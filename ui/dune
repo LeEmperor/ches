@@ -1,0 +1,5 @@
+(library
+ (name ches_ui)
+ (libraries ches_core core async bonsai bonsai_term)
+ (preprocess
+  (pps ppx_jane bonsai.ppx_bonsai)))

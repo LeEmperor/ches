@@ -1,0 +1,9 @@
+; ches_app performs I/O for the editor and coordinates the core with the keymap.
+; Filesystem access lives here, never in ches_core. Like ches_core and ches_input it
+; must not depend on bonsai, bonsai_term, async, notty, or any terminal library.
+
+(library
+ (name ches_app)
+ (libraries ches_core ches_input core core_unix)
+ (preprocess
+  (pps ppx_jane)))

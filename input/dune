@@ -1,0 +1,9 @@
+; ches_input turns normalized key events into editor commands. Like ches_core it
+; must never depend on bonsai, bonsai_term, async, notty, or any terminal library;
+; the UI adapter converts terminal events into [Key.t] and [Keymap.Input.t].
+
+(library
+ (name ches_input)
+ (libraries ches_core core)
+ (preprocess
+  (pps ppx_jane)))
