@@ -80,6 +80,7 @@ Use `Space v` as the view/layout prefix. Proposed MVP0 defaults:
 | `Space v L` | Shift right by 10 cells |
 | `Space v -` | Reduce preferred text width by 10 cells, minimum 20 |
 | `Space v +` | Increase preferred text width by 10 cells |
+| `Space v =` | Same as `Space v +`, without needing Shift |
 | `Space v r` | Restore centered layout, width 100, offset 0 |
 
 Nudge/width commands select centered mode, so their purpose is visible even when
@@ -132,6 +133,168 @@ Completed text storage, cursor semantics, transactions, and file effects do not
 need redesign. Existing code takes precedence for naming/style; illustrative
 types here describe the intended boundary rather than demand exact names.
 
+## Settled phase 6 decisions
+
+These were settled in review before phase 6 started. Where they are more
+specific than the rest of this document, follow them.
+
+### UI state and event handling
+
+Keep all UI-side state in one model updated by one `Bonsai.state_machine` (or
+`state_machine_with_input`, with the terminal dimensions as input). The model
+holds the `Controller.t`, layout preferences, scroll position, the
+bracketed-paste collection buffer, and the status message. Do not use
+`Bonsai.state` with a handler that captures the last rendered value. If two
+events arrive before a redraw, the second is applied to stale state and the
+first keystroke is lost. `apply_action` always receives the current model.
+
+Write the model and its transition function without Bonsai types, so headless
+tests can drive them. One input is: adapt the event, update the model, and
+report whether to exit. The Bonsai component only adapts terminal events, runs
+the transition, renders, sets the cursor, and schedules `exit` when the
+controller reports `Exit`. Saving runs synchronously inside the transition
+(through the controller). That is acceptable for MVP0.
+
+### Keymap and controller boundary
+
+- `ches_input` gains a terminal-independent view-command type, along the lines
+  of:
+
+  ```ocaml
+  type t =
+    | Toggle_centered
+    | Shift of int        (* signed display cells: ±2 or ±10 *)
+    | Adjust_width of int (* signed display cells: ±10 *)
+    | Reset
+  ```
+
+- `Keymap.feed` returns a list of actions, `Editor of Ches_core.Command.t |
+  View of View_command.t`. Their `sexp_of` prints editor commands untagged and
+  view commands as `(View ...)`, so existing keymap expectations stay valid.
+- `Controller.handle_input` dispatches editor actions as before and also
+  returns the view actions, in order, for the UI to apply:
+  `t -> Keymap.Input.t -> t * View_command.t list * Status.t` (or an
+  equivalent record). Editor and view actions touch disjoint state, so their
+  relative order within one input does not matter. This is a deliberate change
+  to the phase 5 controller contract.
+- Ctrl-C produces no command in either mode. It cancels any pending sequence,
+  ends a `j k` sequence, and sets the notice `To quit, use Space q in Normal
+  mode`. Raw mode turns Ctrl-C into an ordinary key, and silently ignoring it
+  would leave a stuck user without a hint.
+
+### Status line and feedback
+
+The status line shows the mode badge, filename, dirty indicator, position
+`line:column`, pending keys, and one message slot. Line and column are
+one-based, and the column is the code-point column (`Editor.cursor_column + 1`),
+not the display column. While a sequence is pending, its keys (e.g. `Space v`)
+appear in their own field, independent of the message slot.
+
+The message slot shows the feedback from the most recent input that produced
+any. In order of precedence:
+
+1. the keymap notice, if that feed set one;
+2. otherwise layout feedback, if the input produced a view command;
+3. otherwise, if the input dispatched any editor command, `Editor.message`.
+   This may be none, which clears the slot.
+
+An input that produces none of these leaves the slot unchanged. Examples are an
+ignored key and the first key of a sequence. There is no timer: brief feedback
+lasts until the next input that replaces it. Editor errors use the error role
+and notices use the warning role.
+
+When the status line is too narrow, drop fields from lowest priority first:
+non-error message, filename (truncate from the left first, marked with `<`),
+position, dirty indicator, pending keys, error message. The mode badge is the
+last field kept.
+
+### One cell model for drawing and cursor math
+
+A single function maps each code point to its screen cells. Rendering,
+clipping, cursor placement, and scrolling all use that same function. Never
+pass document text, filenames, or error text to `View.text` unmapped.
+`View.text` escapes control characters itself, writing ESC as the four
+characters `\027` and TAB as `\t`, so its widths would disagree with ours.
+Hand it only text that it passes through unchanged.
+
+| Code point | Shown as | Cells |
+| --- | --- | --- |
+| TAB | Spaces to the next multiple of the tab stop (8) | 1–8 |
+| C0 controls other than TAB/LF, and DEL | `^A` … `^_`, `^?` (ESC is `^[`) | 2 |
+| C1 controls U+0080–U+009F | `<80>` … `<9f>` | 4 |
+| Bidi controls U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069, and U+FEFF | `<202e>` (lowercase hex) | 6 |
+| Any other code point whose `View.uchar_tty_width` is negative | `<hex>` | 4+ |
+| Other, width 1 or 2 | Itself | 1 or 2 |
+| Other, width 0 (combining marks etc.) | Itself, attached to the preceding cell | 0 |
+
+Draw the `^X` and `<hex>` forms in a distinct muted/special role, so they can't
+be mistaken for literal text. The buffer already rejects NUL and CR. LF ends a
+line and is not drawn. Apply the same mapping to the filename and messages in
+the border and status line.
+
+Notty measures width per grapheme cluster, so for complex clusters, such as
+emoji ZWJ sequences, its width can differ from the sum of the code points'
+widths. Force each rendered line segment to exactly its computed width, cropping
+or padding as needed, so the gutter, border, and tile never shift. The text in
+such a line may look wrong, but the layout stays intact. Record this as a known
+limitation until grapheme support arrives.
+
+**Cursor cell.** The cursor sits on the first cell of the code point at its
+offset. At a line's end it sits on the cell after the last code point. This
+holds for a TAB, a wide character, and an escape form too. (Vim puts the Normal
+cursor on the last cell of a TAB; one rule is simpler here.) A zero-width code
+point puts the cursor on the first cell of the nearest preceding nonzero-width
+code point, or on cell 0.
+
+**Clipping at the text viewport's left and right edges** is exact to the cell:
+
+- a partly visible TAB shows its visible cells as spaces;
+- a partly visible escape form shows its visible ASCII characters;
+- a partly visible wide character shows `<` (left edge) or `>` (right edge) in
+  the muted role.
+
+### Scrolling
+
+Scroll state is the first visible line and the first visible display cell. It
+is UI state, not core state. The cursor span is the cells of the code point
+under the cursor. For an insertion point, an empty line, a line's end, or a
+zero-width code point, the span is the single cursor cell.
+
+One pure fit function computes the new scroll from the previous scroll, the
+cursor line and span, the text viewport size, and the line count:
+
+- **Vertical:** move as little as possible to make the cursor line visible.
+  Then lower the first visible line if needed, so the viewport isn't partly
+  empty while earlier lines are hidden.
+- **Horizontal:** start at cell 0 whenever the span fits there. Otherwise move
+  as little as possible to make the whole span visible. If the span is wider
+  than the viewport, show its first cell.
+- No scroll margin (scrolloff) and no half-screen jumps in MVP0.
+- With zero text rows or columns, keep the scroll unchanged and show no cursor
+  (`set_cursor None`).
+
+Apply the fit after every input. Apply it again at render time with the current
+dimensions, so a resize keeps the cursor visible before the next input arrives.
+
+### Geometry limits and layout feedback
+
+- The gutter uses `max(3, digits(line_count))` digit cells plus one separator
+  cell, so the tile only shifts when a file passes 999 lines.
+- Requested preferences are clamped when changed: width to 20–500 and offset to
+  −500..+500.
+- Feedback shows the requested value, followed by the effective value when it
+  differs, e.g. `Width 110 (76 fit)` and `Offset +40 (+12 fit)`. Toggle and
+  reset report `Centered`, `Full width`, or `Layout reset`.
+
+### Cursor shape and exit
+
+Normal mode uses a non-blinking `Block` cursor and Insert mode a non-blinking
+`Bar`. When it releases the terminal, the installed Notty (`notty-community
+0.2.4+ox2`) shows the cursor and emits `ESC [ 0 q`. That resets the shape to the
+terminal's configured default, so ordinary exit needs no extra code. Acceptance
+still checks the shell's cursor after quitting a session that used Insert mode
+and after an error exit.
+
 ## Reference examples and verification
 
 Local references in `~/devel/jane/bonsai_term_examples/`:
@@ -148,9 +311,12 @@ verify APIs against installed packages: checkout and installed versions can
 differ. Borrow presentation patterns without replacing `ches_core` with the
 example's editor component.
 
-Before integrating the whole editor, do a bounded visual pass with representative
-Normal, Insert, dirty, pending-prefix, and error states. Review at approximately
-80×24 and 160×48 cells, plus pathological tiny dimensions for robustness.
+Do a bounded visual pass in checkpoint 6B, after 6A has the real editor
+working, with representative Normal, Insert, dirty, pending-prefix, and error
+states. Review at approximately 80×24 and 160×48 cells, plus pathological tiny
+dimensions for robustness. The phase 6 smoke script (`scripts/smoke.sh`; see
+[the phase plan](mvp0_plan.md#terminal-smoke-script)) saves these screens with
+colors for review.
 
 Test layout geometry, clamp/restore behavior on resize, nudge/reset/toggle,
 width changes, cursor translation, and scrolling with tabs/wide characters.

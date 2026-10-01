@@ -234,6 +234,7 @@ See [Undo / Redo](ches_editor_prototype_brief.md#undo--redo).
 | Normal | `Space q` | Quit if clean; otherwise show refusal/message |
 | Normal | `Space Q` | Quit and discard unsaved changes |
 | Normal | Escape | Cancel pending sequence |
+| Both | `Ctrl-c` | No command; cancels pending sequence and hints `Space q` (phase 6) |
 | Insert | Text / Space | Insert literal text |
 | Insert | Enter / Backspace / Delete | Edit text |
 | Insert | Tab | Insert a 2-column soft tab (default) or a literal TAB; configurable |
@@ -263,10 +264,13 @@ Do not implement that prompt in MVP0.
 
 Phase 6 adds the Normal-mode `Space v` layout prefix: `c` toggles centered/full
 width, `h/l` nudge left/right by 2 cells, `H/L` by 10, `-/+` adjust preferred text
-width, and `r` resets layout. Full semantics and defaults are in
+width (`=` is an unshifted alias for `+`), and `r` resets layout. Full
+semantics and defaults are in
 [rendering_design.md](rendering_design.md#normal-mode-layout-commands).
 These are view commands routed separately from core editor commands. This is a
 bounded phase-6 extension to phase 4, not a requirement to redo that phase.
+Phase 6 also makes Ctrl-C a hint-only key (see the table above); in raw mode it
+is no longer a signal, and the phase 1 skeleton's Ctrl-C exit goes away.
 
 ## Phase execution and context budget
 
@@ -286,6 +290,9 @@ Suggested assignment:
 > Implement phase N of `mvp0_plan.md`. Respect its scope and architecture
 > contracts. Do not commit, push, or initialize Git. Run its acceptance checks
 > and provide a concise handoff with any unresolved issues.
+
+For phase 6, name the checkpoint ("Implement phase 6A …"), and give a 6B
+session the 6A handoff.
 
 ### Phase 1 — Dune project and real terminal skeleton
 
@@ -406,41 +413,114 @@ Stop before full editor rendering. Keep filesystem access out of `ches_core`.
 **Goal:** join the tested pieces into an interactively usable editor.
 
 Read [rendering_design.md](rendering_design.md) for the MVP0 visual/layout
-contracts and reference examples. Preserve completed phases 1–4, including the
-owner's Tab and `jk` choices. The only anticipated input-interface change is
-tagging editor versus view commands and updating callers/tests accordingly.
+contracts and reference examples. Its
+[settled phase 6 decisions](rendering_design.md#settled-phase-6-decisions) fix
+the UI state model, feedback precedence, cell mapping, cursor placement,
+scrolling, and layout limits; follow them rather than re-deciding. Preserve
+completed phases 1–5, including the owner's Tab and `jk` choices. The
+anticipated interface changes are exactly: keymap output tagged as editor
+versus view actions, `Controller.handle_input` also returning view actions,
+the Ctrl-C hint, and the `Space v` bindings. Update callers/tests accordingly.
 
 Use two checkpoints within this phase to keep the context budget bounded. They
-may be separate implementation sessions with a short handoff; they do not add
-new top-level phases:
+are intended as separate implementation sessions with a short handoff; they do
+not add new top-level phases. 6A reaches a usable editor first, following the
+"short route to usable software" rule; 6B adds layout controls and the visual
+pass on top of real content. 6A's geometry already takes the width/offset
+preferences (fixed at their defaults), so 6B adds controls without reworking it.
 
-1. **6A — Geometry and visual pass:** theme roles, responsive framed document
-   layout, centered width/offset preferences, and synthetic-state visual review.
-2. **6B — Integration:** real editor/controller wiring, layout key routing,
-   scrolling/cursor translation, and interactive acceptance checks.
+#### 6A — Working editor
 
 Work:
-- Establish a cohesive dark palette, fine document border, muted line-number
-  gutter, subtle current-line emphasis, and mode-dependent cursor shape.
-- Implement centered/full-width placement, preferred text width (initially 100
-  cells), signed offset, and responsive reduction of decoration on small screens.
-- Use shared geometry for text, gutter, status, clipping, scrolling, and cursor.
-- Add `Space v` layout actions through the existing keymap, routed to UI state
-  separately from editor commands. Retain requested preferences across resize.
-- Replace the placeholder screen with the controller, editor state, and keymap.
-- Adapt actual terminal events into normalized keys and paste events.
-- Render visible lines, cursor, status, pending leader, and feedback.
-- Implement vertical/horizontal viewport scrolling and resize handling.
-- Handle tab expansion, code-point/display-column conversion, wide characters,
-  and clipping without emitting file contents as terminal control sequences.
-  Render unsupported control characters visibly and safely.
-- Restore terminal state on ordinary exit and handled errors using the terminal
-  framework's lifecycle facilities.
+- Write a Bonsai-free screen model in `ui/` (or a small Bonsai-free library if
+  that keeps tests simpler): geometry for tile, text, gutter, border, and status
+  rectangles, including centered placement at the default width 100 / offset 0
+  and responsive dropping of border/gutter on small screens; the cell mapping;
+  the cursor cell; and the scroll fit function. Cover it with headless expect
+  tests: tabs, wide and zero-width characters, escape forms, edge clipping,
+  scrolling, and tiny/zero dimensions.
+- Write the pure UI model and transition (controller, layout preferences,
+  scroll, paste buffer, message slot) and test it headlessly with key sequences.
+- Replace the placeholder screen: one `Bonsai.state_machine`, terminal event
+  adaptation into normalized keys and bracketed paste, rendering of text,
+  gutter, a plain border, status line, pending keys, and feedback, the
+  mode-dependent cursor, and resize handling.
+- Add the Ctrl-C hint. Remove the skeleton's temporary exit keys.
+- Define theme roles in one module with provisional colors, so 6B tunes values
+  rather than plumbing.
+- Write the terminal smoke script (below) covering the 6A checks.
 
-Acceptance:
-- Manually open a file, move, edit, undo/redo, save, quit, and reopen it.
+6A is done when the editor can open, edit, scroll, save, quit, and reopen
+files; the acceptance items on control characters, lost keystrokes, terminal
+restoration, tall/wide/empty files, and tiny dimensions pass; and `dune build`,
+`dune runtest`, and the smoke script pass. The handoff lists any acceptance
+items that remain open.
+
+#### 6B — Layout controls and visual pass
+
+Work:
+- Add the view-command type, tag keymap output, extend
+  `Controller.handle_input`, and update callers/tests.
+- Add the `Space v` bindings, layout feedback, and preference limits. Keep
+  requested preferences across resize.
+- Finish the visual design: cohesive dark palette, fine border with the filename
+  in the top border when space permits, muted gutter, and subtle current-line
+  emphasis.
+- Review screens at 80×24 and 160×48 and at tiny sizes, with representative
+  Normal, Insert, dirty, pending-prefix, and error states, in a real terminal
+  where available.
+- Extend the smoke script to cover layout commands.
+
+6B is done when every acceptance item below passes or is reported as not
+checkable in this environment.
+
+#### Terminal smoke script
+
+Add `scripts/smoke.sh`. It drives the built `ches` binary inside tmux, so the
+agent can run the interactive checks and phase 7 can repeat them. It is run
+explicitly, not by `dune runtest`, since it needs tmux and a built binary.
+
+- Use a private tmux server (`tmux -L ches-smoke`) and kill it on exit, so it
+  never touches the owner's sessions. Work on fixture copies in a temporary
+  directory, removed on exit.
+- Start a session with a plain shell and an explicit size, e.g.
+  `new-session -d -x 80 -y 24`, with `window-size manual`. Launch `ches` from
+  that shell, so the terminal state after exit can be checked.
+- Send input with `send-keys` (`-l` for literal text; named keys such as
+  `Escape`, `Enter`, `BSpace`, `Space`, `C-r`, `C-c`). Send pastes with
+  `load-buffer` plus `paste-buffer -p`, which brackets the paste when the
+  application has enabled bracketed paste.
+- Wait by polling `capture-pane -p` until expected text appears or a timeout
+  passes; avoid fixed sleeps as the only synchronization.
+- Assert on the screen text (`capture-pane -p`), the cursor position and
+  visibility (`display -p '#{cursor_x} #{cursor_y} #{cursor_flag}'`), the
+  alternate screen (`#{alternate_on}`), and file contents after save, compared
+  byte for byte with `cmp`.
+- Resize with `resize-window -x W -y H`, including tiny sizes such as 1×1 and
+  10×3, then back to 160×48.
+- Cover open/edit/save/reopen, undo/redo, dirty-quit refusal and forced quit,
+  a save error (e.g. a read-only directory), scrolling in tall and wide files,
+  tabs/Unicode/control characters, a fast burst of keys, Insert-mode paste,
+  Ctrl-C, and (6B) each `Space v` command with its clamping/restore behavior.
+- Save `capture-pane -e -p` output (which keeps colors) for the 80×24 and
+  160×48 review screens to a directory the script prints, for the owner to
+  look at. Exit nonzero on any failed assertion and name it.
+
+The script cannot verify cursor shape (tmux 3.4 does not report it), how the
+palette looks, or flicker. Check those in a real terminal, or record them as
+unchecked in the handoff.
+
+#### Acceptance for the whole phase
+
+- Open a file, move, edit, undo/redo, save, quit, and reopen it.
 - Exercise files taller/wider than the screen, empty files, tabs, Unicode, and
   terminal resizing, including very small dimensions.
+- Open a file containing ESC sequences, other C0/C1 controls, and bidi
+  overrides: each shows its escape form, nothing reaches the terminal raw, and
+  the gutter/border stay aligned.
+- Type quickly and paste while the screen is busy: no keystroke is lost.
+- After quitting a session that used Insert mode, and after an error exit, the
+  shell's cursor shape and visibility are restored.
 - Confirm Space-leader feedback, dirty quit refusal, and save-error visibility.
 - Verify nudge/width/reset/toggle controls, clamped placement on small terminals,
   restoration on larger terminals, and cursor visibility after every adjustment.
@@ -451,7 +531,10 @@ Acceptance:
   available; textual snapshots alone do not verify the aesthetic result.
 - Add focused viewport/rendering tests and Bonsai_term expect tests where the
   installed framework supports them.
-- `dune build` and `dune runtest` pass.
+- `dune build`, `dune runtest`, and `scripts/smoke.sh` pass.
+
+Use the smoke script for every item it can check; check the rest by hand or
+report them as unchecked.
 
 Stop when the specified editor works; do not add convenience commands from the
 deferred list.
@@ -462,20 +545,25 @@ deferred list.
 
 Work:
 - Run a bounded end-to-end acceptance pass through the complete binding table.
+  Start from `scripts/smoke.sh` and extend it for any binding or behavior it
+  does not yet cover.
 - Fix integration defects within MVP0 scope.
 - Complete README: setup/build/run, bindings, architecture, storage tradeoff,
   supported text, undo policy, known limitations, and next milestones.
 - Document layout controls, default width/offset, resize behavior, and the fact
   that layout preferences are session-local in MVP0.
 - Record the exact tested toolchain and any manual checks that could not run.
+- Document how to run `scripts/smoke.sh`, what it needs (tmux), and what it
+  cannot check.
 - Review dependency boundaries and ensure no terminal-specific semantics leaked
   into core editing modules.
 
 Acceptance:
 - A user following the README can build and run `ches PATH`.
 - `dune build` and `dune runtest` pass in the documented environment.
-- Manual smoke testing demonstrates edit/save/reopen, undo/redo, scrolling,
-  resize, error feedback, and both quit behaviors.
+- `scripts/smoke.sh` passes and, with any hand checks, demonstrates
+  edit/save/reopen, undo/redo, scrolling, resize, error feedback, and both quit
+  behaviors.
 - No commits or pushes have been made by implementation agents.
 
 MVP0 is complete here. Further features require a new milestone rather than
