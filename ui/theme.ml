@@ -68,5 +68,8 @@ let attrs (style : Ches_screen.Style.t) =
   | Info -> colors Foreground Surface
   | Warning -> colors Warning Surface
   | Error -> colors ~attrs:[ Attr.bold ] Error Surface
-  | Smear -> [ Attr.fg (Role.color Normal_accent) ]
+  (* Notty cannot query the terminal's native cursor colour.  Ches leaves that cursor
+     at the terminal default (normally white), so use an explicit near-white here
+     rather than the Normal-mode blue accent while the replacement cursor is moving. *)
+  | Smear -> [ Attr.fg (Attr.Color.rgb ~r:0xf5 ~g:0xf5 ~b:0xf5) ]
 ;;

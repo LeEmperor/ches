@@ -22,7 +22,7 @@ module Input = struct
     | Key of Key.t
     | Paste_start
     | Paste_end
-    | Animation_tick
+    | Animation_tick of Time_ns.t
   [@@deriving sexp_of]
 end
 
@@ -36,17 +36,19 @@ type t =
   ; paste : string list option (** Text collected so far, most recent first. *)
   ; message : Message.t option
   ; animation : Animation.t
+  ; animation_time : Time_ns.t option
   ; exited : bool
   }
 
-let create ?(prefs = Geometry.Prefs.default) controller =
+let create ?(prefs = Geometry.Prefs.default) ?(smear_enabled = false) controller =
   { controller
   ; prefs
   ; scroll = Scroll.zero
   ; rows = None
   ; paste = None
   ; message = None
-  ; animation = Animation.create ~enabled:false
+  ; animation = Animation.create ~enabled:smear_enabled
+  ; animation_time = None
   ; exited = false
   }
 ;;
@@ -257,7 +259,12 @@ and apply_running t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = refit t ~width ~height in
   match input with
-  | Animation_tick -> { t with animation = Animation.tick t.animation ~dt:0.017 }, Running
+  | Animation_tick now ->
+    let dt =
+      Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
+        Time_ns.diff now previous |> Time_ns.Span.to_sec)
+    in
+    { t with animation = Animation.tick t.animation ~dt; animation_time = Some now }, Running
   | Key _ | Paste_start | Paste_end ->
     let before = cursor_position t ~width ~height in
     let t, status =
@@ -272,12 +279,16 @@ and apply_running t ~width ~height (input : Input.t) =
          | Some text -> { t with paste = Some (text :: chunks) }, Running
          | None -> t, Running)
       | Key key, None -> feed ~width ~height t (Key key)
-      | Animation_tick, _ -> assert false
+      | Animation_tick _, _ -> assert false
     in
     let t = refit t ~width ~height in
     let after = cursor_position t ~width ~height in
+    let was_active = Animation.active t.animation in
+    let animation = Animation.retarget t.animation ~from:before ~to_:after in
     { t with
-      animation = Animation.retarget t.animation ~from:before ~to_:after
+      animation
+    ; animation_time =
+        (if (not was_active) && Animation.active animation then None else t.animation_time)
     ; exited = Controller.Status.equal status Exit
     }, status
 ;;

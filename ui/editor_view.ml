@@ -58,10 +58,10 @@ let cursor (frame : Frame.t) : Cursor.t option =
     })
 ;;
 
-let app controller ~exit ~dimensions (local_ graph) =
+let app ?(smear_enabled = false) controller ~exit ~dimensions (local_ graph) =
   let model, inject =
     Bonsai.state_machine_with_input
-      ~default_model:(Ui_state.create controller)
+      ~default_model:(Ui_state.create ~smear_enabled controller)
       ~apply_action:(fun context dimensions model inputs ->
         match dimensions with
         | Inactive -> model
@@ -76,15 +76,19 @@ let app controller ~exit ~dimensions (local_ graph) =
       dimensions
       graph
   in
+  let get_current_time = Bonsai.Clock.get_current_time graph in
   let () =
     Bonsai.Clock.every
       ~when_to_start_next_effect:`Every_multiple_of_period_non_blocking
       ~trigger_on_activate:true
       (Bonsai.return (Time_ns.Span.of_ms 17.))
       (let%arr inject
-       and model in
+       and model
+       and get_current_time in
        if Animation.active (Ui_state.animation model)
-       then inject [ Ui_state.Input.Animation_tick ]
+       then (
+         let%bind.Effect now = get_current_time in
+         inject [ Ui_state.Input.Animation_tick now ])
        else Effect.Ignore)
       graph
   in
@@ -123,5 +127,5 @@ let run controller =
     ~dispose:true
     ~mouse:No_mouse_events
     ~bpaste:true
-    (app controller)
+    (app ~smear_enabled:true controller)
 ;;

@@ -28,13 +28,14 @@ module Input : sig
     | Key of Key.t
     | Paste_start
     | Paste_end
-    | Animation_tick (** A frontend animation-clock pulse; never reaches the editor. *)
+    | Animation_tick of Time_ns.t
+    (** A timestamped frontend animation-clock pulse; never reaches the editor. *)
   [@@deriving sexp_of]
 end
 
 type t
 
-val create : ?prefs:Geometry.Prefs.t -> Ches_app.Controller.t -> t
+val create : ?prefs:Geometry.Prefs.t -> ?smear_enabled:bool -> Ches_app.Controller.t -> t
 val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
 val scroll : t -> Scroll.t

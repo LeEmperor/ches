@@ -9,7 +9,8 @@ open! Core
 open Bonsai_term
 
 val app
-  :  Ches_app.Controller.t
+  :  ?smear_enabled:bool
+  -> Ches_app.Controller.t
   -> exit:(unit -> unit Effect.t)
   -> dimensions:Dimensions.t Bonsai.t
   -> local_ Bonsai.graph
