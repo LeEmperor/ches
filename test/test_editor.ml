@@ -885,7 +885,38 @@ let%expect_test "Visual selections extend with motions, switch kind, and apply o
   show t;
   let t = run t [ Undo ] in
   show t;
-  [%expect {||}]
+  [%expect {|
+    (((anchor 0) (active 5) (kind Characterwise)))
+    NORMAL 0:0 rev=0
+    > |one
+    > two
+    > three
+    (((text  "one\
+            \ntwo\
+            \n") (kind Linewise)))
+    NORMAL 0:0 rev=2 dirty
+    > |X two
+    NORMAL 0:2 rev=3
+    > on|e two
+    |}]
+;;
+
+let%expect_test "search uses smart ASCII case by default and supports explicit policies" =
+  let t = run (create "phase Phase PHASE") [ Search { query = Some "phase"; forward = true; count = 1; whole_word = false } ] in
+  show t;
+  let t = run t [ Search { query = Some "Phase"; forward = true; count = 1; whole_word = false } ] in
+  show t;
+  let insensitive = Editor.create ~search_case:Editor.Search_case.Insensitive (of_string_exn "phase Phase") in
+  let insensitive = run insensitive [ Search { query = Some "Phase"; forward = true; count = 1; whole_word = false } ] in
+  show insensitive;
+  [%expect {|
+    NORMAL 0:6 rev=0
+    > phase |Phase PHASE
+    NORMAL 0:6 rev=0 (Info"Search wrapped")
+    > phase |Phase PHASE
+    NORMAL 0:6 rev=0
+    > phase |Phase
+    |}]
 ;;
 
 let%test_unit "random commands keep the cursor valid; undo/redo round-trips" =

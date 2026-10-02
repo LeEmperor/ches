@@ -20,6 +20,23 @@ module Selection = struct
   [@@deriving sexp_of, equal]
 end
 
+module Search_case = struct
+  type t =
+    | Sensitive
+    | Insensitive
+    | Smart
+  [@@deriving sexp_of, equal]
+end
+
+let has_ascii_uppercase s = String.exists s ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))
+
+let case_sensitive policy query =
+  match policy with
+  | Search_case.Sensitive -> true
+  | Search_case.Insensitive -> false
+  | Search_case.Smart -> has_ascii_uppercase query
+;;
+
 type t =
   { text : B.t
   ; path : string option
@@ -34,11 +51,12 @@ type t =
   ; message : Message.t option
   ; last_find : (Motion.Find.t * int) option
   ; last_search : (string * bool * bool * int option) option
+  ; search_case : Search_case.t
   ; search_visible : bool
   ; selection : Selection.t option
   }
 
-let create ?path text =
+let create ?path ?(search_case = Search_case.Smart) text =
   { text
   ; path
   ; mode = Normal
@@ -52,6 +70,7 @@ let create ?path text =
   ; message = None
   ; last_find = None
   ; last_search = None
+  ; search_case
   ; search_visible = false
   ; selection = None
   }
@@ -66,9 +85,10 @@ let cursor t = t.cursor
 let selection t = t.selection
 let message t = t.message
 let unnamed_register t = t.unnamed_register
+let search_case t = t.search_case
 let search_state t =
   if t.search_visible
-  then Option.map t.last_search ~f:(fun (query, _direction, whole_word, current) -> query, whole_word, current)
+  then Option.map t.last_search ~f:(fun (query, _direction, whole_word, current) -> query, whole_word, case_sensitive t.search_case query, current)
   else None
 let cursor_line t = B.line_of_offset t.text t.cursor
 let cursor_column t = B.column_of_offset t.text t.cursor
@@ -409,9 +429,19 @@ let repeat_find t ~opposite ~count =
     |> Result.map ~f:(fun (destination, matched) -> original_find, destination, matched)
 ;;
 
-let is_match text ~at query =
+let ascii_lower c =
+  let n = Char.to_int c in
+  if n >= Char.to_int 'A' && n <= Char.to_int 'Z' then Char.of_int_exn (n + 32) else c
+;;
+
+let ascii_equal_case_insensitive a b =
+  Char.equal (ascii_lower a) (ascii_lower b)
+;;
+
+let is_match ~case_sensitive text ~at query =
   at + String.length query <= String.length text
-  && String.equal (String.sub text ~pos:at ~len:(String.length query)) query
+  && String.for_alli query ~f:(fun i c ->
+    if case_sensitive then Char.equal text.[at + i] c else ascii_equal_case_insensitive text.[at + i] c)
 ;;
 
 let small_word_class text offset =
@@ -422,8 +452,8 @@ let small_word_class text offset =
   then Some `Identifier else Some `Punctuation
 ;;
 
-let whole_word_match text ~at query =
-  is_match (B.to_string text) ~at query
+let whole_word_match text ~case_sensitive ~at query =
+  is_match ~case_sensitive (B.to_string text) ~at query
   && let class_ = small_word_class text at in
      let before = if at = 0 then None else small_word_class text (Option.value_exn (B.prev_boundary text at)) in
      let stop = at + String.length query in
@@ -445,11 +475,12 @@ let search t ~query ~forward ~count ~whole_word =
   then { t with message = Some (Error "No previous search") }
   else (
     let source = B.to_string t.text in
+    let case_sensitive = case_sensitive t.search_case query in
     let rec boundaries p acc =
       if p = B.length t.text then List.rev (p :: acc)
       else boundaries (Option.value_exn (B.next_boundary t.text p)) (p :: acc)
     in
-    let candidates = boundaries 0 [] |> List.filter ~f:(fun p -> if whole_word then whole_word_match t.text ~at:p query else is_match source ~at:p query) in
+    let candidates = boundaries 0 [] |> List.filter ~f:(fun p -> if whole_word then whole_word_match t.text ~case_sensitive ~at:p query else is_match ~case_sensitive source ~at:p query) in
     let ordered =
       if direction
       then List.filter candidates ~f:(fun p -> p > t.cursor) @ List.filter candidates ~f:(fun p -> p <= t.cursor)
@@ -614,7 +645,9 @@ let dispatch t (command : Command.t) =
           | Visual_delete | Visual_yank | Visual_change
          | Reload ), Insert -> false
     | (Visual_delete | Visual_yank | Visual_change), Normal -> false
+    | (Move _ | Enter_visual _ | Exit_visual | Visual_delete | Visual_yank | Visual_change), Visual _ -> true
     | (Delete_char | Delete_chars_forward _ | Delete_chars_backward _ | Delete_motion _ | Delete_lines _ | Delete_inner_word | Yank_motion _ | Yank_lines _ | Paste _ | Search _ | Search_word _ | Clear_search_highlight | Reload), Visual _ -> false
+    | _, Visual _ -> false
     | _ -> true
   in
   if not applies

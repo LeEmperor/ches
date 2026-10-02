@@ -51,7 +51,7 @@ let render ui ~width ~height =
   let fields = Status.fields ui in
   let search =
     match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
-    | Some query when not (String.is_empty query) -> Some (query, false, None)
+    | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)
     | Some _ | None -> Editor.search_state editor
   in
   let small_word_class offset =
@@ -61,10 +61,15 @@ let render ui ~width ~height =
     else if code >= 0x80 || Char.is_alphanum (Char.of_int_exn code) || code = Char.to_int '_'
     then Some `Identifier else Some `Punctuation
   in
-  let is_match ~at query whole_word =
+  let is_match ~at query whole_word case_sensitive =
     let source = Text_buffer.to_string text in
     at + String.length query <= String.length source
-    && String.equal (String.sub source ~pos:at ~len:(String.length query)) query
+    && String.for_alli query ~f:(fun i c ->
+      let lower c =
+        let n = Char.to_int c in
+        if n >= Char.to_int 'A' && n <= Char.to_int 'Z' then Char.of_int_exn (n + 32) else c
+      in
+      if case_sensitive then Char.equal source.[at + i] c else Char.equal (lower source.[at + i]) (lower c))
     && (not whole_word
         || let class_ = small_word_class at in
            let before = if at = 0 then None else small_word_class (Option.value_exn (Text_buffer.prev_boundary text at)) in
@@ -76,12 +81,12 @@ let render ui ~width ~height =
   let matches =
     match search with
     | None -> []
-    | Some (query, _, _) when String.is_empty query -> []
-    | Some (query, whole_word, current) ->
+    | Some (query, _, _, _) when String.is_empty query -> []
+    | Some (query, whole_word, case_sensitive, current) ->
       let rec loop at acc =
         if at >= Text_buffer.length text then List.rev acc
         else
-          let acc = if is_match ~at query whole_word then at :: acc else acc in
+          let acc = if is_match ~at query whole_word case_sensitive then at :: acc else acc in
           loop (Option.value_exn (Text_buffer.next_boundary text at)) acc
       in
       loop 0 [] |> List.map ~f:(fun start -> start, String.length query, current)

@@ -93,6 +93,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `x` / `X` | Delete character(s) under / before the cursor |
 | Normal | `y{motion}` / `yy` | Yank by motion / whole line(s) |
 | Normal | `p` / `P` | Paste the unnamed register after / before the cursor or line |
+| Normal | `v` / `V` | Start characterwise / linewise Visual selection |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -109,6 +110,10 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, hybrid numbers |
 | Normal | `Escape` | Cancel a pending count or `Space` sequence |
+| Visual | motions, `%` | Extend the selection |
+| Visual | `v` / `V` | Switch characterwise / linewise selection, preserving its anchor |
+| Visual | `d` / `c` / `y` | Delete / change / yank the selected range |
+| Visual | `Escape` | Cancel selection without moving the cursor |
 | Insert | text, `Backspace`, `Delete` | Edit |
 | Insert | `Enter` | New line, indented like the current one |
 | Insert | `Tab` | Insert spaces to the next multiple of 2 columns |
@@ -200,6 +205,19 @@ indentation. `d%` includes both matching delimiters; an unmatched `%` does
 nothing. Linewise deletes at EOF preserve the editor's invariant that an empty
 document has one logical empty line.
 
+### Visual selection
+
+`v` anchors a characterwise selection at the cursor and `V` anchors a linewise
+selection. Ordinary motions (including counted motions and `%`) move the active
+end; reversing direction is supported. `v` and `V` switch its kind without
+losing the anchor. Selection highlighting takes precedence over search and
+current-line highlighting while the terminal cursor remains visible. `d`, `c`,
+and `y` use the same typed unnamed register and range behavior as their Normal
+mode counterparts. Delete and change are each one undo step; yank returns to
+Normal mode at the selected range's start without changing history. Blockwise
+selection, Visual paste, text objects, and search prompts in Visual mode are not
+supported.
+
 `f{character}`/`F{character}` find a literal code point strictly forward or
 backward on the current line; `t`/`T` stop just before/after it. Counts repeat
 the find, `;` repeats the last successful find, and `,` repeats it in the
@@ -208,7 +226,11 @@ motions too (`df)` and `dt,`); Escape cancels while waiting for the literal
 argument, and a failed find retains the previous successful one.
 
 Search results are highlighted while a query is active; the current result uses
-a distinct highlight. `*` and `#` search the small word under the cursor as a
+a distinct highlight. Searches use smart ASCII case by default: a query with an
+upper-case ASCII letter is case-sensitive, while an all-lowercase query matches
+ASCII letter case-insensitively. The core's `Editor.create` also accepts a
+`search_case` preference (`Smart`, `Sensitive`, or `Insensitive`) for alternate
+frontends. `*` and `#` search the small word under the cursor as a
 whole word (so `cat` does not match `scatter`); on whitespace they report that
 there is no word. The query and highlighting are derived from the current text,
 so edits cannot retain stale match positions. In Normal mode, `Escape` clears

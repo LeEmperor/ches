@@ -63,6 +63,25 @@ let show { editor; keymap } =
   |> List.iter ~f:(fun line -> print_endline ("> " ^ line))
 ;;
 
+let%expect_test "Visual bindings select, cancel, and apply a selection" =
+  let t = run (create "abc") (keys "vld") in
+  show t;
+  let t = run (create "abc") (keys "vl<Esc>") in
+  show t;
+  [%expect {|
+    (Enter_visual Characterwise)
+    (Move(motion Right))
+    Visual_delete
+    NORMAL 0:0 dirty
+    > |c
+    (Enter_visual Characterwise)
+    (Move(motion Right))
+    Exit_visual
+    NORMAL 0:1
+    > a|bc
+    |}]
+;;
+
 let%expect_test "delete grammar composes motions, counts, doubled lines, and cancellation" =
   let t = run (create "one two three\nfour\nfive") (keys "dwe") in
   show t;

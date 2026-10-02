@@ -103,9 +103,17 @@ module Selection : sig
   [@@deriving sexp_of, equal]
 end
 
+module Search_case : sig
+  type t =
+    | Sensitive
+    | Insensitive
+    | Smart
+  [@@deriving sexp_of, equal]
+end
+
 (** A Normal-mode editor at the start of [text], which is considered saved. Use
     [Text_buffer.empty] for a file that does not exist yet. *)
-val create : ?path:string -> Text_buffer.t -> t
+val create : ?path:string -> ?search_case:Search_case.t -> Text_buffer.t -> t
 
 val text : t -> Text_buffer.t
 val path : t -> string option
@@ -130,8 +138,9 @@ val message : t -> Message.t option
 (** The unnamed internal register. Successful deletes and yanks replace it; history
     does not restore it. *)
 val unnamed_register : t -> Register.t option
+val search_case : t -> Search_case.t
 
-val search_state : t -> (string * bool * int option) option
+val search_state : t -> (string * bool * bool * int option) option
 
 val dispatch : t -> Command.t -> t * Effect.t list
 

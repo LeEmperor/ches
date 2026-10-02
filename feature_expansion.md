@@ -717,6 +717,13 @@ Acceptance:
 
 Stop before block selection, selection-specific paste, and text objects.
 
+**Done (2026-10-02).** Visual state is owned by `Editor` as an anchor, active
+endpoint, and characterwise/linewise kind. `v`/`V` enter or switch Visual mode;
+ordinary motions, counts, and `%` extend it. `d`, `c`, and `y` act on the
+resolved selection, with change entering Insert in the same transaction. The
+frame maps selections to cells (including clipped and wide glyphs) with priority
+over search highlighting, while retaining the terminal cursor.
+
 ## Phase 12 — Indent and unindent
 
 **Goal:** adjust blocks without retyping indentation.
