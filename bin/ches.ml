@@ -8,11 +8,12 @@ let command =
       "Opens PATH, or starts an empty document if nothing exists there; saving \
        creates it.\n\
        Normal mode: h/j/k/l move, w/b/e and W/B/E move by words, 0/^/$ to the\n\
-       line start/first non-blank/end, gg/G to the first/last line; a count\n\
-       first (20j, 3w, 20G) repeats or picks the line. i/a insert before/after\n\
-       the cursor, I/A at the line's first non-blank/end, o/O open a line\n\
-       below/above; x deletes, u undoes, Ctrl-r redoes, Space w saves,\n\
-       Space q quits, Space Q quits discarding changes.\n\
+       line start/first non-blank/end, _/g_ to the first/last non-blank,\n\
+       gg/G to the first/last line; a count first (20j, 3w, 20G) repeats or\n\
+       picks the line. i/a insert before/after the cursor, I/A at the line's\n\
+       first non-blank/end, o/O open a line below/above; x deletes, u undoes,\n\
+       Ctrl-r redoes, Space w saves, Space q quits, Space Q quits discarding\n\
+       changes.\n\
        Space v c/h/l/H/L/-/+/r: toggle centering, move, resize, reset the layout.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type) in
      fun () ->

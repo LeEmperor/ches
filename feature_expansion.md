@@ -295,6 +295,11 @@ Acceptance:
   `^` rejects counts in the keymap (`3^` → `^ does not take a count`); the
   editor raises `Invalid_argument` for a count on a motion that takes none.
 - `gg` and `G` go to the first non-blank (Vim's `startofline`).
+- Added after phase 3 at the owner's request: `_` (`First_nonblank_down`, linewise)
+  and `g_` (`Last_nonblank`, inclusive). Both take a count N meaning the line N-1
+  below, like `$`; on a blank line `g_` goes to the line start, as in Vim. Phase 5
+  should include `d_`/`y_` (equivalent to `dd`/`yy`) and `dg_` in its range
+  examples.
 
 ## Phase 3 — Familiar Insert entry and basic autoindent
 

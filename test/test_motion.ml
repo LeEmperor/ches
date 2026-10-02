@@ -284,6 +284,38 @@ let%expect_test "0, ^, and $" =
   [%expect {| 0:3 abc| |}]
 ;;
 
+let%expect_test "_ and g_" =
+  let t = move (create "  \tab cd \t\n  xy日  \n   \n\nz") Right ~count:4 in
+  show_cursor t;
+  show_cursor (move t First_nonblank_down);
+  show_cursor (move t Last_nonblank);
+  show_cursor (move t First_nonblank_down ~count:2);
+  show_cursor (move t Last_nonblank ~count:2);
+  (* A blank line: _ goes to its last character (like ^), g_ to its start. *)
+  show_cursor (move t First_nonblank_down ~count:3);
+  show_cursor (move t Last_nonblank ~count:3);
+  show_cursor (move t Last_nonblank ~count:4);
+  show_cursor (move t First_nonblank_down ~count:999_999);
+  show_cursor (move t Last_nonblank ~count:999_999);
+  [%expect
+    {|
+    0:4   \ta|b cd \t
+    0:3   \t|ab cd \t
+    0:7   \tab c|d \t
+    1:2   |xy日
+    1:4   xy|日
+    2:2   |
+    2:0 |
+    3:0 |
+    4:0 |z
+    4:0 |z
+    |}];
+  (* In Insert mode, g_ stays on the last non-blank rather than after it. *)
+  let t = fst (Editor.dispatch (create "abc  ") (Enter_insert Before_cursor)) in
+  show_cursor (move t Last_nonblank);
+  [%expect {| 0:2 ab|c |}]
+;;
+
 let%expect_test "gg and G, with and without counts" =
   let text = "one\n  two\n\tthree\nfour" in
   let t = create text in
@@ -329,7 +361,9 @@ let%expect_test "motion kinds and counts" =
     ((Word_end Big) (Characterwise (inclusive true)) (takes_count true))
     (Line_start (Characterwise (inclusive false)) (takes_count false))
     (First_nonblank (Characterwise (inclusive false)) (takes_count false))
+    (First_nonblank_down Linewise (takes_count true))
     (Line_end (Characterwise (inclusive true)) (takes_count true))
+    (Last_nonblank (Characterwise (inclusive true)) (takes_count true))
     (First_line Linewise (takes_count true))
     (Last_line Linewise (takes_count true))
     |}];

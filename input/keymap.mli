@@ -16,6 +16,7 @@
       Normal  w / b / e              Move (Word_forward / Word_backward / Word_end Small)
       Normal  W / B / E              Move (Word_forward / Word_backward / Word_end Big)
       Normal  0 / ^ / $              Move Line_start / First_nonblank / Line_end
+      Normal  _ / g _                Move First_nonblank_down / Last_nonblank
       Normal  g g / G                Move First_line / Last_line
       Normal  i / a                  Enter_insert (Before_cursor / After_cursor)
       Normal  A / I                  Enter_insert (Line_end / First_nonblank)

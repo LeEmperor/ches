@@ -30,6 +30,9 @@
       TAB, or the line end for a blank line) take no count.
     - [Line_end] with count [n] goes to the end of the [n]th line, counting the
       current line as the first, clamped at the last line.
+    - [First_nonblank_down] ([_]) and [Last_nonblank] ([g_]) choose the line the same
+      way, and go to its first or last character other than space or TAB. On a
+      blank line, [Last_nonblank] goes to the line start, as in Vim.
     - [First_line] and [Last_line] go to the first non-blank of line [n] (one-based)
       when given a count [n], clamped to the document; without a count, of the first
       or last line. The empty line after a trailing LF is the last line.
@@ -56,7 +59,9 @@ type t =
   | Word_end of Word.t
   | Line_start
   | First_nonblank
+  | First_nonblank_down
   | Line_end
+  | Last_nonblank
   | First_line
   | Last_line
 [@@deriving sexp_of, equal, enumerate]
@@ -70,8 +75,9 @@ module Kind : sig
   [@@deriving sexp_of, equal]
 end
 
-(** [Up]/[Down]/[First_line]/[Last_line] are linewise; [Word_end] and [Line_end] are
-    inclusive; the rest are exclusive. *)
+(** [Up]/[Down]/[First_nonblank_down]/[First_line]/[Last_line] are linewise;
+    [Word_end], [Line_end], and [Last_nonblank] are inclusive; the rest are
+    exclusive. *)
 val kind : t -> Kind.t
 
 (** All but [Line_start] and [First_nonblank]. *)

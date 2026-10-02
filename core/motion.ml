@@ -18,7 +18,9 @@ type t =
   | Word_end of Word.t
   | Line_start
   | First_nonblank
+  | First_nonblank_down
   | Line_end
+  | Last_nonblank
   | First_line
   | Last_line
 [@@deriving sexp_of, equal, enumerate]
@@ -31,8 +33,8 @@ module Kind = struct
 end
 
 let kind : t -> Kind.t = function
-  | Up | Down | First_line | Last_line -> Linewise
-  | Word_end _ | Line_end -> Characterwise { inclusive = true }
+  | Up | Down | First_nonblank_down | First_line | Last_line -> Linewise
+  | Word_end _ | Line_end | Last_nonblank -> Characterwise { inclusive = true }
   | Left | Right | Word_forward _ | Word_backward _ | Line_start | First_nonblank ->
     Characterwise { inclusive = false }
 ;;
@@ -46,7 +48,9 @@ let takes_count = function
   | Word_forward _
   | Word_backward _
   | Word_end _
+  | First_nonblank_down
   | Line_end
+  | Last_nonblank
   | First_line
   | Last_line -> true
 ;;
@@ -60,7 +64,9 @@ let keeps_preferred_column = function
   | Word_end _
   | Line_start
   | First_nonblank
+  | First_nonblank_down
   | Line_end
+  | Last_nonblank
   | First_line
   | Last_line -> false
 ;;
@@ -174,6 +180,19 @@ let first_nonblank text line =
   scan (B.line_start text line)
 ;;
 
+(* The last character other than space or TAB, or the line start for a blank line. *)
+let last_nonblank text line =
+  let start = B.line_start text line in
+  let is_blank p =
+    let code = Uchar.to_scalar (B.uchar_at text p) in
+    code = 0x20 || code = 0x09
+  in
+  (* [p] is the start of a character that is not blank, or the line start. *)
+  let rec scan p = if p > start && is_blank p then scan (prev text p) else p in
+  let stop = B.line_end text line in
+  if stop = start then start else scan (prev text stop)
+;;
+
 let clamp_line text line = Int.clamp_exn line ~min:0 ~max:(B.line_count text - 1)
 
 let destination text t ~cursor ~preferred_column ~count =
@@ -195,7 +214,9 @@ let destination text t ~cursor ~preferred_column ~count =
   | Word_end word -> repeat n cursor ~step:(word_end text word)
   | Line_start -> B.line_start text line
   | First_nonblank -> first_nonblank text line
+  | First_nonblank_down -> first_nonblank text (clamp_line text (line + n - 1))
   | Line_end -> B.line_end text (clamp_line text (line + n - 1))
+  | Last_nonblank -> last_nonblank text (clamp_line text (line + n - 1))
   | First_line ->
     first_nonblank text (Option.value_map count ~default:0 ~f:(fun n -> clamp_line text (n - 1)))
   | Last_line ->

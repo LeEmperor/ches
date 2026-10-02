@@ -97,6 +97,8 @@ let default =
     ; move [ '0' ] Line_start
     ; move [ '^' ] First_nonblank
     ; move [ '$' ] Line_end
+    ; move [ '_' ] First_nonblank_down
+    ; move [ 'g'; '_' ] Last_nonblank
     ; move [ 'g'; 'g' ] First_line
     ; move [ 'G' ] Last_line
     ; editor [ 'i' ] (Enter_insert Before_cursor)

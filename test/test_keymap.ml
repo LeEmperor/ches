@@ -1250,3 +1250,38 @@ let%expect_test "o then j k, paste, and Enter keep the indentation literal" =
     \n  z"
     |}]
 ;;
+
+let%expect_test "_ and g _ go to the first and last non-blank, with counts" =
+  let t = run (create "  ab  \n  cd\n\tef") (keys "$_") in
+  show t;
+  [%expect
+    {|
+    (Move(motion Line_end))
+    (Move(motion First_nonblank_down))
+    NORMAL 0:2
+    >   |ab
+    >   cd
+    > 	ef
+    |}];
+  let t = run t (keys "g") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:2 pending="g"
+    >   |ab
+    >   cd
+    > 	ef
+    |}];
+  let t = run t (keys "_2_3g_") in
+  show t;
+  [%expect
+    {|
+    (Move(motion Last_nonblank))
+    (Move(motion First_nonblank_down)(count 2))
+    (Move(motion Last_nonblank)(count 3))
+    NORMAL 2:2
+    >   ab
+    >   cd
+    > 	e|f
+    |}]
+;;

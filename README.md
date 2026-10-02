@@ -77,6 +77,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `w` / `b` / `e` | Next word start / previous word start / word end |
 | Normal | `W` / `B` / `E` | The same for blank-separated words |
 | Normal | `0` / `^` / `$` | Line start / first non-blank / line end |
+| Normal | `_` / `g_` | First / last non-blank; with a count N, of the line N-1 below |
 | Normal | `gg` / `G` | First / last line, or line N with a count (`20G`) |
 | Normal | `i` / `a` | Insert before / after the character under the cursor |
 | Normal | `I` / `A` | Insert at the first non-blank / end of the line |
@@ -116,7 +117,11 @@ breaks. As in Vim, `w` and `b` stop on empty lines and `e` skips them.
   of the text. `b` goes to the start of the current or previous word. `e` goes to
   the end of the current or next word, and stays put when there is none.
 - `^` goes to the first character that is not a space or TAB (the last character
-  of an all-blank line).
+  of an all-blank line). `_` does the same, but takes a count like `$`: `3_` is
+  the first non-blank two lines down. (Later, under operators, `_` is linewise.)
+- `g_` goes to the last character that is not a space or TAB (the start of an
+  all-blank line), with the same count rule. Without trailing blanks it lands
+  where `$` does.
 - `G` goes to the last line, and `gg` to the first, at its first non-blank. With a
   count, both go to that line: `20G` and `20gg` are line 20, and `999G` stops at
   the last line. A file ending in a line break has an empty last line after it,
@@ -133,8 +138,8 @@ type it, with any keys of the sequence after it (`20 g`).
 - `1`–`9` start a count, and any digit, including `0`, extends it. A bare `0` is
   the line-start motion: `10j` moves 10 lines, and `0` then goes to the line start.
 - Counts go up to 999999. Typing a larger one cancels it with a message.
-- `$` with a count N goes to the end of the Nth line, counting the current line as
-  the first. `G` and `gg` with a count go to that line.
+- `$`, `_`, and `g_` with a count N go to the Nth line, counting the current line
+  as the first. `G` and `gg` with a count go to that line.
 - `0` and `^` take no count, nor does any command other than a motion. A count
   before one, such as `3^`, `3x`, or `2 Space w`, is rejected with a message, and
   the command does not run.
@@ -327,7 +332,7 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
 - counted movement: the pending count on the status line, clamping at the ends
   of the document and of lines, the column kept across short lines, and counts
   cancelled by overflow, `Escape`, an unbound key, or a command that takes none
-- word, line, and document motions (`w b e W B E 0 ^ $ gg G`) with counts,
+- word, line, and document motions (`w b e W B E 0 ^ $ _ g_ gg G`) with counts,
   including a pending and cancelled `g`, and `G` with and without a count
 - Insert entry (`a A I o O`): indentation copied by `o`, `O`, and `Enter` and kept
   when nothing more is typed, undoing an opened line, and `3o` rejected

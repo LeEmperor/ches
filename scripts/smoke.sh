@@ -513,6 +513,13 @@ keys 1 0 j 0
 expect_status "30:1"
 keys 3 '^'
 expect_status "does not take a count"
+# _ and g_ go to the first and last non-blank, a count picking a later line.
+keys g g '$' 2 _
+expect_status "2:4"
+keys g _
+expect_status "2:16"
+keys g g 3 g _
+expect_status "3:1"
 expect_no_screen "[+]"
 keys Space q
 expect_exit 0
