@@ -873,6 +873,19 @@ let undo_all t =
     | _ -> loop t' (n + 1)
   in
   loop t 0
+;; 
+
+let%expect_test "Visual selections extend with motions, switch kind, and apply operators" =
+  let t = run (create "one\ntwo\nthree") [ Enter_visual `Characterwise; move Right; move Down ] in
+  print_s [%sexp (Editor.selection t : Editor.Selection.t option)];
+  let t = run t [ Enter_visual `Linewise; Visual_yank ] in
+  show t;
+  print_s [%sexp (Editor.unnamed_register t : Register.t option)];
+  let t = run (create "one two") [ Enter_visual `Characterwise; move Right; move Right; Visual_change; Insert_text "X"; Exit_insert ] in
+  show t;
+  let t = run t [ Undo ] in
+  show t;
+  [%expect {||}]
 ;;
 
 let%test_unit "random commands keep the cursor valid; undo/redo round-trips" =
