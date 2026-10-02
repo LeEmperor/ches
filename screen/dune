@@ -1,0 +1,11 @@
+; ches_screen is the Bonsai-free screen model: the cell mapping, layout geometry,
+; scrolling, the UI state and its transition, and the rendered frame as styled text
+; spans. It must not depend on bonsai or bonsai_term, so headless tests can drive it.
+; It uses notty only for [Notty.Tty_width_hint], the width table notty itself draws
+; with, so that our cell counts agree with what reaches the terminal.
+
+(library
+ (name ches_screen)
+ (libraries ches_app ches_core ches_input core notty-community)
+ (preprocess
+  (pps ppx_jane)))

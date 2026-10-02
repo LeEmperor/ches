@@ -1,7 +1,7 @@
 open! Core
 open Ches_input
 
-(* Keys in a vim-like notation: [<Esc>], [<CR>], [<Tab>], [<BS>], [<Del>], [<C-r>];
+(* Keys in a vim-like notation: [<Esc>], [<CR>], [<Tab>], [<BS>], [<Del>], [<C-r>], [<C-c>];
    any other code point, including a literal space, is that character. *)
 let keys s : Keymap.Input.t list =
   let named =
@@ -11,6 +11,7 @@ let keys s : Keymap.Input.t list =
     ; "<BS>", Backspace
     ; "<Del>", Delete
     ; "<C-r>", Ctrl 'r'
+    ; "<C-c>", Ctrl 'c'
     ]
   in
   let rec loop pos acc =

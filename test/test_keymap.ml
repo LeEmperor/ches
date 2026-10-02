@@ -353,6 +353,35 @@ let%expect_test "Normal-mode paste is ignored and cancels a pending leader" =
     |}]
 ;;
 
+let%expect_test "Ctrl-c runs nothing, cancels sequences, and hints at Space q" =
+  let t = run (create "ab") (keys " <C-c>") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:0 notice="To quit, use Space q in Normal mode"
+    > |ab
+    |}];
+  (* The cancelled leader does not combine with what follows. *)
+  let t = run t (keys "q") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:0
+    > |ab
+    |}];
+  (* In Insert mode it inserts nothing and ends a [j k] sequence. *)
+  let t = run t (keys "ij<C-c>k") in
+  show t;
+  [%expect
+    {|
+    Enter_insert
+    (Insert_text j)
+    (Insert_text k)
+    INSERT 0:2 dirty
+    > jk|ab
+    |}]
+;;
+
 let%expect_test "type, leave Insert, undo, redo, and save" =
   let t = run (create ~path:"notes.txt" "") (keys "ihello world<Esc>u<C-r> w") in
   show t;

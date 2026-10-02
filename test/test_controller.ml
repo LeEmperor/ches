@@ -253,3 +253,27 @@ let%expect_test "dirty quit is refused and forced quit leaves the file untouched
     let (_ : Controller.t) = run t "u q" in
     [%expect {| EXIT |}])
 ;;
+
+let%expect_test "last_input_dispatched reports whether an input ran any command" =
+  let t = Controller.create (Editor.create ~path:"f.txt" Text_buffer.empty) in
+  print_s [%sexp (Controller.last_input_dispatched t : bool)];
+  ignore
+    (List.fold [ "z"; " "; "x"; "u"; "<C-c>"; "i" ] ~init:t ~f:(fun t keys ->
+       match Key_notation.keys keys with
+       | [ input ] ->
+         let t, (_ : Controller.Status.t) = Controller.handle_input t input in
+         printf "%S %b\n" keys (Controller.last_input_dispatched t);
+         t
+       | _ -> assert false)
+     : Controller.t);
+  [%expect
+    {|
+    false
+    "z" false
+    " " false
+    "x" false
+    "u" true
+    "<C-c>" false
+    "i" true
+    |}]
+;;

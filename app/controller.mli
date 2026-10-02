@@ -34,6 +34,12 @@ val create : ?keymap_config:Keymap.Config.t -> Editor.t -> t
 val editor : t -> Editor.t
 val keymap : t -> Keymap.t
 
+(** Whether the most recent {!handle_input} dispatched at least one editor command.
+    The keymap produces none for, e.g., an ignored key or the first key of a sequence.
+    A frontend uses this to decide whether [Editor.message] is fresh feedback for that
+    input. [false] before any input. *)
+val last_input_dispatched : t -> bool
+
 (** Feeds [input] through the keymap in the editor's current mode, dispatches the
     resulting commands, and performs their effects. Commands after one that requests
     [Exit] are not dispatched. *)

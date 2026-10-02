@@ -17,6 +17,7 @@
       Normal  Space q                Quit
       Normal  Space Q                Force_quit
       Normal  Escape                 Cancel a pending sequence
+      Both    Ctrl-c                 No command: cancel, and hint at Space q
       Insert  characters, Space      Insert_text (literal)
       Insert  Enter                  Insert_text "\n"
       Insert  Tab                    Insert_soft_tab or Insert_text "\t" ({!Config.tab})
@@ -31,6 +32,11 @@
     [k] produces [Delete_backward; Exit_insert], removing the [j] before leaving
     Insert. Typing [j] then [k] literally therefore needs another route, such as a
     paste. Any other input in between, including a paste, ends the sequence.
+
+    Ctrl-c produces no command in either mode. It cancels any pending sequence, ends
+    an Insert-mode escape sequence, and sets {!notice} to a hint about [Space q], so
+    that a user who expects Ctrl-c to quit is not left stuck. (A terminal frontend in
+    raw mode receives Ctrl-c as an ordinary key, not a signal.)
 
     Other keys are ignored. In Normal mode, a key that does not continue a pending
     sequence cancels it without producing commands, and sets {!notice}. A pending

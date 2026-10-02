@@ -12,10 +12,11 @@ end
 type t =
   { editor : Editor.t
   ; keymap : Keymap.t
+  ; dispatched : bool
   }
 
 let create ?(keymap_config = Keymap.Config.default) editor =
-  { editor; keymap = Keymap.create keymap_config }
+  { editor; keymap = Keymap.create keymap_config; dispatched = false }
 ;;
 
 let open_file ?keymap_config path =
@@ -29,6 +30,7 @@ let open_file ?keymap_config path =
 
 let editor t = t.editor
 let keymap t = t.keymap
+let last_input_dispatched t = t.dispatched
 
 let perform editor (effect : Effect.t) : Editor.t * Status.t =
   match effect with
@@ -57,5 +59,5 @@ let rec dispatch_all editor (commands : Command.t list) : Editor.t * Status.t =
 let handle_input t input =
   let keymap, commands = Keymap.feed t.keymap ~mode:(Editor.mode t.editor) input in
   let editor, status = dispatch_all t.editor commands in
-  { editor; keymap }, status
+  { editor; keymap; dispatched = not (List.is_empty commands) }, status
 ;;

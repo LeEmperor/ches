@@ -6,14 +6,10 @@ frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
 for the long-term direction and [`mvp0_plan.md`](mvp0_plan.md) for the current
 milestone.
 
-**Status: MVP0 phase 5.** `ches_core` is a complete, tested editing core:
-text buffer, Normal/Insert cursor rules, undo transactions, dirty tracking, and
-save/quit decisions expressed as effects. `ches_input` maps normalized key and
-paste events to core commands, including the Space-leader bindings.
-`ches_app` loads and saves files and runs the keymap and core together; it is
-tested against real files. The `ches` executable opens `PATH` (reporting load
-errors), but its screen is still the phase 1 placeholder: the editor is not
-connected to the terminal until phase 6.
+**Status: MVP0 phase 6A.** `ches PATH` is a working terminal editor: it opens,
+edits, scrolls, saves, and quits, in a centered, bordered document tile with a
+line-number gutter and a status line. Phase 6B adds layout controls (`Space v`)
+and the visual design pass; until then the colors are provisional.
 
 ## Toolchain
 
@@ -48,7 +44,8 @@ From this directory, with the OxCaml switch active
 ```sh
 dune build            # builds everything, including the `ches` executable
 dune runtest          # runs the expect tests
-dune exec ches -- PATH   # opens PATH, then shows the terminal skeleton
+dune exec ches -- PATH   # edits PATH
+scripts/smoke.sh      # drives the built editor in tmux; see below
 ```
 
 `dune build` also regenerates `ches.opam` from `dune-project`; edit
@@ -58,10 +55,39 @@ dune exec ches -- PATH   # opens PATH, then shows the terminal skeleton
 special file, a read error, or text that is not valid UTF-8 with LF line
 endings. A path where nothing exists opens an empty document; saving creates it.
 
-In the skeleton, press **`q`** or **`Ctrl-C`** to quit. Both keys are
-temporary and will be replaced by the Space-leader bindings in phase 6. The
-status line shows the current terminal size, and the body shows the last
-input event that Bonsai_term delivered.
+## Keys
+
+| Mode | Keys | Action |
+| --- | --- | --- |
+| Normal | `h` `j` `k` `l` | Move left, down, up, right |
+| Normal | `i` | Insert at the cursor |
+| Normal | `x` | Delete the character under the cursor |
+| Normal | `u` / `Ctrl-r` | Undo / redo |
+| Normal | `Space w` | Save |
+| Normal | `Space q` | Quit; refused while there are unsaved changes |
+| Normal | `Space Q` | Quit, discarding unsaved changes |
+| Normal | `Escape` | Cancel a pending `Space` sequence |
+| Insert | text, `Enter`, `Backspace`, `Delete` | Edit |
+| Insert | `Tab` | Insert spaces to the next multiple of 2 columns |
+| Insert | `Escape`, or `j` then `k` | Back to Normal mode |
+| Both | `Ctrl-c` | Nothing, except a hint to use `Space q` |
+
+Pasting (with a terminal that supports bracketed paste) inserts the text
+literally in Insert mode and is ignored in Normal mode. Arrow keys and the
+mouse are not used. SIGTERM or SIGHUP ends the editor, discarding unsaved
+changes, after restoring the terminal.
+
+## Screen
+
+The text sits in a tile centered on the screen, 100 cells wide when there is
+room. The status line at the bottom shows the mode, filename, `[+]` when there
+are unsaved changes, pending keys, the line and column (one-based; the column
+counts code points), and the latest message. On a small screen the border goes
+first, then the gutter; status fields are dropped from the least important up.
+
+Text is shown safely: a TAB expands to the next multiple of 8 cells, and
+control characters, C1 controls, and bidi controls appear as visible escape
+forms (`^[`, `<85>`, `<202e>`) instead of reaching the terminal.
 
 ## Layout
 
@@ -70,8 +96,13 @@ dune-project   project and package metadata (generates ches.opam)
 core/          ches_core: pure editing library; depends only on `core`
 input/         ches_input: terminal-independent keys and modal keymap
 app/           ches_app: file loading/saving and the controller that runs input
+screen/        ches_screen: Bonsai-free screen model: cell mapping, geometry,
+               scrolling, UI state and transition, rendered frames
+ui/            ches_ui: Bonsai_term frontend (event adapter, theme, app)
 test/          core, input, and app tests (expect tests, Quickcheck, temp-dir file tests)
-ui/            ches_ui: Bonsai_term frontend (currently the phase 1 skeleton)
+screen/test/   headless screen-model tests
+ui/test/       event adapter tests and Bonsai_term_test tests of the app
+scripts/       smoke.sh, the terminal smoke test
 bin/ches.ml    command-line entry point
 ```
 
@@ -79,7 +110,29 @@ bin/ches.ml    command-line entry point
 Bonsai_term, Async, Notty, or any other terminal library. You can build them on
 their own with
 `dune build ./core/ches_core.cmxa ./input/ches_input.cmxa ./app/ches_app.cmxa`.
-Only `ches_app` touches the filesystem.
+Only `ches_app` touches the filesystem. `ches_screen` must not depend on Bonsai
+or Bonsai_term; it uses Notty only for its code-point width table, so that its
+cell counts agree with what Notty draws.
+
+## Terminal smoke test
+
+`scripts/smoke.sh` drives the built binary in a private tmux server
+(`tmux -L ches-smoke`), on copies of fixtures in a temporary directory, and
+checks the screen text, cursor position and visibility, the alternate screen,
+saved file bytes, exit statuses, and that `stty` settings and the cursor are
+restored after every exit. It covers editing, saving, reopening, undo/redo,
+quitting, a save error, scrolling, resizing down to 1x1, control characters,
+a fast burst of keys with a paste, Ctrl-C, and an exit by SIGTERM. It needs
+tmux (tested with 3.4) and a UTF-8 locale, and is not run by `dune runtest`:
+
+```sh
+dune build && scripts/smoke.sh
+```
+
+It exits nonzero and names each failed check. It also saves colored captures
+of review screens and prints their directory (`cat` a file to view it). It
+cannot check the cursor shape (tmux does not report it), how the colors look,
+or flicker; check those in a real terminal.
 
 ## Saving: current limitations
 
@@ -87,6 +140,16 @@ Saving is synchronous and writes the file in place (truncate, then write). It is
 not crash-safe: a crash or full disk mid-save can leave the file truncated. It
 does not `fsync`. Symlinks are followed and kept, existing permissions are kept,
 and changes made to the file by other programs are not detected.
+
+## Known limitations
+
+- Grapheme clusters are not handled: cursor movement and deletion work on code
+  points, and widths are per code point. A complex cluster such as an emoji
+  ZWJ sequence may look wrong, but the layout around it stays aligned.
+- A combining mark is drawn with the character before it only when that
+  character is drawn as itself; after a TAB, an escape form, or the left edge
+  of the view it is not drawn.
+- No soft wrapping: long lines scroll horizontally.
 
 ## Known toolchain quirk: ppx_expect source path
 

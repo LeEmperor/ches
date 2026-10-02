@@ -110,8 +110,11 @@ let feed_insert_key t (key : Key.t) =
     { (reset t) with escape_started = is_escape_char 0 }, commands)
 ;;
 
+let quit_hint = "To quit, use Space q in Normal mode"
+
 let feed t ~(mode : Mode.t) (input : Input.t) =
   match mode, input with
+  | _, Key (Ctrl 'c') -> { (reset t) with notice = Some quit_hint }, []
   | Normal, Key key -> feed_normal_key t key
   | Normal, Paste _ -> { (reset t) with notice = Some "Paste ignored in Normal mode" }, []
   | Insert, Key key -> feed_insert_key t key
