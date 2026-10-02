@@ -17,7 +17,7 @@ let%expect_test "the smear is opt-in, advances, and settles" =
     {|
     false
     true
-    ((2 1) (3 1))
+    ((2 1))
     false
     |}]
 ;;
@@ -35,10 +35,10 @@ let%expect_test "head and tail follow the direction of travel" =
   print_s [%sexp (after_one_frame (5, 8) (5, 1) : (int * int) list)];
   [%expect
     {|
-    ((2 5) (3 5))
-    ((6 5) (7 5))
-    ((5 2) (5 3))
-    ((5 6) (5 7))
+    ((2 5))
+    ((7 5))
+    ((5 2))
+    ((5 7))
     |}]
 ;;
 

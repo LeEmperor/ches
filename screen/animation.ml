@@ -20,6 +20,11 @@ let create ~enabled =
 let enabled t = t.enabled
 let active t = Option.is_some t.current
 
+(* Terminal cells are usually taller than they are wide, so equal movement in cell space
+   makes vertical motion look faster.  Keep the two components independently tunable. *)
+let horizontal_speed = 0.95
+let vertical_speed = 0.9
+
 let stopped t =
   { t with current = None; target = None; velocity = [||]; stiffness = [||] }
 ;;
@@ -100,27 +105,41 @@ let tick t ~dt =
   else
     match t.current, t.target with
     | Some current, Some target ->
-      let frames = Float.max 0. (Float.min 4. (dt /. 0.017)) in
+      let frames speed = Float.max 0. (Float.min 4. ((dt /. 0.017) *. speed)) in
+      let horizontal_frames = frames horizontal_speed in
+      let vertical_frames = frames vertical_speed in
       (* Smear expresses damping as the fraction removed per frame.  Correct both damping
          and stiffness for elapsed time so a late frame does not change the feel. *)
-      let velocity_conservation = 0.15 ** frames in
-      let damping_correction = 1. /. (1. +. (2.5 *. velocity_conservation)) in
+      let advance ~frames ~stiffness ~point ~target ~velocity =
+        let velocity_conservation = 0.15 ** frames in
+        let damping_correction = 1. /. (1. +. (2.5 *. velocity_conservation)) in
+        let stiffness =
+          1. -. ((1. -. (stiffness *. damping_correction)) ** frames)
+        in
+        let velocity = velocity +. ((target -. point) *. stiffness) in
+        point +. velocity, velocity *. velocity_conservation
+      in
       let current, velocity =
         Array.mapi current ~f:(fun i point ->
           let target = target.(i) in
           let velocity = t.velocity.(i) in
-          let stiffness =
-            1. -. ((1. -. (t.stiffness.(i) *. damping_correction)) ** frames)
+          let x, velocity_x =
+            advance
+              ~frames:horizontal_frames
+              ~stiffness:t.stiffness.(i)
+              ~point:point.x
+              ~target:target.x
+              ~velocity:velocity.x
           in
-          let velocity =
-            { x = velocity.x +. ((target.x -. point.x) *. stiffness)
-            ; y = velocity.y +. ((target.y -. point.y) *. stiffness)
-            }
+          let y, velocity_y =
+            advance
+              ~frames:vertical_frames
+              ~stiffness:t.stiffness.(i)
+              ~point:point.y
+              ~target:target.y
+              ~velocity:velocity.y
           in
-          ( { x = point.x +. velocity.x; y = point.y +. velocity.y }
-          , { x = velocity.x *. velocity_conservation
-            ; y = velocity.y *. velocity_conservation
-            } ))
+          { x; y }, { x = velocity_x; y = velocity_y })
         |> Array.unzip
       in
       let settled =
