@@ -23,7 +23,20 @@ type t =
   | Last_nonblank
   | First_line
   | Last_line
+  | Matching_delimiter
 [@@deriving sexp_of, equal, enumerate]
+
+module Failure = struct
+  type t =
+    | No_delimiter
+    | Unmatched of char
+  [@@deriving sexp_of, equal]
+
+  let to_string = function
+    | No_delimiter -> "No delimiter on this line"
+    | Unmatched c -> sprintf "No match for %c" c
+  ;;
+end
 
 module Kind = struct
   type t =
@@ -34,13 +47,14 @@ end
 
 let kind : t -> Kind.t = function
   | Up | Down | First_nonblank_down | First_line | Last_line -> Linewise
-  | Word_end _ | Line_end | Last_nonblank -> Characterwise { inclusive = true }
+  | Word_end _ | Line_end | Last_nonblank | Matching_delimiter ->
+    Characterwise { inclusive = true }
   | Left | Right | Word_forward _ | Word_backward _ | Line_start | First_nonblank ->
     Characterwise { inclusive = false }
 ;;
 
 let takes_count = function
-  | Line_start | First_nonblank -> false
+  | Line_start | First_nonblank | Matching_delimiter -> false
   | Left
   | Right
   | Up
@@ -68,7 +82,8 @@ let keeps_preferred_column = function
   | Line_end
   | Last_nonblank
   | First_line
-  | Last_line -> false
+  | Last_line
+  | Matching_delimiter -> false
 ;;
 
 (* Word classes *)
@@ -193,35 +208,93 @@ let last_nonblank text line =
   if stop = start then start else scan (prev text stop)
 ;;
 
+(* Matching delimiters. They are ASCII, so scanning bytes is safe: no byte of a
+   multibyte UTF-8 sequence is ASCII, and every match is a code-point boundary. *)
+
+let mate = function
+  | '(' -> Some ')'
+  | ')' -> Some '('
+  | '[' -> Some ']'
+  | ']' -> Some '['
+  | '{' -> Some '}'
+  | '}' -> Some '{'
+  | _ -> None
+;;
+
+let is_opening = function
+  | '(' | '[' | '{' -> true
+  | _ -> false
+;;
+
+let matching_delimiter text ~cursor : (int, Failure.t) Result.t =
+  let s = B.to_string text in
+  let stop = B.line_end text (B.line_of_offset text cursor) in
+  let rec find i =
+    if i >= stop then None else if Option.is_some (mate s.[i]) then Some i else find (i + 1)
+  in
+  match find cursor with
+  | None -> Error No_delimiter
+  | Some start ->
+    let first = s.[start] in
+    (* Scanning away from [first]: delimiters facing the same way as [first] open a
+       nesting level, the others close one. [stack] holds the open ones, innermost
+       first, starting with [first]. *)
+    let forward = is_opening first in
+    let step = if forward then 1 else -1 in
+    let rec scan i stack =
+      if i < 0 || i >= String.length s
+      then Error (Failure.Unmatched first)
+      else (
+        let c = s.[i] in
+        match mate c with
+        | None -> scan (i + step) stack
+        | Some m ->
+          if Bool.equal (is_opening c) forward
+          then scan (i + step) (c :: stack)
+          else (
+            match stack with
+            | top :: rest when Char.equal top m ->
+              if List.is_empty rest then Ok i else scan (i + step) rest
+            | _ -> Error (Unmatched first)))
+    in
+    scan (start + step) [ first ]
+;;
+
 let clamp_line text line = Int.clamp_exn line ~min:0 ~max:(B.line_count text - 1)
 
-let destination text t ~cursor ~preferred_column ~count =
+let destination text t ~cursor ~preferred_column ~count : (int, Failure.t) Result.t =
   let n = Option.value count ~default:1 in
   let line = B.line_of_offset text cursor in
   match t with
   | Left ->
-    B.offset_of_column text ~line (Int.max 0 (B.column_of_offset text cursor - n))
+    Ok (B.offset_of_column text ~line (Int.max 0 (B.column_of_offset text cursor - n)))
   | Right ->
     (* [offset_of_column] stops at the line end. *)
-    B.offset_of_column text ~line (B.column_of_offset text cursor + n)
+    Ok (B.offset_of_column text ~line (B.column_of_offset text cursor + n))
   | Up | Down ->
     let target = clamp_line text (if equal t Up then line - n else line + n) in
-    if target = line
-    then cursor
-    else B.offset_of_column text ~line:target preferred_column
-  | Word_forward word -> repeat n cursor ~step:(word_forward text word)
-  | Word_backward word -> repeat n cursor ~step:(word_backward text word)
-  | Word_end word -> repeat n cursor ~step:(word_end text word)
-  | Line_start -> B.line_start text line
-  | First_nonblank -> first_nonblank text line
-  | First_nonblank_down -> first_nonblank text (clamp_line text (line + n - 1))
-  | Line_end -> B.line_end text (clamp_line text (line + n - 1))
-  | Last_nonblank -> last_nonblank text (clamp_line text (line + n - 1))
+    Ok
+      (if target = line
+       then cursor
+       else B.offset_of_column text ~line:target preferred_column)
+  | Word_forward word -> Ok (repeat n cursor ~step:(word_forward text word))
+  | Word_backward word -> Ok (repeat n cursor ~step:(word_backward text word))
+  | Word_end word -> Ok (repeat n cursor ~step:(word_end text word))
+  | Line_start -> Ok (B.line_start text line)
+  | First_nonblank -> Ok (first_nonblank text line)
+  | First_nonblank_down -> Ok (first_nonblank text (clamp_line text (line + n - 1)))
+  | Line_end -> Ok (B.line_end text (clamp_line text (line + n - 1)))
+  | Last_nonblank -> Ok (last_nonblank text (clamp_line text (line + n - 1)))
   | First_line ->
-    first_nonblank text (Option.value_map count ~default:0 ~f:(fun n -> clamp_line text (n - 1)))
+    Ok
+      (first_nonblank
+         text
+         (Option.value_map count ~default:0 ~f:(fun n -> clamp_line text (n - 1))))
   | Last_line ->
-    first_nonblank
-      text
-      (Option.value_map count ~default:(B.line_count text - 1) ~f:(fun n ->
-         clamp_line text (n - 1)))
+    Ok
+      (first_nonblank
+         text
+         (Option.value_map count ~default:(B.line_count text - 1) ~f:(fun n ->
+            clamp_line text (n - 1))))
+  | Matching_delimiter -> matching_delimiter text ~cursor
 ;;

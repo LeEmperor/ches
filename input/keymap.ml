@@ -71,6 +71,9 @@ let resolve t ~keys (target : Bindings.Target.t) =
   | Move motion, Some _ when not (Motion.takes_count motion) ->
     cancel t (keys_to_string keys ^ " does not take a count")
   | Move motion, count -> reset t, [ Action.Editor (Move { motion; count }) ]
+  | Scroll scroll, Some _ when not (View_command.Scroll.takes_count scroll) ->
+    cancel t (keys_to_string keys ^ " does not take a count")
+  | Scroll scroll, count -> reset t, [ View (Scroll { scroll; count }) ]
   | Editor command, None -> reset t, [ Editor command ]
   | View command, None -> reset t, [ View command ]
   | (Editor _ | View _), Some _ ->

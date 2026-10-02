@@ -1,8 +1,9 @@
 open! Core
 open Ches_input
 
-(* Keys in a vim-like notation: [<Esc>], [<CR>], [<Tab>], [<BS>], [<Del>], [<C-r>], [<C-c>];
-   any other code point, including a literal space, is that character. *)
+(* Keys in a vim-like notation: [<Esc>], [<CR>], [<Tab>], [<BS>], [<Del>], and [<C-x>]
+   for Ctrl and a lowercase letter; any other code point, including a literal space,
+   is that character. *)
 let keys s : Keymap.Input.t list =
   let named =
     [ "<Esc>", Key.Escape
@@ -10,9 +11,10 @@ let keys s : Keymap.Input.t list =
     ; "<Tab>", Tab
     ; "<BS>", Backspace
     ; "<Del>", Delete
-    ; "<C-r>", Ctrl 'r'
-    ; "<C-c>", Ctrl 'c'
     ]
+    @ List.init 26 ~f:(fun i ->
+      let c = Char.of_int_exn (Char.to_int 'a' + i) in
+      sprintf "<C-%c>" c, Key.Ctrl c)
   in
   let rec loop pos acc =
     if pos >= String.length s

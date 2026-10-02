@@ -82,6 +82,12 @@ expect_screen() {
   if poll screen_has "$1"; then ok "screen shows '$1'"; else fail "screen never showed '$1'"; fi
 }
 
+# Whether the row the cursor is on contains TEXT.
+cursor_row_has() { local y; read -r _ y _ <<< "$(cursor)"; row "$y" | grep -qF -- "$1"; }
+expect_cursor_row() {
+  if poll cursor_row_has "$1"; then ok "cursor row shows '$1'"; else fail "cursor row never showed '$1'"; fi
+}
+
 expect_no_screen() {
   if screen_has "$1"; then fail "screen shows '$1'"; else ok "screen does not show '$1'"; fi
 }
@@ -94,13 +100,13 @@ expect_status() {
   fi
 }
 
+cursor_is() { [ "$(cursor)" = "$1" ]; }
+
 expect_cursor() {
-  local actual
-  actual=$(cursor)
-  if [ "$actual" = "$1" ]; then
+  if poll cursor_is "$1"; then
     ok "cursor at $1"
   else
-    fail "cursor is '$actual', expected '$1'"
+    fail "cursor is '$(cursor)', expected '$1'"
   fi
 }
 
@@ -202,18 +208,18 @@ expect_file "$work/edit.txt" "$work/edit.expected"
 keys Space q
 expect_exit 0
 launch edit.txt
-expect_screen "  1 Hi hello"
-expect_screen "  2 wold"
+expect_screen "1   Hi hello"
+expect_screen "  1 wold"
 
 section "undo and redo"
 keys x
-expect_screen "  1 i hello"
+expect_screen "1   i hello"
 keys u
-expect_screen "  1 Hi hello"
+expect_screen "1   Hi hello"
 keys C-r
-expect_screen "  1 i hello"
+expect_screen "1   i hello"
 keys u
-expect_screen "  1 Hi hello"
+expect_screen "1   Hi hello"
 # Undone back to the saved text: clean, so a plain quit works.
 keys Space q
 expect_exit 0
@@ -232,43 +238,43 @@ expect_cursor "6 1 1"
 keys i Enter
 expect_status "2:1"
 expect_screen "  1 a "
-expect_screen "  2 bcd"
+expect_screen "2   bcd"
 # Soft tabs: Tab inserts spaces to the next multiple of 2 columns, and Backspace
 # deletes spaces back to the previous one.
 keys Tab Tab
 expect_status "2:5"
-expect_screen "  2     bcd"
+expect_screen "2       bcd"
 keys BSpace
 expect_status "2:3"
-expect_screen "  2   bcd"
+expect_screen "2     bcd"
 # Backspace after anything but a space deletes one character.
 type_text "x"
 expect_status "2:4"
 keys BSpace
 expect_status "2:3"
-expect_screen "  2   bcd"
+expect_screen "2     bcd"
 keys DC
-expect_screen "  2   cd"
+expect_screen "2     cd"
 # j is inserted when typed; the k after it takes it back and returns to Normal,
 # stepping back one character as Escape does.
 type_text "j"
-expect_screen "  2   jcd"
+expect_screen "2     jcd"
 type_text "k"
 expect_status "NORMAL"
 expect_status "2:2"
-expect_screen "  2   cd"
+expect_screen "2     cd"
 expect_no_screen "jcd"
 keys k
 expect_status "1:1"
 keys Space z
 expect_status "Space z is not bound"
-expect_screen "  2   cd"
+expect_screen "  1   cd"
 keys Space w
 expect_status "Wrote ins.txt"
 expect_file "$work/ins.txt" "$work/ins.expected"
 # The whole Insert session is one undo step.
 keys u
-expect_screen "  1 abcd"
+expect_screen "1   abcd"
 expect_status "[+]"
 keys Space Q
 expect_exit 0
@@ -278,7 +284,7 @@ expect_file "$work/ins.txt" "$work/ins.expected"
 section "empty and missing files"
 : > "$work/empty.txt"
 launch empty.txt
-expect_screen "  1  "
+expect_screen "1    "
 expect_status "1:1"
 expect_cursor "5 1 1"
 keys Space q
@@ -332,9 +338,9 @@ fi
 section "tabs, Unicode, and control characters"
 printf 'a\tb\n中文x\n\033[31mred\033[0m \001\177 \302\205 \342\200\256rtl\n' > "$work/controls.txt"
 launch controls.txt
-expect_screen "  1 a       b"
-expect_screen "  2 中文x"
-expect_screen '  3 ^[[31mred^[[0m ^A^? <85> <202e>rtl'
+expect_screen "1   a       b"
+expect_screen "  1 中文x"
+expect_screen '  2 ^[[31mred^[[0m ^A^? <85> <202e>rtl'
 if t capture-pane -e -p -t "$session" | grep -qF $'\033[31m'; then
   fail "a raw color sequence reached the terminal"
 else
@@ -375,7 +381,7 @@ row "$y" | grep -qF "151 line 151" && ok "cursor row shows line 151" || fail "cu
 keys -N 150 k
 expect_status "1:1"
 expect_cursor "5 1 1"
-expect_screen "  1 line 1"
+expect_screen "1   line 1"
 
 section "resizing, including tiny sizes"
 keys -N 100 j
@@ -411,7 +417,7 @@ keys j
 expect_status "21:1"
 status_line | grep -qE ' 20 ' && fail "status line still shows the count" || ok "count cleared"
 read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF " 21 line 21" && ok "cursor row shows line 21" || fail "cursor row is not line 21"
+row "$y" | grep -qF "21  line 21" && ok "cursor row shows line 21" || fail "cursor row is not line 21"
 keys 5 l
 expect_status "21:6"
 keys 5 h
@@ -422,13 +428,13 @@ expect_status "1:1"
 # file ends with LF, so its last line is the empty line 201.
 keys 9 9 9 j
 expect_status "201:1"
-expect_screen "200 line 200"
+expect_screen "  1 line 200"
 keys k 9 9 9 9 9 9 l
 expect_status "200:8"
 # Line 1 is shorter, so the cursor stops at its last column.
 keys 9 9 9 9 9 9 k
 expect_status "1:6"
-expect_screen "  1 line 1"
+expect_screen "1   line 1"
 # An oversized count, Escape, an unbound continuation, and a command that takes no
 # count each cancel the count; none of it leaks into the next key.
 keys 1 0 0 0 0 0 0
@@ -437,8 +443,8 @@ keys j
 expect_status "2:6"
 keys 1 2 Escape j
 expect_status "3:6"
-keys 3 z
-expect_status "3 z is not bound"
+keys 3 q
+expect_status "3 q is not bound"
 keys j
 expect_status "4:6"
 keys 3 x
@@ -495,18 +501,18 @@ expect_status "4:1"
 # G alone is the last line (the empty one after the final LF); a count picks a line.
 keys G
 expect_status "121:1"
-expect_screen "120 line 120"
+expect_screen "  1 line 120"
 keys 5 0 G
 expect_status "50:1"
 read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF " 50 line 50" && ok "cursor row shows line 50" || fail "cursor row is not line 50"
+row "$y" | grep -qF "50  line 50" && ok "cursor row shows line 50" || fail "cursor row is not line 50"
 keys g
 expect_status "g"
 keys Escape j
 expect_status "51:1"
 keys g g
 expect_status "1:1"
-expect_screen "  1 let foo_bar"
+expect_screen "1   let foo_bar"
 keys 2 0 g g
 expect_status "20:1"
 keys 1 0 j 0
@@ -521,6 +527,41 @@ expect_status "2:16"
 keys g g 3 g _
 expect_status "3:1"
 expect_no_screen "[+]"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "matching delimiters (%)"
+{
+  echo 'let f x = ('
+  for i in $(seq 1 148); do echo "  [ $i ];"; done
+  echo ') (* end *)'
+  echo 'no brackets here'
+} > "$work/match.txt"
+launch match.txt
+# From before the delimiter, % goes to the mate of the first one on the line, far
+# below, and the view scrolls to show it.
+keys %
+expect_status "150:1"
+expect_cursor_row "│150 ) (* end *)"
+keys %
+expect_status "1:11"
+expect_cursor_row "1   let f x = ("
+# Inside the block, from the line start: the first delimiter from the cursor is the [.
+keys j 0 %
+expect_status "2:7"
+keys %
+expect_status "2:3"
+# No delimiter on the line, and a rejected count, leave the cursor where it is.
+keys G k
+expect_status "151:1"
+keys %
+expect_status "No delimiter on this line"
+expect_status "151:1"
+keys 5 0 %
+expect_status "% does not take a count"
+expect_status "151:1"
+status_has "[+]" && fail "% made the document dirty" || ok "document still clean"
 keys Space q
 expect_exit 0
 
@@ -547,11 +588,11 @@ keys O
 expect_status "3:3"
 keys Escape
 expect_status "3:2"
-expect_screen "  4   next()"
+expect_screen "  1   next()"
 # Undoing the opened line restores the cursor from before O.
 keys u
 expect_status "3:8"
-expect_screen "  3   next()"
+expect_screen "3     next()"
 # Enter copies the indentation too.
 keys A Enter
 expect_status "4:3"
@@ -652,16 +693,152 @@ keys u
 expect_status "Already at oldest change"
 # In Insert mode the same keys are text.
 keys i Space v c Escape
-expect_screen "  1  vcHi hello"
+expect_screen "1    vcHi hello"
 expect_status "1:3"
 poll tile_is 27 132 && ok "tile unmoved by Insert-mode text" || fail "tile moved"
 expect_cursor "34 1 1"
 keys u
-expect_screen "  1 Hi hello"
+expect_screen "1   Hi hello"
 keys Space q
 expect_exit 0
 expect_file "$work/edit.txt" "$work/edit.expected"
 resize 80 24
+
+# ---------------------------------------------------------------------------
+section "line numbers (Space v n / N)"
+resize 160 48
+launch tall.txt
+keys 2 j
+expect_status "3:1"
+# Hybrid by default: the cursor line's own number, left-aligned; distances elsewhere.
+expect_cursor_row "│3   line 3"
+expect_screen "│  2 line 1"
+expect_screen "│  2 line 5"
+keys Space v n
+expect_status "Line numbers: relative"
+expect_cursor_row "│  0 line 3"
+expect_screen "│  2 line 1"
+# Neither switch: no gutter, and the centered tile narrows around the same text width.
+keys Space v N
+expect_status "Line numbers: off"
+poll tile_is 29 130 && ok "tile narrows without a gutter" || fail "tile spans $(tile_left)..$(tile_right) without a gutter"
+expect_cursor_row "│line 3"
+expect_cursor "30 3 1"
+keys Space v n
+expect_status "Line numbers: absolute"
+poll tile_is 27 132 && ok "gutter back" || fail "tile spans $(tile_left)..$(tile_right) with a gutter"
+expect_cursor_row "│  3 line 3"
+expect_cursor "32 3 1"
+# A count is rejected, and the style kept.
+keys 3 Space v N
+expect_status "Space v N does not take a count"
+expect_cursor_row "│  3 line 3"
+keys Space v N
+expect_status "Line numbers: hybrid"
+expect_cursor_row "│3   line 3"
+# Space v r restores hybrid with the rest of the layout.
+keys Space v N
+expect_status "Line numbers: absolute"
+keys Space v r
+expect_status "Layout reset"
+expect_cursor_row "│3   line 3"
+# Moving the cursor renumbers; the text never shifts.
+keys j
+expect_status "4:1"
+expect_cursor_row "│4   line 4"
+expect_screen "│  1 line 3"
+expect_cursor "32 4 1"
+# Too small for a gutter: the style is still switched, and shows when there is room.
+resize 18 6
+expect_screen "line 4"
+keys Space v N
+resize 160 48
+expect_status "Line numbers: absolute (no room)"
+expect_cursor_row "│  4 line 4"
+status_has "[+]" && fail "line-number toggles made the document dirty" || ok "document still clean"
+keys Space q
+expect_exit 0
+resize 80 24
+
+# ---------------------------------------------------------------------------
+section "view scrolling (Ctrl-e/y/d/u, zz/zt/zb)"
+# At 80x24 the text viewport has 21 rows, from screen row 1; text starts at column 5.
+resize 80 24
+launch tall.txt
+keys 1 0 j
+expect_status "11:1"
+# Ctrl-e scrolls the view; the cursor stays on its line while it is visible.
+keys C-e
+expect_screen "│  9 line 2 "
+expect_status "11:1"
+expect_cursor "5 10 1"
+keys 5 C-e
+expect_screen "│  4 line 7 "
+expect_cursor "5 5 1"
+# ... and is pushed down when its line would leave the top.
+keys 1 0 C-e
+expect_status "17:1"
+expect_cursor_row "│17  line 17"
+expect_cursor "5 1 1"
+keys 2 0 C-y
+expect_screen "│ 16 line 1 "
+expect_status "17:1"
+expect_cursor "5 17 1"
+# Ctrl-d / Ctrl-u move the view and cursor by half the viewport (10 lines).
+keys C-d
+expect_status "27:1"
+expect_cursor "5 17 1"
+keys C-u
+expect_status "17:1"
+expect_cursor "5 17 1"
+# zt / zb / zz place the cursor line; the cursor itself stays.
+keys 5 0 G
+expect_status "50:1"
+keys z t
+expect_cursor "5 1 1"
+keys z b
+expect_cursor "5 21 1"
+keys z z
+expect_cursor "5 11 1"
+expect_status "50:1"
+keys 3 z z
+expect_status "z z does not take a count"
+expect_cursor "5 11 1"
+# Past the end: the last line can reach the top, and moving within the view keeps it.
+keys G 9 9 9 C-e
+expect_status "201:1"
+expect_cursor "5 1 1"
+keys k
+expect_status "200:1"
+expect_cursor "5 1 1"
+keys j
+expect_cursor "5 2 1"
+# Resizing after scrolling keeps the cursor visible: 7 rows, filled to the end.
+resize 40 10
+expect_cursor "5 7 1"
+expect_screen "│  6 line 195"
+# Back at the size of the last key, before any key, the view is as it was.
+resize 80 24
+expect_cursor "5 2 1"
+# Tiny terminals: two rows still scroll; with no text rows nothing changes.
+keys g g
+resize 10 3
+sleep 0.3
+keys C-e
+resize 20 1
+sleep 0.3
+keys C-e C-d z t
+resize 80 24
+expect_status "2:1"
+expect_cursor_row "2   line 2"
+# Insert mode leaves these keys unbound; nothing is typed.
+keys i C-e C-y Escape
+expect_status "NORMAL"
+status_has "[+]" && fail "scrolling made the document dirty" || ok "document still clean"
+keys u
+expect_status "Already at oldest change"
+keys Space q
+expect_exit 0
 
 # ---------------------------------------------------------------------------
 section "scrolling a wide line"
@@ -766,6 +943,12 @@ for size in 80x24 160x48; do
   keys L
   expect_status "Offset +10"
   save_screen "offset-$size"
+  keys Space v n
+  expect_status "Line numbers: relative"
+  save_screen "numbers-relative-$size"
+  keys Space v N
+  expect_status "Line numbers: off"
+  save_screen "numbers-off-$size"
   keys Space Q
   expect_exit 0
 done

@@ -18,12 +18,16 @@
       Normal  0 / ^ / $              Move Line_start / First_nonblank / Line_end
       Normal  _ / g _                Move First_nonblank_down / Last_nonblank
       Normal  g g / G                Move First_line / Last_line
+      Normal  %                      Move Matching_delimiter (no count)
       Normal  i / a                  Enter_insert (Before_cursor / After_cursor)
       Normal  A / I                  Enter_insert (Line_end / First_nonblank)
       Normal  o / O                  Open_line_below / Open_line_above
       Normal  x                      Delete_char
       Normal  u                      Undo
       Normal  Ctrl-r                 Redo
+      Normal  Ctrl-e / Ctrl-y        View (Scroll Line_down / Line_up)
+      Normal  Ctrl-d / Ctrl-u        View (Scroll Half_page_down / Half_page_up)
+      Normal  z z / z t / z b        View (Scroll Cursor_middle / _top / _bottom), no count
       Normal  Space w                Save
       Normal  Space q                Quit
       Normal  Space Q                Force_quit
@@ -32,6 +36,8 @@
       Normal  Space v H / L          View (Shift -10) / (Shift 10)
       Normal  Space v -              View (Adjust_width -10)
       Normal  Space v + / =          View (Adjust_width 10)
+      Normal  Space v n              View Toggle_absolute_numbers
+      Normal  Space v N              View Toggle_relative_numbers
       Normal  Space v r              View Reset
       Normal  Escape                 Cancel a pending count or sequence
       Both    Ctrl-c                 No command: cancel, and hint at Space q

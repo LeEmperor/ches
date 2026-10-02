@@ -259,7 +259,7 @@ let%expect_test "last_input_dispatched reports whether an input ran any command"
   let t = Controller.create (Editor.create ~path:"f.txt" Text_buffer.empty) in
   print_s [%sexp (Controller.last_input_dispatched t : bool)];
   ignore
-    (List.fold [ "z"; " "; "x"; "u"; "<C-c>"; "i" ] ~init:t ~f:(fun t keys ->
+    (List.fold [ "q"; " "; "x"; "u"; "<C-c>"; "i" ] ~init:t ~f:(fun t keys ->
        match Key_notation.keys keys with
        | [ input ] ->
          let t, (_ : Ches_input.View_command.t list), (_ : Controller.Status.t) =
@@ -272,7 +272,7 @@ let%expect_test "last_input_dispatched reports whether an input ran any command"
   [%expect
     {|
     false
-    "z" false
+    "q" false
     " " false
     "x" false
     "u" true

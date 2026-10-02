@@ -12,7 +12,9 @@
       trailing LF.
 
     [Move] goes to {!Motion.destination}, which clamps at line and document
-    boundaries rather than failing; a move already at its boundary is a no-op. Its
+    boundaries rather than failing; a move already at its boundary is a no-op. The
+    exception is [Matching_delimiter], which can fail: the cursor stays and the
+    message is an [Error] such as [No match for (]. Its
     cost does not grow with the count beyond those boundaries. A count outside 1 to
     [Command.max_count], or any count for a motion that does not
     [Motion.takes_count], raises [Invalid_argument]. Moves change no text, revision,

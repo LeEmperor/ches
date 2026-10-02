@@ -29,6 +29,9 @@ type t =
   { controller : Controller.t
   ; prefs : Geometry.Prefs.t
   ; scroll : Scroll.t
+  ; rows : int option
+  (** Text rows the scroll was last fitted for: when they change, the fit fills the
+      viewport (see {!Scroll.fit}). *)
   ; paste : string list option (** Text collected so far, most recent first. *)
   ; message : Message.t option
   ; exited : bool
@@ -38,6 +41,7 @@ let create ?(prefs = Geometry.Prefs.default) controller =
   { controller
   ; prefs
   ; scroll = Scroll.zero
+  ; rows = None
   ; paste = None
   ; message = None
   ; exited = false
@@ -76,6 +80,7 @@ let fitted_scroll t ~width ~height =
   let { Geometry.text = viewport; _ } = geometry t ~width ~height in
   Scroll.fit
     t.scroll
+    ~fill:(not ([%equal: int option] t.rows (Some viewport.height)))
     ~line
     ~span
     ~rows:viewport.height
@@ -90,7 +95,12 @@ let max_offset = 500
 let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Prefs.t =
   match view with
   | Toggle_centered -> { prefs with centered = not prefs.centered }
+  | Toggle_absolute_numbers ->
+    { prefs with line_numbers = Line_numbers.toggle_absolute prefs.line_numbers }
+  | Toggle_relative_numbers ->
+    { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
+  | Scroll _ -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -105,7 +115,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
 
 (* Feedback for [view], just applied: the requested value, then the effective one on
    this screen when it differs. *)
-let view_feedback t ~width ~height (view : View_command.t) =
+let view_feedback t ~width ~height (view : View_command.t) : string option =
   let geometry = geometry t ~width ~height in
   let with_fit requested effective ~to_string =
     if requested = effective
@@ -114,23 +124,87 @@ let view_feedback t ~width ~height (view : View_command.t) =
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
-  | Toggle_centered -> if t.prefs.centered then "Centered" else "Full width"
-  | Reset -> "Layout reset"
-  | Shift _ -> "Offset " ^ with_fit t.prefs.offset geometry.offset ~to_string:signed
+  | Scroll _ -> None
+  | Toggle_centered -> Some (if t.prefs.centered then "Centered" else "Full width")
+  | Toggle_absolute_numbers | Toggle_relative_numbers ->
+    let style = t.prefs.line_numbers in
+    let no_room = (not (Line_numbers.equal style Off)) && geometry.gutter.width = 0 in
+    Some
+      (sprintf
+         "Line numbers: %s%s"
+         (Line_numbers.to_string style)
+         (if no_room then " (no room)" else ""))
+  | Reset -> Some "Layout reset"
+  | Shift _ -> Some ("Offset " ^ with_fit t.prefs.offset geometry.offset ~to_string:signed)
   | Adjust_width _ ->
-    "Width " ^ with_fit t.prefs.width geometry.text.width ~to_string:Int.to_string
+    Some ("Width " ^ with_fit t.prefs.width geometry.text.width ~to_string:Int.to_string)
+;;
+
+(* [scroll] from the fitted scroll, with the cursor on screen. The new first line is
+   kept within the document: [Ctrl-e] stops with the last line at the top. When the
+   cursor line would leave the view, the cursor is moved by a counted [Up]/[Down],
+   which keeps its preferred column. *)
+let scroll_view t ~width ~height (scroll : View_command.Scroll.t) ~count =
+  let rows = (geometry t ~width ~height).text.height in
+  if rows <= 0
+  then t
+  else (
+    let editor = Controller.editor t.controller in
+    let line_count = Text_buffer.line_count (Editor.text editor) in
+    let last = line_count - 1 in
+    let line = Editor.cursor_line editor in
+    let top = t.scroll.top in
+    let half = Int.max 1 (rows / 2) in
+    let top, target =
+      match scroll with
+      | Line_down -> Int.min last (top + Option.value count ~default:1), line
+      | Line_up -> Int.max 0 (top - Option.value count ~default:1), line
+      | Half_page_down ->
+        let n = Option.value count ~default:half in
+        (* Down to showing the last line at the bottom, but never back up. *)
+        Int.max top (Int.min (top + n) (line_count - rows)), Int.min last (line + n)
+      | Half_page_up ->
+        let n = Option.value count ~default:half in
+        Int.max 0 (top - n), Int.max 0 (line - n)
+      | Cursor_middle -> Int.max 0 (line - ((rows - 1) / 2)), line
+      | Cursor_top -> line, line
+      | Cursor_bottom -> Int.max 0 (line - rows + 1), line
+    in
+    let target = Int.clamp_exn target ~min:top ~max:(Int.min last (top + rows - 1)) in
+    let controller =
+      if target > line
+      then Controller.move t.controller Down ~count:(Some (target - line))
+      else if target < line
+      then Controller.move t.controller Up ~count:(Some (line - target))
+      else t.controller
+    in
+    { t with controller; scroll = { t.scroll with top } })
+;;
+
+let apply_view_command t ~width ~height (view : View_command.t) =
+  match view with
+  | Scroll { scroll; count } -> scroll_view t ~width ~height scroll ~count
+  | Toggle_centered
+  | Shift _
+  | Adjust_width _
+  | Toggle_absolute_numbers
+  | Toggle_relative_numbers
+  | Reset -> { t with prefs = apply_view t.prefs view }
 ;;
 
 let feed t ~width ~height (input : Keymap.Input.t) =
   let controller, views, status = Controller.handle_input t.controller input in
   let t =
-    { t with controller; prefs = List.fold views ~init:t.prefs ~f:apply_view }
+    List.fold views ~init:{ t with controller } ~f:(fun t view ->
+      apply_view_command t ~width ~height view)
   in
   let message =
     match Keymap.notice (Controller.keymap controller), List.last views with
     | Some text, _ -> Some { Message.kind = Warning; text }
     | None, Some view ->
-      Some { Message.kind = Info; text = view_feedback t ~width ~height view }
+      (match view_feedback t ~width ~height view with
+       | Some text -> Some { Message.kind = Info; text }
+       | None -> t.message)
     | None, None ->
       if Controller.last_input_dispatched controller
       then
@@ -144,12 +218,19 @@ let feed t ~width ~height (input : Keymap.Input.t) =
   { t with message }, status
 ;;
 
+let refit t ~width ~height =
+  { t with
+    scroll = fitted_scroll t ~width ~height
+  ; rows = Some (geometry t ~width ~height).text.height
+  }
+;;
+
 let rec apply t ~width ~height (input : Input.t) =
   if t.exited then t, Controller.Status.Exit else apply_running t ~width ~height input
 
 and apply_running t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
-  let t = { t with scroll = fitted_scroll t ~width ~height } in
+  let t = refit t ~width ~height in
   let t, status =
     match input, t.paste with
     | Paste_start, None -> { t with paste = Some [] }, Controller.Status.Running
@@ -163,11 +244,7 @@ and apply_running t ~width ~height (input : Input.t) =
        | None -> t, Running)
     | Key key, None -> feed ~width ~height t (Key key)
   in
-  ( { t with
-      scroll = fitted_scroll t ~width ~height
-    ; exited = Controller.Status.equal status Exit
-    }
-  , status )
+  { (refit t ~width ~height) with exited = Controller.Status.equal status Exit }, status
 ;;
 
 let apply_all t ~width ~height inputs =

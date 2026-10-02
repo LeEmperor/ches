@@ -77,7 +77,11 @@ let render ui ~width ~height =
         else
           [ Span.create
               (if on_cursor_line then Gutter_cursor_line else Gutter)
-              (sprintf "%*d " gutter_digits (line + 1))
+              (Line_numbers.label
+                 (Ui_state.prefs ui).line_numbers
+                 ~digits:gutter_digits
+                 ~line
+                 ~cursor_line)
               ~width:gutter.width
           ]
       in

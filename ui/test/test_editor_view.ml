@@ -34,9 +34,9 @@ let%expect_test "the app renders, edits, and follows resizes" =
     (cursor (((position ((x 5) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
-    ││  1 hello                             ││
-    ││  2 world                             ││
-    ││  3                                   ││
+    ││1   hello                             ││
+    ││  1 world                             ││
+    ││  2                                   ││
     │╰──────────────────────────────────────╯│
     │ NORMAL  f.txt                      1:1 │
     └────────────────────────────────────────┘
@@ -49,8 +49,8 @@ let%expect_test "the app renders, edits, and follows resizes" =
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
     ││  1 hello                             ││
-    ││  2 xworld                            ││
-    ││  3                                   ││
+    ││2   xworld                            ││
+    ││  1                                   ││
     │╰──────────────────────────────────────╯│
     │ NORMAL  f.txt [+]                  2:1 │
     └────────────────────────────────────────┘
@@ -78,7 +78,7 @@ let%expect_test "events in one frame all apply, in order" =
     (cursor (((position ((x 6) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
-    ││  1 ab                                ││
+    ││1   ab                                ││
     ││                                      ││
     ││                                      ││
     │╰──────────────────────────────────────╯│
@@ -106,7 +106,7 @@ let%expect_test "Space v layout commands move the tile, and resizes keep the req
     (cursor (((position ((x 19) (y 1))) (kind Block))))
     ┌──────────────────────────────────────────────────┐
     │              ╭─ f.txt ──────────────────────────╮│
-    │              │  1 abc                           ││
+    │              │1   abc                           ││
     │              │                                  ││
     │              │                                  ││
     │              ╰──────────────────────────────────╯│
@@ -119,7 +119,7 @@ let%expect_test "Space v layout commands move the tile, and resizes keep the req
     (cursor (((position ((x 9) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
     │    ╭─ f.txt ──────────────────────────╮│
-    │    │  1 abc                           ││
+    │    │1   abc                           ││
     │    │                                  ││
     │    │                                  ││
     │    ╰──────────────────────────────────╯│
@@ -132,7 +132,7 @@ let%expect_test "Space v layout commands move the tile, and resizes keep the req
     (cursor (((position ((x 5) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
-    ││  1 abc                               ││
+    ││1   abc                               ││
     ││                                      ││
     ││                                      ││
     │╰──────────────────────────────────────╯│

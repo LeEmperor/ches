@@ -23,12 +23,14 @@ module Command := Editor_command
 
 module Target : sig
   (** What a bound sequence asks for. Only [Move] of a motion that
-      [Motion.takes_count] takes a count; the keymap rejects a count before any other
-      target. *)
+      [Motion.takes_count] and [Scroll] of a scroll that [View_command.Scroll.takes_count]
+      take a count; the keymap rejects a count before any other target. *)
   type t =
     | Move of Ches_core.Motion.t (** [Command.Move], with the count if one was typed. *)
     | Editor of Command.t (** An editor command, which takes no count. *)
     | View of View_command.t (** A layout command, which takes no count. *)
+    | Scroll of View_command.Scroll.t
+    (** [View_command.Scroll], with the count if one was typed. *)
   [@@deriving sexp_of, equal]
 end
 

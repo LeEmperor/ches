@@ -366,6 +366,7 @@ let%expect_test "motion kinds and counts" =
     (Last_nonblank (Characterwise (inclusive true)) (takes_count true))
     (First_line Linewise (takes_count true))
     (Last_line Linewise (takes_count true))
+    (Matching_delimiter (Characterwise (inclusive true)) (takes_count false))
     |}];
   Expect_test_helpers_core.require_does_raise (fun () ->
     move (create "ab") First_nonblank ~count:1);
@@ -433,4 +434,116 @@ let%test_unit "motions change no text, revision, dirty state, or history" =
       [%test_result: string]
         (Text_buffer.to_string (Editor.text undone))
         ~expect:text)
+;;
+
+(* [%] from the [|] in [s] (which is removed): where the cursor lands, or the message
+   when it stays. *)
+let percent s =
+  let at = String.substr_index_exn s ~pattern:"|" in
+  let text = String.substr_replace_first s ~pattern:"|" ~with_:"" in
+  let line = String.count (String.prefix text at) ~f:(Char.equal '\n') in
+  let t = create text in
+  let t = if line = 0 then t else move t Motion.Down ~count:line in
+  let rec right t =
+    let t' = move t Motion.Right in
+    if Editor.cursor t >= at || Editor.cursor t' = Editor.cursor t then t else right t'
+  in
+  let t = right t in
+  assert (Editor.cursor t = at);
+  let t' = move t Motion.Matching_delimiter in
+  if Editor.cursor t' = Editor.cursor t
+  then
+    printf
+      "stays: %s\n"
+      (match Editor.message t' with
+       | Some (Error m | Info m) -> m
+       | None -> "(no message)")
+  else show_cursor t'
+;;
+
+let%expect_test "%: both directions, on the same line" =
+  percent "f|(a, b) x";
+  percent "f(a, b|) x";
+  percent "|[1; 2]";
+  percent "[1; 2|]";
+  percent "|{ x }";
+  percent "{ x |}";
+  [%expect {xxx|
+    0:6 f(a, b|) x
+    0:1 f|(a, b) x
+    0:5 [1; 2|]
+    0:0 |[1; 2]
+    0:4 { x |}
+    0:0 |{ x }
+    |xxx}]
+;;
+
+let%expect_test "%: nesting, mixed types, and multiple lines" =
+  percent "|(a (b) [c {d}] e)";
+  percent "(a (b) [c {d}] e|)";
+  percent "(a (b) |[c {d}] e)";
+  percent "(a (b) [c {d|}] e)";
+  percent "let f x =\n  |{ a = (x,\n    [ 1 ]) }\n";
+  percent "let f x =\n  { a = (x,\n    [ 1 ]) |}\n";
+  percent "a (\n\n|)";
+  [%expect {xxx|
+    0:16 (a (b) [c {d}] e|)
+    0:0 |(a (b) [c {d}] e)
+    0:13 (a (b) [c {d}|] e)
+    0:10 (a (b) [c |{d}] e)
+    2:11     [ 1 ]) |}
+    1:2   |{ a = (x,
+    0:2 a |(
+    |xxx}]
+;;
+
+let%expect_test "%: from before a delimiter, the first one on the line from the cursor" =
+  percent "|let x = f (a) + g [b]";
+  percent "let x = f (a|) + g [b]";
+  percent "let x = f (a) |+ g [b]";
+  percent "(a) b|c\n(d)";
+  [%expect {|
+    0:12 let x = f (a|) + g [b]
+    0:10 let x = f |(a) + g [b]
+    0:20 let x = f (a) + g [b|]
+    stays: No delimiter on this line
+    |}]
+;;
+
+let%expect_test "%: no delimiter, unmatched, and misnested" =
+  percent "|abc";
+  percent "(a) b|c";
+  percent "|";
+  percent "x\n|\n()";
+  percent "|(a";
+  percent "a|)";
+  percent "|( ] )";
+  percent "( [ |)";
+  percent "|(a [b) c]";
+  percent "(\n|)\n)";
+  [%expect {|
+    stays: No delimiter on this line
+    stays: No delimiter on this line
+    stays: No delimiter on this line
+    stays: No delimiter on this line
+    stays: No match for (
+    stays: No match for )
+    stays: No match for (
+    stays: No match for )
+    stays: No match for (
+    0:0 |(
+    |}]
+;;
+
+let%expect_test "%: multibyte text around and inside pairs" =
+  percent "é|(中文 [ü]) ö";
+  percent "é(中文 [ü]|) ö";
+  percent "é(中文 |[ü]) ö";
+  percent "中|文 (x)";
+  [%expect {|
+    0:8 é(中文 [ü]|) ö
+    0:1 é|(中文 [ü]) ö
+    0:7 é(中文 [ü|]) ö
+    0:5 中文 (x|)
+    |}]
 ;;

@@ -35,7 +35,7 @@ let%expect_test "centered at the default width, with the overhead around it" =
 ;;
 
 let%expect_test "full width ignores the preferred width and offset" =
-  show ~prefs:{ centered = false; width = 40; offset = 30 } 160 48;
+  show ~prefs:{ Geometry.Prefs.default with centered = false; width = 40; offset = 30 } 160 48;
   [%expect
     {| 160x48  tile 0,0 160x47     border true  gutter 1,1 4x45     text 5,1 154x45     status 0,47 160x1   offset 0 |}]
 ;;
@@ -97,5 +97,56 @@ let%expect_test "small screens drop the border, then the gutter" =
      1x0   tile 0,0 1x0        border false gutter 0,0 0x0      text 0,0 1x0        status 0,0 1x0      offset 0
      0x1   tile 0,0 0x0        border false gutter 0,0 0x0      text 0,0 0x0        status 0,0 0x1      offset 0
      0x0   tile 0,0 0x0        border false gutter 0,0 0x0      text 0,0 0x0        status 0,0 0x0      offset 0
+    |}]
+;;
+
+let%expect_test "with line numbers off there is no gutter" =
+  let off = { Geometry.Prefs.default with line_numbers = Off } in
+  (* Centered with room: the text keeps its width and the tile narrows. *)
+  show 160 48;
+  show ~prefs:off 160 48;
+  (* Full width, or a screen narrower than the request: the text widens. *)
+  show ~prefs:{ Geometry.Prefs.default with centered = false } 160 48;
+  show ~prefs:{ off with centered = false } 160 48;
+  show 80 24;
+  show ~prefs:off 80 24;
+  [%expect {|
+    160x48  tile 27,0 106x47    border true  gutter 28,1 4x45    text 32,1 100x45    status 0,47 160x1   offset 0
+    160x48  tile 29,0 102x47    border true  gutter 30,1 0x45    text 30,1 100x45    status 0,47 160x1   offset 0
+    160x48  tile 0,0 160x47     border true  gutter 1,1 4x45     text 5,1 154x45     status 0,47 160x1   offset 0
+    160x48  tile 0,0 160x47     border true  gutter 1,1 0x45     text 1,1 158x45     status 0,47 160x1   offset 0
+     80x24  tile 0,0 80x23      border true  gutter 1,1 4x21     text 5,1 74x21      status 0,23 80x1    offset 0
+     80x24  tile 0,0 80x23      border true  gutter 1,1 0x21     text 1,1 78x21      status 0,23 80x1    offset 0
+    |}]
+;;
+
+let%expect_test "small screens: border, then gutter; off keeps a border that fits" =
+  let off = { Geometry.Prefs.default with line_numbers = Off } in
+  List.iter [ 22; 21; 20; 19; 18; 17 ] ~f:(fun width ->
+    show width 10;
+    show ~prefs:off width 10);
+  [%expect {|
+    22x10  tile 0,0 22x9       border true  gutter 1,1 4x7      text 5,1 16x7       status 0,9 22x1     offset 0
+    22x10  tile 0,0 22x9       border true  gutter 1,1 0x7      text 1,1 20x7       status 0,9 22x1     offset 0
+    21x10  tile 0,0 21x9       border false gutter 0,0 4x9      text 4,0 17x9       status 0,9 21x1     offset 0
+    21x10  tile 0,0 21x9       border true  gutter 1,1 0x7      text 1,1 19x7       status 0,9 21x1     offset 0
+    20x10  tile 0,0 20x9       border false gutter 0,0 4x9      text 4,0 16x9       status 0,9 20x1     offset 0
+    20x10  tile 0,0 20x9       border true  gutter 1,1 0x7      text 1,1 18x7       status 0,9 20x1     offset 0
+    19x10  tile 0,0 19x9       border false gutter 0,0 0x9      text 0,0 19x9       status 0,9 19x1     offset 0
+    19x10  tile 0,0 19x9       border true  gutter 1,1 0x7      text 1,1 17x7       status 0,9 19x1     offset 0
+    18x10  tile 0,0 18x9       border false gutter 0,0 0x9      text 0,0 18x9       status 0,9 18x1     offset 0
+    18x10  tile 0,0 18x9       border true  gutter 1,1 0x7      text 1,1 16x7       status 0,9 18x1     offset 0
+    17x10  tile 0,0 17x9       border false gutter 0,0 0x9      text 0,0 17x9       status 0,9 17x1     offset 0
+    17x10  tile 0,0 17x9       border false gutter 0,0 0x9      text 0,0 17x9       status 0,9 17x1     offset 0
+    |}]
+;;
+
+let%expect_test "every numbered style has the same gutter" =
+  List.iter [ Line_numbers.Absolute; Relative; Hybrid ] ~f:(fun line_numbers ->
+    show ~prefs:{ Geometry.Prefs.default with line_numbers } ~line_count:1000 160 48);
+  [%expect {|
+    160x48  tile 26,0 107x47    border true  gutter 27,1 5x45    text 32,1 100x45    status 0,47 160x1   offset 0
+    160x48  tile 26,0 107x47    border true  gutter 27,1 5x45    text 32,1 100x45    status 0,47 160x1   offset 0
+    160x48  tile 26,0 107x47    border true  gutter 27,1 5x45    text 32,1 100x45    status 0,47 160x1   offset 0
     |}]
 ;;

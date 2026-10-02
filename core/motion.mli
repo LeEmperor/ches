@@ -38,7 +38,19 @@
       or last line. The empty line after a trailing LF is the last line.
     - [Left]/[Right] move by code points within the line; [Up]/[Down] move by lines,
       to the {i preferred column}, clamped to the line's length. All four clamp at
-      their boundaries. *)
+      their boundaries.
+
+    {2 Matching delimiters}
+
+    [Matching_delimiter] ([%]) finds the first of [( ) \[ \] { }] at or after the
+    cursor on the cursor's line, then goes to its properly nested mate, searching
+    forward from an opening delimiter or backward from a closing one, across lines.
+    Mixed types nest on one stack, so [( \] )] is misnested. Matching is lexical:
+    delimiters inside strings and comments count too. It fails, leaving the cursor
+    where it is, when the line has no delimiter from the cursor on
+    ({!Failure.No_delimiter}) or the delimiter has no properly nested mate
+    ({!Failure.Unmatched}). It takes no count (Vim's [50%] is not supported). The
+    scan is linear in the text it crosses. *)
 
 open! Core
 
@@ -64,7 +76,18 @@ type t =
   | Last_nonblank
   | First_line
   | Last_line
+  | Matching_delimiter
 [@@deriving sexp_of, equal, enumerate]
+
+module Failure : sig
+  type t =
+    | No_delimiter (** No delimiter on the line at or after the cursor. *)
+    | Unmatched of char (** This delimiter has no properly nested mate. *)
+  [@@deriving sexp_of, equal]
+
+  (** For feedback: [No delimiter on this line], [No match for (]. *)
+  val to_string : t -> string
+end
 
 module Kind : sig
   (** How an operator will use the motion's range (from phase 5 on): whole lines, or
@@ -76,11 +99,11 @@ module Kind : sig
 end
 
 (** [Up]/[Down]/[First_nonblank_down]/[First_line]/[Last_line] are linewise;
-    [Word_end], [Line_end], and [Last_nonblank] are inclusive; the rest are
-    exclusive. *)
+    [Word_end], [Line_end], [Last_nonblank], and [Matching_delimiter] are inclusive;
+    the rest are exclusive. *)
 val kind : t -> Kind.t
 
-(** All but [Line_start] and [First_nonblank]. *)
+(** All but [Line_start], [First_nonblank], and [Matching_delimiter]. *)
 val takes_count : t -> bool
 
 (** Whether the move keeps the cursor's preferred column ([Up], [Down]) instead of
@@ -89,11 +112,11 @@ val keeps_preferred_column : t -> bool
 
 (** The destination from [cursor]. [count] is [None] when none was given; a given
     count must be positive. [preferred_column] is the code-point column [Up]/[Down]
-    aim for. *)
+    aim for. Only [Matching_delimiter] can fail; the others clamp. *)
 val destination
   :  Text_buffer.t
   -> t
   -> cursor:int
   -> preferred_column:int
   -> count:int option
-  -> int
+  -> (int, Failure.t) Result.t

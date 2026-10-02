@@ -173,7 +173,7 @@ let%expect_test "repeated sequences leave no pending state behind" =
 ;;
 
 let%expect_test "unbound Normal-mode keys and a lone Escape do nothing" =
-  let t = run (create "abc") (keys "z<Esc><CR><BS><Del><Tab>Q<C-r>") in
+  let t = run (create "abc") (keys "q<Esc><CR><BS><Del><Tab>Q<C-r>") in
   show t;
   [%expect
     {|
@@ -815,9 +815,9 @@ let%expect_test "Escape cancels a pending count silently; nothing leaks" =
 ;;
 
 let%expect_test "an invalid continuation cancels the count with a notice" =
-  let t = run (create (lines 30)) (keys "3z") in
+  let t = run (create (lines 30)) (keys "3q") in
   show_position t;
-  [%expect {| NORMAL 0:0 notice="3 z is not bound" |}];
+  [%expect {| NORMAL 0:0 notice="3 q is not bound" |}];
   let t = run t (keys "j") in
   show_position t;
   [%expect
@@ -1283,5 +1283,47 @@ let%expect_test "_ and g _ go to the first and last non-blank, with counts" =
     >   ab
     >   cd
     > 	e|f
+    |}]
+;;
+
+let%expect_test "Space v n / N toggle line-number switches and reject a count" =
+  let t = run (create "abc") (keys " vn vN") in
+  show t;
+  [%expect {|
+    (View Toggle_absolute_numbers)
+    (View Toggle_relative_numbers)
+    NORMAL 0:0
+    > |abc
+    |}];
+  let t = run t (keys "3 vnl") in
+  show t;
+  [%expect {|
+    (Move(motion Right))
+    NORMAL 0:1
+    > a|bc
+    |}]
+;;
+
+let%expect_test "% is a motion that rejects a count, even a huge one" =
+  let t = run (create "(a)") (keys "%%") in
+  show t;
+  [%expect {|
+    (Move(motion Matching_delimiter))
+    (Move(motion Matching_delimiter))
+    NORMAL 0:0
+    > |(a)
+    |}];
+  let t = run t (keys "50%") in
+  show t;
+  [%expect {|
+    NORMAL 0:0 notice="% does not take a count"
+    > |(a)
+    |}];
+  let t = run t (keys "999999%l") in
+  show t;
+  [%expect {|
+    (Move(motion Right))
+    NORMAL 0:1
+    > (|a)
     |}]
 ;;

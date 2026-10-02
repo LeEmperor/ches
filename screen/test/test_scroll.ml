@@ -1,8 +1,16 @@
 open! Core
 open Ches_screen
 
-let fit ?(from = Scroll.zero) ?(rows = 10) ?(cols = 20) ?(line_count = 100) line span =
-  let { Scroll.top; left } = Scroll.fit from ~line ~span ~rows ~cols ~line_count in
+let fit
+  ?(from = Scroll.zero)
+  ?(fill = true)
+  ?(rows = 10)
+  ?(cols = 20)
+  ?(line_count = 100)
+  line
+  span
+  =
+  let { Scroll.top; left } = Scroll.fit from ~fill ~line ~span ~rows ~cols ~line_count in
   printf "top %d left %d\n" top left
 ;;
 
@@ -32,6 +40,21 @@ let%expect_test "vertical: no empty rows below the end while earlier lines are h
     top 90 left 0
     top 0 left 0
     top 60 left 0
+    |}]
+;;
+
+let%expect_test "vertical: without fill, a view past the end stays while the cursor \
+                 is visible"
+  =
+  fit ~fill:false ~from:{ top = 95; left = 0 } 97 (0, 1);
+  fit ~fill:false ~from:{ top = 99; left = 0 } 99 (0, 1);
+  fit ~fill:false ~from:{ top = 95; left = 0 } ~line_count:5 3 (0, 1);
+  fit ~fill:false ~from:{ top = 95; left = 0 } 40 (0, 1);
+  [%expect {|
+    top 95 left 0
+    top 99 left 0
+    top 3 left 0
+    top 40 left 0
     |}]
 ;;
 

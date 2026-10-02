@@ -85,17 +85,19 @@ let move t motion ~count =
   if Option.is_some count && not (Motion.takes_count motion)
   then invalid_argf "%s takes no count" (Sexp.to_string [%sexp (motion : Motion.t)]) ();
   let t = commit t in
-  let offset =
+  match
     Motion.destination
       t.text
       motion
       ~cursor:t.cursor
       ~preferred_column:t.preferred_column
       ~count
-  in
-  if Motion.keeps_preferred_column motion
-  then { t with cursor = normalize t.text t.mode offset }
-  else set_cursor t offset
+  with
+  | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
+  | Ok offset ->
+    if Motion.keeps_preferred_column motion
+    then { t with cursor = normalize t.text t.mode offset }
+    else set_cursor t offset
 ;;
 
 (* The leading spaces and TABs of [line]. *)
@@ -103,6 +105,8 @@ let indentation text line =
   let start = B.line_start text line in
   let first_nonblank =
     Motion.destination text First_nonblank ~cursor:start ~preferred_column:0 ~count:None
+    |> Result.ok
+    |> Option.value_exn ~message:"First_nonblank never fails"
   in
   B.slice text ~pos:start ~len:(first_nonblank - start)
 ;;

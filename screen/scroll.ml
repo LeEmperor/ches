@@ -8,7 +8,7 @@ type t =
 
 let zero = { top = 0; left = 0 }
 
-let fit t ~line ~span:(start, width) ~rows ~cols ~line_count =
+let fit t ~fill ~line ~span:(start, width) ~rows ~cols ~line_count =
   if rows <= 0 || cols <= 0
   then t
   else (
@@ -19,7 +19,7 @@ let fit t ~line ~span:(start, width) ~rows ~cols ~line_count =
       then line - rows + 1
       else t.top
     in
-    let top = Int.max 0 (Int.min top (line_count - rows)) in
+    let top = Int.max 0 (if fill then Int.min top (line_count - rows) else top) in
     let left =
       if start + width <= cols
       then 0

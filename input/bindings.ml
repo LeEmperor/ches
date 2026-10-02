@@ -7,6 +7,7 @@ module Target = struct
     | Move of Ches_core.Motion.t
     | Editor of Command.t
     | View of View_command.t
+    | Scroll of View_command.Scroll.t
   [@@deriving sexp_of, equal]
 end
 
@@ -80,6 +81,9 @@ let default =
   let move keys (motion : Ches_core.Motion.t) =
     List.map keys ~f:Key.char, Target.Move motion
   in
+  let scroll keys (scroll : View_command.Scroll.t) =
+    List.map keys ~f:Key.char, Target.Scroll scroll
+  in
   let view c (command : View_command.t) =
     [ leader; Key.char 'v'; Key.char c ], Target.View command
   in
@@ -101,6 +105,7 @@ let default =
     ; move [ 'g'; '_' ] Last_nonblank
     ; move [ 'g'; 'g' ] First_line
     ; move [ 'G' ] Last_line
+    ; move [ '%' ] Matching_delimiter
     ; editor [ 'i' ] (Enter_insert Before_cursor)
     ; editor [ 'a' ] (Enter_insert After_cursor)
     ; editor [ 'A' ] (Enter_insert Line_end)
@@ -110,6 +115,13 @@ let default =
     ; editor [ 'x' ] Delete_char
     ; editor [ 'u' ] Undo
     ; [ Ctrl 'r' ], Editor Redo
+    ; [ Ctrl 'e' ], Scroll Line_down
+    ; [ Ctrl 'y' ], Scroll Line_up
+    ; [ Ctrl 'd' ], Scroll Half_page_down
+    ; [ Ctrl 'u' ], Scroll Half_page_up
+    ; scroll [ 'z'; 'z' ] Cursor_middle
+    ; scroll [ 'z'; 't' ] Cursor_top
+    ; scroll [ 'z'; 'b' ] Cursor_bottom
     ; editor [ ' '; 'w' ] Save
     ; editor [ ' '; 'q' ] Quit
     ; editor [ ' '; 'Q' ] Force_quit
@@ -121,6 +133,8 @@ let default =
     ; view '-' (Adjust_width (-10))
     ; view '+' (Adjust_width 10)
     ; view '=' (Adjust_width 10)
+    ; view 'n' Toggle_absolute_numbers
+    ; view 'N' Toggle_relative_numbers
     ; view 'r' Reset
     ]
   |> Or_error.ok_exn

@@ -4,11 +4,14 @@
 
     The status line is the bottom row of the screen, across its full width. The tile
     fills the rows above it. Within the tile, a single-cell border surrounds a
-    line-number gutter and the text viewport.
+    line-number gutter (unless line numbers are [Off]) and the text viewport. The
+    gutter is as wide in every numbered style, so switching between them never moves
+    the text.
 
     On a small screen the border is dropped first, then the gutter, so the text keeps
-    at least {!min_decorated_text_width} cells while either is shown. Any dimensions,
-    including zero, are accepted. *)
+    at least {!min_decorated_text_width} cells while either is shown. With line
+    numbers [Off], the border needs no room for a gutter. Any dimensions, including
+    zero, are accepted. *)
 
 open! Core
 
@@ -29,10 +32,11 @@ module Prefs : sig
     { centered : bool (** Centered tile; otherwise the tile uses the full width. *)
     ; width : int (** Preferred text width when centered. *)
     ; offset : int (** Shift of the centered tile; negative is left. *)
+    ; line_numbers : Line_numbers.t (** [Off] has no gutter. *)
     }
   [@@deriving sexp_of, equal]
 
-  (** Centered, width 100, offset 0. *)
+  (** Centered, width 100, offset 0, hybrid line numbers. *)
   val default : t
 end
 

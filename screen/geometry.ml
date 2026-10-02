@@ -15,10 +15,11 @@ module Prefs = struct
     { centered : bool
     ; width : int
     ; offset : int
+    ; line_numbers : Line_numbers.t
     }
   [@@deriving sexp_of, equal]
 
-  let default = { centered = true; width = 100; offset = 0 }
+  let default = { centered = true; width = 100; offset = 0; line_numbers = Hybrid }
 end
 
 let min_decorated_text_width = 16
@@ -60,7 +61,11 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
   let status_height = Int.min 1 height in
   let tile_height = height - status_height in
   let gutter_digits = gutter_digits ~line_count in
-  let full_gutter_width = gutter_digits + 1 in
+  let full_gutter_width =
+    match prefs.line_numbers with
+    | Off -> 0
+    | Absolute | Relative | Hybrid -> gutter_digits + 1
+  in
   let border =
     tile_height >= min_bordered_text_height + 2
     && width >= 2 + full_gutter_width + min_decorated_text_width

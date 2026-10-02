@@ -1,5 +1,8 @@
 # Ches feature expansion — MVP1
 
+**Status (2026-10-02):** phases 1–4B accepted by the owner after the checkpoint
+below; no ergonomic corrections were requested. Next: phase 5.
+
 ## Purpose
 
 Make single-file editing comfortable for someone accustomed to Vim. MVP0 is
@@ -373,25 +376,47 @@ Work:
   numbers and `Space v N` toggles relative numbers (neither = `Off`, both =
   `Hybrid`). Add them as view commands through the binding table; they take no
   count. Report the resulting style in the status line, like other layout
-  feedback (`Line numbers: hybrid`).
+  feedback (`Line numbers: hybrid`). When the screen is too small for the
+  gutter, say so as the width feedback does (`Line numbers: hybrid (no room)`).
 - Default to `Hybrid` (owner's preference); `Space v r` resets to it. Like
   other layout preferences, the style lasts for the session only.
 - Gutter width stays `max(3, digits(line_count))` + separator in every numbered
   style, so toggling between numbered styles or moving the cursor never shifts
   the text. `Off` removes the gutter entirely; the text width request is
-  unchanged, so the tile narrows. The existing small-screen rule (border first,
-  then gutter) still applies to numbered styles.
+  unchanged. When centered with room, the tile narrows and recenters, so the
+  text moves about half a gutter left; in full width, or when the screen limits
+  the centered width, the text viewport widens instead. Horizontal scroll stays
+  fitted either way. The existing small-screen rule (border first, then gutter)
+  still applies to numbered styles; with `Off`, the border's width requirement
+  excludes the gutter (`2 + min_decorated_text_width`), so `Off` never drops a
+  border that would otherwise fit.
+- Store the style as the four-way variant and implement the two toggles as pure
+  functions over it, so a 4×2 expect test covers every transition.
 - Relative numbers are the absolute distance from the cursor line. In `Hybrid`,
   the cursor line's true number is left-aligned (as Vim does) and the others
   right-aligned; in `Relative`, the cursor line shows `0` right-aligned. Keep
   the existing cursor-line gutter styling.
 - Numbers derive from the current cursor line at render time; no stored state
-  needs updating on movement or edits.
+  needs updating on movement or edits. Rows past the end of the document keep a
+  blank gutter.
+- The new default changes every rendered gutter (about 35 smoke expectations
+  plus frame and UI-state expect output). Regenerate expect output with
+  `dune promote` and check the diff touches only gutter columns. Leave renders
+  that are not about line numbers on the new default rather than pinning them
+  to `Absolute`. Replace full `Prefs` record literals in tests with
+  `{ Prefs.default with … }`.
+- Update `rendering_design.md` (the `Space v` table and gutter description),
+  the `geometry.mli` header, README bindings and layout section, and add a
+  smoke review screen for a non-default style.
 
 Acceptance:
 - Every style and both toggles from every style, wide/narrow line counts
   (e.g. 9, 999, 1000, 120000 lines), cursor at first/last line, after edits that
   add or remove lines, and with the gutter dropped on tiny screens.
+- `Off` on a screen just wide enough for a border without a gutter keeps the
+  border; `Off` in full width widens the text viewport.
+- Hybrid's left-aligned cursor-line number is shown on a review screen for the
+  owner to judge.
 - Toggling changes no text, cursor, history, or dirty state; the cursor stays
   visible and on the same text cell.
 - `Space v r` restores `Hybrid` along with the other defaults; existing
@@ -443,7 +468,23 @@ Acceptance:
   hint unaffected.
 - Build, tests, and scroll smoke checks (including tiny terminals) pass.
 
-**Owner checkpoint:** try phases 1–4B on real source files. Record ergonomic
+Decisions recorded during implementation:
+- End of file: Vim's rule. `Ctrl-e` stops with the last line at the top; the old
+  fill rule (lower `top` so the viewport is not partly empty) now applies only
+  when the text rows differ from those of the last applied input, i.e. after a
+  resize. Resizing away and back with no key in between redraws the view as it
+  was.
+- `Ctrl-d` stops scrolling once the last line is at the bottom (never scrolling
+  back up) but keeps moving the cursor; at the top, `Ctrl-u` moves only the cursor.
+- `zz` puts the cursor line on row `(rows - 1) / 2`; `zt` near the end may leave
+  the view partly empty, as in Vim; `zb` near the start stops at line 1.
+- Scroll commands are a `View_command.Scroll` with a count, bound through a
+  `Scroll` binding target so the keymap applies their count rules; the cursor
+  follows through `Controller.move`. They produce no message.
+- `z` is now a prefix, so tests that used it as an unbound key use `q`.
+
+**Owner checkpoint (passed 2026-10-02: phases 1–4B accepted, no corrections):**
+try phases 1–4B on real source files. Record ergonomic
 corrections before broadening scope.
 
 ## Phase 5 — Delete operator and range semantics

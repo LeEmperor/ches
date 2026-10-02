@@ -5,8 +5,8 @@ and a [Bonsai_term](https://github.com/janestreet/bonsai_term) terminal
 frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
 for the long-term direction, [`mvp0_plan.md`](mvp0_plan.md) for the first
 milestone, and [`feature_expansion.md`](feature_expansion.md) for MVP1, in
-progress (phases 1–2, counted movement and word, line, and document motions, are
-done).
+progress (phases 1–4B are done: counted movement, word, line, and document
+motions, Insert entry, `%`, line-number styles, and view scrolling).
 
 **Status: MVP0 complete (2026-10-01).** `ches PATH` is a working terminal
 editor: it opens, edits, scrolls, saves, and quits, in a
@@ -79,10 +79,14 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `0` / `^` / `$` | Line start / first non-blank / line end |
 | Normal | `_` / `g_` | First / last non-blank; with a count N, of the line N-1 below |
 | Normal | `gg` / `G` | First / last line, or line N with a count (`20G`) |
+| Normal | `%` | Matching `()`, `[]`, or `{}` (see [Matching delimiters](#matching-delimiters)) |
 | Normal | `i` / `a` | Insert before / after the character under the cursor |
 | Normal | `I` / `A` | Insert at the first non-blank / end of the line |
 | Normal | `o` / `O` | Open a new line below / above, indented like this one |
 | Normal | `x` | Delete the character under the cursor |
+| Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
+| Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
+| Normal | `zz` / `zt` / `zb` | Put the cursor line at the middle / top / bottom of the view |
 | Normal | `u` / `Ctrl-r` | Undo / redo |
 | Normal | `Space w` | Save |
 | Normal | `Space q` | Quit; refused while there are unsaved changes |
@@ -91,7 +95,9 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v h` / `Space v l` | Move the tile 2 cells left / right |
 | Normal | `Space v H` / `Space v L` | Move the tile 10 cells left / right |
 | Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider |
-| Normal | `Space v r` | Reset the layout: centered, width 100, offset 0 |
+| Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
+| Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
+| Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, hybrid numbers |
 | Normal | `Escape` | Cancel a pending count or `Space` sequence |
 | Insert | text, `Backspace`, `Delete` | Edit |
 | Insert | `Enter` | New line, indented like the current one |
@@ -127,6 +133,19 @@ breaks. As in Vim, `w` and `b` stop on empty lines and `e` skips them.
   the last line. A file ending in a line break has an empty last line after it,
   so `G` (and `w` after the last word) goes there.
 
+### Matching delimiters
+
+`%` finds the first `(`, `)`, `[`, `]`, `{`, or `}` at or after the cursor on its
+line and jumps to its mate: forward from an opening delimiter, backward from a
+closing one, across lines, skipping properly nested pairs of all three kinds.
+
+- Matching is lexical: delimiters in strings and comments count too.
+- Mixed kinds nest on one stack, so in `( ] )` the `(` has no match. A misnested or
+  missing mate shows `No match for (` and the cursor stays.
+- With no delimiter from the cursor to the line end, it shows
+  `No delimiter on this line` and the cursor stays.
+- It takes no count: `50%` (Vim's jump to a percentage of the file) is rejected.
+
 ### Counts
 
 In Normal mode, digits before a movement key repeat it: `20j` moves down 20
@@ -140,9 +159,10 @@ type it, with any keys of the sequence after it (`20 g`).
 - Counts go up to 999999. Typing a larger one cancels it with a message.
 - `$`, `_`, and `g_` with a count N go to the Nth line, counting the current line
   as the first. `G` and `gg` with a count go to that line.
-- `0` and `^` take no count, nor does any command other than a motion. A count
-  before one, such as `3^`, `3x`, or `2 Space w`, is rejected with a message, and
-  the command does not run.
+- `0`, `^`, `%`, and `zz`/`zt`/`zb` take no count, nor does any command other than
+  a motion or `Ctrl-e`/`Ctrl-y`/`Ctrl-d`/`Ctrl-u`. A count before one, such as
+  `3^`, `3x`, or `2 Space w`, is rejected with a message, and the command does not
+  run.
 - `Escape` cancels a pending count silently. A key that is not bound after a count,
   `Ctrl-c`, or a paste also cancels it. Nothing typed before a cancellation
   carries over to the next key.
@@ -226,6 +246,18 @@ and column (one-based; the column counts code points), and the latest message.
 On a small screen the border goes first, then the gutter; status fields are
 dropped from the least important up.
 
+Line numbers are hybrid by default: the cursor line shows its own number,
+left-aligned, and every other line its distance from the cursor, as with Vim's
+`number` and `relativenumber` both set. `Space v n` and `Space v N` toggle those
+two switches independently, giving four styles: hybrid (both), absolute (`n`
+only), relative (`N` only; the cursor line shows `0`), and off (neither, with no
+gutter). The gutter is `max(3, digits in the line count)` cells plus a separator
+in every numbered style, so switching between them or moving the cursor never
+shifts the text. With numbers off, a centered tile with room keeps its text width
+and narrows, so the text moves left by about half a gutter; at full width, or when
+the screen limits the width, the text gets the gutter's cells instead. Numbers
+off also lets the border fit on a slightly narrower screen.
+
 The view scrolls only as far as it must to keep the cursor visible: there is no
 scroll margin, and long lines scroll sideways rather than wrap. When the terminal
 is resized, the tile, gutter, and scroll are fitted to the new size at once,
@@ -235,10 +267,35 @@ the cursor is hidden until there is room again.
 The cursor is a steady block in Normal mode and a steady bar in Insert mode, where
 the terminal supports cursor shapes. Quitting restores the terminal's own cursor.
 
+### Scrolling the view
+
+`Ctrl-e` and `Ctrl-y` scroll the view down and up by a line, or by N with a
+count, as in Vim. The cursor stays on its line while that line is visible;
+when it would scroll out of view, the cursor moves to the nearest visible line,
+keeping its column as `j` and `k` do. `Ctrl-d` and `Ctrl-u` move both the view
+and the cursor by half the text rows (at least 1), or by N lines with a count
+(for that use only; Vim's `scroll` setting is not supported). `zz`, `zt`, and
+`zb` put the cursor line at the middle, top, or bottom of the view without moving
+the cursor; they take no count.
+
+- At the end, `Ctrl-e` can scroll until the last line is at the top, and `zt`
+  can put the last line there. Moving the cursor within the view then leaves it
+  as it is. `Ctrl-d` stops scrolling once the last line is at the bottom but
+  keeps moving the cursor, so repeating it reaches the last line.
+- At the start, scrolling stops at line 1, and `Ctrl-u` then moves only the
+  cursor. Nothing happens at either end once there is nowhere to go, and there is
+  no message.
+- A resize fills a view scrolled past the end, so it is not partly empty while
+  earlier lines are hidden; so does the first key typed after a resize. Ordinary
+  movement does not.
+- These keys are Normal-mode only; in Insert mode they do nothing. They never
+  edit: no undo step, no dirty marker.
+
 ### Layout controls
 
-The default layout is a centered tile with a text width of 100 cells and an
-offset of 0. The text width counts only text cells, not the gutter or border.
+The default layout is a centered tile with a text width of 100 cells, an
+offset of 0, and hybrid line numbers. The text width counts only text cells, not
+the gutter or border.
 `Space v r` returns to this default.
 
 The `Space v` commands change the layout, never the document: they make no
@@ -249,7 +306,9 @@ The requested text width is kept within 20–500 cells and the offset within
 the request is kept, so the layout comes back when the screen grows. The status
 line shows the request and, when it differs, what fits: `Width 110 (74 fit)`,
 `Offset +40 (+12 fit)`. Toggling and resetting report `Centered`, `Full width`,
-or `Layout reset`. Layout preferences last for the session only: every run
+or `Layout reset`; the line-number toggles report the new style, noting when the
+screen is too small for a gutter: `Line numbers: relative (no room)`. They take
+no count. Layout preferences last for the session only: every run
 starts with the default layout.
 
 ### Colors and safe display
@@ -334,11 +393,18 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
   cancelled by overflow, `Escape`, an unbound key, or a command that takes none
 - word, line, and document motions (`w b e W B E 0 ^ $ _ g_ gg G`) with counts,
   including a pending and cancelled `g`, and `G` with and without a count
+- `%` across 150 lines and back, from before a delimiter, on a line without one,
+  and with a rejected count
 - Insert entry (`a A I o O`): indentation copied by `o`, `O`, and `Enter` and kept
   when nothing more is typed, undoing an opened line, and `3o` rejected
 - tabs, wide characters, and control characters
 - a fast burst of keys with a paste in it, and a paste in Normal mode
 - every `Space v` command, with clamping and restoring on resize
+- line-number styles: both toggles, the hybrid default, a rejected count,
+  `Space v r`, renumbering as the cursor moves, and a toggle while too small
+- view scrolling: `Ctrl-e`/`Ctrl-y` with counts and a pushed cursor, `Ctrl-d`/
+  `Ctrl-u`, `zt`/`zb`/`zz` and a rejected count, scrolling past the end, resizing
+  after scrolling, tiny terminals, and Insert mode
 - exits by SIGTERM and SIGHUP, a file that cannot be opened, and standard input
   that is not a terminal
 
@@ -354,7 +420,8 @@ It prints `ok` or `FAIL` for each check, with a screen dump after each failure,
 and exits nonzero if any check failed. It never touches your own tmux sessions,
 and it deletes its temporary directory on exit. It also saves colored captures
 of review screens (Normal, Insert and dirty, pending `Space` and `Space v`, a
-moved tile, and a save error at 80x24 and 160x48, plus tiny sizes) and prints
+moved tile, relative and no line numbers, and a save error at 80x24 and
+160x48, plus tiny sizes) and prints
 their directory (`cat` a file to view it).
 
 ### Checks to do by hand
@@ -401,7 +468,7 @@ and changes made to the file by other programs are not detected.
   of the view it is not drawn.
 - No soft wrapping: long lines scroll horizontally.
 - One document at a time. There is no `:` prompt, no operators (`dd`, `dw`), no
-  `%`, no search, and no syntax highlighting. Word motions use the
+  search, and no syntax highlighting. Word motions use the
   simple character classes above, not Unicode word properties.
 - Large files are slow to edit and undo history grows without limit; see
   [Storage](#storage).

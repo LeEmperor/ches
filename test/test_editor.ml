@@ -1272,3 +1272,60 @@ let%expect_test "Insert-entry commands are Normal-only; Insert_newline is Insert
     > |..ab
     |}]
 ;;
+
+let%expect_test "%: moves without editing; a failure leaves a message and the cursor" =
+  let t = run (create "f (a,\n   b)\nx") [ move Matching_delimiter ] in
+  show t;
+  let t = run t [ move Matching_delimiter ] in
+  show t;
+  (* The preferred column is the destination's: Down goes to column 2. *)
+  let t = run t [ move Down ] in
+  show_position t;
+  let t = run t [ move Up; move Line_end; move Matching_delimiter ] in
+  show t;
+  (* The next command clears the message. *)
+  let t = run t [ move Left ] in
+  show t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    NORMAL 1:4 rev=0
+    > f (a,
+    >    b|)
+    > x
+    NORMAL 0:2 rev=0
+    > f |(a,
+    >    b)
+    > x
+    NORMAL 1:2 rev=0
+    NORMAL 0:4 rev=0 (Error"No delimiter on this line")
+    > f (a|,
+    >    b)
+    > x
+    NORMAL 0:3 rev=0
+    > f (|a,
+    >    b)
+    > x
+    0
+    |}]
+;;
+
+let%expect_test "%: a count is rejected by the editor" =
+  Expect_test_helpers_core.require_does_raise (fun () ->
+    Editor.dispatch (create "()") (move ~count:50 Matching_delimiter));
+  [%expect {| (Invalid_argument "Matching_delimiter takes no count") |}]
+;;
+
+let%expect_test "%: an Insert transaction is closed, and a failed % still closes it" =
+  let t = run (create "(x)") ([ Enter_insert Line_end ] @ typed "ab" @ [ move Matching_delimiter ]) in
+  show t;
+  let t = run t (typed "c" @ [ move Matching_delimiter ] @ typed "d" @ [ Exit_insert ]) in
+  show t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    INSERT 0:5 rev=2 dirty (Error"No delimiter on this line")
+    > (x)ab|
+    NORMAL 0:6 rev=4 dirty
+    > (x)abc|d
+    3
+    |}]
+;;

@@ -19,7 +19,9 @@ MVP0 uses one document tile:
 
 - A cohesive dark palette with rich, selective accents.
 - Thin, single-cell borders; filename in the top border when space permits.
-- Muted line-number gutter and a subtle current-line background.
+- Muted line-number gutter and a subtle current-line background. Since MVP1
+  phase 4A the gutter has four styles (hybrid by default, absolute, relative,
+  off); see [`feature_expansion.md`](feature_expansion.md).
 - Clear mode badge, dirty indicator, position, and predictable feedback area.
 - Block cursor in Normal and bar cursor in Insert where supported.
 - No special icon font requirement. Labels remain understandable without color.
@@ -81,7 +83,9 @@ Use `Space v` as the view/layout prefix. Proposed MVP0 defaults:
 | `Space v -` | Reduce preferred text width by 10 cells, minimum 20 |
 | `Space v +` | Increase preferred text width by 10 cells |
 | `Space v =` | Same as `Space v +`, without needing Shift |
-| `Space v r` | Restore centered layout, width 100, offset 0 |
+| `Space v n` | Toggle absolute line numbers (MVP1 phase 4A) |
+| `Space v N` | Toggle relative line numbers (MVP1 phase 4A) |
+| `Space v r` | Restore centered layout, width 100, offset 0, hybrid line numbers |
 
 Nudge/width commands select centered mode, so their purpose is visible even when
 invoked from full-width mode. Escape cancels a pending prefix. Unknown
@@ -264,12 +268,18 @@ One pure fit function computes the new scroll from the previous scroll, the
 cursor line and span, the text viewport size, and the line count:
 
 - **Vertical:** move as little as possible to make the cursor line visible.
-  Then lower the first visible line if needed, so the viewport isn't partly
-  empty while earlier lines are hidden.
+  After a resize only (when the text rows differ from those of the last input),
+  also lower the first visible line if needed, so the viewport isn't partly
+  empty while earlier lines are hidden. Otherwise a view scrolled past the end
+  stays put while the cursor is visible, as in Vim, so `Ctrl-e` can scroll until
+  the last line is at the top (MVP1 phase 4B; MVP0 applied this rule after every
+  input).
 - **Horizontal:** start at cell 0 whenever the span fits there. Otherwise move
   as little as possible to make the whole span visible. If the span is wider
   than the viewport, show its first cell.
-- No scroll margin (scrolloff) and no half-screen jumps in MVP0.
+- No scroll margin (scrolloff). MVP1 phase 4B adds explicit scroll commands
+  (`Ctrl-e/y/d/u`, `zz/zt/zb`); see [`feature_expansion.md`](feature_expansion.md)
+  and `Ui_state`.
 - With zero text rows or columns, keep the scroll unchanged and show no cursor
   (`set_cursor None`).
 
