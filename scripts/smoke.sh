@@ -448,14 +448,42 @@ expect_status "3 q is not bound"
 keys j
 expect_status "4:6"
 keys 3 x
-expect_status "x does not take a count"
-keys j
+expect_status "[+]"
+keys u j
 expect_status "5:6"
 expect_no_screen "[+]"
 keys Space q
 expect_exit 0
 
+# ---------------------------------------------------------------------------
+section "delete operators"
+printf 'one two\nthree\nfour\n' > "$work/operators.txt"
+launch operators.txt
+keys d w
+expect_screen "1   two"
+keys u
+expect_screen "1   one two"
+# A doubled operator is linewise and the count applies to lines.
+keys 2 d d
+expect_screen "1   four"
+keys u
+expect_screen "1   one two"
+# A failed operator motion is feedback-only.
+keys d %
+expect_status "No delimiter on this line"
+# The narrow command prompt force-reloads instead of saving the accidental edit.
+keys i
+type_text X
+keys Escape
+expect_screen "1   Xone two"
+keys : e ! Enter
+expect_status "Reloaded operators.txt"
+expect_screen "1   one two"
+keys Space q
+expect_exit 0
+
 # Counted vertical moves keep the column across shorter lines.
+section "counted vertical movement"
 printf 'abcdefgh\nab\nabcdefgh\n' > "$work/columns.txt"
 launch columns.txt
 keys 5 l 2 j
@@ -609,6 +637,22 @@ keys Space w
 expect_status "Wrote"
 printf 'if xy:\n  do_call() # ok\n  next()\n  end()\n' > "$work/insert.expected"
 expect_file "$work/insert.txt" "$work/insert.expected"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "yank and paste"
+printf 'alpha\nbeta\n' > "$work/yank.txt"
+printf 'alpha\nalpha\nbeta\n' > "$work/yank.expected"
+launch yank.txt
+# No register yet; then yy/p inserts the yanked line below as one edit.
+keys p
+expect_status "Nothing in register"
+keys y y p
+expect_screen "  1 alpha"
+expect_screen "2   alpha"
+keys Space w
+expect_file "$work/yank.txt" "$work/yank.expected"
 keys Space q
 expect_exit 0
 

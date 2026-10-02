@@ -8,6 +8,18 @@ module Target = struct
     | Editor of Command.t
     | View of View_command.t
     | Scroll of View_command.Scroll.t
+    | Delete_operator
+    | Yank_operator
+    | Delete_chars_forward
+    | Delete_chars_backward
+    | Delete_to_line_end
+    | Paste of { before : bool }
+    | Find of { direction : Ches_core.Motion.Find.direction; till : bool }
+    | Repeat_find of { opposite : bool }
+    | Search_prompt of { forward : bool }
+    | Repeat_search of { opposite : bool }
+    | Search_word of { forward : bool }
+    | Visual of [ `Characterwise | `Linewise ]
   [@@deriving sexp_of, equal]
 end
 
@@ -105,14 +117,34 @@ let default =
     ; move [ 'g'; '_' ] Last_nonblank
     ; move [ 'g'; 'g' ] First_line
     ; move [ 'G' ] Last_line
-    ; move [ '%' ] Matching_delimiter
+     ; move [ '%' ] Matching_delimiter
+     ; [ Key.char 'f' ], Find { direction = Ches_core.Motion.Find.Forward; till = false }
+     ; [ Key.char 'F' ], Find { direction = Ches_core.Motion.Find.Backward; till = false }
+     ; [ Key.char 't' ], Find { direction = Ches_core.Motion.Find.Forward; till = true }
+     ; [ Key.char 'T' ], Find { direction = Ches_core.Motion.Find.Backward; till = true }
+     ; [ Key.char ';' ], Repeat_find { opposite = false }
+     ; [ Key.char ',' ], Repeat_find { opposite = true }
+     ; [ Key.char '/' ], Search_prompt { forward = true }
+     ; [ Key.char '?' ], Search_prompt { forward = false }
+     ; [ Key.char 'n' ], Repeat_search { opposite = false }
+     ; [ Key.char 'N' ], Repeat_search { opposite = true }
+     ; [ Key.char '*' ], Search_word { forward = true }
+     ; [ Key.char '#' ], Search_word { forward = false }
+     ; [ Key.char 'v' ], Visual `Characterwise
+     ; [ Key.char 'V' ], Visual `Linewise
     ; editor [ 'i' ] (Enter_insert Before_cursor)
     ; editor [ 'a' ] (Enter_insert After_cursor)
     ; editor [ 'A' ] (Enter_insert Line_end)
     ; editor [ 'I' ] (Enter_insert First_nonblank)
-    ; editor [ 'o' ] Open_line_below
-    ; editor [ 'O' ] Open_line_above
-    ; editor [ 'x' ] Delete_char
+     ; editor [ 'o' ] Open_line_below
+     ; editor [ 'O' ] Open_line_above
+    ; [ Key.char 'd' ], Delete_operator
+    ; [ Key.char 'y' ], Yank_operator
+     ; [ Key.char 'x' ], Delete_chars_forward
+     ; [ Key.char 'X' ], Delete_chars_backward
+    ; [ Key.char 'D' ], Delete_to_line_end
+    ; [ Key.char 'p' ], Paste { before = false }
+    ; [ Key.char 'P' ], Paste { before = true }
     ; editor [ 'u' ] Undo
     ; [ Ctrl 'r' ], Editor Redo
     ; [ Ctrl 'e' ], Scroll Line_down

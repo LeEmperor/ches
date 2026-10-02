@@ -491,6 +491,28 @@ corrections before broadening scope.
 
 **Goal:** composable deletion with correct ranges and one-step undo.
 
+### Range examples (settled before implementation)
+
+Ranges are half-open byte ranges after motion resolution.  A forward exclusive
+motion deletes `[cursor, destination)` and a backward exclusive motion deletes
+`[destination, cursor)`; inclusive motions extend the appropriate end through
+the destination code point.  Linewise motions expand from the first selected
+line's start through the selected last line's LF, or EOF for the final line.
+
+| Start (`|`) | Command | Result | Notes |
+| --- | --- | --- | --- |
+| `|one two` | `dw` | `two` | `w` is exclusive. |
+| `one |two  ` | `de` | `one ` | `e` is inclusive. |
+| `one |two` | `db` | `two` | backward exclusive range. |
+| `|one\n  two` | `dw` | `\n  two` | crossing `w` stops at the first line end, preserving its LF and next indentation. |
+| `one\n|two\nthree` | `dj` | `three` | vertical motions are linewise. |
+| `one\ntwo|` | `dgg` | `` | absolute motions are linewise. |
+| `(|x)` | `d%` | `` | `%` includes both delimiters when starting on one. |
+| `one\n` | `dd` | `` | deleting all text leaves the editor's one empty logical line. |
+
+`d_` and `dg_` are linewise (thus equivalent to `dd` from their current line
+through their selected line).  A failed `%` leaves text and the register intact.
+
 Work:
 - Specify concrete range examples for all implemented motions, then implement
   the shared range resolver. Keep resolution separate from mutation.
@@ -508,6 +530,29 @@ Acceptance:
 
 Stop before change/yank/paste. Split this phase at the range-resolver boundary
 if semantic investigation threatens the session context budget.
+
+**Done (2026-10-02).**
+
+- `core/range.ml` resolves the existing motion metadata into half-open,
+  characterwise or linewise ranges before `Editor` mutates text. The `dw`
+  cross-line exception and inclusive `$`/`e`/`g_`/`%` endpoints live there.
+- The core owns `Delete_motion`, `Delete_lines`, and counted forward/backward
+  character deletes. `Register.t` is the typed unnamed register; only a
+  successful nonempty delete overwrites it, and history deliberately does not
+  restore it.
+- The input grammar has a pending `d` state, supports doubled `dd`, `D`,
+  `d{motion}`, `d_`/`dg_`, count multiplication with overflow rejection, and
+  cancellation. Existing motion bindings remain the source of valid operator
+  motions.
+- `x` now accepts a count as required by this phase. `X` is added; both remain
+  line-local. README and the terminal smoke script cover the new commands.
+
+**Follow-up (2026-10-02, owner request):** Added the narrow `diw` text object
+and `:e!` force reload. `diw` is intentionally limited to the small word under
+the cursor (or next word from whitespace), rather than starting a general text
+object framework. The command prompt accepts only `e!`; its reload is a core
+effect performed by the controller, so failed reads leave the buffer untouched.
+Successful reloads discard undo/redo history and unsaved buffer text.
 
 ## Phase 6 — Yank and paste
 
@@ -528,6 +573,17 @@ Acceptance:
   persistence across undo. Yanking preserves text/history and leaves cursor at
   the original position.
 - Build, tests, and copy/paste smoke checks pass.
+
+**Done (2026-10-02).**
+
+- `y{motion}` and `yy` share the phase 5 resolver and typed unnamed register with
+  deletion. Yanks preserve text, cursor, history, revision, and dirty state.
+- `p`/`P` repeat characterwise or linewise register contents in one transaction,
+  with checked size arithmetic, EOF newline handling, and the documented cursor
+  destinations. An unset register reports `Nothing in register`.
+- Core/keymap expect tests and the terminal smoke script cover yanking, counts,
+  repeated paste, undo/register persistence, final-LF behavior, and the empty
+  register feedback.
 
 ## Phase 7 — Change, replace, and join
 
@@ -571,6 +627,14 @@ Acceptance:
 - Argument characters are literal, including digits and action-binding keys.
 - Build, tests, and representative find smoke checks pass.
 
+**Done (2026-10-02), except for `ct,`:** `f/F/t/T` take literal Unicode
+code-point arguments, stay on the current line, support counts, and are shared
+motions for delete/yank ranges. `;` and `,` repeat the saved successful find;
+`,` does not reverse the stored direction, and repeated `t/T` skips its prior
+adjacent match. Escape cancels an argument and failures retain the old find.
+The acceptance example `ct,` requires Phase 7's change operator, which remains
+deferred at the owner's request; `dt,` has the same range behavior.
+
 ## Phase 9 — Search prompt and document search
 
 **Goal:** find text anywhere in the current file.
@@ -593,6 +657,12 @@ Acceptance:
   and a file with only one occurrence. Search preserves history and dirty state.
 - Build, tests, and real prompt/search smoke checks pass, including tiny terminals.
 
+**Implemented (2026-10-02).** `/` and `?` use a terminal-independent prompt with
+literal text editing, paste, Backspace, Enter, and Escape. Searches are
+case-sensitive, wrap once, and begin strictly past the cursor. Empty Enter
+reuses the last query; `n` repeats its original direction and `N` reverses it.
+Queries that do not match are retained for repetition without moving the cursor.
+
 ## Phase 10 — Search highlighting and word search
 
 **Goal:** make search results easy to understand.
@@ -612,6 +682,18 @@ Acceptance:
   horizontal clipping, and readable current-line/cursor styling.
 - Match styling does not alter cell geometry or cursor position.
 - Build, tests, and search-feedback smoke checks pass.
+
+**Implemented (2026-10-02).** `*`/`#` start whole-small-word searches under
+the cursor. Visible literal query matches are styled in the frame layer, with
+the last accepted search destination distinguished as the current match. Match
+locations are recomputed from the current buffer during rendering, including
+through horizontal clipping and mapped TAB/wide-character glyphs. Normal-mode
+Escape clears the visible highlights but keeps the repeat query.
+
+**Follow-up (2026-10-02):** The search prompt now previews literal matches as
+the query is typed, pasted, or erased, without moving the cursor. A
+cursor-following `incsearch` behavior is intentionally deferred as a future
+configurable option.
 
 ## Phase 11 — Characterwise and linewise Visual selection
 

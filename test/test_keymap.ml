@@ -63,6 +63,140 @@ let show { editor; keymap } =
   |> List.iter ~f:(fun line -> print_endline ("> " ^ line))
 ;;
 
+let%expect_test "delete grammar composes motions, counts, doubled lines, and cancellation" =
+  let t = run (create "one two three\nfour\nfive") (keys "dwe") in
+  show t;
+  [%expect {|
+    (Delete_motion(motion(Word_forward Small)))
+    (Move(motion(Word_end Small)))
+    NORMAL 0:2 dirty
+    > tw|o three
+    > four
+    > five
+    |}];
+  let t = run (create "a b c d") (keys "2d3w") in
+  show t;
+  [%expect {|
+    (Delete_motion(motion(Word_forward Small))(count 6))
+    NORMAL 0:0 dirty
+    > |
+    |}];
+  let t = run (create "a\nb\nc") (keys "2dd") in
+  show t;
+  [%expect {|
+    (Delete_lines 2)
+    NORMAL 0:0 dirty
+    > |c
+    |}];
+  let t = run (create "abc") (keys "d<Esc>x") in
+  show t;
+  [%expect {|
+    (Delete_chars_forward 1)
+    NORMAL 0:0 dirty
+    > |bc
+    |}]
+;;
+
+let%expect_test "yank grammar composes motions and counts; paste repeats once" =
+  let t = run (create "a\nb\nc\nd") (keys "2yyP") in
+  show t;
+  let t = run (create "one two") (keys "yw2p") in
+  show t;
+  [%expect {|
+    (Yank_lines 2)
+    (Paste(before true)(count 1))
+    NORMAL 0:0 dirty
+    > |a
+    > b
+    > a
+    > b
+    > c
+    > d
+    (Yank_motion(motion(Word_forward Small)))
+    (Paste(before false)(count 2))
+    NORMAL 0:8 dirty
+    > oone one| ne two
+    |}]
+;;
+
+let%expect_test "diw deletes the small word at the cursor" =
+  let t = run (create "foo + bar") (keys "lldiw") in
+  show t;
+  [%expect {|
+    (Move(motion Right))
+    (Move(motion Right))
+    Delete_inner_word
+    NORMAL 0:0 dirty
+    > | + bar
+    |}]
+;;
+
+let%expect_test "finds take literal arguments, repeat, and compose with operators" =
+  let t = run (create "a,b,c,d") (keys "f,;,") in
+  show t;
+  let t = run (create "one) two") (keys "df)") in
+  show t;
+  let t = run (create "one,two,three") (keys "dt,") in
+  show t;
+  [%expect {|
+    (Move(motion(Find((target U+002C)(direction Forward)(till false)))))
+    (Repeat_find(opposite false)(count 1))
+    (Repeat_find(opposite true)(count 1))
+    NORMAL 0:1
+    > a|,b,c,d
+    (Delete_motion(motion(Find((target U+0029)(direction Forward)(till false)))))
+    NORMAL 0:0 dirty
+    > | two
+    (Delete_motion(motion(Find((target U+002C)(direction Forward)(till true)))))
+    NORMAL 0:0 dirty
+    > |e,two,three
+    |}]
+;;
+
+let%expect_test "search prompts and n/N search literally with wrapping" =
+  let t = run (create "one two two") (keys "/two<CR>nN") in
+  show t;
+  let t = run (create "a 日 a") (keys "?日<CR>n") in
+  show t;
+  let t = run (create "abc") (keys "/zzz<CR>/<CR>") in
+  show t;
+  [%expect {|
+    (Search(query two)(forward true)(count 1)(whole_word false))
+    (Search(forward true)(count 1)(whole_word false))
+    (Search(forward false)(count 1)(whole_word false))
+    NORMAL 0:4
+    > one |two two
+    (Search(query"\230\151\165")(forward false)(count 1)(whole_word false))
+    (Search(forward true)(count 1)(whole_word false))
+    NORMAL 0:2 (Info"Search wrapped")
+    > a |日 a
+    (Search(query zzz)(forward true)(count 1)(whole_word false))
+    (Search(query"")(forward true)(count 1)(whole_word false))
+    NORMAL 0:0 (Error"Pattern not found: zzz")
+    > |abc
+    |}]
+;;
+
+let%expect_test "star and hash search whole small words" =
+  let t = run (create "cat scatter cat") (keys "*n#") in
+  show t;
+  let t = run (create "cat scatter") (keys "lll*") in
+  show t;
+  [%expect {|
+    (Search_word(forward true))
+    (Search(forward true)(count 1)(whole_word false))
+    (Search_word(forward false))
+    NORMAL 0:12 (Info"Search wrapped")
+    > cat scatter |cat
+    (Move(motion Right))
+    (Move(motion Right))
+    (Move(motion Right))
+    (Search_word(forward true))
+    NORMAL 0:3 (Error"No word under cursor")
+    > cat| scatter
+    |}]
+;;
+
 let%expect_test "Space w saves; the leader is shown while pending" =
   let t = run (create "abc") (keys " ") in
   show t;
@@ -92,7 +226,7 @@ let%expect_test "Space q exits a clean document and refuses a dirty one" =
   show t;
   [%expect
     {|
-    Delete_char
+    (Delete_chars_forward 1)
     Quit
     NORMAL 0:0 dirty (Error"Unsaved changes: save them or force quit")
     > |bc
@@ -102,7 +236,7 @@ let%expect_test "Space q exits a clean document and refuses a dirty one" =
 let%expect_test "Space Q exits even with unsaved changes" =
   let _ = run (create "abc") (keys "x Q") in
   [%expect {|
-    Delete_char
+    (Delete_chars_forward 1)
     Force_quit
     Exit
     |}]
@@ -122,7 +256,7 @@ let%expect_test "Escape cancels a pending leader silently" =
   [%expect
     {|
     (Move(motion(Word_forward Small)))
-    Delete_char
+    (Delete_chars_forward 1)
     NORMAL 0:1 dirty
     > a|b
     |}]
@@ -164,7 +298,7 @@ let%expect_test "repeated sequences leave no pending state behind" =
     (Write_file (path f.txt) (text abc) (revision 0))
     Save
     (Write_file (path f.txt) (text abc) (revision 0))
-    Delete_char
+    (Delete_chars_forward 1)
     Save
     (Write_file (path f.txt) (text bc) (revision 1))
     NORMAL 0:0 dirty
@@ -177,6 +311,7 @@ let%expect_test "unbound Normal-mode keys and a lone Escape do nothing" =
   show t;
   [%expect
     {|
+    Clear_search_highlight
     Redo
     NORMAL 0:0 (Info"Already at newest change")
     > |abc
@@ -267,8 +402,8 @@ let%expect_test "u undoes and Ctrl-r redoes" =
   show t;
   [%expect
     {|
-    Delete_char
-    Delete_char
+    (Delete_chars_forward 1)
+    (Delete_chars_forward 1)
     Undo
     NORMAL 0:0 dirty
     > |bc
@@ -640,7 +775,7 @@ let%expect_test "Space v layout bindings produce view actions, shown tagged" =
   let t = run (create "abc") (keys "x vl vcu") in
   show t;
   [%expect {|
-    Delete_char
+    (Delete_chars_forward 1)
     (View(Shift 2))
     (View Toggle_centered)
     Undo
@@ -844,50 +979,51 @@ let%expect_test "an invalid continuation cancels the count with a notice" =
     |}]
 ;;
 
-let%expect_test "commands that take no count reject one without running" =
+let%expect_test "counted x works while unsupported commands reject a count" =
   let t = run (create "abc") (keys "3x") in
   show t;
   [%expect
     {|
-    NORMAL 0:0 notice="x does not take a count"
-    > |abc
+    (Delete_chars_forward 3)
+    NORMAL 0:0 dirty
+    > |
     |}];
   let t = run t (keys "2i") in
   show t;
   [%expect
     {|
-    NORMAL 0:0 notice="i does not take a count"
-    > |abc
+    NORMAL 0:0 dirty notice="i does not take a count"
+    > |
     |}];
   let t = run t (keys "2 ") in
   show t;
   [%expect
     {|
-    NORMAL 0:0 pending="2 Space"
-    > |abc
+    NORMAL 0:0 dirty pending="2 Space"
+    > |
     |}];
   let t = run t (keys "w") in
   show t;
   [%expect
     {|
-    NORMAL 0:0 notice="Space w does not take a count"
-    > |abc
+    NORMAL 0:0 dirty notice="Space w does not take a count"
+    > |
     |}];
   let t = run t (keys "4 vl2<C-r>5 Q") in
   show t;
   [%expect
     {|
-    NORMAL 0:0 notice="Space Q does not take a count"
-    > |abc
+    NORMAL 0:0 dirty notice="Space Q does not take a count"
+    > |
     |}];
   (* Nothing leaks into the next command. *)
   let t = run t (keys "x") in
   show t;
   [%expect
     {|
-    Delete_char
+    (Delete_chars_forward 1)
     NORMAL 0:0 dirty
-    > |bc
+    > |
     |}]
 ;;
 

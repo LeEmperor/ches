@@ -13,7 +13,9 @@ type t =
       ; revision : int (** The document revision [text] was taken at. *)
       }
   (** Write exactly [text] to [path], then report [Outcome.Write_file_finished] with the
-      same fields. *)
+       same fields. *)
+  | Read_file of { path : string }
+  (** Read [path] for a forced reload, then report [Read_file_finished]. *)
   | Exit (** Terminate the editor. *)
 [@@deriving sexp_of, equal]
 
@@ -24,6 +26,10 @@ module Outcome : sig
         ; text : Text_buffer.t
         ; revision : int
         ; result : unit Or_error.t
+        }
+    | Read_file_finished of
+        { path : string
+        ; result : Text_buffer.t Or_error.t
         }
   [@@deriving sexp_of]
 end

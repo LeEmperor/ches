@@ -75,7 +75,7 @@ let fitted_scroll t ~width ~height =
       ~insertion:
         (match Editor.mode editor with
          | Insert -> true
-         | Normal -> false)
+          | Normal | Visual _ -> false)
   in
   let { Geometry.text = viewport; _ } = geometry t ~width ~height in
   Scroll.fit

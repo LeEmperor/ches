@@ -1,6 +1,7 @@
 open! Core
 open Ches_core
 open Ches_app
+open Ches_input
 
 module Span = Span
 
@@ -48,6 +49,44 @@ let render ui ~width ~height =
     geometry
   in
   let fields = Status.fields ui in
+  let search =
+    match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
+    | Some query when not (String.is_empty query) -> Some (query, false, None)
+    | Some _ | None -> Editor.search_state editor
+  in
+  let small_word_class offset =
+    if offset < 0 || offset >= Text_buffer.length text then None else
+    let code = Uchar.to_scalar (Text_buffer.uchar_at text offset) in
+    if code = 0x20 || code = 0x09 || code = 0x0A then None
+    else if code >= 0x80 || Char.is_alphanum (Char.of_int_exn code) || code = Char.to_int '_'
+    then Some `Identifier else Some `Punctuation
+  in
+  let is_match ~at query whole_word =
+    let source = Text_buffer.to_string text in
+    at + String.length query <= String.length source
+    && String.equal (String.sub source ~pos:at ~len:(String.length query)) query
+    && (not whole_word
+        || let class_ = small_word_class at in
+           let before = if at = 0 then None else small_word_class (Option.value_exn (Text_buffer.prev_boundary text at)) in
+           let stop = at + String.length query in
+           let after = if stop = Text_buffer.length text then None else small_word_class stop in
+           not ([%equal: [ `Identifier | `Punctuation ] option] class_ before)
+           && not ([%equal: [ `Identifier | `Punctuation ] option] class_ after))
+  in
+  let matches =
+    match search with
+    | None -> []
+    | Some (query, _, _) when String.is_empty query -> []
+    | Some (query, whole_word, current) ->
+      let rec loop at acc =
+        if at >= Text_buffer.length text then List.rev acc
+        else
+          let acc = if is_match ~at query whole_word then at :: acc else acc in
+          loop (Option.value_exn (Text_buffer.next_boundary text at)) acc
+      in
+      loop 0 [] |> List.map ~f:(fun start -> start, String.length query, current)
+  in
+  let selection = Editor.selection editor in
   let area_on_row layout y =
     List.find areas ~f:(fun { rect; layout = l; _ } ->
       Geometry.Area.equal_layout l layout && y >= rect.y && y < rect.y + rect.height)
@@ -94,12 +133,20 @@ let render ui ~width ~height =
             then Style.Text_cursor_line, Style.Special_cursor_line
             else Text, Special
           in
-          Span.of_glyphs
-            (Cell_map.glyphs (Text_buffer.line_text text line))
+           Span.of_glyphs
+             (Cell_map.glyphs (Text_buffer.line_text text line))
             ~left:scroll.left
             ~cols:viewport.width
-            ~text:text_style
-            ~special:special_style)
+             ~text:text_style
+             ~special:special_style
+              ~highlight:(fun glyph ->
+                let offset = Text_buffer.line_start text line + glyph.pos in
+                match selection with
+                | Some { Editor.Selection.anchor; active; kind = `Linewise } when line >= Int.min (Text_buffer.line_of_offset text anchor) (Text_buffer.line_of_offset text active) && line <= Int.max (Text_buffer.line_of_offset text anchor) (Text_buffer.line_of_offset text active) -> Some `Selection
+                | Some { Editor.Selection.anchor; active; kind = `Characterwise } when offset >= Int.min anchor active && offset <= Int.max anchor active -> Some `Selection
+                | _ -> List.find_map matches ~f:(fun (start, len, current) ->
+                         Option.some_if (offset >= start && offset < start + len)
+                            (if Option.value_map current ~default:false ~f:(Int.equal start) then `Current else `Match))))
       in
       let side = if border then [ Span.create Border "│" ~width:1 ] else [] in
       side @ gutter_spans @ text_spans @ side)
@@ -133,7 +180,7 @@ let render ui ~width ~height =
         ; y = viewport.y + y
         ; shape =
             (match Editor.mode editor with
-             | Normal -> Block
+              | Normal | Visual _ -> Block
              | Insert -> Bar)
         }
     else None

@@ -11,6 +11,15 @@ module Message = struct
   [@@deriving sexp_of, equal]
 end
 
+module Selection = struct
+  type t =
+    { anchor : int
+    ; active : int
+    ; kind : [ `Characterwise | `Linewise ]
+    }
+  [@@deriving sexp_of, equal]
+end
+
 type t =
   { text : B.t
   ; path : string option
@@ -21,7 +30,12 @@ type t =
   ; cursor : int
   ; preferred_column : int
   ; history : History.t
+  ; unnamed_register : Register.t option
   ; message : Message.t option
+  ; last_find : (Motion.Find.t * int) option
+  ; last_search : (string * bool * bool * int option) option
+  ; search_visible : bool
+  ; selection : Selection.t option
   }
 
 let create ?path text =
@@ -34,7 +48,12 @@ let create ?path text =
   ; cursor = 0
   ; preferred_column = 0
   ; history = History.empty
+  ; unnamed_register = None
   ; message = None
+  ; last_find = None
+  ; last_search = None
+  ; search_visible = false
+  ; selection = None
   }
 ;;
 
@@ -44,7 +63,13 @@ let mode t = t.mode
 let revision t = t.revision
 let is_dirty t = not (B.equal t.text t.saved)
 let cursor t = t.cursor
+let selection t = t.selection
 let message t = t.message
+let unnamed_register t = t.unnamed_register
+let search_state t =
+  if t.search_visible
+  then Option.map t.last_search ~f:(fun (query, _direction, whole_word, current) -> query, whole_word, current)
+  else None
 let cursor_line t = B.line_of_offset t.text t.cursor
 let cursor_column t = B.column_of_offset t.text t.cursor
 
@@ -52,7 +77,7 @@ let cursor_column t = B.column_of_offset t.text t.cursor
 let normalize text (mode : Mode.t) offset =
   match mode with
   | Insert -> offset
-  | Normal ->
+   | Normal | Visual _ ->
     let line = B.line_of_offset text offset in
     if offset = B.line_end text line && offset > B.line_start text line
     then Option.value_exn (B.prev_boundary text offset)
@@ -80,24 +105,83 @@ let check_count count =
   then invalid_argf "count %d is not between 1 and %d" count Command.max_count ()
 ;;
 
+let resolve_motion t motion ~count =
+  match motion with
+  | Motion.Find find -> Motion.find_destination t.text find ~cursor:t.cursor ~count:(Option.value count ~default:1) ~skip:None
+  | _ -> Motion.destination t.text motion ~cursor:t.cursor ~preferred_column:t.preferred_column ~count |> Result.map ~f:(fun x -> x, -1)
+;;
+
 let move t motion ~count =
   Option.iter count ~f:check_count;
   if Option.is_some count && not (Motion.takes_count motion)
   then invalid_argf "%s takes no count" (Sexp.to_string [%sexp (motion : Motion.t)]) ();
   let t = commit t in
   match
-    Motion.destination
-      t.text
-      motion
-      ~cursor:t.cursor
-      ~preferred_column:t.preferred_column
-      ~count
+    resolve_motion t motion ~count
   with
   | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
-  | Ok offset ->
-    if Motion.keeps_preferred_column motion
-    then { t with cursor = normalize t.text t.mode offset }
-    else set_cursor t offset
+  | Ok (offset, matched) ->
+    let t = match motion with Motion.Find find -> { t with last_find = Some (find, matched) } | _ -> t in
+    let t =
+      if Motion.keeps_preferred_column motion
+      then { t with cursor = normalize t.text t.mode offset }
+      else set_cursor t offset
+    in
+    match t.selection with
+    | None -> t
+    | Some selection -> { t with selection = Some { selection with active = t.cursor } }
+;;
+
+let selection_range t selection =
+  match selection.Selection.kind with
+  | `Linewise -> Range.linewise t.text ~cursor:selection.anchor ~destination:selection.active
+  | `Characterwise ->
+    let start = Int.min selection.anchor selection.active in
+    let stop = Int.max selection.anchor selection.active in
+    let stop = Option.value (B.next_boundary t.text stop) ~default:stop in
+    { Range.start; stop; kind = Characterwise }
+;;
+
+let enter_visual t kind =
+  match t.mode, t.selection with
+  | Visual _, Some selection ->
+    { t with mode = Visual kind; selection = Some { selection with kind } }
+  | Visual _, None -> { t with mode = Visual kind; selection = Some { anchor = t.cursor; active = t.cursor; kind } }
+  | Normal, _ -> { t with mode = Visual kind; selection = Some { anchor = t.cursor; active = t.cursor; kind } }
+  | Insert, _ -> t
+;;
+
+let leave_visual t ~cursor =
+  set_cursor { t with mode = Normal; selection = None } cursor
+;;
+
+let visual_yank t =
+  match t.selection with
+  | None -> t
+  | Some selection ->
+    let range = selection_range t selection in
+    let selected = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
+    let t =
+      if String.is_empty selected && Register.Kind.equal range.kind Characterwise
+      then t
+      else { t with unnamed_register = Some { Register.text = selected; kind = range.kind } }
+    in
+    leave_visual t ~cursor:(Int.min selection.anchor selection.active)
+;;
+
+let visual_delete t ~change =
+  match t.selection with
+  | None -> t
+  | Some selection ->
+    let range = selection_range t selection in
+    if range.start = range.stop
+    then leave_visual t ~cursor:range.start
+    else (
+      let deleted = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
+      let text = B.delete t.text ~pos:range.start ~len:(range.stop - range.start) in
+      let mode = if change then Mode.Insert else Mode.Normal in
+      let t = edit { t with mode; selection = None; unnamed_register = Some { Register.text = deleted; kind = range.kind } } ~text ~cursor:range.start in
+      if change then t else commit t)
 ;;
 
 (* The leading spaces and TABs of [line]. *)
@@ -213,8 +297,273 @@ let delete_forward t =
 
 (* Normal mode: the cursor is on a code point other than LF unless its line is
    empty, in which case it sits on the LF (or end of text). *)
-let delete_char t =
-  if t.cursor = B.line_end t.text (cursor_line t) then t else commit (delete_forward t)
+let delete_range t (range : Range.t) =
+  if range.start = range.stop
+  then t
+  else (
+    let deleted = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
+    let text = B.delete t.text ~pos:range.start ~len:(range.stop - range.start) in
+    let t = edit t ~text ~cursor:range.start in
+    commit
+      { t with
+        unnamed_register = Some { Register.text = deleted; kind = range.kind }
+      })
+;;
+
+let delete_chars_forward t count =
+  check_count count;
+  let line_end = B.line_end t.text (cursor_line t) in
+  let rec stop offset remaining =
+    if remaining = 0 || offset = line_end
+    then offset
+    else stop (Option.value_exn (B.next_boundary t.text offset)) (remaining - 1)
+  in
+  delete_range t { Range.start = t.cursor; stop = stop t.cursor count; kind = Characterwise }
+;;
+
+let delete_chars_backward t count =
+  check_count count;
+  let line_start = B.line_start t.text (cursor_line t) in
+  let rec start offset remaining =
+    if remaining = 0 || offset = line_start
+    then offset
+    else start (Option.value_exn (B.prev_boundary t.text offset)) (remaining - 1)
+  in
+  delete_range t { Range.start = start t.cursor count; stop = t.cursor; kind = Characterwise }
+;;
+
+let delete_motion t motion ~count =
+  Option.iter count ~f:check_count;
+  if Option.is_some count && not (Motion.takes_count motion)
+  then invalid_argf "%s takes no count" (Sexp.to_string [%sexp (motion : Motion.t)]) ();
+  let t, motion =
+    match motion with
+    | Motion.Find find ->
+      (match Motion.find_destination t.text find ~cursor:t.cursor ~count:(Option.value count ~default:1) ~skip:None with
+       | Error failure -> t, Error failure
+       | Ok (destination, matched) -> { t with last_find = Some (find, matched) }, Ok (Motion.Find find, destination))
+    | _ -> t, Ok (motion, -1)
+  in
+  match t, motion with
+  | t, Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
+  | t, Ok (Motion.Find find, destination) ->
+    Range.resolve_destination t.text find ~cursor:t.cursor ~destination |> delete_range t
+  | t, Ok (motion, _) ->
+    (match Range.resolve t.text motion ~cursor:t.cursor ~preferred_column:t.preferred_column ~count with
+     | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
+     | Ok range -> delete_range t range)
+;;
+
+let delete_lines t count =
+  check_count count;
+  let first = cursor_line t in
+  let last = Int.min (B.line_count t.text - 1) (first + count - 1) in
+  let start = B.line_start t.text first in
+  let stop = if last + 1 < B.line_count t.text then B.line_start t.text (last + 1) else B.length t.text in
+  delete_range t { Range.start; stop; kind = Linewise }
+;;
+
+let delete_inner_word t =
+  match Range.inner_word t.text ~cursor:t.cursor with
+  | None -> t
+  | Some range -> delete_range t range
+;;
+
+let yank_range t (range : Range.t) =
+  (* A linewise yank of an empty final line is still useful: its kind lets [p]
+     create a blank line. *)
+  let text = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
+  if String.is_empty text && Register.Kind.equal range.kind Characterwise
+  then t
+  else { t with unnamed_register = Some { Register.text; kind = range.kind } }
+;;
+
+let yank_motion t motion ~count =
+  Option.iter count ~f:check_count;
+  if Option.is_some count && not (Motion.takes_count motion)
+  then invalid_argf "%s takes no count" (Sexp.to_string [%sexp (motion : Motion.t)]) ();
+  match motion with
+  | Motion.Find find ->
+    (match Motion.find_destination t.text find ~cursor:t.cursor ~count:(Option.value count ~default:1) ~skip:None with
+     | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
+     | Ok (destination, matched) ->
+       yank_range { t with last_find = Some (find, matched) }
+         (Range.resolve_destination t.text find ~cursor:t.cursor ~destination))
+  | _ ->
+    (match Range.resolve t.text motion ~cursor:t.cursor ~preferred_column:t.preferred_column ~count with
+     | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
+     | Ok range -> yank_range t range)
+;;
+
+let repeat_find t ~opposite ~count =
+  check_count count;
+  match t.last_find with
+  | None -> Error Motion.Failure.No_previous_find
+  | Some (original_find, previous_match) ->
+    let find =
+      if not opposite then original_find
+      else { original_find with direction = (match original_find.direction with Motion.Find.Forward -> Motion.Find.Backward | Motion.Find.Backward -> Motion.Find.Forward) }
+    in
+    let skip = Option.some_if (find.till && not opposite) previous_match in
+    Motion.find_destination t.text find ~cursor:t.cursor ~count ~skip
+    |> Result.map ~f:(fun (destination, matched) -> original_find, destination, matched)
+;;
+
+let is_match text ~at query =
+  at + String.length query <= String.length text
+  && String.equal (String.sub text ~pos:at ~len:(String.length query)) query
+;;
+
+let small_word_class text offset =
+  if offset < 0 || offset >= B.length text then None else
+  let code = Uchar.to_scalar (B.uchar_at text offset) in
+  if code = 0x20 || code = 0x09 || code = 0x0A then None
+  else if code >= 0x80 || Char.is_alphanum (Char.of_int_exn code) || code = Char.to_int '_'
+  then Some `Identifier else Some `Punctuation
+;;
+
+let whole_word_match text ~at query =
+  is_match (B.to_string text) ~at query
+  && let class_ = small_word_class text at in
+     let before = if at = 0 then None else small_word_class text (Option.value_exn (B.prev_boundary text at)) in
+     let stop = at + String.length query in
+     let after = if stop = B.length text then None else small_word_class text stop in
+     not ([%equal: [ `Identifier | `Punctuation ] option] class_ before)
+     && not ([%equal: [ `Identifier | `Punctuation ] option] class_ after)
+;;
+
+let search t ~query ~forward ~count ~whole_word =
+  check_count count;
+  let query, direction, whole_word =
+    match query, t.last_search with
+    | Some query, _ when not (String.is_empty query) -> query, forward, whole_word
+    | Some _, Some (query, previous_direction, whole_word, _) | None, Some (query, previous_direction, whole_word, _) ->
+      query, (if forward then previous_direction else not previous_direction), whole_word
+    | Some _, None | None, None -> "", forward, whole_word
+  in
+  if String.is_empty query
+  then { t with message = Some (Error "No previous search") }
+  else (
+    let source = B.to_string t.text in
+    let rec boundaries p acc =
+      if p = B.length t.text then List.rev (p :: acc)
+      else boundaries (Option.value_exn (B.next_boundary t.text p)) (p :: acc)
+    in
+    let candidates = boundaries 0 [] |> List.filter ~f:(fun p -> if whole_word then whole_word_match t.text ~at:p query else is_match source ~at:p query) in
+    let ordered =
+      if direction
+      then List.filter candidates ~f:(fun p -> p > t.cursor) @ List.filter candidates ~f:(fun p -> p <= t.cursor)
+      else List.rev (List.filter candidates ~f:(fun p -> p < t.cursor)) @ List.rev (List.filter candidates ~f:(fun p -> p >= t.cursor))
+    in
+    let nth_exn xs n = List.nth_exn xs n in
+    match ordered with
+    | [] -> { t with last_search = Some (query, direction, whole_word, None); search_visible = true; message = Some (Error ("Pattern not found: " ^ query)) }
+    | ordered ->
+      let offset = nth_exn ordered ((count - 1) % List.length ordered) in
+      let wrapped =
+        count > List.length (List.take_while ordered ~f:(fun p -> if direction then p > t.cursor else p < t.cursor))
+        || if direction then offset <= t.cursor else offset >= t.cursor
+      in
+      let t = set_cursor { t with last_search = Some (query, direction, whole_word, Some offset); search_visible = true } offset in
+      if wrapped then { t with message = Some (Info "Search wrapped") } else t)
+;;
+
+let search_word t ~forward =
+  match small_word_class t.text t.cursor with
+  | None -> { t with message = Some (Error "No word under cursor") }
+  | Some class_ ->
+    let rec first p =
+      match B.prev_boundary t.text p with
+      | Some previous when [%equal: [ `Identifier | `Punctuation ] option] (small_word_class t.text previous) (Some class_) -> first previous
+      | None | Some _ -> p
+    in
+    let rec stop p =
+      if [%equal: [ `Identifier | `Punctuation ] option] (small_word_class t.text p) (Some class_)
+      then stop (Option.value_exn (B.next_boundary t.text p)) else p
+    in
+    let start = first t.cursor and stop = stop t.cursor in
+    search t ~query:(Some (B.slice t.text ~pos:start ~len:(stop - start))) ~forward ~count:1 ~whole_word:true
+;;
+
+let yank_lines t count =
+  check_count count;
+  let first = cursor_line t in
+  let last = Int.min (B.line_count t.text - 1) (first + count - 1) in
+  let start = B.line_start t.text first in
+  let stop = if last + 1 < B.line_count t.text then B.line_start t.text (last + 1) else B.length t.text in
+  yank_range t { Range.start; stop; kind = Linewise }
+;;
+
+let repeat_text t text count =
+  if String.length text > (Sys.max_string_length - B.length t.text) / count
+  then Error "Paste is too large"
+  else Ok (String.concat (List.init count ~f:(fun _ -> text)))
+;;
+
+let paste t ~before ~count =
+  check_count count;
+  match t.unnamed_register with
+  | None -> { t with message = Some (Error "Nothing in register") }
+  | Some { Register.text; kind = Characterwise } ->
+    (match repeat_text t text count with
+     | Error message -> { t with message = Some (Error message) }
+     | Ok inserted when String.is_empty inserted -> t
+     | Ok inserted ->
+       let line = cursor_line t in
+       let at =
+         if before || t.cursor = B.line_end t.text line
+         then t.cursor
+         else Option.value_exn (B.next_boundary t.text t.cursor)
+       in
+       let text =
+         B.insert t.text ~at inserted
+         |> Result.map_error ~f:B.Invalid_text.to_string_hum
+         |> Result.ok_or_failwith
+       in
+       let cursor = Option.value_exn (B.prev_boundary text (at + String.length inserted)) in
+       commit (edit t ~text ~cursor))
+  | Some { Register.text; kind = Linewise } ->
+    let one = if String.is_suffix text ~suffix:"\n" then text else text ^ "\n" in
+    (match repeat_text t one count with
+     | Error message -> { t with message = Some (Error message) }
+     | Ok inserted ->
+       let line = cursor_line t in
+       let at =
+         if before
+         then B.line_start t.text line
+         else if line + 1 < B.line_count t.text
+         then B.line_start t.text (line + 1)
+         else B.length t.text
+       in
+       let separator =
+         if before || at < B.length t.text || String.is_suffix (B.to_string t.text) ~suffix:"\n"
+         then ""
+         else "\n"
+       in
+       let inserted = separator ^ inserted in
+       if String.length inserted > Sys.max_string_length - B.length t.text
+       then { t with message = Some (Error "Paste is too large") }
+       else (
+         let text =
+           B.insert t.text ~at inserted
+           |> Result.map_error ~f:B.Invalid_text.to_string_hum
+           |> Result.ok_or_failwith
+         in
+         let first_line = B.line_of_offset text (at + String.length separator) in
+         let cursor =
+           Motion.destination
+             text
+             First_nonblank
+             ~cursor:(B.line_start text first_line)
+             ~preferred_column:0
+             ~count:None
+           |> Result.map_error ~f:Motion.Failure.to_string
+           |> Result.ok_or_failwith
+         in
+         commit (edit t ~text ~cursor)))
+;;
+
+let delete_char t = delete_chars_forward t 1
 ;;
 
 let restore t ~step ~none_message =
@@ -243,7 +592,7 @@ let quit t =
 let dispatch t (command : Command.t) =
   let applies =
     match command, t.mode with
-    | (Enter_insert _ | Open_line_below | Open_line_above), Insert
+    | (Enter_insert _ | Open_line_below | Open_line_above | Enter_visual _ | Exit_visual), Insert
     | ( ( Exit_insert
         | Insert_text _
         | Insert_newline
@@ -252,7 +601,20 @@ let dispatch t (command : Command.t) =
         | Insert_soft_tab _
         | Delete_soft_tab_backward _ )
       , Normal )
-    | Delete_char, Insert -> false
+    | ( Delete_char
+      | Delete_chars_forward _
+      | Delete_chars_backward _
+       | Delete_motion _
+       | Delete_lines _
+       | Delete_inner_word
+       | Yank_motion _
+        | Yank_lines _
+        | Paste _
+          | Search _ | Search_word _ | Clear_search_highlight
+          | Visual_delete | Visual_yank | Visual_change
+         | Reload ), Insert -> false
+    | (Visual_delete | Visual_yank | Visual_change), Normal -> false
+    | (Delete_char | Delete_chars_forward _ | Delete_chars_backward _ | Delete_motion _ | Delete_lines _ | Delete_inner_word | Yank_motion _ | Yank_lines _ | Paste _ | Search _ | Search_word _ | Clear_search_highlight | Reload), Visual _ -> false
     | _ -> true
   in
   if not applies
@@ -272,6 +634,47 @@ let dispatch t (command : Command.t) =
     | Insert_soft_tab width -> insert_soft_tab t width, []
     | Delete_soft_tab_backward width -> delete_soft_tab_backward t width, []
     | Delete_char -> delete_char t, []
+    | Delete_chars_forward count -> delete_chars_forward t count, []
+    | Delete_chars_backward count -> delete_chars_backward t count, []
+    | Delete_motion { motion; count } -> delete_motion t motion ~count, []
+    | Delete_lines count -> delete_lines t count, []
+    | Delete_inner_word -> delete_inner_word t, []
+    | Yank_motion { motion; count } -> yank_motion t motion ~count, []
+    | Yank_lines count -> yank_lines t count, []
+    | Paste { before; count } -> paste t ~before ~count, []
+    | Repeat_find { opposite; count } ->
+      (match repeat_find t ~opposite ~count with
+       | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
+       | Ok (find, destination, matched) ->
+         let t = { t with last_find = Some (find, matched) } in
+         set_cursor t destination, [])
+    | Delete_repeat_find { opposite; count } ->
+      (match repeat_find t ~opposite ~count with
+       | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
+       | Ok (find, destination, matched) ->
+         delete_range { t with last_find = Some (find, matched) }
+           (Range.resolve_destination t.text find ~cursor:t.cursor ~destination), [])
+    | Yank_repeat_find { opposite; count } ->
+      (match repeat_find t ~opposite ~count with
+       | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
+       | Ok (find, destination, matched) ->
+         yank_range { t with last_find = Some (find, matched) }
+           (Range.resolve_destination t.text find ~cursor:t.cursor ~destination), [])
+    | Search { query; forward; count; whole_word } -> search t ~query ~forward ~count ~whole_word, []
+    | Search_word { forward } -> search_word t ~forward, []
+    | Clear_search_highlight -> { t with search_visible = false }, []
+    | Enter_visual kind -> enter_visual t kind, []
+    | Exit_visual ->
+      (match t.selection with
+       | None -> t, []
+       | Some selection -> leave_visual t ~cursor:selection.active, [])
+    | Visual_delete -> visual_delete t ~change:false, []
+    | Visual_yank -> visual_yank t, []
+    | Visual_change -> visual_delete t ~change:true, []
+    | Reload ->
+      (match t.path with
+       | None -> { t with message = Some (Error "No file name") }, []
+       | Some path -> t, [ Effect.Read_file { path } ])
     | Undo -> restore t ~step:History.undo ~none_message:"Already at oldest change", []
     | Redo -> restore t ~step:History.redo ~none_message:"Already at newest change", []
     | Save -> save t
@@ -292,6 +695,23 @@ let handle_outcome t (outcome : Effect.Outcome.t) =
          then { t with saved = text; saved_revision = revision }
          else t
        in
-       let message = sprintf "Wrote %s (%d bytes)" path (B.length text) in
-       { t with message = Some (Info message) })
+        let message = sprintf "Wrote %s (%d bytes)" path (B.length text) in
+        { t with message = Some (Info message) })
+  | Read_file_finished { path; result } ->
+    (match result with
+     | Error error ->
+       { t with
+         message = Some (Error (sprintf "Failed to reload %s: %s" path (Error.to_string_hum error)))
+       }
+     | Ok text ->
+       { t with
+         text
+       ; saved = text
+       ; saved_revision = t.revision + 1
+       ; revision = t.revision + 1
+       ; cursor = 0
+       ; preferred_column = 0
+       ; history = History.empty
+       ; message = Some (Info (sprintf "Reloaded %s" path))
+       })
 ;;

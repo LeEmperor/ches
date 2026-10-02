@@ -8,6 +8,20 @@ module Word = struct
   [@@deriving sexp_of, equal, enumerate]
 end
 
+module Find = struct
+  type direction =
+    | Forward
+    | Backward
+  [@@deriving sexp_of, equal]
+
+  type t =
+    { target : Uchar.t
+    ; direction : direction
+    ; till : bool
+    }
+  [@@deriving sexp_of, equal]
+end
+
 type t =
   | Left
   | Right
@@ -24,17 +38,29 @@ type t =
   | First_line
   | Last_line
   | Matching_delimiter
-[@@deriving sexp_of, equal, enumerate]
+  | Find of Find.t
+[@@deriving sexp_of, equal]
+
+let all =
+  [ Left; Right; Up; Down
+  ; Word_forward Small; Word_forward Big; Word_backward Small; Word_backward Big
+  ; Word_end Small; Word_end Big; Line_start; First_nonblank; First_nonblank_down
+  ; Line_end; Last_nonblank; First_line; Last_line; Matching_delimiter
+  ]
 
 module Failure = struct
   type t =
     | No_delimiter
     | Unmatched of char
+    | No_character of Uchar.t
+    | No_previous_find
   [@@deriving sexp_of, equal]
 
   let to_string = function
     | No_delimiter -> "No delimiter on this line"
     | Unmatched c -> sprintf "No match for %c" c
+    | No_character u -> sprintf "Character not found: %s" (Uchar.Utf8.to_string u)
+    | No_previous_find -> "No previous find"
   ;;
 end
 
@@ -47,8 +73,9 @@ end
 
 let kind : t -> Kind.t = function
   | Up | Down | First_nonblank_down | First_line | Last_line -> Linewise
-  | Word_end _ | Line_end | Last_nonblank | Matching_delimiter ->
+  | Word_end _ | Line_end | Last_nonblank | Matching_delimiter | Find { till = false; _ } ->
     Characterwise { inclusive = true }
+  | Find { till = true; _ } -> Characterwise { inclusive = false }
   | Left | Right | Word_forward _ | Word_backward _ | Line_start | First_nonblank ->
     Characterwise { inclusive = false }
 ;;
@@ -66,7 +93,7 @@ let takes_count = function
   | Line_end
   | Last_nonblank
   | First_line
-  | Last_line -> true
+  | Last_line | Find _ -> true
 ;;
 
 let keeps_preferred_column = function
@@ -83,7 +110,7 @@ let keeps_preferred_column = function
   | Last_nonblank
   | First_line
   | Last_line
-  | Matching_delimiter -> false
+  | Matching_delimiter | Find _ -> false
 ;;
 
 (* Word classes *)
@@ -260,6 +287,59 @@ let matching_delimiter text ~cursor : (int, Failure.t) Result.t =
     scan (start + step) [ first ]
 ;;
 
+let find_match text ({ Find.target; direction; _ } : Find.t) ~cursor ~skip =
+  let line = B.line_of_offset text cursor in
+  let start = B.line_start text line in
+  let stop = B.line_end text line in
+  let rec forward p =
+    if p >= stop
+    then None
+    else if Uchar.equal (B.uchar_at text p) target && not ([%equal: int option] skip (Some p))
+    then Some p
+    else forward (next text p)
+  in
+  let rec backward p =
+    if p < start
+    then None
+    else if Uchar.equal (B.uchar_at text p) target && not ([%equal: int option] skip (Some p))
+    then Some p
+    else if p = start then None else backward (prev text p)
+  in
+  match direction with
+  | Forward -> if cursor >= stop then None else forward (next text cursor)
+  | Backward -> if cursor <= start then None else backward (prev text cursor)
+;;
+
+let find_destination text find ~cursor ~count ~skip =
+  let rec loop remaining from skip last =
+    if remaining = 0
+    then last
+    else (
+      match find_match text find ~cursor:from ~skip with
+      | None -> None
+      | Some matched -> loop (remaining - 1) matched None (Some matched))
+  in
+  match loop count cursor skip None with
+  | None -> Error (Failure.No_character find.target)
+  | Some matched ->
+    let destination =
+      if not find.till
+      then matched
+      else (
+        match find.direction with
+        | Find.Forward -> cursor (* replaced below for non-adjacent targets *)
+        | Backward -> cursor)
+    in
+    let destination =
+      if not find.till
+      then destination
+      else match find.direction with
+        | Find.Forward -> prev text matched
+        | Backward -> next text matched
+    in
+    Ok (destination, matched)
+;;
+
 let clamp_line text line = Int.clamp_exn line ~min:0 ~max:(B.line_count text - 1)
 
 let destination text t ~cursor ~preferred_column ~count : (int, Failure.t) Result.t =
@@ -297,4 +377,5 @@ let destination text t ~cursor ~preferred_column ~count : (int, Failure.t) Resul
          (Option.value_map count ~default:(B.line_count text - 1) ~f:(fun n ->
             clamp_line text (n - 1))))
   | Matching_delimiter -> matching_delimiter text ~cursor
+  | Find find -> find_destination text find ~cursor ~count:n ~skip:None |> Result.map ~f:fst
 ;;

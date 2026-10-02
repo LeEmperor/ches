@@ -61,6 +61,11 @@ module Word : sig
   [@@deriving sexp_of, equal, enumerate]
 end
 
+module Find : sig
+  type direction = Forward | Backward [@@deriving sexp_of, equal]
+  type t = { target : Uchar.t; direction : direction; till : bool } [@@deriving sexp_of, equal]
+end
+
 type t =
   | Left
   | Right
@@ -77,12 +82,17 @@ type t =
   | First_line
   | Last_line
   | Matching_delimiter
-[@@deriving sexp_of, equal, enumerate]
+  | Find of Find.t
+[@@deriving sexp_of, equal]
+
+val all : t list
 
 module Failure : sig
   type t =
     | No_delimiter (** No delimiter on the line at or after the cursor. *)
     | Unmatched of char (** This delimiter has no properly nested mate. *)
+    | No_character of Uchar.t
+    | No_previous_find
   [@@deriving sexp_of, equal]
 
   (** For feedback: [No delimiter on this line], [No match for (]. *)
@@ -120,3 +130,11 @@ val destination
   -> preferred_column:int
   -> count:int option
   -> (int, Failure.t) Result.t
+
+val find_destination
+  :  Text_buffer.t
+  -> Find.t
+  -> cursor:int
+  -> count:int
+  -> skip:int option
+  -> ((int * int), Failure.t) Result.t

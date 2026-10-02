@@ -97,6 +97,19 @@ let%expect_test "load, edit, save, and reload" =
       |}])
 ;;
 
+let%expect_test "colon e! discards buffer changes and reloads the file" =
+  with_temp_dir (fun dir ->
+    let path = dir ^/ "reload.txt" in
+    Out_channel.write_all path ~data:"on disk\n";
+    let t = Option.value_exn (open_file ~dir path) in
+    let t = run t "iunsaved <Esc>:e!<CR>" in
+    show ~dir t;
+    [%expect {|
+      NORMAL info: Reloaded $TMP/reload.txt
+      "on disk\n"
+      |}])
+;;
+
 let%expect_test "a missing file starts clean and empty, and saving creates it" =
   with_temp_dir (fun dir ->
     let path = dir ^/ "new.txt" in

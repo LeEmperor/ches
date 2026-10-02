@@ -47,6 +47,12 @@ let attrs (style : Ches_screen.Style.t) =
   | Text_cursor_line -> colors Foreground Current_line
   | Special -> colors Special Background
   | Special_cursor_line -> colors Special Current_line
+  | Search_match -> colors Background Normal_accent
+  | Search_match_current -> colors Background Insert_accent
+  | Search_special_match -> colors Background Normal_accent
+  | Search_special_match_current -> colors Background Insert_accent
+  | Selection -> colors Background Warning
+  | Selection_special -> colors Background Warning
   | Gutter -> colors Muted Background
   | Gutter_cursor_line -> colors Foreground Current_line
   | Border -> colors Border Background
@@ -56,6 +62,7 @@ let attrs (style : Ches_screen.Style.t) =
   | Status_special -> colors Special Surface
   | Mode Normal -> colors ~attrs:[ Attr.bold ] Background Normal_accent
   | Mode Insert -> colors ~attrs:[ Attr.bold ] Background Insert_accent
+  | Mode (Visual _) -> colors ~attrs:[ Attr.bold ] Background Warning
   | Dirty -> colors ~attrs:[ Attr.bold ] Warning Surface
   | Pending -> colors ~attrs:[ Attr.bold ] Normal_accent Surface
   | Info -> colors Foreground Surface

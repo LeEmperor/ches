@@ -9,6 +9,12 @@ type t =
   | Text_cursor_line
   | Special (** Escape forms and clip markers in the text. *)
   | Special_cursor_line
+  | Search_match
+  | Search_match_current
+  | Search_special_match
+  | Search_special_match_current
+  | Selection
+  | Selection_special
   | Gutter
   | Gutter_cursor_line
   | Border

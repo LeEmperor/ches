@@ -38,6 +38,14 @@ let perform editor (effect : Effect.t) : Editor.t * Status.t =
   | Write_file { path; text; revision } ->
     let result = File_io.write path text in
     Editor.handle_outcome editor (Write_file_finished { path; text; revision; result }), Running
+  | Read_file { path } ->
+    let result =
+      match File_io.read path with
+      | Ok (File_io.Loaded.Existing text) -> Ok text
+      | Ok Missing -> Or_error.error_string "File no longer exists"
+      | Error error -> Error error
+    in
+    Editor.handle_outcome editor (Read_file_finished { path; result }), Running
 ;;
 
 (* Dispatches the editor commands in [actions] and collects the view commands, until

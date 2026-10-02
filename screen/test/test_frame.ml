@@ -50,6 +50,32 @@ let%expect_test "styles" =
     |}]
 ;;
 
+let%expect_test "search matches and the current match have distinct styles" =
+  let t = run ~width:40 ~height:6 (ui "one two one") (keys "/one<CR>") in
+  show_styled ~width:40 ~height:6 t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Gutter_cursor_line[1   ] Search_match[one] Text_cursor_line[ two ] Search_match_current[one] Text_cursor_line[                       ] Border[│]
+    Border[│] Gutter[    ] Text[                                  ] Border[│]
+    Border[│] Gutter[    ] Text[                                  ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode Normal)[ NORMAL ] Status[ f.txt                      1:9 ]
+    |}]
+;;
+
+let%expect_test "a search prompt previews highlights without moving the cursor" =
+  let t = run ~width:40 ~height:6 (ui "word two word") (keys "/wo") in
+  show_styled ~width:40 ~height:6 t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Gutter_cursor_line[1   ] Search_match[wo] Text_cursor_line[rd t] Search_match[wo] Text_cursor_line[ ] Search_match[wo] Text_cursor_line[rd                     ] Border[│]
+    Border[│] Gutter[    ] Text[                                  ] Border[│]
+    Border[│] Gutter[    ] Text[                                  ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode Normal)[ NORMAL ] Status[ f.txt                  ] Pending[/wo] Status[ 1:1 ]
+    |}]
+;;
+
 let%expect_test "an empty file" =
   show ~width:30 ~height:6 (ui "");
   [%expect

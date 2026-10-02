@@ -40,7 +40,9 @@
       Delete_backward, Delete_forward,
       Insert_soft_tab,
       Delete_soft_tab_backward         -       yes (may join or split lines)
-      Delete_char                      yes     -   (never deletes an LF)
+       Delete_char, Delete_chars_*      yes     -   (never delete an LF)
+        Delete_motion, Delete_lines,
+        Yank_motion, Yank_lines, Paste  yes     -
       Undo, Redo, Save, Quit,
       Force_quit                       yes     yes
     v}
@@ -65,7 +67,9 @@
     Consecutive Insert-mode edits form one transaction, closed by [Exit_insert], [Move],
     [Save], [Undo] or [Redo]. [Open_line_below]/[Open_line_above] start the
     transaction with the new line, so one undo removes it with the text typed after
-    it and restores the original cursor. Each [Delete_char] is its own transaction.
+     it and restores the original cursor. Each completed Normal-mode deletion is its
+    own transaction. Each Normal-mode paste is also one transaction, even when
+    its count repeats the register.
     Transactions with no net text change are not recorded. Undo/redo restore text and
     cursor; the file association and saved state are untouched.
 
@@ -90,6 +94,15 @@ end
 
 type t
 
+module Selection : sig
+  type t =
+    { anchor : int
+    ; active : int
+    ; kind : [ `Characterwise | `Linewise ]
+    }
+  [@@deriving sexp_of, equal]
+end
+
 (** A Normal-mode editor at the start of [text], which is considered saved. Use
     [Text_buffer.empty] for a file that does not exist yet. *)
 val create : ?path:string -> Text_buffer.t -> t
@@ -102,6 +115,7 @@ val is_dirty : t -> bool
 
 (** Byte offset; see the cursor rules above. *)
 val cursor : t -> int
+val selection : t -> Selection.t option
 
 (** Zero-based line of the cursor. *)
 val cursor_line : t -> int
@@ -112,6 +126,12 @@ val cursor_column : t -> int
 (** Feedback from the most recent command or outcome. Cleared by every {!dispatch}
     that applies in the current mode. *)
 val message : t -> Message.t option
+
+(** The unnamed internal register. Successful deletes and yanks replace it; history
+    does not restore it. *)
+val unnamed_register : t -> Register.t option
+
+val search_state : t -> (string * bool * int option) option
 
 val dispatch : t -> Command.t -> t * Effect.t list
 

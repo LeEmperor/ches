@@ -5,7 +5,8 @@ type t =
       { path : string
       ; text : Text_buffer.t
       ; revision : int
-      }
+       }
+  | Read_file of { path : string }
   | Exit
 [@@deriving sexp_of, equal]
 
@@ -17,5 +18,6 @@ module Outcome = struct
         ; revision : int
         ; result : unit Or_error.t
         }
+    | Read_file_finished of { path : string; result : Text_buffer.t Or_error.t }
   [@@deriving sexp_of]
 end

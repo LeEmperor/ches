@@ -28,7 +28,8 @@ val merge : t list -> t list
     TAB shows spaces, a partly visible escape form its visible characters, and a wide
     character cut by an edge [<] or [>]. *)
 val of_glyphs
-  :  Cell_map.Glyph.t array
+  :  ?highlight:(Cell_map.Glyph.t -> [ `Match | `Current | `Selection ] option)
+  -> Cell_map.Glyph.t array
   -> left:int
   -> cols:int
   -> text:Style.t

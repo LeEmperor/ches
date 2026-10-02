@@ -18,11 +18,17 @@
       Normal  0 / ^ / $              Move Line_start / First_nonblank / Line_end
       Normal  _ / g _                Move First_nonblank_down / Last_nonblank
       Normal  g g / G                Move First_line / Last_line
-      Normal  %                      Move Matching_delimiter (no count)
+       Normal  %                      Move Matching_delimiter (no count)
+       Normal  f/F/t/T + character    Find character forward/backward, on/before it
+       Normal  ;/,                    Repeat last find / opposite direction
       Normal  i / a                  Enter_insert (Before_cursor / After_cursor)
       Normal  A / I                  Enter_insert (Line_end / First_nonblank)
       Normal  o / O                  Open_line_below / Open_line_above
-      Normal  x                      Delete_char
+        Normal  d{motion}, dd, D       Delete by motion / line / to line end
+        Normal  y{motion}, yy           Yank by motion / line
+        Normal  p / P                   Paste after / before; count repeats the register
+       Normal  : e ! Enter             Force-reload the associated file
+       Normal  x / X                  Delete character(s) under / before cursor
       Normal  u                      Undo
       Normal  Ctrl-r                 Redo
       Normal  Ctrl-e / Ctrl-y        View (Scroll Line_down / Line_up)
@@ -57,7 +63,9 @@
     instead ([Line_start] by default). A count of at most [Command.max_count]
     produces one counted command, e.g. [2 0 j] produces
     [Move { motion = Down; count = Some 20 }]; without a count, [count] is [None], so
-    the editor can tell bare [G] from [1 G]. While a count is pending, {!pending}
+    the editor can tell bare [G] from [1 G]. [x], [X], [p], and [P] accept a count.
+    [d] and [y] keep their own count while waiting for a motion; operator and motion
+    counts multiply (so [2d3w] deletes and [2y3w] yanks six words). While a count is pending, {!pending}
     shows it, followed by any keys of the sequence (["20"], ["20 g"], ["3 Space"]).
 
     A count is cancelled, with a {!notice} and without any command, when
@@ -159,6 +167,10 @@ val feed : t -> mode:Ches_core.Mode.t -> Input.t -> t * Action.t list
 (** The count and keys of an incomplete sequence, for the status line, e.g.
     ["Space"] or ["20"]. *)
 val pending : t -> string option
+
+(** The in-progress [/]/[?] query, for highlight-only incremental search.  It is
+    [None] outside a search prompt and does not move the editor cursor. *)
+val search_preview : t -> string option
 
 (** Feedback about the most recent {!feed}, e.g. ["Space z is not bound"]. Cleared
     by the next {!feed}. Independent of the editor's own message. *)

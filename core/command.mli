@@ -47,6 +47,35 @@ type t =
       multiple of the width, stopping at anything other than a space. Without a space
       before the cursor, the same as [Delete_backward]. *)
   | Delete_char (** Remove the code point under the Normal-mode cursor. *)
+  | Delete_chars_forward of int (** [x], deleting up to this many code points. *)
+  | Delete_chars_backward of int (** [X], deleting up to this many code points. *)
+  | Delete_motion of
+      { motion : Motion.t
+      ; count : int option
+      (** The already-multiplied operator/motion count. *)
+      }
+  | Delete_lines of int (** [dd], deleting this many logical lines. *)
+  | Delete_inner_word (** [diw], the small word under the cursor. *)
+  | Yank_motion of
+      { motion : Motion.t
+      ; count : int option
+      (** The already-multiplied operator/motion count. *)
+      }
+  | Yank_lines of int (** [yy], yanking this many logical lines. *)
+  | Paste of { before : bool; count : int }
+   (** Insert the unnamed register [count] times: [before] is [P], otherwise [p]. *)
+  | Repeat_find of { opposite : bool; count : int }
+  | Delete_repeat_find of { opposite : bool; count : int }
+  | Yank_repeat_find of { opposite : bool; count : int }
+  | Search of { query : string option; forward : bool; count : int; whole_word : bool }
+  | Search_word of { forward : bool }
+  | Clear_search_highlight
+  | Enter_visual of [ `Characterwise | `Linewise ]
+  | Exit_visual
+  | Visual_delete
+  | Visual_yank
+  | Visual_change
+  | Reload (** [:e!], discarding buffer changes and reading the associated path. *)
   | Undo
   | Redo
   | Save

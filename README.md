@@ -5,7 +5,7 @@ and a [Bonsai_term](https://github.com/janestreet/bonsai_term) terminal
 frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
 for the long-term direction, [`mvp0_plan.md`](mvp0_plan.md) for the first
 milestone, and [`feature_expansion.md`](feature_expansion.md) for MVP1, in
-progress (phases 1–4B are done: counted movement, word, line, and document
+ progress (phases 1–6 and 8 are done: counted movement, word, line, and document
 motions, Insert entry, `%`, line-number styles, and view scrolling).
 
 **Status: MVP0 complete (2026-10-01).** `ches PATH` is a working terminal
@@ -80,10 +80,20 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `_` / `g_` | First / last non-blank; with a count N, of the line N-1 below |
 | Normal | `gg` / `G` | First / last line, or line N with a count (`20G`) |
 | Normal | `%` | Matching `()`, `[]`, or `{}` (see [Matching delimiters](#matching-delimiters)) |
+| Normal | `f` / `F` / `t` / `T` + character | Find character forward/backward, on/before it |
+| Normal | `;` / `,` | Repeat the last find / repeat it in the opposite direction |
+| Normal | `/` / `?` then text and `Enter` | Search forward / backward (literal, case-sensitive) |
+| Normal | `n` / `N` | Repeat the last search / repeat it in the opposite direction |
+| Normal | `*` / `#` | Search the small word under the cursor forward / backward |
 | Normal | `i` / `a` | Insert before / after the character under the cursor |
 | Normal | `I` / `A` | Insert at the first non-blank / end of the line |
 | Normal | `o` / `O` | Open a new line below / above, indented like this one |
-| Normal | `x` | Delete the character under the cursor |
+| Normal | `d{motion}`, `dd`, `D` | Delete by motion, whole line(s), or through line end |
+| Normal | `diw` | Delete the small word under the cursor |
+| Normal | `x` / `X` | Delete character(s) under / before the cursor |
+| Normal | `y{motion}` / `yy` | Yank by motion / whole line(s) |
+| Normal | `p` / `P` | Paste the unnamed register after / before the cursor or line |
+| Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
 | Normal | `zz` / `zt` / `zb` | Put the cursor line at the middle / top / bottom of the view |
@@ -159,13 +169,60 @@ type it, with any keys of the sequence after it (`20 g`).
 - Counts go up to 999999. Typing a larger one cancels it with a message.
 - `$`, `_`, and `g_` with a count N go to the Nth line, counting the current line
   as the first. `G` and `gg` with a count go to that line.
-- `0`, `^`, `%`, and `zz`/`zt`/`zb` take no count, nor does any command other than
-  a motion or `Ctrl-e`/`Ctrl-y`/`Ctrl-d`/`Ctrl-u`. A count before one, such as
-  `3^`, `3x`, or `2 Space w`, is rejected with a message, and the command does not
-  run.
+- `0`, `^`, `%`, and `zz`/`zt`/`zb` take no count. `x`, `X`, `p`, and `P` take a
+  count; operator and motion counts multiply (`2d3w` deletes and `2y3w` yanks six
+  words). A count before
+  an unsupported command, such as `3^` or `2 Space w`, is rejected with a message.
 - `Escape` cancels a pending count silently. A key that is not bound after a count,
   `Ctrl-c`, or a paste also cancels it. Nothing typed before a cancellation
   carries over to the next key.
+
+### Delete, yank, and paste
+
+`d` waits for a supported motion: `dw`, `db`, `de`, `d$`, `dj`, `dgg`, `dG`,
+`d_`, `dg_`, `d%`, and `diw` are available. `dd` deletes the current line, `D` is
+`d$`, and `x`/`X` delete forward/backward without crossing a line break. A
+successful delete replaces the unnamed internal register (characterwise or
+linewise). Escape cancels a pending `d` sequence without changing text or that
+register. Every complete delete, including a counted one, is one undo step.
+
+`y` accepts the same supported motions (apart from the deliberately narrow `diw`
+text object); `yy` yanks logical lines. Yanking changes neither text, cursor,
+history, nor dirty state. `p` inserts characterwise text after the cursor and `P`
+before it; linewise text goes below/above the current line. A paste count repeats
+the register in one undo step. Characterwise paste leaves the cursor on its last
+inserted code point; linewise paste puts it at the first non-blank of its first
+inserted line. An unset register reports feedback. Undo and redo do not restore
+the register.
+
+`dw` stops at a line end rather than consuming its newline and the next line's
+indentation. `d%` includes both matching delimiters; an unmatched `%` does
+nothing. Linewise deletes at EOF preserve the editor's invariant that an empty
+document has one logical empty line.
+
+`f{character}`/`F{character}` find a literal code point strictly forward or
+backward on the current line; `t`/`T` stop just before/after it. Counts repeat
+the find, `;` repeats the last successful find, and `,` repeats it in the
+opposite direction without changing what `;` means. They work as operator
+motions too (`df)` and `dt,`); Escape cancels while waiting for the literal
+argument, and a failed find retains the previous successful one.
+
+Search results are highlighted while a query is active; the current result uses
+a distinct highlight. `*` and `#` search the small word under the cursor as a
+whole word (so `cat` does not match `scatter`); on whitespace they report that
+there is no word. The query and highlighting are derived from the current text,
+so edits cannot retain stale match positions. In Normal mode, `Escape` clears
+the highlighting while retaining the query for `n`/`N`. While typing `/` or
+`?`, its nonempty query highlights matches immediately but does not move the
+cursor; cursor-following incremental search is deferred as a future setting.
+
+### Reloading a file
+
+In Normal mode, type `:e!` then `Enter` to discard all unsaved buffer changes
+and replace the buffer with the current contents of its associated file. It
+also clears undo/redo history. Escape cancels the small command prompt. This is
+deliberately the only `:` command currently supported; an unknown command
+reports feedback without changing the buffer.
 
 Soft tabs work like Vim's `softtabstop`: `Tab` inserts spaces up to the next
 multiple of 2 columns, and in Insert mode `Backspace` deletes spaces back to the
@@ -467,8 +524,8 @@ and changes made to the file by other programs are not detected.
   character is drawn as itself; after a TAB, an escape form, or the left edge
   of the view it is not drawn.
 - No soft wrapping: long lines scroll horizontally.
-- One document at a time. There is no `:` prompt, no operators (`dd`, `dw`), no
-  search, and no syntax highlighting. Word motions use the
+- One document at a time. The only `:` command is `:e!`; there is no general Ex
+  prompt, search, or syntax highlighting. Word motions use the
   simple character classes above, not Unicode word properties.
 - Large files are slow to edit and undo history grows without limit; see
   [Storage](#storage).
@@ -479,10 +536,10 @@ and changes made to the file by other programs are not detected.
 
 These come after MVP0 and are not part of it. Roughly in order:
 
-1. `%` and composable operators such as `dd` and `dw` (MVP1; see
-   [`feature_expansion.md`](feature_expansion.md)).
-2. A small `:` prompt (`:w`, `:q`, `:wq`, `:q!`) using the existing commands and
-   effects.
+1. Yank/paste, changes, replacement, and the remaining MVP1 editing features
+   (see [`feature_expansion.md`](feature_expansion.md)).
+2. More `:` commands (`:w`, `:q`, `:wq`, `:q!`) on the narrow prompt used by
+   `:e!`.
 3. Better Unicode (grapheme clusters) and line-ending support (CRLF).
 4. Measure real editing latency and memory, and replace the string storage with a
    rope or piece tree if the numbers justify it.

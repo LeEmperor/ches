@@ -62,6 +62,112 @@ let undo_steps t =
   loop t 0
 ;;
 
+let%expect_test "operator deletion resolves ranges, preserves failed-register contents, and undoes once" =
+  let t = run (create "one two\n  three\nlast") [ Delete_motion { motion = Word_forward Small; count = None } ] in
+  show t;
+  [%expect {|
+    NORMAL 0:0 rev=1 dirty
+    > |two
+    >   three
+    > last
+    |}];
+  let t = run t [ Delete_motion { motion = Word_forward Small; count = Some 2 } ] in
+  show t;
+  [%expect {|
+    NORMAL 0:0 rev=2 dirty
+    > |
+    >   three
+    > last
+    |}];
+  let t = run t [ Undo ] in
+  show t;
+  [%expect {|
+    NORMAL 0:0 rev=3 dirty
+    > |two
+    >   three
+    > last
+    |}];
+  let before = Editor.unnamed_register t in
+  let t = run t [ Delete_motion { motion = Matching_delimiter; count = None } ] in
+  show t;
+  printf "%b\n" ([%equal: Register.t option] before (Editor.unnamed_register t));
+  [%expect {|
+    NORMAL 0:0 rev=3 dirty (Error"No delimiter on this line")
+    > |two
+    >   three
+    > last
+    true
+    |}]
+;;
+
+let%expect_test "inclusive line-end and matching-delimiter ranges include their final character" =
+  let t = run (create "abc\ndef") [ Delete_motion { motion = Line_end; count = None } ] in
+  show t;
+  [%expect {|
+    NORMAL 0:0 rev=1 dirty
+    > |
+    > def
+    |}];
+  let t = run (create "(x)") [ Delete_motion { motion = Matching_delimiter; count = None } ] in
+  show t;
+  [%expect {|
+    NORMAL 0:0 rev=1 dirty
+    > |
+    |}]
+;;
+
+let%expect_test "yank shares ranges, leaves the editor unchanged, and paste honors register kind" =
+  let t = create "one two\n  three\nlast" in
+  let before = Editor.revision t, Editor.cursor t, Editor.is_dirty t in
+  let t = run t [ Yank_motion { motion = Word_forward Small; count = None } ] in
+  printf "%b\n" ([%equal: int * int * bool] before (Editor.revision t, Editor.cursor t, Editor.is_dirty t));
+  print_s [%sexp (Editor.unnamed_register t : Register.t option)];
+  let register = Editor.unnamed_register t in
+  let t = run t [ Paste { before = false; count = 2 } ] in
+  show t;
+  let t = run t [ Undo ] in
+  show t;
+  printf "%b\n" ([%equal: Register.t option] register (Editor.unnamed_register t));
+  let t = run t [ Move { motion = Down; count = None }; Yank_lines 1; Paste { before = true; count = 2 } ] in
+  show t;
+  [%expect {|
+    true
+    (((text "one ") (kind Characterwise)))
+    NORMAL 0:8 rev=1 dirty
+    > oone one| ne two
+    >   three
+    > last
+    NORMAL 0:0 rev=2
+    > |one two
+    >   three
+    > last
+    true
+    NORMAL 1:2 rev=3 dirty
+    > one two
+    >   |three
+    >   three
+    >   three
+    > last
+    |}]
+;;
+
+let%expect_test "linewise paste supplies separators for a final line without LF" =
+  let t = run (create "a\n  b") [ Move { motion = Down; count = None }; Yank_lines 1; Move { motion = Up; count = None }; Paste { before = false; count = 1 } ] in
+  show t;
+  let t = run (create "a\n") [ Yank_lines 1; Paste { before = false; count = 1 } ] in
+  show t;
+  [%expect {|
+    NORMAL 1:2 rev=1 dirty
+    > a
+    >   |b
+    >   b
+    NORMAL 1:0 rev=1 dirty
+    > a
+    > |a
+    >
+    |}]
+;;
+
 let%expect_test "vertical movement keeps a preferred column across shorter lines" =
   let t = run (create "abcdef\nab\n\nabcdef") (List.init 4 ~f:(fun _ -> move Right)) in
   show t;
@@ -750,7 +856,7 @@ let check_cursor t =
   assert (Text_buffer.is_boundary text cursor);
   match Editor.mode t with
   | Insert -> ()
-  | Normal ->
+  | Normal | Visual _ ->
     let line = Text_buffer.line_of_offset text cursor in
     let start = Text_buffer.line_start text line in
     let stop = Text_buffer.line_end text line in

@@ -24,13 +24,26 @@ module Command := Editor_command
 module Target : sig
   (** What a bound sequence asks for. Only [Move] of a motion that
       [Motion.takes_count] and [Scroll] of a scroll that [View_command.Scroll.takes_count]
-      take a count; the keymap rejects a count before any other target. *)
+      take a count; the keymap rejects a count before any other target, except
+      [Paste], which repeats the register. *)
   type t =
     | Move of Ches_core.Motion.t (** [Command.Move], with the count if one was typed. *)
     | Editor of Command.t (** An editor command, which takes no count. *)
     | View of View_command.t (** A layout command, which takes no count. *)
     | Scroll of View_command.Scroll.t
     (** [View_command.Scroll], with the count if one was typed. *)
+    | Delete_operator (** [d], whose following motion is parsed by the keymap. *)
+    | Yank_operator (** [y], whose following motion is parsed by the keymap. *)
+    | Delete_chars_forward (** [x], taking a count. *)
+    | Delete_chars_backward (** [X], taking a count. *)
+    | Delete_to_line_end (** [D], taking a count like [d$]. *)
+    | Paste of { before : bool } (** [P] or [p], taking a count. *)
+    | Find of { direction : Ches_core.Motion.Find.direction; till : bool }
+    | Repeat_find of { opposite : bool }
+    | Search_prompt of { forward : bool }
+    | Repeat_search of { opposite : bool }
+    | Search_word of { forward : bool }
+    | Visual of [ `Characterwise | `Linewise ]
   [@@deriving sexp_of, equal]
 end
 
