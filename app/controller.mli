@@ -47,3 +47,8 @@ val last_input_dispatched : t -> bool
     after an editor command that requests [Exit] are neither dispatched nor
     returned. *)
 val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Status.t
+
+(** Dispatches [Move { motion; count }] to the editor, for a frontend whose view
+    command must bring the cursor along (scrolling the cursor line out of view). Moves
+    request no effects. It leaves the keymap and {!last_input_dispatched} alone. *)
+val move : t -> Motion.t -> count:int option -> t

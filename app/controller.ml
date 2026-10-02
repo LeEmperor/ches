@@ -68,3 +68,9 @@ let handle_input t input =
   in
   { editor; keymap; dispatched }, views, status
 ;;
+
+let move t motion ~count =
+  match Editor.dispatch t.editor (Move { motion; count }) with
+  | editor, [] -> { t with editor }
+  | _, effects -> raise_s [%message "Controller.move: unexpected effects" (effects : Effect.t list)]
+;;
