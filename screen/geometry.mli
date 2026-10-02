@@ -38,6 +38,25 @@ end
 
 val min_decorated_text_width : int
 
+(** Where status fields are shown: a rectangle, the layout that arranges fields in
+    it, and which fields, in display order. *)
+module Area : sig
+  type layout =
+    | Status_row
+    (** One row of fields, the most important leading at the left, the rest dropped
+        by priority as the row narrows. *)
+    | Border_title
+    (** Fields set into a top border, between its corners, while they fit. *)
+  [@@deriving sexp_of, equal]
+
+  type t =
+    { rect : Rect.t
+    ; layout : layout
+    ; fields : Status_field.Id.t list
+    }
+  [@@deriving sexp_of]
+end
+
 type t =
   { tile : Rect.t (** Includes the border. *)
   ; border : bool
@@ -48,6 +67,9 @@ type t =
   ; offset : int
   (** The effective offset of the tile from its centered position: [Prefs.offset]
       clamped to the screen, or 0 in full-width mode. *)
+  ; areas : Area.t list
+  (** The status line gets every field. The top border, when there is one, gets the
+      filename. *)
   }
 [@@deriving sexp_of]
 

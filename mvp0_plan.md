@@ -21,11 +21,11 @@ effort on boundaries, correctness, and testability rather than future features.
 
 ## Instructions for implementation agents
 
-- **Do not create commits or push to GitHub or any other remote.** The owner
-  writes their own commit messages and manages commits. This applies even if a
-  Git repository is added later.
-- The directory was not a Git repository when this plan was written. Do not
-  initialize one unless explicitly asked.
+- **Do not change Git state.** The directory is a Git repository; the owner
+  writes their own commit messages and manages commits, branches, and remotes.
+  Read-only commands (`git status`, `git diff`, `git log`) are fine. Do not
+  commit, push, stage, stash, reset, check out, switch branches, rebase, tag,
+  or otherwise modify the repository or any remote unless explicitly asked.
 - Implement only the phase assigned, plus prerequisites demonstrably necessary
   for that phase. Do not silently expand into later phases.
 - Read this plan, the relevant sections of the original brief, and any applicable
@@ -288,7 +288,7 @@ unrelated workaround or relying on compaction.
 Suggested assignment:
 
 > Implement phase N of `mvp0_plan.md`. Respect its scope and architecture
-> contracts. Do not commit, push, or initialize Git. Run its acceptance checks
+> contracts. Do not commit, push, or otherwise change Git state. Run its acceptance checks
 > and provide a concise handoff with any unresolved issues.
 
 For phase 6, name the checkpoint ("Implement phase 6A …"), and give a 6B
@@ -466,6 +466,23 @@ Work:
 - Finish the visual design: cohesive dark palette, fine border with the filename
   in the top border when space permits, muted gutter, and subtle current-line
   emphasis.
+- Before adding the top-border filename, split the status line in
+  `screen/frame.ml` into three parts, so status information can later appear
+  in any tile, not only the bottom row:
+  1. **Fields as data:** a function from UI state to a list of fields (mode,
+     filename, dirty, pending keys, position, message), each with its spans,
+     priority, and how it may be cut.
+  2. **Layout functions:** fields plus a size in, spans out. The existing
+     priority-ordered single-row fitting becomes one layout; the top-border
+     filename is a second, using the same filename field.
+  3. **Placement:** `Geometry` decides which rectangle gets which layout and
+     fields.
+
+  The bottom status line must look and behave exactly as in 6A; its existing
+  expect tests should pass unchanged. This is a refactor that makes the top
+  border use shared fields, not a status-panel or tile framework. Field
+  configuration stays in code (no configuration language), and additional
+  status tiles remain later work.
 - Review screens at 80×24 and 160×48 and at tiny sizes, with representative
   Normal, Insert, dirty, pending-prefix, and error states, in a real terminal
   where available.

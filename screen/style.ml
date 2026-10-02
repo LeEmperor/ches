@@ -9,6 +9,8 @@ type t =
   | Gutter
   | Gutter_cursor_line
   | Border
+  | Title
+  | Title_special
   | Status
   | Status_special
   | Mode of Ches_core.Mode.t

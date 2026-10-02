@@ -12,6 +12,8 @@ type t =
   | Gutter
   | Gutter_cursor_line
   | Border
+  | Title (** Text set into the top border, such as the filename. *)
+  | Title_special (** Escape forms and cut markers there. *)
   | Status (** The status line's background and plain fields. *)
   | Status_special (** Escape forms in the filename and messages. *)
   | Mode of Ches_core.Mode.t (** The mode badge. *)

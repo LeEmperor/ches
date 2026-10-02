@@ -6,10 +6,12 @@ frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
 for the long-term direction and [`mvp0_plan.md`](mvp0_plan.md) for the current
 milestone.
 
-**Status: MVP0 phase 6A.** `ches PATH` is a working terminal editor: it opens,
-edits, scrolls, saves, and quits, in a centered, bordered document tile with a
-line-number gutter and a status line. Phase 6B adds layout controls (`Space v`)
-and the visual design pass; until then the colors are provisional.
+**Status: MVP0 complete (2026-10-01).** `ches PATH` is a working terminal
+editor: it opens, edits, scrolls, saves, and quits, in a
+centered, bordered document tile with a line-number gutter and a status line,
+and `Space v` moves and resizes the tile. It edits one file at a time, with
+Normal and Insert modes and undo/redo; see [Next milestones](#next-milestones)
+for what it does not do yet.
 
 ## Toolchain
 
@@ -26,15 +28,23 @@ Tested environment:
 | opam switch | `5.2.0+ox` (`ocaml-variants.5.2.0+ox`) |
 | opam repositories | `ox` (`git+https://github.com/oxcaml/opam-repository.git`), `default` |
 | Dune | 3.24.2 (project declares `lang dune 3.17`) |
-| `bonsai`, `bonsai_term`, `core`, `async`, `ppx_jane`, `ppx_expect` | `v0.18~preview.130.106+341` |
+| `bonsai`, `bonsai_term`, `core`, `core_unix`, `async`, `ppx_jane`, `ppx_expect` | `v0.18~preview.130.106+341` |
 | `notty-community` | `0.2.4+ox2` |
+| OS | Linux 7.0 (x86_64) |
+| tmux, bash (smoke test only) | 3.4, 5.2.21 |
 
-To set up a matching switch from scratch, follow the OxCaml install
-instructions to create a `5.2.0+ox` switch with the `ox` repository, then:
+To set up a matching switch from scratch (see the OxCaml install instructions
+for system prerequisites):
 
 ```sh
+opam update
+opam switch create 5.2.0+ox \
+  --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
+eval $(opam env --switch=5.2.0+ox)
 opam install dune core core_unix async bonsai bonsai_term ppx_jane
 ```
+
+The smoke test also needs tmux (`apt install tmux` or similar).
 
 ## Build, test, run
 
@@ -44,7 +54,7 @@ From this directory, with the OxCaml switch active
 ```sh
 dune build            # builds everything, including the `ches` executable
 dune runtest          # runs the expect tests
-dune exec ches -- PATH   # edits PATH
+dune exec ches -- PATH   # edits PATH (the binary is _build/default/bin/ches.exe)
 scripts/smoke.sh      # drives the built editor in tmux; see below
 ```
 
@@ -54,6 +64,8 @@ scripts/smoke.sh      # drives the built editor in tmux; see below
 `ches PATH` exits with an error if `PATH` cannot be opened: a directory or
 special file, a read error, or text that is not valid UTF-8 with LF line
 endings. A path where nothing exists opens an empty document; saving creates it.
+It also exits with an error if its standard input is not a terminal.
+`ches -help` prints a short summary of the keys.
 
 ## Keys
 
@@ -66,30 +78,142 @@ endings. A path where nothing exists opens an empty document; saving creates it.
 | Normal | `Space w` | Save |
 | Normal | `Space q` | Quit; refused while there are unsaved changes |
 | Normal | `Space Q` | Quit, discarding unsaved changes |
+| Normal | `Space v c` | Toggle the centered tile / full width |
+| Normal | `Space v h` / `Space v l` | Move the tile 2 cells left / right |
+| Normal | `Space v H` / `Space v L` | Move the tile 10 cells left / right |
+| Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider |
+| Normal | `Space v r` | Reset the layout: centered, width 100, offset 0 |
 | Normal | `Escape` | Cancel a pending `Space` sequence |
 | Insert | text, `Enter`, `Backspace`, `Delete` | Edit |
 | Insert | `Tab` | Insert spaces to the next multiple of 2 columns |
 | Insert | `Escape`, or `j` then `k` | Back to Normal mode |
 | Both | `Ctrl-c` | Nothing, except a hint to use `Space q` |
 
+Movement stops at the ends of a line: `h` and `l` do not wrap to the next line.
+`j` and `k` keep the column you were aiming for across shorter lines. Leaving
+Insert mode steps the cursor back one character, as in Vim.
+
+Soft tabs work like Vim's `softtabstop`: `Tab` inserts spaces up to the next
+multiple of 2 columns, and in Insert mode `Backspace` deletes spaces back to the
+previous multiple, or one character if there is no space before the cursor.
+`Backspace` at the start of a line joins it to the line above, and `Delete` at
+the end of a line joins the line below. `x` never deletes a line break.
+
+`j` is inserted when you type it; a `k` straight after it deletes the `j` and
+returns to Normal mode. No timeout is involved, and typed text is never held back,
+but you cannot type `jk` itself (paste it instead). Tab width and the `j k` escape
+are settings in `Keymap.Config`, chosen in code; there is no configuration file.
+
+`Space` starts a sequence only in Normal mode. While a sequence is pending, the
+status line shows its keys. An unbound continuation such as `Space z` does
+nothing except report `Space z is not bound`. Sequences have no timeout.
+
 Pasting (with a terminal that supports bracketed paste) inserts the text
 literally in Insert mode and is ignored in Normal mode. Arrow keys and the
 mouse are not used. SIGTERM or SIGHUP ends the editor, discarding unsaved
 changes, after restoring the terminal.
 
+## Text
+
+Ches edits UTF-8 text with LF line endings. Opening a file fails with a clear
+error, instead of silently converting it, if the file has invalid UTF-8, a CR
+byte (CRLF or bare CR line endings), or a NUL byte. Typed and pasted text follows
+the same rules: text that breaks them is rejected with a `Rejected text: ...`
+message. Saving writes the text back exactly as it is, including whether it
+ends with a newline.
+
+Cursor movement and deletion work on Unicode code points, and the status-line
+column counts code points. On screen, characters take their terminal width (CJK
+characters take two cells), a TAB expands to the next multiple of 8 cells, and
+control characters are drawn as escape forms (see [Screen](#screen)).
+
+## Undo
+
+`u` and `Ctrl-r` work in Normal mode, and they restore both the text and the
+cursor.
+
+- Everything typed in one visit to Insert mode, including Backspace, Delete,
+  Enter, and pastes, is one undo step. Leaving Insert mode ends the step.
+- Each Normal-mode edit (`x`) is its own step.
+- Moving and switching modes add no steps.
+- A new edit after an undo discards the redo history.
+- `[+]` means the text differs from what was last saved. Undoing back to the
+  saved text clears it, so a plain `Space q` then works.
+
+History is kept for the session only, as whole-text snapshots (see
+[Storage](#storage)).
+
 ## Screen
 
 The text sits in a tile centered on the screen, 100 cells wide when there is
-room. The status line at the bottom shows the mode, filename, `[+]` when there
-are unsaved changes, pending keys, the line and column (one-based; the column
-counts code points), and the latest message. On a small screen the border goes
-first, then the gutter; status fields are dropped from the least important up.
+room, with the filename in its top border. The status line at the bottom shows
+the mode, filename, `[+]` when there are unsaved changes, pending keys, the line
+and column (one-based; the column counts code points), and the latest message.
+On a small screen the border goes first, then the gutter; status fields are
+dropped from the least important up.
+
+The view scrolls only as far as it must to keep the cursor visible: there is no
+scroll margin, and long lines scroll sideways rather than wrap. When the terminal
+is resized, the tile, gutter, and scroll are fitted to the new size at once,
+without waiting for a key. Any size works, down to 1×1; when no text cell fits,
+the cursor is hidden until there is room again.
+
+The cursor is a steady block in Normal mode and a steady bar in Insert mode, where
+the terminal supports cursor shapes. Quitting restores the terminal's own cursor.
+
+### Layout controls
+
+The default layout is a centered tile with a text width of 100 cells and an
+offset of 0. The text width counts only text cells, not the gutter or border.
+`Space v r` returns to this default.
+
+The `Space v` commands change the layout, never the document: they make no
+edits, move no cursor, and leave undo history and the dirty state alone. Moving
+the tile or changing its width also switches back from full width to centered.
+The requested text width is kept within 20–500 cells and the offset within
+±500. When the screen is too small for a request, the tile is clamped to fit, and
+the request is kept, so the layout comes back when the screen grows. The status
+line shows the request and, when it differs, what fits: `Width 110 (74 fit)`,
+`Offset +40 (+12 fit)`. Toggling and resetting report `Centered`, `Full width`,
+or `Layout reset`. Layout preferences last for the session only: every run
+starts with the default layout.
+
+### Colors and safe display
+
+The colors are one dark theme, near-black neutral grays with a few colored
+accents, defined in `ui/theme.ml`.
+Everything is also readable without color: the mode, `[+]`, and messages are
+text, and escape forms are bracketed.
 
 Text is shown safely: a TAB expands to the next multiple of 8 cells, and
 control characters, C1 controls, and bidi controls appear as visible escape
 forms (`^[`, `<85>`, `<202e>`) instead of reaching the terminal.
 
-## Layout
+## Architecture
+
+One key press goes through these steps:
+
+1. **`ui/`** (Bonsai_term) receives a terminal event. `Terminal_input` turns it
+   into a terminal-independent `Key.t`, or into the start or end of a paste.
+2. **`screen/Ui_state`** collects any paste and passes the input to the
+   controller.
+3. **`app/Controller`** feeds it to **`input/Keymap`**. The keymap tracks pending
+   `Space` sequences and the `j k` escape, and returns *actions*. An action is
+   either an editor command or a view command.
+4. Editor commands go to **`core/Editor.dispatch`**, a pure function from state
+   and command to a new state plus a list of *effects*, such as "write this exact
+   text to this path" or "exit". The controller runs the effects synchronously
+   and reports each outcome back to the editor. A save marks the text it wrote as
+   saved, not whatever is current when it finishes.
+5. View commands (`Space v`) come back to `Ui_state`, which changes its layout
+   preferences. They never touch the editor.
+6. **`screen/Frame`** draws the editor, keymap, and UI state as rows of styled
+   spans plus a cursor, as plain data. `ui/` turns the spans into Bonsai_term
+   views with `ui/theme.ml`'s colors.
+
+Only `ui/` uses Bonsai, so everything from `Ui_state` down to the finished frame
+is tested headlessly with key sequences. `ui/` contains only event conversion,
+colors, and the Bonsai_term app.
 
 ```text
 dune-project   project and package metadata (generates ches.opam)
@@ -97,7 +221,8 @@ core/          ches_core: pure editing library; depends only on `core`
 input/         ches_input: terminal-independent keys and modal keymap
 app/           ches_app: file loading/saving and the controller that runs input
 screen/        ches_screen: Bonsai-free screen model: cell mapping, geometry,
-               scrolling, UI state and transition, rendered frames
+               scrolling, UI state and transition, status fields and their
+               layouts, rendered frames
 ui/            ches_ui: Bonsai_term frontend (event adapter, theme, app)
 test/          core, input, and app tests (expect tests, Quickcheck, temp-dir file tests)
 screen/test/   headless screen-model tests
@@ -120,19 +245,62 @@ cell counts agree with what Notty draws.
 (`tmux -L ches-smoke`), on copies of fixtures in a temporary directory, and
 checks the screen text, cursor position and visibility, the alternate screen,
 saved file bytes, exit statuses, and that `stty` settings and the cursor are
-restored after every exit. It covers editing, saving, reopening, undo/redo,
-quitting, a save error, scrolling, resizing down to 1x1, control characters,
-a fast burst of keys with a paste, Ctrl-C, and an exit by SIGTERM. It needs
-tmux (tested with 3.4) and a UTF-8 locale, and is not run by `dune runtest`:
+restored after every exit. It goes through every binding in the [Keys](#keys)
+table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
+`Space` key. It also covers:
+
+- saving, reopening, and undo/redo, including undoing a whole Insert session
+- a plain quit refused while there are unsaved changes, and a forced quit
+- a save error
+- empty and new files
+- scrolling tall and wide files, and resizing down to 1x1
+- tabs, wide characters, and control characters
+- a fast burst of keys with a paste in it, and a paste in Normal mode
+- every `Space v` command, with clamping and restoring on resize
+- exits by SIGTERM and SIGHUP, a file that cannot be opened, and standard input
+  that is not a terminal
+
+It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
+`dune runtest`. A run takes about 15 seconds:
 
 ```sh
-dune build && scripts/smoke.sh
+dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe
+scripts/smoke.sh path/to/ches                # or another binary
 ```
 
-It exits nonzero and names each failed check. It also saves colored captures
-of review screens and prints their directory (`cat` a file to view it). It
-cannot check the cursor shape (tmux does not report it), how the colors look,
-or flicker; check those in a real terminal.
+It prints `ok` or `FAIL` for each check, with a screen dump after each failure,
+and exits nonzero if any check failed. It never touches your own tmux sessions,
+and it deletes its temporary directory on exit. It also saves colored captures
+of review screens (Normal, Insert and dirty, pending `Space` and `Space v`, a
+moved tile, and a save error at 80x24 and 160x48, plus tiny sizes) and prints
+their directory (`cat` a file to view it).
+
+### Checks to do by hand
+
+The smoke script cannot check these, so check them in a real terminal:
+
+- The cursor is a block in Normal mode and a bar in Insert mode, and the shell's
+  own cursor shape comes back after quitting from Insert mode and after an error
+  exit. tmux does not report cursor shape.
+- The colors look right: the review screens, and a live session at about 80×24
+  and 160×48.
+- Nothing flickers while typing fast, scrolling, or resizing.
+- Pasting from the terminal's own clipboard inserts text literally in Insert mode.
+  This depends on the terminal; the script pastes through tmux.
+
+## Storage
+
+The document is an immutable OCaml string behind the abstract `Text_buffer.t`.
+Every edit copies the string, and line lookups scan it. That is the simplest
+thing that is clearly correct, and it is fast enough for source-sized files.
+Only `Text_buffer` knows how text is stored. Its interface works in byte offsets
+at UTF-8 code-point boundaries and in line numbers, so it can later become a rope
+or piece tree without changing the editor, keymap, or screen code.
+
+The cost is that editing time and undo memory grow with file size. Undo history
+keeps a whole snapshot of the text for each step (neighboring steps share one),
+and it is never trimmed. Very large files will be slow to edit, and a long session
+uses memory roughly in proportion to file size times the number of undo steps.
 
 ## Saving: current limitations
 
@@ -150,6 +318,25 @@ and changes made to the file by other programs are not detected.
   character is drawn as itself; after a TAB, an escape form, or the left edge
   of the view it is not drawn.
 - No soft wrapping: long lines scroll horizontally.
+- One document at a time. There is no `:` prompt, no word or line motions
+  (`w`, `b`, `0`, `$`), no `a`, no counts or operators (`dd`, `dw`), no search,
+  and no syntax highlighting.
+- Large files are slow to edit and undo history grows without limit; see
+  [Storage](#storage).
+- No configuration file: tab width and the `j k` escape are set in code, and
+  layout preferences are not saved between runs.
+
+## Next milestones
+
+These come after MVP0 and are not part of it. Roughly in order:
+
+1. Word and line motions, `a`, and composable operators such as `dd` and `dw`.
+2. A small `:` prompt (`:w`, `:q`, `:wq`, `:q!`) using the existing commands and
+   effects.
+3. Better Unicode (grapheme clusters) and line-ending support (CRLF).
+4. Measure real editing latency and memory, and replace the string storage with a
+   rope or piece tree if the numbers justify it.
+5. Search, then language tooling once the core is stable.
 
 ## Known toolchain quirk: ppx_expect source path
 

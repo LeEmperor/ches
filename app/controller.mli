@@ -2,7 +2,8 @@
     execution of the editor's effects.
 
     A frontend opens a file with {!open_file}, then for each normalized input calls
-    {!handle_input} and redraws from {!editor} and {!keymap}. All feedback is in
+    {!handle_input}, applies the view commands it returns to its own layout state, and
+    redraws from {!editor} and {!keymap}. All feedback is in
     [Editor.message] (including save results and errors) and [Keymap.pending] /
     [Keymap.notice]. When {!handle_input} returns [Exit], the frontend restores the
     terminal and ends the process.
@@ -41,6 +42,8 @@ val keymap : t -> Keymap.t
 val last_input_dispatched : t -> bool
 
 (** Feeds [input] through the keymap in the editor's current mode, dispatches the
-    resulting commands, and performs their effects. Commands after one that requests
-    [Exit] are not dispatched. *)
-val handle_input : t -> Keymap.Input.t -> t * Status.t
+    resulting editor commands, and performs their effects. The view commands are
+    returned, in order, for the frontend to apply; they touch no state here. Actions
+    after an editor command that requests [Exit] are neither dispatched nor
+    returned. *)
+val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Status.t

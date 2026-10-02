@@ -118,7 +118,9 @@ shell_count=0
 shell() {
   shell_count=$((shell_count + 1))
   local marker="done-$shell_count"
-  t send-keys -t "$session" -l "$1; echo $marker"
+  # printf, so that the echoed command line does not itself contain the marker and
+  # the poll waits for the command to run, not just for it to be typed.
+  t send-keys -t "$session" -l "$1; printf 'done-%s\\n' $shell_count"
   t send-keys -t "$session" Enter
   poll screen_has "$marker" || fail "shell command did not finish: $1"
 }
@@ -218,6 +220,61 @@ expect_exit 0
 expect_file "$work/edit.txt" "$work/edit.expected"
 
 # ---------------------------------------------------------------------------
+section "Insert-mode editing keys, j k, and an unbound leader key"
+printf 'abcd\n' > "$work/ins.txt"
+printf 'a\n  cd\n' > "$work/ins.expected"
+launch ins.txt
+keys l l
+expect_status "1:3"
+keys h
+expect_status "1:2"
+expect_cursor "6 1 1"
+keys i Enter
+expect_status "2:1"
+expect_screen "  1 a "
+expect_screen "  2 bcd"
+# Soft tabs: Tab inserts spaces to the next multiple of 2 columns, and Backspace
+# deletes spaces back to the previous one.
+keys Tab Tab
+expect_status "2:5"
+expect_screen "  2     bcd"
+keys BSpace
+expect_status "2:3"
+expect_screen "  2   bcd"
+# Backspace after anything but a space deletes one character.
+type_text "x"
+expect_status "2:4"
+keys BSpace
+expect_status "2:3"
+expect_screen "  2   bcd"
+keys DC
+expect_screen "  2   cd"
+# j is inserted when typed; the k after it takes it back and returns to Normal,
+# stepping back one character as Escape does.
+type_text "j"
+expect_screen "  2   jcd"
+type_text "k"
+expect_status "NORMAL"
+expect_status "2:2"
+expect_screen "  2   cd"
+expect_no_screen "jcd"
+keys k
+expect_status "1:1"
+keys Space z
+expect_status "Space z is not bound"
+expect_screen "  2   cd"
+keys Space w
+expect_status "Wrote ins.txt"
+expect_file "$work/ins.txt" "$work/ins.expected"
+# The whole Insert session is one undo step.
+keys u
+expect_screen "  1 abcd"
+expect_status "[+]"
+keys Space Q
+expect_exit 0
+expect_file "$work/ins.txt" "$work/ins.expected"
+
+# ---------------------------------------------------------------------------
 section "empty and missing files"
 : > "$work/empty.txt"
 launch empty.txt
@@ -266,7 +323,6 @@ else
   keys Escape Space w
   expect_status "Failed to write ro/new.txt: Permission denied"
   expect_status "[+]"
-  save_screen error-80x24
   keys Space Q
   expect_exit 0
   [ -e "$work/ro/new.txt" ] && fail "the file was created" || ok "no file created"
@@ -334,7 +390,7 @@ read -r x y flag <<< "$(cursor)"
 [ "$flag" = 1 ] && [ "$y" -lt 2 ] && ok "cursor in the text at 10x3" || fail "cursor not in the text at 10x3"
 resize 160 48
 expect_status "101:1"
-row 0 | grep -qE '^ {27}┌─' && ok "tile centered at 160x48" || fail "tile not centered at 160x48"
+row 0 | grep -qE '^ {27}╭─' && ok "tile centered at 160x48" || fail "tile not centered at 160x48"
 read -r x y flag <<< "$(cursor)"
 [ "$flag" = 1 ] && [ "$x" = 32 ] && [ "$y" -ge 1 ] && [ "$y" -le 45 ] \
   && ok "cursor in the text at 160x48" || fail "cursor not in the text at 160x48: $x $y $flag"
@@ -342,6 +398,98 @@ resize 80 24
 expect_status "101:1"
 keys Space q
 expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "layout commands (Space v)"
+# Where the tile's top corners are, in cells from the left.
+tile_left() { local line prefix; line=$(row 0); prefix=${line%%╭*}; echo "${#prefix}"; }
+tile_right() { local line prefix; line=$(row 0); prefix=${line%%╮*}; echo "${#prefix}"; }
+tile_is() { [ "$(tile_left) $(tile_right)" = "$1 $2" ]; }
+# Waits for FEEDBACK in the status line, then checks the tile's corners and that the
+# cursor is visible on the first text cell of line 1.
+expect_layout() {
+  local feedback=$1 left=$2 right=$3
+  expect_status "$feedback"
+  if poll tile_is "$left" "$right"; then
+    ok "tile spans $left..$right"
+  else
+    fail "tile spans $(tile_left)..$(tile_right), expected $left..$right"
+  fi
+  expect_cursor "$((left + 5)) 1 1"
+}
+resize 160 48
+launch edit.txt
+expect_layout "1:1" 27 132
+keys Space v
+expect_status "Space v"
+keys L
+expect_layout "Offset +10" 37 142
+keys Space v h
+expect_layout "Offset +8" 35 140
+keys Space v H
+expect_layout "Offset -2" 25 130
+keys Space v l
+expect_layout "Offset 0" 27 132
+keys Space v -
+expect_layout "Width 90" 32 127
+keys Space v =
+expect_layout "Width 100" 27 132
+keys Space v +
+expect_layout "Width 110" 22 137
+keys Space v c
+expect_layout "Full width" 0 159
+keys Space v c
+expect_layout "Centered" 22 137
+for _ in 1 2 3 4 5 6; do keys Space v L; done
+expect_layout "Offset +60 (+22 fit)" 44 159
+# A screen too small for the request clamps the tile; a larger one restores it.
+resize 100 30
+if poll tile_is 0 99; then ok "tile clamped to 100 columns"; else fail "tile not clamped at 100x30"; fi
+expect_cursor "5 1 1"
+resize 10 3
+cursor_is() { [ "$(cursor)" = "$1" ]; }
+poll cursor_is "0 0 1" && ok "cursor visible on the text at 10x3" \
+  || fail "cursor not on the text at 10x3: $(cursor)"
+resize 160 48
+if poll tile_is 44 159; then ok "requested placement restored at 160x48"; else fail "placement not restored"; fi
+expect_cursor "49 1 1"
+# Full width ignores the offset; Space v l from full width centers again.
+keys Space v c
+expect_layout "Full width" 0 159
+keys Space v l
+expect_layout "Offset +62 (+22 fit)" 44 159
+keys Space v r
+expect_layout "Layout reset" 27 132
+for _ in 1 2 3 4 5 6 7 8 9 10; do keys Space v -; done
+expect_layout "Width 20" 67 92
+for _ in $(seq 1 50); do keys Space v +; done
+expect_layout "Width 500 (154 fit)" 0 159
+keys Space v r
+expect_layout "Layout reset" 27 132
+keys Space v z
+expect_status "Space v z is not bound"
+# After Escape, l moves the cursor instead of nudging the tile.
+keys Space v Escape l
+expect_status "1:2"
+poll tile_is 27 132 && ok "Escape cancels Space v" || fail "Escape did not cancel Space v"
+keys h
+expect_status "1:1"
+# None of this touched the document: no dirty marker, nothing to undo, a plain quit.
+status_has "[+]" && fail "layout commands made the document dirty" || ok "document still clean"
+keys u
+expect_status "Already at oldest change"
+# In Insert mode the same keys are text.
+keys i Space v c Escape
+expect_screen "  1  vcHi hello"
+expect_status "1:3"
+poll tile_is 27 132 && ok "tile unmoved by Insert-mode text" || fail "tile moved"
+expect_cursor "34 1 1"
+keys u
+expect_screen "  1 Hi hello"
+keys Space q
+expect_exit 0
+expect_file "$work/edit.txt" "$work/edit.expected"
+resize 80 24
 
 # ---------------------------------------------------------------------------
 section "scrolling a wide line"
@@ -400,11 +548,21 @@ expect_status "INSERT"
 pane_pid=$(t display -p -t "$session" '#{pane_pid}')
 kill -TERM "$(pgrep -P "$pane_pid")"
 expect_exit 1
+launch edit.txt
+keys i
+expect_status "INSERT"
+kill -HUP "$(pgrep -P "$pane_pid")"
+expect_exit 1
 shell "clear; stty -g > $work/stty.before"
 mkdir -p "$work/adir"
 t send-keys -t "$session" -l "$ches adir"
 t send-keys -t "$session" Enter
 expect_screen "ches: Cannot open adir: is a directory"
+expect_exit 1
+shell "clear; stty -g > $work/stty.before"
+t send-keys -t "$session" -l "$ches edit.txt < /dev/null"
+t send-keys -t "$session" Enter
+expect_screen "ches: standard input is not a terminal"
 expect_exit 1
 
 # ---------------------------------------------------------------------------
@@ -430,9 +588,43 @@ for size in 80x24 160x48; do
   type_text "  "
   expect_status "INSERT"
   save_screen "insert-dirty-$size"
-  keys Escape Space Q
+  keys Escape Space v
+  expect_status "Space v"
+  save_screen "pending-view-$size"
+  keys L
+  expect_status "Offset +10"
+  save_screen "offset-$size"
+  keys Space Q
   expect_exit 0
 done
+if [ "$(id -u)" != 0 ]; then
+  mkdir "$work/review-ro"
+  cp "$work/sample.ml" "$work/review-ro/"
+  chmod 444 "$work/review-ro/sample.ml"
+  for size in 80x24 160x48; do
+    resize "${size%x*}" "${size#*x}"
+    launch review-ro/sample.ml
+    keys x Space w
+    expect_status "Permission denied"
+    save_screen "error-$size"
+    keys Space Q
+    expect_exit 0
+  done
+fi
+resize 80 24
+launch sample.ml
+keys j
+expect_status "2:1"
+for size in 40x10 20x6 10x3 1x1; do
+  resize "${size%x*}" "${size#*x}"
+  sleep 0.3
+  poll alternate_is 1 || fail "exited at $size"
+  save_screen "tiny-$size"
+done
+resize 80 24
+expect_status "2:1"
+keys Space q
+expect_exit 0
 
 echo
 echo "review screens (view with: cat FILE): $screens"

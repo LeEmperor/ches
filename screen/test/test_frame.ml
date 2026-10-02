@@ -8,7 +8,7 @@ let%expect_test "a small file at 80x24 in the centered tile" =
   show ~width:80 ~height:24 (ui "let foo x = x + 1\n\nlet bar = foo 41\n");
   [%expect
     {|
-    ┌──────────────────────────────────────────────────────────────────────────────┐|
+    ╭─ f.txt ──────────────────────────────────────────────────────────────────────╮|
     │  1 let foo x = x + 1                                                         │|
     │  2                                                                           │|
     │  3 let bar = foo 41                                                          │|
@@ -30,7 +30,7 @@ let%expect_test "a small file at 80x24 in the centered tile" =
     │                                                                              │|
     │                                                                              │|
     │                                                                              │|
-    └──────────────────────────────────────────────────────────────────────────────┘|
+    ╰──────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  f.txt                                                              1:1 |
     cursor: 5,1 Block
     |}]
@@ -40,12 +40,12 @@ let%expect_test "styles" =
   show_styled ~width:30 ~height:7 (ui "ab\tc\001\n\nx");
   [%expect
     {|
-    Border[┌────────────────────────────┐]
+    Border[╭─] Title[ f.txt ] Border[────────────────────╮]
     Border[│] Gutter_cursor_line[  1 ] Text_cursor_line[ab      c] Special_cursor_line[^A] Text_cursor_line[             ] Border[│]
     Border[│] Gutter[  2 ] Text[                        ] Border[│]
     Border[│] Gutter[  3 ] Text[x                       ] Border[│]
     Border[│] Gutter[    ] Text[                        ] Border[│]
-    Border[└────────────────────────────┘]
+    Border[╰────────────────────────────╯]
     (Mode Normal)[ NORMAL ] Status[ f.txt            1:1 ]
     |}]
 ;;
@@ -54,11 +54,11 @@ let%expect_test "an empty file" =
   show ~width:30 ~height:6 (ui "");
   [%expect
     {|
-    ┌────────────────────────────┐|
+    ╭─ f.txt ────────────────────╮|
     │  1                         │|
     │                            │|
     │                            │|
-    └────────────────────────────┘|
+    ╰────────────────────────────╯|
      NORMAL  f.txt            1:1 |
     cursor: 5,1 Block
     |}]
@@ -69,13 +69,13 @@ let%expect_test "a tall file scrolls to keep the cursor visible" =
   show ~width:30 ~height:8 t;
   [%expect
     {|
-    ┌────────────────────────────┐|
+    ╭─ f.txt ────────────────────╮|
     │  5 line 5                  │|
     │  6 line 6                  │|
     │  7 line 7                  │|
     │  8 line 8                  │|
     │  9 line 9                  │|
-    └────────────────────────────┘|
+    ╰────────────────────────────╯|
      NORMAL  f.txt            9:1 |
     cursor: 5,5 Block
     |}];
@@ -83,13 +83,13 @@ let%expect_test "a tall file scrolls to keep the cursor visible" =
   show ~width:30 ~height:8 t;
   [%expect
     {|
-    ┌────────────────────────────┐|
+    ╭─ f.txt ────────────────────╮|
     │  1 line 1                  │|
     │  2 line 2                  │|
     │  3 line 3                  │|
     │  4 line 4                  │|
     │  5 line 5                  │|
-    └────────────────────────────┘|
+    ╰────────────────────────────╯|
      NORMAL  f.txt            1:1 |
     cursor: 5,1 Block
     |}]
@@ -102,11 +102,11 @@ let%expect_test "a wide line scrolls horizontally, and the cursor follows" =
   show ~width:30 ~height:6 t;
   [%expect
     {|
-    ┌────────────────────────────┐|
+    ╭─ f.txt ────────────────────╮|
     │  1 _______1________2_______│|
     │  2 ort                     │|
     │  3                         │|
-    └────────────────────────────┘|
+    ╰────────────────────────────╯|
      NORMAL  f.txt           1:26 |
     cursor: 28,1 Block
     |}];
@@ -115,11 +115,11 @@ let%expect_test "a wide line scrolls horizontally, and the cursor follows" =
   show ~width:30 ~height:6 t;
   [%expect
     {|
-    ┌────────────────────────────┐|
+    ╭─ f.txt ────────────────────╮|
     │  1 0________1________2_____│|
     │  2 short                   │|
     │  3                         │|
-    └────────────────────────────┘|
+    ╰────────────────────────────╯|
      NORMAL  f.txt            2:5 |
     cursor: 9,2 Block
     |}]
@@ -133,11 +133,11 @@ let%expect_test "control characters, C1 controls and bidi overrides show escape 
     (ui "\027[31mred\027[0m\n\194\133x\226\128\174y\239\187\191z\n");
   [%expect
     {|
-    ┌──────────────────────────────────────┐|
+    ╭─ f.txt ──────────────────────────────╮|
     │  1 ^[[31mred^[[0m                    │|
     │  2 <85>x<202e>y<feff>z               │|
     │  3                                   │|
-    └──────────────────────────────────────┘|
+    ╰──────────────────────────────────────╯|
      NORMAL  f.txt                      1:1 |
     cursor: 5,1 Block
     |}]
@@ -147,11 +147,11 @@ let%expect_test "tabs, wide and zero-width characters" =
   show ~width:40 ~height:6 (ui "\tx\n中文e\204\129!\n");
   [%expect
     {|
-    ┌──────────────────────────────────────┐|
+    ╭─ f.txt ──────────────────────────────╮|
     │  1         x                         │|
     │  2 中文é!                            │|
     │  3                                   │|
-    └──────────────────────────────────────┘|
+    ╰──────────────────────────────────────╯|
      NORMAL  f.txt                      1:1 |
     cursor: 5,1 Block
     |}]
@@ -287,5 +287,60 @@ let%expect_test "status line fields drop by priority as it narrows" =
     cursor: none
      NORMAL  Failed to> |
     cursor: none
+    |}]
+;;
+
+let%expect_test "the filename in the top border is cut from the left, then omitted" =
+  let t = ui ~path:"/home/user/projects/ches/src/some_long_name.ml" "abc" in
+  List.iter [ 60; 40; 26; 24; 23 ] ~f:(fun width ->
+    let frame = Frame.render t ~width ~height:6 in
+    print_endline (List.hd_exn (String.split_lines (Frame.to_string frame))));
+  [%expect {|
+    ╭─ /home/user/projects/ches/src/some_long_name.ml ─────────╮|
+    ╭─ <ojects/ches/src/some_long_name.ml ─╮|
+    ╭─ <c/some_long_name.ml ─╮|
+    ╭─ <some_long_name.ml ─╮|
+    ╭─ <ome_long_name.ml ─╮|
+    |}];
+  (* Escape forms in the name are mapped, as in the status line. *)
+  show_styled ~width:30 ~height:6 (ui ~path:"a\027b.txt" "");
+  [%expect {|
+    Border[╭─] Title[ a] Title_special[^[] Title[b.txt ] Border[─────────────────╮]
+    Border[│] Gutter_cursor_line[  1 ] Text_cursor_line[                        ] Border[│]
+    Border[│] Gutter[    ] Text[                        ] Border[│]
+    Border[│] Gutter[    ] Text[                        ] Border[│]
+    Border[╰────────────────────────────╯]
+    (Mode Normal)[ NORMAL ] Status[ a] Status_special[^[] Status[b.txt         1:1 ]
+    |}];
+  (* With no path, the border is unbroken. *)
+  let no_path =
+    Ui_state.create (Ches_app.Controller.create (Ches_core.Editor.create Ches_core.Text_buffer.empty))
+  in
+  show ~width:30 ~height:6 no_path;
+  [%expect {|
+    ╭────────────────────────────╮|
+    │  1                         │|
+    │                            │|
+    │                            │|
+    ╰────────────────────────────╯|
+     NORMAL                   1:1 |
+    cursor: 5,1 Block
+    |}]
+;;
+
+let%expect_test "status fields as data" =
+  let t = run (ui "abc") (keys "x ") in
+  print_s [%sexp (Status.fields t : Status_field.t list)];
+  [%expect {|
+    (((id Mode) (spans (((text " NORMAL ") (width 8) (style (Mode Normal)))))
+      (priority 0) (fit Whole) (side Left))
+     ((id Filename) (spans (((text f.txt) (width 5) (style Status))))
+      (priority 5) (fit Cut_left) (side Left))
+     ((id Dirty) (spans (((text [+]) (width 3) (style Dirty)))) (priority 3)
+      (fit Whole) (side Left))
+     ((id Pending) (spans (((text Space) (width 5) (style Pending))))
+      (priority 2) (fit Whole) (side Right))
+     ((id Position) (spans (((text 1:1) (width 3) (style Status)))) (priority 4)
+      (fit Whole) (side Right)))
     |}]
 ;;

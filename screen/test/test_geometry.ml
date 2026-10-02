@@ -2,7 +2,7 @@ open! Core
 open Ches_screen
 
 let show ?(prefs = Geometry.Prefs.default) ?(line_count = 10) width height =
-  let { Geometry.tile; border; gutter; gutter_digits = _; text; status; offset } =
+  let { Geometry.tile; border; gutter; gutter_digits = _; text; status; offset; areas = _ } =
     Geometry.compute prefs ~width ~height ~line_count
   in
   let rect ({ x; y; width; height } : Geometry.Rect.t) =

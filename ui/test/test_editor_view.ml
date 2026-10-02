@@ -33,11 +33,11 @@ let%expect_test "the app renders, edits, and follows resizes" =
     {|
     (cursor (((position ((x 5) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
-    │┌──────────────────────────────────────┐│
+    │╭─ f.txt ──────────────────────────────╮│
     ││  1 hello                             ││
     ││  2 world                             ││
     ││  3                                   ││
-    │└──────────────────────────────────────┘│
+    │╰──────────────────────────────────────╯│
     │ NORMAL  f.txt                      1:1 │
     └────────────────────────────────────────┘
     |}];
@@ -47,11 +47,11 @@ let%expect_test "the app renders, edits, and follows resizes" =
     {|
     (cursor (((position ((x 5) (y 2))) (kind Block))))
     ┌────────────────────────────────────────┐
-    │┌──────────────────────────────────────┐│
+    │╭─ f.txt ──────────────────────────────╮│
     ││  1 hello                             ││
     ││  2 xworld                            ││
     ││  3                                   ││
-    │└──────────────────────────────────────┘│
+    │╰──────────────────────────────────────╯│
     │ NORMAL  f.txt [+]                  2:1 │
     └────────────────────────────────────────┘
     |}];
@@ -77,11 +77,11 @@ let%expect_test "events in one frame all apply, in order" =
     {|
     (cursor (((position ((x 6) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
-    │┌──────────────────────────────────────┐│
+    │╭─ f.txt ──────────────────────────────╮│
     ││  1 ab                                ││
     ││                                      ││
     ││                                      ││
-    │└──────────────────────────────────────┘│
+    │╰──────────────────────────────────────╯│
     │ NORMAL  f.txt [+]                  1:2 │
     └────────────────────────────────────────┘
     |}]
@@ -94,5 +94,49 @@ let%expect_test "Space q exits once; later input is ignored" =
   [%expect {|
     EXIT
     (cursor (((position ((x 5) (y 1))) (kind Block))))
+    |}]
+;;
+
+let%expect_test "Space v layout commands move the tile, and resizes keep the request" =
+  let handle = handle ~width:50 ~height:6 "abc" in
+  (* Width 100 down to 30, then 10 cells right. *)
+  send handle (chars (String.concat (List.init 7 ~f:(fun _ -> " v-")) ^ " vL"));
+  Handle.show handle;
+  [%expect {|
+    (cursor (((position ((x 19) (y 1))) (kind Block))))
+    ┌──────────────────────────────────────────────────┐
+    │              ╭─ f.txt ──────────────────────────╮│
+    │              │  1 abc                           ││
+    │              │                                  ││
+    │              │                                  ││
+    │              ╰──────────────────────────────────╯│
+    │ NORMAL  f.txt Offset +10 (+7 fit)            1:1 │
+    └──────────────────────────────────────────────────┘
+    |}];
+  Bonsai_term_test.set_dimensions handle { width = 40; height = 6 };
+  Handle.show handle;
+  [%expect {|
+    (cursor (((position ((x 9) (y 1))) (kind Block))))
+    ┌────────────────────────────────────────┐
+    │    ╭─ f.txt ──────────────────────────╮│
+    │    │  1 abc                           ││
+    │    │                                  ││
+    │    │                                  ││
+    │    ╰──────────────────────────────────╯│
+    │ NORMAL  f.txt Offset +10 (+7 fit)  1:1 │
+    └────────────────────────────────────────┘
+    |}];
+  send handle (chars " vc");
+  Handle.show handle;
+  [%expect {|
+    (cursor (((position ((x 5) (y 1))) (kind Block))))
+    ┌────────────────────────────────────────┐
+    │╭─ f.txt ──────────────────────────────╮│
+    ││  1 abc                               ││
+    ││                                      ││
+    ││                                      ││
+    │╰──────────────────────────────────────╯│
+    │ NORMAL  f.txt Full width           1:1 │
+    └────────────────────────────────────────┘
     |}]
 ;;

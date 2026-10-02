@@ -52,12 +52,15 @@ val exited : t -> bool
     Keys between [Paste_start] and [Paste_end] are collected with [Key.text] and
     delivered as one paste at the end; keys without text are dropped. Everything else
     goes to the controller, with its effects (such as saving) performed before this
-    returns.
+    returns. View commands the controller returns update {!prefs}: see
+    {!apply_view}.
 
     The message slot shows the feedback of the most recent input that produced any:
-    the keymap's notice if it set one, otherwise the editor's message if the input
-    dispatched an editor command (which may clear the slot). Other inputs, such as the
-    first key of a sequence, leave it unchanged.
+    the keymap's notice if it set one; otherwise layout feedback if the input produced
+    a view command, such as [Width 110 (76 fit)] (the requested value, then the
+    effective one on this screen when it differs); otherwise the editor's message if
+    the input dispatched an editor command (which may clear the slot). Other inputs,
+    such as the first key of a sequence, leave it unchanged.
 
     The scroll is then fitted to keep the cursor visible. Once an input returns
     [Exit], no later input is applied (see {!exited}). *)
@@ -67,6 +70,17 @@ val apply
   -> height:int
   -> Input.t
   -> t * Ches_app.Controller.Status.t
+
+(** The requested preferences after a view command. [Shift] and [Adjust_width] also
+    select centered mode, so their effect is visible. The requested width is kept
+    within {!min_width}..{!max_width} and the offset within
+    [-max_offset..max_offset]; the screen may show less (see {!Geometry.compute}),
+    and the request is kept for when it grows. *)
+val apply_view : Geometry.Prefs.t -> View_command.t -> Geometry.Prefs.t
+
+val min_width : int
+val max_width : int
+val max_offset : int
 
 (** [apply] for each input in order, stopping at [Exit]. *)
 val apply_all

@@ -19,18 +19,21 @@ let create ?(config = Keymap.Config.default) ?(path = "f.txt") s =
 ;;
 
 (* Feed [inputs] through the keymap and the editor, as a frontend would, printing the
-   commands produced and the effects requested. *)
+   actions produced and the effects requested. *)
 let run session inputs =
   List.fold inputs ~init:session ~f:(fun session input ->
-    let keymap, commands =
+    let keymap, actions =
       Keymap.feed session.keymap ~mode:(Editor.mode session.editor) input
     in
     let editor =
-      List.fold commands ~init:session.editor ~f:(fun editor command ->
-        print_endline (Sexp.to_string [%sexp (command : Command.t)]);
-        let editor, effects = Editor.dispatch editor command in
-        List.iter effects ~f:(fun effect -> print_s [%sexp (effect : Effect.t)]);
-        editor)
+      List.fold actions ~init:session.editor ~f:(fun editor action ->
+        print_endline (Sexp.to_string [%sexp (action : Keymap.Action.t)]);
+        match action with
+        | View _ -> editor
+        | Editor command ->
+          let editor, effects = Editor.dispatch editor command in
+          List.iter effects ~f:(fun effect -> print_s [%sexp (effect : Effect.t)]);
+          editor)
     in
     { editor; keymap })
 ;;
@@ -605,5 +608,83 @@ let%expect_test "Backspace deletes a whole soft tab" =
     (Delete_soft_tab_backward 2)
     INSERT 0:0
     > |
+    |}]
+;;
+
+let%expect_test "Space v layout bindings produce view actions, shown tagged" =
+  let t = run (create "abc") (keys " v") in
+  show t;
+  [%expect {|
+    NORMAL 0:0 pending="Space v"
+    > |abc
+    |}];
+  let t = run t (keys "c v  vh vl vH vL v- v+ v= vr") in
+  show t;
+  [%expect {|
+    (View Toggle_centered)
+    (View(Shift -2))
+    (View(Shift 2))
+    (View(Shift -10))
+    (View(Shift 10))
+    (View(Adjust_width -10))
+    (View(Adjust_width 10))
+    (View(Adjust_width 10))
+    (View Reset)
+    NORMAL 0:0
+    > |abc
+    |}];
+  (* View actions touch nothing in the editor. *)
+  let t = run (create "abc") (keys "x vl vcu") in
+  show t;
+  [%expect {|
+    Delete_char
+    (View(Shift 2))
+    (View Toggle_centered)
+    Undo
+    NORMAL 0:0
+    > |abc
+    |}]
+;;
+
+let%expect_test "Space v: Escape cancels, unknown continuations give a notice" =
+  let t = run (create "abc") (keys " v<Esc>") in
+  show t;
+  [%expect {|
+    NORMAL 0:0
+    > |abc
+    |}];
+  let t = run t (keys " vz") in
+  show t;
+  [%expect {|
+    NORMAL 0:0 notice="Space v z is not bound"
+    > |abc
+    |}];
+  (* Nothing leaks: [l] after a cancelled prefix moves. *)
+  let t = run t (keys " vvl") in
+  show t;
+  [%expect {|
+    (Move Right)
+    NORMAL 0:1
+    > a|bc
+    |}]
+;;
+
+let%expect_test "Insert mode types Space v sequences literally" =
+  let t = run (create "") (keys "i vc vL v=<Esc>") in
+  show t;
+  [%expect {|
+    Enter_insert
+    (Insert_text" ")
+    (Insert_text v)
+    (Insert_text c)
+    (Insert_text" ")
+    (Insert_text v)
+    (Insert_text L)
+    (Insert_text" ")
+    (Insert_text v)
+    (Insert_text =)
+    Exit_insert
+    NORMAL 0:8 dirty
+    >  vc vL v|=
     |}]
 ;;

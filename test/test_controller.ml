@@ -37,7 +37,8 @@ let open_file ~dir path =
 (* Feed keys, reporting an exit request. *)
 let run t keys =
   List.fold (Key_notation.keys keys) ~init:t ~f:(fun t input ->
-    let t, status = Controller.handle_input t input in
+    let t, views, status = Controller.handle_input t input in
+    List.iter views ~f:(fun view -> print_s [%sexp View (view : Ches_input.View_command.t)]);
     (match status with
      | Exit -> print_endline "EXIT"
      | Running -> ());
@@ -261,7 +262,9 @@ let%expect_test "last_input_dispatched reports whether an input ran any command"
     (List.fold [ "z"; " "; "x"; "u"; "<C-c>"; "i" ] ~init:t ~f:(fun t keys ->
        match Key_notation.keys keys with
        | [ input ] ->
-         let t, (_ : Controller.Status.t) = Controller.handle_input t input in
+         let t, (_ : Ches_input.View_command.t list), (_ : Controller.Status.t) =
+           Controller.handle_input t input
+         in
          printf "%S %b\n" keys (Controller.last_input_dispatched t);
          t
        | _ -> assert false)
@@ -275,5 +278,26 @@ let%expect_test "last_input_dispatched reports whether an input ran any command"
     "u" true
     "<C-c>" false
     "i" true
+    |}]
+;;
+
+let%expect_test "view commands are returned for the frontend and touch no editor state" =
+  let t = Controller.create (Editor.create ~path:"f.txt" Text_buffer.empty) in
+  let before = Controller.editor t in
+  let t = run t " vL vc vr" in
+  [%expect {|
+    (View (Shift 10))
+    (View Toggle_centered)
+    (View Reset)
+    |}];
+  print_s
+    [%message
+      (phys_equal before (Controller.editor t) : bool)
+        (Controller.last_input_dispatched t : bool)
+        (Ches_input.Keymap.pending (Controller.keymap t) : string option)];
+  [%expect {|
+    (("phys_equal before (Controller.editor t)" true)
+     ("Controller.last_input_dispatched t" false)
+     ("Ches_input.Keymap.pending (Controller.keymap t)" ()))
     |}]
 ;;

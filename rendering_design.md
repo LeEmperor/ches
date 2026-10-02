@@ -6,7 +6,7 @@ This is the rendering companion to [the architecture brief](ches_editor_prototyp
 and [the MVP0 phase plan](mvp0_plan.md). The phase plan determines implementation
 order; this document records visual intent, concrete layout behavior, and future
 directions. The MVP0 requirements below belong to phase 6, not a restart of
-phases 1–4. No commits, pushes, or Git initialization by implementation agents.
+phases 1–4. No commits, pushes, or other Git state changes by implementation agents.
 
 ## Visual intent
 

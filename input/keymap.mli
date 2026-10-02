@@ -1,4 +1,5 @@
-(** Modal key bindings: a state machine from {!Input.t} to editor commands.
+(** Modal key bindings: a state machine from {!Input.t} to actions: editor commands,
+    and layout commands for the view.
 
     The keymap owns only the pending key sequence (e.g. a Space leader waiting for its
     continuation). The editor's mode is passed in on every call, so the frontend
@@ -16,6 +17,12 @@
       Normal  Space w                Save
       Normal  Space q                Quit
       Normal  Space Q                Force_quit
+      Normal  Space v c              View Toggle_centered
+      Normal  Space v h / l          View (Shift -2) / (Shift 2)
+      Normal  Space v H / L          View (Shift -10) / (Shift 10)
+      Normal  Space v -              View (Adjust_width -10)
+      Normal  Space v + / =          View (Adjust_width 10)
+      Normal  Space v r              View Reset
       Normal  Escape                 Cancel a pending sequence
       Both    Ctrl-c                 No command: cancel, and hint at Space q
       Insert  characters, Space      Insert_text (literal)
@@ -37,6 +44,9 @@
     an Insert-mode escape sequence, and sets {!notice} to a hint about [Space q], so
     that a user who expects Ctrl-c to quit is not left stuck. (A terminal frontend in
     raw mode receives Ctrl-c as an ordinary key, not a signal.)
+
+    [Space v] is the prefix for layout commands ({!View_command.t}), which the frontend
+    applies to its own view state; every other binding is an editor command.
 
     Other keys are ignored. In Normal mode, a key that does not continue a pending
     sequence cancels it without producing commands, and sets {!notice}. A pending
@@ -87,15 +97,24 @@ module Config : sig
   val default : t
 end
 
+module Action : sig
+  (** What a key sequence asks for. [sexp_of] prints an editor command untagged, as
+      plain [Command.t], and a view command as [(View ...)]. *)
+  type t =
+    | Editor of Command.t
+    | View of View_command.t
+  [@@deriving sexp_of, equal]
+end
+
 type t [@@deriving sexp_of]
 
 (** A keymap with no pending sequence. Raises if [config.tab] is [Spaces n] with
     [n < 1]. *)
 val create : Config.t -> t
 
-(** [feed t ~mode input] interprets [input] in [mode] and returns the commands to
-    dispatch, in order. *)
-val feed : t -> mode:Ches_core.Mode.t -> Input.t -> t * Command.t list
+(** [feed t ~mode input] interprets [input] in [mode] and returns the actions to
+    perform, in order. *)
+val feed : t -> mode:Ches_core.Mode.t -> Input.t -> t * Action.t list
 
 (** The keys of an incomplete sequence, for the status line, e.g. ["Space"]. *)
 val pending : t -> string option

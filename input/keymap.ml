@@ -25,6 +25,18 @@ module Config = struct
   let default = { tab = Spaces 2; insert_escape = Some ('j', 'k') }
 end
 
+module Action = struct
+  type t =
+    | Editor of Command.t
+    | View of View_command.t
+  [@@deriving equal]
+
+  let sexp_of_t = function
+    | Editor command -> [%sexp (command : Command.t)]
+    | View view -> [%sexp View (view : View_command.t)]
+  ;;
+end
+
 type t =
   { config : Config.t
   ; pending : Key.t list (** Keys of an incomplete Normal-mode sequence, in order. *)
@@ -44,19 +56,32 @@ let create (config : Config.t) =
 (* The state between sequences: only the configuration carries over. *)
 let reset t = create t.config
 
-let normal_bindings : (Key.t list * Command.t) list =
+let normal_bindings : (Key.t list * Action.t) list =
   let leader = Key.char ' ' in
-  [ [ Key.char 'h' ], Move Left
-  ; [ Key.char 'j' ], Move Down
-  ; [ Key.char 'k' ], Move Up
-  ; [ Key.char 'l' ], Move Right
-  ; [ Key.char 'i' ], Enter_insert
-  ; [ Key.char 'x' ], Delete_char
-  ; [ Key.char 'u' ], Undo
-  ; [ Ctrl 'r' ], Redo
-  ; [ leader; Key.char 'w' ], Save
-  ; [ leader; Key.char 'q' ], Quit
-  ; [ leader; Key.char 'Q' ], Force_quit
+  let editor keys (command : Command.t) = List.map keys ~f:Key.char, Action.Editor command in
+  let view c (command : View_command.t) =
+    [ leader; Key.char 'v'; Key.char c ], Action.View command
+  in
+  [ editor [ 'h' ] (Move Left)
+  ; editor [ 'j' ] (Move Down)
+  ; editor [ 'k' ] (Move Up)
+  ; editor [ 'l' ] (Move Right)
+  ; editor [ 'i' ] Enter_insert
+  ; editor [ 'x' ] Delete_char
+  ; editor [ 'u' ] Undo
+  ; ([ Ctrl 'r' ], Editor Redo)
+  ; editor [ ' '; 'w' ] Save
+  ; editor [ ' '; 'q' ] Quit
+  ; editor [ ' '; 'Q' ] Force_quit
+  ; view 'c' Toggle_centered
+  ; view 'h' (Shift (-2))
+  ; view 'l' (Shift 2)
+  ; view 'H' (Shift (-10))
+  ; view 'L' (Shift 10)
+  ; view '-' (Adjust_width (-10))
+  ; view '+' (Adjust_width 10)
+  ; view '=' (Adjust_width 10)
+  ; view 'r' Reset
   ]
 ;;
 
@@ -65,7 +90,7 @@ let keys_to_string keys = List.map keys ~f:Key.to_string_hum |> String.concat ~s
 let feed_normal_key t (key : Key.t) =
   let keys = t.pending @ [ key ] in
   match List.Assoc.find normal_bindings keys ~equal:[%equal: Key.t list] with
-  | Some command -> reset t, [ command ]
+  | Some action -> reset t, [ action ]
   | None ->
     let is_prefix (sequence, _) =
       List.is_prefix sequence ~prefix:keys ~equal:Key.equal
@@ -88,7 +113,7 @@ let feed_insert_key t (key : Key.t) =
   if t.escape_started && is_escape_char 1
   then
     (* The first character was inserted when typed; take it back before leaving. *)
-    reset t, [ Command.Delete_backward; Exit_insert ]
+    reset t, [ Action.Editor Delete_backward; Editor Exit_insert ]
   else (
     let commands : Command.t list =
       match key with
@@ -107,7 +132,8 @@ let feed_insert_key t (key : Key.t) =
          | Some text -> [ Insert_text text ]
          | None -> [])
     in
-    { (reset t) with escape_started = is_escape_char 0 }, commands)
+    ( { (reset t) with escape_started = is_escape_char 0 }
+    , List.map commands ~f:(fun command -> Action.Editor command) ))
 ;;
 
 let quit_hint = "To quit, use Space q in Normal mode"
@@ -119,7 +145,7 @@ let feed t ~(mode : Mode.t) (input : Input.t) =
   | Normal, Paste _ -> { (reset t) with notice = Some "Paste ignored in Normal mode" }, []
   | Insert, Key key -> feed_insert_key t key
   | Insert, Paste text ->
-    reset t, if String.is_empty text then [] else [ Insert_text text ]
+    reset t, if String.is_empty text then [] else [ Action.Editor (Insert_text text) ]
 ;;
 
 let pending t = if List.is_empty t.pending then None else Some (keys_to_string t.pending)

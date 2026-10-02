@@ -1,0 +1,49 @@
+(** Styled runs of text on one screen row, and the operations that lay them out by
+    display cell. Each span's [text] is valid UTF-8 without control characters and, by
+    {!Cell_map}'s widths, occupies exactly [width] cells. *)
+
+open! Core
+
+type t =
+  { text : string
+  ; width : int
+  ; style : Style.t
+  }
+[@@deriving sexp_of]
+
+(** [create style text ~width]: [text] must already be mapped (see {!of_text}). *)
+val create : Style.t -> string -> width:int -> t
+
+(** [width] spaces. *)
+val blank : Style.t -> int -> t
+
+(** Total width of a row of spans. *)
+val total_width : t list -> int
+
+(** Joins adjacent spans of the same style and drops empty ones. *)
+val merge : t list -> t list
+
+(** The cells [\[left, left + cols)] of a line laid out as [glyphs], exactly [cols]
+    wide, in [text], with escape forms and clip markers in [special]. A partly visible
+    TAB shows spaces, a partly visible escape form its visible characters, and a wide
+    character cut by an edge [<] or [>]. *)
+val of_glyphs
+  :  Cell_map.Glyph.t array
+  -> left:int
+  -> cols:int
+  -> text:Style.t
+  -> special:Style.t
+  -> t list
+
+(** All of [s], mapped by {!Cell_map}, with escape forms in [special]. *)
+val of_text : string -> style:Style.t -> special:Style.t -> t list
+
+(** The first [n] cells of [spans], a single line of text. A glyph cut in two becomes
+    spaces. *)
+val take : t list -> n:int -> t list
+
+(** The first [n] cells of [spans], ending with [>] in [marker_style] when cut. *)
+val keep_left : t list -> n:int -> marker_style:Style.t -> t list
+
+(** The last [n] cells of [spans], starting with [<] in [marker_style] when cut. *)
+val keep_right : t list -> n:int -> marker_style:Style.t -> t list

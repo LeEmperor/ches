@@ -40,10 +40,15 @@ let perform editor (effect : Effect.t) : Editor.t * Status.t =
     Editor.handle_outcome editor (Write_file_finished { path; text; revision; result }), Running
 ;;
 
-let rec dispatch_all editor (commands : Command.t list) : Editor.t * Status.t =
-  match commands with
-  | [] -> editor, Running
-  | command :: rest ->
+(* Dispatches the editor commands in [actions] and collects the view commands, until
+   an [Exit]. Returns the view commands in order, and whether any command ran. *)
+let rec perform_all editor (actions : Keymap.Action.t list) ~views ~dispatched
+  : Editor.t * View_command.t list * bool * Status.t
+  =
+  match actions with
+  | [] -> editor, List.rev views, dispatched, Running
+  | View view :: rest -> perform_all editor rest ~views:(view :: views) ~dispatched
+  | Editor command :: rest ->
     let editor, effects = Editor.dispatch editor command in
     let editor, status =
       List.fold effects ~init:(editor, Status.Running) ~f:(fun (editor, status) effect ->
@@ -52,12 +57,14 @@ let rec dispatch_all editor (commands : Command.t list) : Editor.t * Status.t =
         | editor, Running -> editor, status)
     in
     (match status with
-     | Exit -> editor, Exit
-     | Running -> dispatch_all editor rest)
+     | Exit -> editor, List.rev views, true, Exit
+     | Running -> perform_all editor rest ~views ~dispatched:true)
 ;;
 
 let handle_input t input =
-  let keymap, commands = Keymap.feed t.keymap ~mode:(Editor.mode t.editor) input in
-  let editor, status = dispatch_all t.editor commands in
-  { editor; keymap; dispatched = not (List.is_empty commands) }, status
+  let keymap, actions = Keymap.feed t.keymap ~mode:(Editor.mode t.editor) input in
+  let editor, views, dispatched, status =
+    perform_all t.editor actions ~views:[] ~dispatched:false
+  in
+  { editor; keymap; dispatched }, views, status
 ;;

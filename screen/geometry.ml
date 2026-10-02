@@ -23,6 +23,20 @@ end
 
 let min_decorated_text_width = 16
 
+module Area = struct
+  type layout =
+    | Status_row
+    | Border_title
+  [@@deriving sexp_of, equal]
+
+  type t =
+    { rect : Rect.t
+    ; layout : layout
+    ; fields : Status_field.Id.t list
+    }
+  [@@deriving sexp_of]
+end
+
 (* The border also needs this many text rows. *)
 let min_bordered_text_height = 3
 
@@ -34,6 +48,7 @@ type t =
   ; text : Rect.t
   ; status : Rect.t
   ; offset : int
+  ; areas : Area.t list
   }
 [@@deriving sexp_of]
 
@@ -77,7 +92,27 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
     ; height = inner_height
     }
   in
-  { tile = { x = tile_x; y = 0; width = tile_width; height = tile_height }
+  let tile = { Rect.x = tile_x; y = 0; width = tile_width; height = tile_height } in
+  let status = { Rect.x = 0; y = tile_height; width; height = status_height } in
+  let areas =
+    let status_area =
+      { Area.rect = status
+      ; layout = Status_row
+      ; fields = [ Mode; Filename; Dirty; Message; Pending; Position ]
+      }
+    in
+    let title_area =
+      { Area.rect = { tile with x = tile.x + 1; width = tile.width - 2; height = 1 }
+      ; layout = Border_title
+      ; fields = [ Filename ]
+      }
+    in
+    List.filter_opt
+      [ Option.some_if border title_area
+      ; Option.some_if (status_height > 0) status_area
+      ]
+  in
+  { tile
   ; border
   ; gutter
   ; gutter_digits
@@ -87,7 +122,8 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
       ; width = text_width
       ; height = inner_height
       }
-  ; status = { x = 0; y = tile_height; width; height = status_height }
+  ; status
   ; offset = (if prefs.centered then tile_x - centered_x else 0)
+  ; areas
   }
 ;;

@@ -9,14 +9,7 @@
 
 open! Core
 
-module Span : sig
-  type t =
-    { text : string
-    ; width : int
-    ; style : Style.t
-    }
-  [@@deriving sexp_of]
-end
+module Span = Span
 
 module Cursor : sig
   type shape =
