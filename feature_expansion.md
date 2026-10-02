@@ -92,7 +92,8 @@ Phases 4A and 4B were added at the owner's request after phase 2; they keep the
 numbering of later phases unchanged.
 
 Deferred: full Vim compatibility, text objects (`iw`, `i"`, etc.), macros,
-named/numbered registers, system clipboard integration, blockwise Visual mode,
+named/numbered registers, system clipboard integration, blockwise Visual mode
+(now proposed as the post-MVP1 expansion below),
 regex search/substitution, `:` prompt, multiple files/panes, syntax highlighting,
 LSP, runtime binding files, plugin/configuration languages, storage replacement,
 CRLF/grapheme support, and viewport redesign beyond phases 4A–4B (soft wrap,
@@ -794,3 +795,159 @@ Acceptance:
 
 MVP1 ends here. Expand the next milestone from real use rather than silently
 adding full Vim compatibility or the original brief's future infrastructure.
+
+## Proposed post-MVP1 expansion — blockwise Visual and block insert
+
+**Status (2026-10-02): owner-requested proposal; not part of MVP1 acceptance.**
+
+The desired workflow is Vim/Neovim's `Ctrl-v`, followed by motions to select a
+rectangle and `I` to insert the same edit on every selected line. During block
+insert, show the affected insertion points and apply typing to every line live,
+rather than showing only one cursor and replicating the completed edit on exit.
+This is a bounded block-insert feature, not authorization for a general
+multi-cursor command system.
+
+### Column model decision
+
+A block is rectangular in visible columns, but the core currently addresses
+text by byte offsets and code-point columns while `screen/Cell_map` computes
+terminal display cells. These differ in ordinary source text:
+
+- A TAB is one code point but can occupy one to eight display cells. For
+  example, the `a` after a leading TAB is code-point column 1 but display column
+  8 with the current tab stop.
+- A wide character such as `界` is one code point but normally occupies two
+  display cells, while a combining mark may occupy zero.
+- A requested block column may lie beyond a short line's end, where there is no
+  byte offset at all. Supporting that position requires a virtual column policy:
+  skip the line, clamp to its end, or pad it with spaces when editing.
+- A block edge can visually fall inside a TAB or wide glyph even though edits
+  can occur only at code-point boundaries. The selection and edit policy must
+  say whether to include the whole glyph, place the edge before/after it, or
+  split/expand a TAB.
+
+A cheaper implementation would use code-point columns and clamp each line with
+`Text_buffer.offset_of_column`. It would be internally simple, but rectangles
+would stop lining up on screen around TABs and wide characters and would likely
+need semantic rework later.
+
+**Preferred target:** use display-cell columns with behavior close to
+Vim/Neovim. Before implementation, settle examples against Neovim for TABs,
+wide and combining characters, short lines, reversed selections, `I`/`A`, and
+Backspace. Extract or introduce a shared, terminal-independent mapping between
+line byte boundaries and display columns so editing semantics and
+`screen/Cell_map` cannot disagree; the core must not acquire a Bonsai or
+terminal dependency. If that extraction proves disproportionate, stop at the
+checkpoint and explicitly approve code-point semantics rather than introducing
+them as an undocumented shortcut.
+
+### Phase 15 — Blockwise Visual selection
+
+**Goal:** `Ctrl-v` creates and visibly extends a rectangular selection.
+
+Work:
+- Extend Visual selection kind and mode labels with `Blockwise`; bind `Ctrl-v`
+  through the existing configurable binding path. The terminal adapter already
+  represents Ctrl-letter keys.
+- Preserve an anchor and active endpoint plus the selected column bounds under
+  ordinary supported motions and counts. Switching among `v`, `V`, and
+  `Ctrl-v` keeps the anchor.
+- Resolve a block to one range per touched logical line. Keep this separate from
+  mutation and order the ranges so callers can edit safely despite shifting byte
+  offsets.
+- Render rectangular selection by display cells, including horizontal clipping,
+  TABs, wide/zero-width characters, empty lines, and the selected empty area of
+  short lines when the settled virtual-column policy calls for it.
+- Keep one real terminal cursor at the active endpoint. This phase does not yet
+  create insertion cursors.
+
+Acceptance:
+- Forward and reversed blocks, all four selection directions, counts, empty and
+  short lines, TABs, wide/combining characters, clipping, cancellation, and
+  switching selection kinds.
+- Selection changes do not edit text, alter history, revision, dirty state, or
+  registers.
+- Build, tests, and representative terminal smoke checks pass.
+
+Stop before block operators or insertion.
+
+### Phase 16 — Blockwise operators and register
+
+**Goal:** existing Visual operators act predictably on rectangular selections.
+
+Work:
+- Add a blockwise register representation that preserves row boundaries and the
+  settled column/width information; do not flatten a block into an ambiguous
+  characterwise string.
+- Implement block `d` and `y` by applying the per-line ranges bottom-to-top.
+  Define short-line, empty-row, TAB-edge, final-line, and zero-width behavior.
+- Define block `p`/`P` placement and padding before exposing it. Keep each
+  delete or paste invocation one undo transaction; yanking changes no history.
+- Either implement Visual block `c` using Phase 17's insertion machinery or
+  defer it explicitly to that phase; do not approximate it with one ordinary
+  Insert cursor.
+
+Acceptance:
+- Forward/reversed blocks can be yanked, deleted, pasted, undone, and redone;
+  registers survive undo as existing registers do.
+- Multibyte text and multiple disjoint line edits retain valid byte boundaries,
+  exact final-newline behavior, and one-step undo.
+- Build, tests, and representative terminal smoke checks pass.
+
+Stop before `I`/`A` block insert unless implementing `c` requires a shared,
+separately tested prerequisite.
+
+### Phase 17 — Live block insert and software cursors
+
+**Goal:** `Ctrl-v` selection followed by `I` performs a live replicated Insert
+session across its lines; add `A` if its semantics were settled at the column
+checkpoint.
+
+Work:
+- Add explicit block-insert state containing the participating logical lines,
+  insertion columns, and enough information to update every insertion point
+  after each edit. Do not model it as repeated independent ordinary Insert
+  commands or expose a general multi-cursor API.
+- Apply printable typing to every participating line immediately. Perform
+  per-line mutations from the end of the buffer toward the start, but expose one
+  semantic text change per input and one undo transaction for the complete
+  Insert visit.
+- Define and test Escape, the configured `jk` escape, Backspace, Delete, soft
+  Tab, bracketed paste, invalid text, and lines that become shorter while
+  editing. Newline/Enter may be rejected initially if faithful rectangular
+  semantics are not settled; report that limitation instead of allowing the
+  cursors to diverge silently.
+- Render one insertion marker for every visible participating line and update
+  them after every input. A terminal has only one hardware cursor, so retain it
+  for the active insertion point and draw the others as styled software cursors
+  (for example, a bar or highlighted cell) through the frame/UI layers.
+- Specify interaction with the animated smear cursor. Prefer disabling smear
+  for the software cursors, and avoid animating every replicated cursor unless
+  profiling and visual review justify it.
+- Complete Visual block `c` by entering the same block-insert machinery after
+  deleting the selected cells, if it was deferred from Phase 16.
+
+Acceptance:
+- `Ctrl-v`, motions, `I`, typing, and Escape produce aligned edits on all
+  selected lines and undo/redo as one step.
+- Every live edit visibly updates all on-screen insertion markers; scrolling and
+  clipping hide off-screen markers without losing their logical positions.
+- `jk`, Backspace, Tab, paste, short lines, empty lines, TABs, wide characters,
+  invalid pasted text, and cancellation leave consistent text, cursor, history,
+  and dirty state.
+- Build, tests, terminal smoke checks, and manual cursor/contrast/flicker review
+  pass. Record terminal-dependent visual checks that could not be performed.
+
+### Estimated scope
+
+- Phase 15: one to two focused implementation sessions after the column model is
+  settled; display-cell extraction may consume an additional session.
+- Phase 16: one to two sessions.
+- Phase 17: two to three sessions, including live software-cursor rendering and
+  Insert edge cases.
+
+A deliberately limited code-point-column implementation could be smaller, but
+the preferred display-cell-compatible feature is expected to take roughly four
+to six focused sessions in total. General independent cursors, arbitrary cursor
+creation, per-cursor selections, and commands outside block insertion remain
+deferred.
