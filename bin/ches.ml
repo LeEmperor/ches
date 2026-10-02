@@ -17,7 +17,7 @@ let command =
        line, Ctrl-d/Ctrl-u half a screen with the cursor, zz/zt/zb put the cursor\n\
        line at the middle/top/bottom.\n\
        Space v c/h/l/H/L/-/+/r: toggle centering, move, resize, reset the layout;\n\
-       Space v n/N toggle absolute/relative line numbers.")
+        Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type) in
      fun () ->
        let fail error =

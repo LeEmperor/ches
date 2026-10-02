@@ -14,9 +14,38 @@ let draw_span ({ text; width; style } : Frame.Span.t) =
   else View.hcat [ view; View.rectangle ~attrs ~width:(width - drawn) ~height:1 () ]
 ;;
 
+let draw_smear (frame : Frame.t) =
+  let cells = List.sort frame.smear ~compare:(fun (x1, y1) (x2, y2) -> [%compare: int * int] (y1, x1) (y2, x2)) in
+  match cells with
+  | [] -> View.none
+  | _ ->
+    let rows = List.group cells ~break:(fun (_, y1) (_, y2) -> y1 <> y2) in
+    let first_y = snd (List.hd_exn cells) in
+    let row_view cells =
+      let rec loop previous_x = function
+        | [] -> []
+        | (x, _) :: rest ->
+          let gap = Int.max 0 (x - previous_x) in
+          View.transparent_rectangle ~width:gap ~height:1
+          :: View.text ~attrs:(Theme.attrs Smear) "█"
+          :: loop (x + 1) rest
+      in
+      View.hcat (loop 0 cells)
+    in
+    View.vcat
+      (View.transparent_rectangle ~width:0 ~height:first_y
+       :: List.concat_mapi rows ~f:(fun i row ->
+         let y = snd (List.hd_exn row) in
+         let previous_y = if i = 0 then first_y else snd (List.hd_exn (List.nth_exn rows (i - 1))) in
+         View.transparent_rectangle ~width:0 ~height:(Int.max 0 (y - previous_y - 1)) :: [ row_view row ]))
+;;
+
 let draw (frame : Frame.t) =
-  View.vcat
-    (List.map frame.rows ~f:(fun spans -> View.hcat (List.map spans ~f:draw_span)))
+  let base =
+    View.vcat
+      (List.map frame.rows ~f:(fun spans -> View.hcat (List.map spans ~f:draw_span)))
+  in
+  View.zcat [ draw_smear frame; base ]
 ;;
 
 let cursor (frame : Frame.t) : Cursor.t option =
@@ -45,6 +74,18 @@ let app controller ~exit ~dimensions (local_ graph) =
            | Exit | Running -> ());
           model)
       dimensions
+      graph
+  in
+  let () =
+    Bonsai.Clock.every
+      ~when_to_start_next_effect:`Every_multiple_of_period_non_blocking
+      ~trigger_on_activate:true
+      (Bonsai.return (Time_ns.Span.of_ms 17.))
+      (let%arr inject
+       and model in
+       if Animation.active (Ui_state.animation model)
+       then inject [ Ui_state.Input.Animation_tick ]
+       else Effect.Ignore)
       graph
   in
   let frame =

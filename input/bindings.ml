@@ -167,6 +167,7 @@ let default =
     ; view '=' (Adjust_width 10)
     ; view 'n' Toggle_absolute_numbers
     ; view 'N' Toggle_relative_numbers
+    ; view 's' Toggle_smear
     ; view 'r' Reset
     ]
   |> Or_error.ok_exn

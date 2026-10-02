@@ -30,6 +30,7 @@ type t =
   ; height : int
   ; rows : Span.t list list
   ; cursor : Cursor.t option (** [None] when there is no text cell to put it in. *)
+  ; smear : (int * int) list (** Filled cells for the animated-cursor overlay. *)
   }
 [@@deriving sexp_of]
 

@@ -108,6 +108,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider |
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
+| Normal | `Space v s` | Toggle the animated smear cursor (off by default) |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, hybrid numbers |
 | Normal | `Escape` | Cancel a pending count or `Space` sequence |
 | Visual | motions, `%` | Extend the selection |

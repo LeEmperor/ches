@@ -22,6 +22,7 @@ module Input = struct
     | Key of Key.t
     | Paste_start
     | Paste_end
+    | Animation_tick
   [@@deriving sexp_of]
 end
 
@@ -34,6 +35,7 @@ type t =
       viewport (see {!Scroll.fit}). *)
   ; paste : string list option (** Text collected so far, most recent first. *)
   ; message : Message.t option
+  ; animation : Animation.t
   ; exited : bool
   }
 
@@ -44,6 +46,7 @@ let create ?(prefs = Geometry.Prefs.default) controller =
   ; rows = None
   ; paste = None
   ; message = None
+  ; animation = Animation.create ~enabled:false
   ; exited = false
   }
 ;;
@@ -54,6 +57,7 @@ let scroll t = t.scroll
 let message t = t.message
 let pasting t = Option.is_some t.paste
 let exited t = t.exited
+let animation t = t.animation
 
 let geometry t ~width ~height =
   Geometry.compute
@@ -88,6 +92,25 @@ let fitted_scroll t ~width ~height =
     ~line_count:(Text_buffer.line_count text)
 ;;
 
+let cursor_position t ~width ~height =
+  let editor = Controller.editor t.controller in
+  let text = Editor.text editor in
+  let cursor_line = Editor.cursor_line editor in
+  let line_text = Text_buffer.line_text text cursor_line in
+  let start, _ =
+    Cell_map.cursor_span
+      (Cell_map.glyphs line_text)
+      ~pos:(Editor.cursor editor - Text_buffer.line_start text cursor_line)
+      ~insertion:true
+  in
+  let scroll = fitted_scroll t ~width ~height in
+  let { Geometry.text = viewport; _ } = geometry t ~width ~height in
+  let x = start - scroll.left and y = cursor_line - scroll.top in
+  if x >= 0 && x < viewport.width && y >= 0 && y < viewport.height
+  then Some (viewport.x + x, viewport.y + y)
+  else None
+;;
+
 let min_width = 20
 let max_width = 500
 let max_offset = 500
@@ -100,7 +123,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_relative_numbers ->
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
-  | Scroll _ -> prefs
+  | Scroll _ | Toggle_smear -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -125,6 +148,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
   | Scroll _ -> None
+  | Toggle_smear -> Some (if Animation.enabled t.animation then "Smear cursor enabled" else "Smear cursor disabled")
   | Toggle_centered -> Some (if t.prefs.centered then "Centered" else "Full width")
   | Toggle_absolute_numbers | Toggle_relative_numbers ->
     let style = t.prefs.line_numbers in
@@ -184,6 +208,7 @@ let scroll_view t ~width ~height (scroll : View_command.Scroll.t) ~count =
 let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
   | Scroll { scroll; count } -> scroll_view t ~width ~height scroll ~count
+  | Toggle_smear -> { t with animation = Animation.set_enabled t.animation (not (Animation.enabled t.animation)) }
   | Toggle_centered
   | Shift _
   | Adjust_width _
@@ -231,20 +256,30 @@ let rec apply t ~width ~height (input : Input.t) =
 and apply_running t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = refit t ~width ~height in
-  let t, status =
-    match input, t.paste with
-    | Paste_start, None -> { t with paste = Some [] }, Controller.Status.Running
-    | Paste_start, Some _ -> t, Running
-    | Paste_end, None -> t, Running
-    | Paste_end, Some chunks ->
-      feed ~width ~height { t with paste = None } (Paste (String.concat (List.rev chunks)))
-    | Key key, Some chunks ->
-      (match Key.text key with
-       | Some text -> { t with paste = Some (text :: chunks) }, Running
-       | None -> t, Running)
-    | Key key, None -> feed ~width ~height t (Key key)
-  in
-  { (refit t ~width ~height) with exited = Controller.Status.equal status Exit }, status
+  match input with
+  | Animation_tick -> { t with animation = Animation.tick t.animation ~dt:0.017 }, Running
+  | Key _ | Paste_start | Paste_end ->
+    let before = cursor_position t ~width ~height in
+    let t, status =
+      match input, t.paste with
+      | Paste_start, None -> { t with paste = Some [] }, Controller.Status.Running
+      | Paste_start, Some _ -> t, Running
+      | Paste_end, None -> t, Running
+      | Paste_end, Some chunks ->
+        feed ~width ~height { t with paste = None } (Paste (String.concat (List.rev chunks)))
+      | Key key, Some chunks ->
+        (match Key.text key with
+         | Some text -> { t with paste = Some (text :: chunks) }, Running
+         | None -> t, Running)
+      | Key key, None -> feed ~width ~height t (Key key)
+      | Animation_tick, _ -> assert false
+    in
+    let t = refit t ~width ~height in
+    let after = cursor_position t ~width ~height in
+    { t with
+      animation = Animation.retarget t.animation ~from:before ~to_:after
+    ; exited = Controller.Status.equal status Exit
+    }, status
 ;;
 
 let apply_all t ~width ~height inputs =

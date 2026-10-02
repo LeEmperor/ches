@@ -28,4 +28,5 @@ type t =
   | Info
   | Warning
   | Error
+  | Smear (** The foreground-only animated cursor overlay. *)
 [@@deriving sexp_of, equal]

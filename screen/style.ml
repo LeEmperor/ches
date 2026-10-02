@@ -25,4 +25,5 @@ type t =
   | Info
   | Warning
   | Error
+  | Smear
 [@@deriving sexp_of, equal]

@@ -24,6 +24,7 @@ type t =
   ; height : int
   ; rows : Span.t list list
   ; cursor : Cursor.t option
+  ; smear : (int * int) list
   }
 [@@deriving sexp_of]
 
@@ -168,29 +169,22 @@ let render ui ~width ~height =
       | Some area -> row area.rect (Status.render area fields)
       | None -> row tile (tile_row y))
   in
+  let animation = Ui_state.animation ui in
+  let smear = Animation.cells animation ~width ~height in
   let cursor =
-    let line_text = Text_buffer.line_text text cursor_line in
-    let start, _ =
-      Cell_map.cursor_span
-        (Cell_map.glyphs line_text)
-        ~pos:(Editor.cursor editor - Text_buffer.line_start text cursor_line)
-        ~insertion:true
-    in
-    let x = start - scroll.left
-    and y = cursor_line - scroll.top in
-    if x >= 0 && x < viewport.width && y >= 0 && y < viewport.height
-    then
-      Some
-        { Cursor.x = viewport.x + x
-        ; y = viewport.y + y
+    if Animation.active animation
+    then None
+    else
+      Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) ->
+        { Cursor.x = x
+        ; y
         ; shape =
             (match Editor.mode editor with
-              | Normal | Visual _ -> Block
+             | Normal | Visual _ -> Block
              | Insert -> Bar)
-        }
-    else None
+        })
   in
-  { width; height; rows; cursor }
+  { width; height; rows; cursor; smear }
 ;;
 
 let to_string t =

@@ -28,6 +28,7 @@ module Input : sig
     | Key of Key.t
     | Paste_start
     | Paste_end
+    | Animation_tick (** A frontend animation-clock pulse; never reaches the editor. *)
   [@@deriving sexp_of]
 end
 
@@ -38,6 +39,7 @@ val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
 val scroll : t -> Scroll.t
 val message : t -> Message.t option
+val animation : t -> Animation.t
 
 (** Whether a bracketed paste is being collected. *)
 val pasting : t -> bool
@@ -46,6 +48,9 @@ val pasting : t -> bool
     returns [Exit] again, so keys that arrive before the frontend has shut down (say,
     [Space w] typed right after [Space Q]) never run. *)
 val exited : t -> bool
+
+(** The visible cursor's terminal-cell coordinate, after applying layout and scroll. *)
+val cursor_position : t -> width:int -> height:int -> (int * int) option
 
 (** Applies one input on a [width] x [height] screen.
 

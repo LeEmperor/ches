@@ -68,4 +68,5 @@ let attrs (style : Ches_screen.Style.t) =
   | Info -> colors Foreground Surface
   | Warning -> colors Warning Surface
   | Error -> colors ~attrs:[ Attr.bold ] Error Surface
+  | Smear -> [ Attr.fg (Role.color Normal_accent) ]
 ;;

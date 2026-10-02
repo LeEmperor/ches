@@ -31,6 +31,7 @@ type t =
   (** Flip the absolute line-number switch (Vim's ['number']). *)
   | Toggle_relative_numbers
   (** Flip the relative line-number switch (Vim's ['relativenumber']). *)
+  | Toggle_smear (** Enable or disable the animated terminal cursor. *)
   | Reset (** Centered, at the default width and offset, with hybrid line numbers. *)
   | Scroll of
       { scroll : Scroll.t

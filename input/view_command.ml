@@ -23,6 +23,7 @@ type t =
   | Adjust_width of int
   | Toggle_absolute_numbers
   | Toggle_relative_numbers
+  | Toggle_smear
   | Reset
   | Scroll of
       { scroll : Scroll.t
