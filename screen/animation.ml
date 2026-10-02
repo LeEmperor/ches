@@ -98,41 +98,41 @@ let tick t ~dt =
        more distracting than completing the move. *)
     stopped t
   else
-  match t.current, t.target with
-  | Some current, Some target ->
-    let frames = Float.max 0. (Float.min 4. (dt /. 0.017)) in
-    (* Smear expresses damping as the fraction removed per frame.  Correct both damping
-       and stiffness for elapsed time so a late frame does not change the feel. *)
-    let velocity_conservation = 0.15 ** frames in
-    let damping_correction = 1. /. (1. +. (2.5 *. velocity_conservation)) in
-    let current, velocity =
-      Array.mapi current ~f:(fun i point ->
-        let target = target.(i) in
-        let velocity = t.velocity.(i) in
-        let stiffness =
-          1. -. ((1. -. (t.stiffness.(i) *. damping_correction)) ** frames)
-        in
-        let velocity =
-          { x = velocity.x +. ((target.x -. point.x) *. stiffness)
-          ; y = velocity.y +. ((target.y -. point.y) *. stiffness)
-          }
-        in
-        ( { x = point.x +. velocity.x; y = point.y +. velocity.y }
-        , { x = velocity.x *. velocity_conservation
-          ; y = velocity.y *. velocity_conservation
-          } ))
-      |> Array.unzip
-    in
-    let settled =
-      Array.for_alli current ~f:(fun i point ->
-        let target = target.(i) and velocity = velocity.(i) in
-        Float.(hypot (target.x -. point.x) (target.y -. point.y) < 0.06)
-        && Float.(hypot velocity.x velocity.y < 0.025))
-    in
-    if settled then stopped t
-    else { t with current = Some current; velocity }
-  | None, None -> t
-  | Some _, None | None, Some _ -> stopped t
+    match t.current, t.target with
+    | Some current, Some target ->
+      let frames = Float.max 0. (Float.min 4. (dt /. 0.017)) in
+      (* Smear expresses damping as the fraction removed per frame.  Correct both damping
+         and stiffness for elapsed time so a late frame does not change the feel. *)
+      let velocity_conservation = 0.15 ** frames in
+      let damping_correction = 1. /. (1. +. (2.5 *. velocity_conservation)) in
+      let current, velocity =
+        Array.mapi current ~f:(fun i point ->
+          let target = target.(i) in
+          let velocity = t.velocity.(i) in
+          let stiffness =
+            1. -. ((1. -. (t.stiffness.(i) *. damping_correction)) ** frames)
+          in
+          let velocity =
+            { x = velocity.x +. ((target.x -. point.x) *. stiffness)
+            ; y = velocity.y +. ((target.y -. point.y) *. stiffness)
+            }
+          in
+          ( { x = point.x +. velocity.x; y = point.y +. velocity.y }
+          , { x = velocity.x *. velocity_conservation
+            ; y = velocity.y *. velocity_conservation
+            } ))
+        |> Array.unzip
+      in
+      let settled =
+        Array.for_alli current ~f:(fun i point ->
+          let target = target.(i) and velocity = velocity.(i) in
+          Float.(hypot (target.x -. point.x) (target.y -. point.y) < 0.06)
+          && Float.(hypot velocity.x velocity.y < 0.025))
+      in
+      if settled then stopped t
+      else { t with current = Some current; velocity }
+    | None, None -> t
+    | Some _, None | None, Some _ -> stopped t
 ;;
 
 let cross a b p = ((b.x -. a.x) *. (p.y -. a.y)) -. ((b.y -. a.y) *. (p.x -. a.x))
@@ -168,6 +168,7 @@ let cells t ~width ~height =
     | _ :: _ -> cells
     | [] ->
       let center = center quad in
-      let x = Int.of_float center.x and y = Int.of_float center.y in
+      let x = Int.of_float (Float.round_down center.x)
+      and y = Int.of_float (Float.round_down center.y) in
       if x >= 0 && x < width && y >= 0 && y < height then [ x, y ] else []
 ;;
