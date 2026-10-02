@@ -11,9 +11,17 @@
       end), or at the start of an empty line, including the empty final line after a
       trailing LF.
 
-    [Move Up]/[Move Down] keep a preferred code-point column across shorter lines.
-    Every other command that moves the cursor resets the preference to the resulting
-    column. Moves past a boundary are no-ops.
+    [Move] goes to {!Motion.destination}, which clamps at line and document
+    boundaries rather than failing; a move already at its boundary is a no-op. Its
+    cost does not grow with the count beyond those boundaries. A count outside 1 to
+    [Command.max_count], or any count for a motion that does not
+    [Motion.takes_count], raises [Invalid_argument]. Moves change no text, revision,
+    dirty state, or history (beyond closing an Insert transaction).
+
+    [Up]/[Down] keep a preferred code-point column across shorter lines, including the
+    lines a counted move passes over. Every other command that moves the cursor
+    resets the preference to the resulting column; after [Line_end] that is the last
+    character's column (unlike Vim, the cursor does not then stick to line ends).
 
     {2 Commands by mode}
 
@@ -23,10 +31,12 @@
     {v
       Command                          Normal  Insert
       Move                             yes     yes (closes the transaction)
-      Enter_insert                     yes     -
+      Enter_insert, Open_line_below,
+      Open_line_above                  yes     -
       Exit_insert                      -       yes
-      Insert_text, Delete_backward,
-      Delete_forward, Insert_soft_tab,
+      Insert_text, Insert_newline,
+      Delete_backward, Delete_forward,
+      Insert_soft_tab,
       Delete_soft_tab_backward         -       yes (may join or split lines)
       Delete_char                      yes     -   (never deletes an LF)
       Undo, Redo, Save, Quit,
@@ -35,6 +45,15 @@
 
     [Exit_insert] steps left one code point when that does not cross a line start.
 
+    {2 Autoindent}
+
+    Indentation is literal and language-independent: the leading spaces and TABs of
+    the cursor's line, copied unchanged. [Open_line_below]/[Open_line_above] copy all
+    of it; [Insert_newline] copies only the part before the cursor, and leaves the
+    text after the cursor (including any blanks) unchanged at the start of the new
+    line. Indentation stays when Insert mode is left without typing anything more.
+    [Insert_text] never indents, so pastes are literal.
+
     Soft-tab widths are in code-point columns, so a TAB before the cursor counts as
     one column. They must be at least 1; otherwise the command raises
     [Invalid_argument].
@@ -42,9 +61,11 @@
     {2 Undo}
 
     Consecutive Insert-mode edits form one transaction, closed by [Exit_insert], [Move],
-    [Save], [Undo] or [Redo]. Each [Delete_char] is its own transaction. Transactions
-    with no net text change are not recorded. Undo/redo restore text and cursor; the
-    file association and saved state are untouched.
+    [Save], [Undo] or [Redo]. [Open_line_below]/[Open_line_above] start the
+    transaction with the new line, so one undo removes it with the text typed after
+    it and restores the original cursor. Each [Delete_char] is its own transaction.
+    Transactions with no net text change are not recorded. Undo/redo restore text and
+    cursor; the file association and saved state are untouched.
 
     {2 Revision and dirty state}
 

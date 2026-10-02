@@ -3,8 +3,10 @@
 A small modal programmer's editor in OCaml, with a UI-independent editing core
 and a [Bonsai_term](https://github.com/janestreet/bonsai_term) terminal
 frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
-for the long-term direction and [`mvp0_plan.md`](mvp0_plan.md) for the current
-milestone.
+for the long-term direction, [`mvp0_plan.md`](mvp0_plan.md) for the first
+milestone, and [`feature_expansion.md`](feature_expansion.md) for MVP1, in
+progress (phases 1–2, counted movement and word, line, and document motions, are
+done).
 
 **Status: MVP0 complete (2026-10-01).** `ches PATH` is a working terminal
 editor: it opens, edits, scrolls, saves, and quits, in a
@@ -71,8 +73,14 @@ It also exits with an error if its standard input is not a terminal.
 
 | Mode | Keys | Action |
 | --- | --- | --- |
-| Normal | `h` `j` `k` `l` | Move left, down, up, right |
-| Normal | `i` | Insert at the cursor |
+| Normal | `h` `j` `k` `l` | Move left, down, up, right; with a count, e.g. `20j`, that many |
+| Normal | `w` / `b` / `e` | Next word start / previous word start / word end |
+| Normal | `W` / `B` / `E` | The same for blank-separated words |
+| Normal | `0` / `^` / `$` | Line start / first non-blank / line end |
+| Normal | `gg` / `G` | First / last line, or line N with a count (`20G`) |
+| Normal | `i` / `a` | Insert before / after the character under the cursor |
+| Normal | `I` / `A` | Insert at the first non-blank / end of the line |
+| Normal | `o` / `O` | Open a new line below / above, indented like this one |
 | Normal | `x` | Delete the character under the cursor |
 | Normal | `u` / `Ctrl-r` | Undo / redo |
 | Normal | `Space w` | Save |
@@ -83,15 +91,56 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v H` / `Space v L` | Move the tile 10 cells left / right |
 | Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0 |
-| Normal | `Escape` | Cancel a pending `Space` sequence |
-| Insert | text, `Enter`, `Backspace`, `Delete` | Edit |
+| Normal | `Escape` | Cancel a pending count or `Space` sequence |
+| Insert | text, `Backspace`, `Delete` | Edit |
+| Insert | `Enter` | New line, indented like the current one |
 | Insert | `Tab` | Insert spaces to the next multiple of 2 columns |
 | Insert | `Escape`, or `j` then `k` | Back to Normal mode |
 | Both | `Ctrl-c` | Nothing, except a hint to use `Space q` |
 
 Movement stops at the ends of a line: `h` and `l` do not wrap to the next line.
-`j` and `k` keep the column you were aiming for across shorter lines. Leaving
-Insert mode steps the cursor back one character, as in Vim.
+`j` and `k` keep the column you were aiming for across shorter lines; every other
+motion sets that column to where it lands (after `$`, unlike Vim, `j` and `k` do
+not stick to line ends). Leaving Insert mode steps the cursor back one character,
+as in Vim. Motions never change the text, the undo history, or `[+]`.
+
+### Words and lines
+
+`w`, `b`, and `e` treat a run of identifier characters (ASCII letters, digits,
+`_`, and every non-ASCII character) as a word, and a run of other non-blank
+characters (punctuation, such as `+=` or `(`) as another. `W`, `B`, and `E` treat
+any run of non-blank characters as one word. Blanks are space, TAB, and line
+breaks. As in Vim, `w` and `b` stop on empty lines and `e` skips them.
+
+- `w` goes to the start of the next word; after the last word it goes to the end
+  of the text. `b` goes to the start of the current or previous word. `e` goes to
+  the end of the current or next word, and stays put when there is none.
+- `^` goes to the first character that is not a space or TAB (the last character
+  of an all-blank line).
+- `G` goes to the last line, and `gg` to the first, at its first non-blank. With a
+  count, both go to that line: `20G` and `20gg` are line 20, and `999G` stops at
+  the last line. A file ending in a line break has an empty last line after it,
+  so `G` (and `w` after the last word) goes there.
+
+### Counts
+
+In Normal mode, digits before a movement key repeat it: `20j` moves down 20
+lines, `5l` moves right 5 characters, and `3w` moves 3 words. A count stops at the
+edge rather than failing: `999j` near the end goes to the last line, and `20l` on a
+short line goes to its last character. The status line shows a count while you
+type it, with any keys of the sequence after it (`20 g`).
+
+- `1`–`9` start a count, and any digit, including `0`, extends it. A bare `0` is
+  the line-start motion: `10j` moves 10 lines, and `0` then goes to the line start.
+- Counts go up to 999999. Typing a larger one cancels it with a message.
+- `$` with a count N goes to the end of the Nth line, counting the current line as
+  the first. `G` and `gg` with a count go to that line.
+- `0` and `^` take no count, nor does any command other than a motion. A count
+  before one, such as `3^`, `3x`, or `2 Space w`, is rejected with a message, and
+  the command does not run.
+- `Escape` cancels a pending count silently. A key that is not bound after a count,
+  `Ctrl-c`, or a paste also cancels it. Nothing typed before a cancellation
+  carries over to the next key.
 
 Soft tabs work like Vim's `softtabstop`: `Tab` inserts spaces up to the next
 multiple of 2 columns, and in Insert mode `Backspace` deletes spaces back to the
@@ -101,8 +150,28 @@ the end of a line joins the line below. `x` never deletes a line break.
 
 `j` is inserted when you type it; a `k` straight after it deletes the `j` and
 returns to Normal mode. No timeout is involved, and typed text is never held back,
-but you cannot type `jk` itself (paste it instead). Tab width and the `j k` escape
-are settings in `Keymap.Config`, chosen in code; there is no configuration file.
+but you cannot type `jk` itself (paste it instead). Tab width, the `j k` escape,
+and the Normal-mode bindings are settings in `Keymap.Config`, chosen in code; there
+is no configuration file. The bindings are a table (`input/bindings.ml`) checked when
+it is built: a key sequence bound twice, a sequence that is a prefix of another
+(which could never run, since there is no timeout), a sequence starting with
+`1`–`9` (which starts a count), or one using `Escape` or `Ctrl-c` is an error.
+
+### Entering Insert mode and autoindent
+
+`a` on an empty line inserts at the cursor, and `I` on an all-blank line inserts
+at its end. `o` and `O` work on the last line with or without a final line break
+and in an empty file. Opening a line and the typing that follows are one undo
+step, which restores the cursor to where it was before `o`/`O`. These commands
+take no count (`3o` is rejected with a message); Vim's repeated insertion is not
+supported.
+
+Autoindent is literal and knows nothing about the language: `o` and `O` copy the
+current line's leading spaces and TABs, and `Enter` copies the part of them that
+is before the cursor (so `Enter` inside the indentation copies only what is to its
+left). Text after the cursor moves to the new line unchanged, leading blanks
+included. Unlike Vim, the copied indentation stays when you leave Insert mode
+without typing anything. A paste is inserted literally, without indentation.
 
 `Space` starts a sequence only in Normal mode. While a sequence is pending, the
 status line shows its keys. An unbound continuation such as `Space z` does
@@ -198,8 +267,9 @@ One key press goes through these steps:
 2. **`screen/Ui_state`** collects any paste and passes the input to the
    controller.
 3. **`app/Controller`** feeds it to **`input/Keymap`**. The keymap tracks pending
-   `Space` sequences and the `j k` escape, and returns *actions*. An action is
-   either an editor command or a view command.
+   counts, `Space` sequences, and the `j k` escape, looks Normal-mode sequences up
+   in its **`input/Bindings`** table, and returns *actions*. An action is either an
+   editor command, such as a counted move, or a view command.
 4. Editor commands go to **`core/Editor.dispatch`**, a pure function from state
    and command to a new state plus a list of *effects*, such as "write this exact
    text to this path" or "exit". The controller runs the effects synchronously
@@ -254,6 +324,13 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
 - a save error
 - empty and new files
 - scrolling tall and wide files, and resizing down to 1x1
+- counted movement: the pending count on the status line, clamping at the ends
+  of the document and of lines, the column kept across short lines, and counts
+  cancelled by overflow, `Escape`, an unbound key, or a command that takes none
+- word, line, and document motions (`w b e W B E 0 ^ $ gg G`) with counts,
+  including a pending and cancelled `g`, and `G` with and without a count
+- Insert entry (`a A I o O`): indentation copied by `o`, `O`, and `Enter` and kept
+  when nothing more is typed, undoing an opened line, and `3o` rejected
 - tabs, wide characters, and control characters
 - a fast burst of keys with a paste in it, and a paste in Normal mode
 - every `Space v` command, with clamping and restoring on resize
@@ -318,19 +395,20 @@ and changes made to the file by other programs are not detected.
   character is drawn as itself; after a TAB, an escape form, or the left edge
   of the view it is not drawn.
 - No soft wrapping: long lines scroll horizontally.
-- One document at a time. There is no `:` prompt, no word or line motions
-  (`w`, `b`, `0`, `$`), no `a`, no counts or operators (`dd`, `dw`), no search,
-  and no syntax highlighting.
+- One document at a time. There is no `:` prompt, no operators (`dd`, `dw`), no
+  `%`, no search, and no syntax highlighting. Word motions use the
+  simple character classes above, not Unicode word properties.
 - Large files are slow to edit and undo history grows without limit; see
   [Storage](#storage).
-- No configuration file: tab width and the `j k` escape are set in code, and
-  layout preferences are not saved between runs.
+- No configuration file: tab width, the `j k` escape, and key bindings are set in
+  code, and layout preferences are not saved between runs.
 
 ## Next milestones
 
 These come after MVP0 and are not part of it. Roughly in order:
 
-1. Word and line motions, `a`, and composable operators such as `dd` and `dw`.
+1. `%` and composable operators such as `dd` and `dw` (MVP1; see
+   [`feature_expansion.md`](feature_expansion.md)).
 2. A small `:` prompt (`:w`, `:q`, `:wq`, `:q!`) using the existing commands and
    effects.
 3. Better Unicode (grapheme clusters) and line-ending support (CRLF).

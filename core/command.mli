@@ -3,20 +3,41 @@
 
 open! Core
 
-module Direction : sig
+(** The largest count a counted command accepts: 999,999. *)
+val max_count : int
+
+(** Where [Enter_insert] places the insertion point, relative to the Normal-mode
+    cursor's line. *)
+module Insert_position : sig
   type t =
-    | Left
-    | Right
-    | Up
-    | Down
-  [@@deriving sexp_of, equal, enumerate]
+    | Before_cursor (** [i]: at the cursor. *)
+    | After_cursor
+    (** [a]: after the character under the cursor; on an empty line, at the cursor. *)
+    | Line_end (** [A]: at the end of the line, before its LF. *)
+    | First_nonblank
+    (** [I]: before the first character other than space or TAB, or at the end of a
+        blank line. *)
+  [@@deriving sexp_of, equal]
 end
 
 type t =
-  | Move of Direction.t
-  | Enter_insert
+  | Move of
+      { motion : Motion.t
+      ; count : int option [@sexp.option]
+      (** From 1 to {!max_count}, or [None] when none was given: bare [G] and [1G]
+          differ. Only motions that [Motion.takes_count] accept one. *)
+      }
+  | Enter_insert of Insert_position.t
+  | Open_line_below
+  (** Insert a line after the cursor's line, indented like it, and enter Insert mode
+      at its end. *)
+  | Open_line_above (** Like [Open_line_below], before the cursor's line. *)
   | Exit_insert
-  | Insert_text of string (** Literal text, including LF for a new line. *)
+  | Insert_text of string
+  (** Literal text, including LF for a new line, with no autoindent (e.g. a paste). *)
+  | Insert_newline
+  (** Split the line at the cursor, copying the line's leading spaces and TABs that
+      come before the cursor to the start of the new line. *)
   | Delete_backward (** Remove the code point before the cursor. *)
   | Delete_forward (** Remove the code point after the cursor. *)
   | Insert_soft_tab of int

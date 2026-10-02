@@ -121,9 +121,10 @@ let%expect_test "Escape cancels a pending leader silently" =
   show t;
   [%expect
     {|
+    (Move(motion(Word_forward Small)))
     Delete_char
-    NORMAL 0:0 dirty
-    > |bc
+    NORMAL 0:1 dirty
+    > a|b
     |}]
 ;;
 
@@ -148,7 +149,7 @@ let%expect_test "an unknown continuation cancels the sequence without editing" =
   show t;
   [%expect
     {|
-    (Move Right)
+    (Move(motion Right))
     NORMAL 0:1
     > a|bc
     |}]
@@ -187,9 +188,9 @@ let%expect_test "h/j/k/l move, i and Escape change mode" =
   show t;
   [%expect
     {|
-    (Move Right)
-    (Move Down)
-    (Move Right)
+    (Move(motion Right))
+    (Move(motion Down))
+    (Move(motion Right))
     NORMAL 1:2
     > abc
     > de|f
@@ -198,9 +199,9 @@ let%expect_test "h/j/k/l move, i and Escape change mode" =
   show t;
   [%expect
     {|
-    (Move Up)
-    (Move Left)
-    Enter_insert
+    (Move(motion Up))
+    (Move(motion Left))
+    (Enter_insert Before_cursor)
     INSERT 0:1
     > a|bc
     > def
@@ -221,7 +222,7 @@ let%expect_test "Insert mode inserts Space and Normal-mode keys literally" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text" ")
     (Insert_text w)
     (Insert_text" ")
@@ -229,16 +230,17 @@ let%expect_test "Insert mode inserts Space and Normal-mode keys literally" =
     (Insert_text"\195\169")
     (Insert_soft_tab 2)
     (Insert_text x)
-    (Insert_text"\n")
+    Insert_newline
     (Insert_text y)
-    INSERT 1:1 dirty
+    INSERT 1:2 dirty
     >  w qé x
-    > y|
+    >  y|
     |}];
-  let t = run t (keys "<BS><BS><Esc>") in
+  let t = run t (keys "<BS><BS><BS><Esc>") in
   show t;
   [%expect
     {|
+    (Delete_soft_tab_backward 2)
     (Delete_soft_tab_backward 2)
     (Delete_soft_tab_backward 2)
     Exit_insert
@@ -249,9 +251,9 @@ let%expect_test "Insert mode inserts Space and Normal-mode keys literally" =
   show t;
   [%expect
     {|
-    (Move Left)
-    (Move Left)
-    Enter_insert
+    (Move(motion Left))
+    (Move(motion Left))
+    (Enter_insert Before_cursor)
     Delete_forward
     Exit_insert
     NORMAL 0:3 dirty
@@ -297,8 +299,8 @@ let%expect_test "Insert-mode paste is one literal insertion" =
   show t;
   [%expect
     {|
-    (Move Right)
-    Enter_insert
+    (Move(motion Right))
+    (Enter_insert Before_cursor)
     (Insert_text" w\n<Esc>u\tQ")
     INSERT 1:8 dirty
     > a w
@@ -323,7 +325,7 @@ let%expect_test "a paste of invalid text is rejected by the editor" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text"x\r\ny")
     INSERT 0:0 (Error"Rejected text: CRLF line ending (only LF line endings are supported) at byte offset 1")
     > |ab
@@ -351,8 +353,9 @@ let%expect_test "Normal-mode paste is ignored and cancels a pending leader" =
   show t;
   [%expect
     {|
-    NORMAL 0:0
-    > |ab
+    (Move(motion(Word_forward Small)))
+    NORMAL 0:1
+    > a|b
     |}]
 ;;
 
@@ -377,7 +380,7 @@ let%expect_test "Ctrl-c runs nothing, cancels sequences, and hints at Space q" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text j)
     (Insert_text k)
     INSERT 0:2 dirty
@@ -390,7 +393,7 @@ let%expect_test "type, leave Insert, undo, redo, and save" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text h)
     (Insert_text e)
     (Insert_text l)
@@ -455,7 +458,7 @@ let%expect_test "Tab inserts spaces or a TAB, as configured" =
   tab_with (Spaces 4);
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_soft_tab 4)
     Exit_insert
     NORMAL 0:3 dirty
@@ -464,7 +467,7 @@ let%expect_test "Tab inserts spaces or a TAB, as configured" =
   tab_with Literal_tab;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text"\t")
     Exit_insert
     NORMAL 0:0 dirty
@@ -480,7 +483,7 @@ let%expect_test "j k leaves Insert mode without leaving the j behind" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text a)
     (Insert_text b)
     (Insert_text j)
@@ -503,9 +506,9 @@ let%expect_test "j k leaves Insert mode without leaving the j behind" =
   show t;
   [%expect
     {|
-    (Move Down)
-    (Move Right)
-    (Move Up)
+    (Move(motion Down))
+    (Move(motion Right))
+    (Move(motion Up))
     NORMAL 0:1
     > a|b
     > cd
@@ -518,7 +521,7 @@ let%expect_test "j k only escapes when typed in a row" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text j)
     (Insert_text j)
     Delete_backward
@@ -534,7 +537,7 @@ let%expect_test "j k only escapes when typed in a row" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text j)
     (Insert_text x)
     (Insert_text k)
@@ -554,7 +557,7 @@ let%expect_test "j k only escapes when typed in a row" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text j)
     Exit_insert
     NORMAL 0:0 dirty
@@ -571,7 +574,7 @@ let%expect_test "the Insert-mode escape sequence can be changed or disabled" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text j)
     (Insert_text k)
     INSERT 0:2 dirty
@@ -585,7 +588,7 @@ let%expect_test "the Insert-mode escape sequence can be changed or disabled" =
   show t;
   [%expect
     {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text j)
     (Insert_text k)
     Delete_backward
@@ -599,7 +602,7 @@ let%expect_test "Backspace deletes a whole soft tab" =
   let t = run (create "") (keys "i<Tab><Tab><BS>x<BS><BS>") in
   show t;
   [%expect {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_soft_tab 2)
     (Insert_soft_tab 2)
     (Delete_soft_tab_backward 2)
@@ -663,7 +666,7 @@ let%expect_test "Space v: Escape cancels, unknown continuations give a notice" =
   let t = run t (keys " vvl") in
   show t;
   [%expect {|
-    (Move Right)
+    (Move(motion Right))
     NORMAL 0:1
     > a|bc
     |}]
@@ -673,7 +676,7 @@ let%expect_test "Insert mode types Space v sequences literally" =
   let t = run (create "") (keys "i vc vL v=<Esc>") in
   show t;
   [%expect {|
-    Enter_insert
+    (Enter_insert Before_cursor)
     (Insert_text" ")
     (Insert_text v)
     (Insert_text c)
@@ -686,5 +689,564 @@ let%expect_test "Insert mode types Space v sequences literally" =
     Exit_insert
     NORMAL 0:8 dirty
     >  vc vL v|=
+    |}]
+;;
+
+(* Counts *)
+
+let lines n = List.init n ~f:(sprintf "line %02d") |> String.concat ~sep:"\n"
+
+(* Mode, zero-based line:column, pending keys and keymap notice, without the text. *)
+let show_position { editor; keymap } =
+  printf
+    "%s %d:%d%s%s\n"
+    (Mode.to_string (Editor.mode editor))
+    (Editor.cursor_line editor)
+    (Editor.cursor_column editor)
+    (match Keymap.pending keymap with
+     | None -> ""
+     | Some pending -> sprintf " pending=%S" pending)
+    (match Keymap.notice keymap with
+     | None -> ""
+     | Some notice -> sprintf " notice=%S" notice)
+;;
+
+let%expect_test "digits before h/j/k/l make one counted move, shown while pending" =
+  let t = run (create (lines 30)) (keys "2") in
+  show_position t;
+  [%expect {| NORMAL 0:0 pending="2" |}];
+  let t = run t (keys "0") in
+  show_position t;
+  [%expect {| NORMAL 0:0 pending="20" |}];
+  let t = run t (keys "j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down)(count 20))
+    NORMAL 20:0
+    |}];
+  let t = run t (keys "5l") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Right)(count 5))
+    NORMAL 20:5
+    |}];
+  let t = run t (keys "5h") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Left)(count 5))
+    NORMAL 20:0
+    |}];
+  let t = run t (keys "20k") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Up)(count 20))
+    NORMAL 0:0
+    |}];
+  (* The count does not outlive its command. *)
+  let t = run t (keys "j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 1:0
+    |}]
+;;
+
+let%expect_test "counts clamp on a tiny file" =
+  let t = run (create "ab\ncd") (keys "20j999999l20k") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down)(count 20))
+    (Move(motion Right)(count 999999))
+    (Move(motion Up)(count 20))
+    NORMAL 0:1
+    |}];
+  let t = run (create "") (keys "5j5l") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down)(count 5))
+    (Move(motion Right)(count 5))
+    NORMAL 0:0
+    |}]
+;;
+
+let%expect_test "a bare 0 is Line_start, but 0 extends a count" =
+  let t = run (create (lines 30)) (keys "0") in
+  show_position t;
+  [%expect {|
+    (Move(motion Line_start))
+    NORMAL 0:0
+    |}];
+  let t = run t (keys "10j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down)(count 10))
+    NORMAL 10:0
+    |}];
+  let t = run t (keys "00j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Line_start))
+    (Move(motion Line_start))
+    (Move(motion Down))
+    NORMAL 11:0
+    |}]
+;;
+
+let%expect_test "Escape cancels a pending count silently; nothing leaks" =
+  let t = run (create (lines 30)) (keys "12<Esc>") in
+  show_position t;
+  [%expect {| NORMAL 0:0 |}];
+  let t = run t (keys "3 <Esc>j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 1:0
+    |}]
+;;
+
+let%expect_test "an invalid continuation cancels the count with a notice" =
+  let t = run (create (lines 30)) (keys "3z") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="3 z is not bound" |}];
+  let t = run t (keys "j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 1:0
+    |}];
+  let t = run t (keys "3<CR>") in
+  show_position t;
+  [%expect {| NORMAL 1:0 notice="3 Enter is not bound" |}];
+  let t = run t (keys "3 z") in
+  show_position t;
+  [%expect {| NORMAL 1:0 notice="3 Space z is not bound" |}];
+  (* A count comes only before a sequence. *)
+  let t = run t (keys " 3") in
+  show_position t;
+  [%expect {| NORMAL 1:0 notice="Space 3 is not bound" |}];
+  let t = run t (keys "j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 2:0
+    |}]
+;;
+
+let%expect_test "commands that take no count reject one without running" =
+  let t = run (create "abc") (keys "3x") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:0 notice="x does not take a count"
+    > |abc
+    |}];
+  let t = run t (keys "2i") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:0 notice="i does not take a count"
+    > |abc
+    |}];
+  let t = run t (keys "2 ") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:0 pending="2 Space"
+    > |abc
+    |}];
+  let t = run t (keys "w") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:0 notice="Space w does not take a count"
+    > |abc
+    |}];
+  let t = run t (keys "4 vl2<C-r>5 Q") in
+  show t;
+  [%expect
+    {|
+    NORMAL 0:0 notice="Space Q does not take a count"
+    > |abc
+    |}];
+  (* Nothing leaks into the next command. *)
+  let t = run t (keys "x") in
+  show t;
+  [%expect
+    {|
+    Delete_char
+    NORMAL 0:0 dirty
+    > |bc
+    |}]
+;;
+
+let%expect_test "a count above 999999 is rejected and reset" =
+  let t = run (create (lines 3)) (keys "999999") in
+  show_position t;
+  [%expect {| NORMAL 0:0 pending="999999" |}];
+  let t = run t (keys "9") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Count is too large: the maximum is 999999" |}];
+  let t = run t (keys "j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 1:0
+    |}];
+  (* Each rejection resets the count, so the digits after it start a new one: 7 + 7 +
+     7 nines are rejected three times, and the last 2 nines count. *)
+  let t = run t (keys "99999999999999999999999k") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Up)(count 99))
+    NORMAL 0:0
+    |}]
+;;
+
+let%expect_test "Ctrl-c and paste cancel a pending count" =
+  let t = run (create (lines 30)) (keys "5<C-c>j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 1:0
+    |}];
+  let t = run t (keys "5<C-c>") in
+  show_position t;
+  [%expect {| NORMAL 1:0 notice="To quit, use Space q in Normal mode" |}];
+  let t = run t (keys "5" @ [ Keymap.Input.Paste "j" ] @ keys "j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 2:0
+    |}]
+;;
+
+let%expect_test "digits are text in Insert mode" =
+  let t = run (create "") (keys "i20j<Esc>") in
+  show t;
+  [%expect
+    {|
+    (Enter_insert Before_cursor)
+    (Insert_text 2)
+    (Insert_text 0)
+    (Insert_text j)
+    Exit_insert
+    NORMAL 0:2 dirty
+    > 20|j
+    |}]
+;;
+
+(* Bindings *)
+
+let%expect_test "alternate bindings drive counted movement without editor changes" =
+  let normal =
+    Bindings.create
+      [ [ Key.char 'n' ], Move Down
+      ; [ Key.char 'g'; Key.char 'u' ], Move Up
+      ; [ Key.char '0' ], Editor Undo
+      ; [ Key.char ' '; Key.char 'w' ], Editor Save
+      ]
+    |> ok_exn
+  in
+  let config = { Keymap.Config.default with normal } in
+  let t = run (create ~config (lines 30)) (keys "12n") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down)(count 12))
+    NORMAL 12:0
+    |}];
+  let t = run t (keys "3g") in
+  show_position t;
+  [%expect {| NORMAL 12:0 pending="3 g" |}];
+  let t = run t (keys "u") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Up)(count 3))
+    NORMAL 9:0
+    |}];
+  (* The defaults are gone; a bare [0] is a binding, and still extends a count. *)
+  let t = run t (keys "jx0") in
+  show_position t;
+  [%expect
+    {|
+    Undo
+    NORMAL 9:0
+    |}];
+  let t = run t (keys "20") in
+  show_position t;
+  [%expect {| NORMAL 9:0 pending="20" |}]
+;;
+
+let%expect_test "ambiguous or reserved bindings are a configuration error" =
+  let k s = List.map (String.to_list s) ~f:Key.char in
+  let check bindings =
+    match Bindings.create bindings with
+    | Ok _ -> print_endline "ok"
+    | Error error -> print_s [%sexp (error : Error.t)]
+  in
+  check [ k "0", Move Left; k "g0", Move Right ];
+  [%expect {| ok |}];
+  check
+    [ k "j", Move Down
+    ; k "j", Move Up
+    ; k "g", Editor Undo
+    ; k "gg", Editor Redo
+    ; k "gu", Editor Redo
+    ; k "5x", Editor Delete_char
+    ; [], Editor Save
+    ; [ Key.char ' '; Escape ], Editor Save
+    ; [ Ctrl 'c' ], Editor Quit
+    ; k "j", Move Left
+    ]
+  ;
+  [%expect
+    {|
+    ("Invalid key bindings"
+     ("5 x starts with a digit, which starts a count"
+      "an empty key sequence is bound"
+      "Space Escape uses Escape or Ctrl-c, which always cancel"
+      "Ctrl-c uses Escape or Ctrl-c, which always cancel"
+      "j is bound more than once" "g is a prefix of g g, so it could never run"
+      "g is a prefix of g u, so it could never run"))
+    |}]
+;;
+
+(* Word, line, and document motions *)
+
+let%expect_test "word and line motion keys" =
+  let t = run (create "  foo.bar baz\nqux") (keys "wwWbBe") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion(Word_forward Small)))
+    (Move(motion(Word_forward Small)))
+    (Move(motion(Word_forward Big)))
+    (Move(motion(Word_backward Small)))
+    (Move(motion(Word_backward Big)))
+    (Move(motion(Word_end Small)))
+    NORMAL 0:4
+    |}];
+  let t = run t (keys "E$^02w2$") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion(Word_end Big)))
+    (Move(motion Line_end))
+    (Move(motion First_nonblank))
+    (Move(motion Line_start))
+    (Move(motion(Word_forward Small))(count 2))
+    (Move(motion Line_end)(count 2))
+    NORMAL 1:2
+    |}]
+;;
+
+let%expect_test "0 and ^ reject a count; 0 after a count extends it" =
+  let t = run (create (lines 30)) (keys "4l3^") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Right)(count 4))
+    NORMAL 0:4 notice="^ does not take a count"
+    |}];
+  let t = run t (keys "10j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down)(count 10))
+    NORMAL 10:4
+    |}];
+  let t = run t (keys "0") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Line_start))
+    NORMAL 10:0
+    |}]
+;;
+
+let%expect_test "gg and G: pending, cancellation, and explicit counts" =
+  let t = run (create (lines 30)) (keys "G") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Last_line))
+    NORMAL 29:0
+    |}];
+  let t = run t (keys "g") in
+  show_position t;
+  [%expect {| NORMAL 29:0 pending="g" |}];
+  let t = run t (keys "<Esc>") in
+  show_position t;
+  [%expect {| NORMAL 29:0 |}];
+  let t = run t (keys "gx") in
+  show_position t;
+  [%expect {| NORMAL 29:0 notice="g x is not bound" |}];
+  let t = run t (keys "gg") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion First_line))
+    NORMAL 0:0
+    |}];
+  (* Bare G is the last line; 1G is the first. *)
+  let t = run t (keys "1G") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Last_line)(count 1))
+    NORMAL 0:0
+    |}];
+  let t = run t (keys "20G") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Last_line)(count 20))
+    NORMAL 19:0
+    |}];
+  let t = run t (keys "5g") in
+  show_position t;
+  [%expect {| NORMAL 19:0 pending="5 g" |}];
+  let t = run t (keys "g") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion First_line)(count 5))
+    NORMAL 4:0
+    |}];
+  let t = run t (keys "999999G") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Last_line)(count 999999))
+    NORMAL 29:0
+    |}];
+  let t = run t (keys "3g<Esc>j") in
+  show_position t;
+  [%expect
+    {|
+    (Move(motion Down))
+    NORMAL 29:0
+    |}]
+;;
+
+let%expect_test "a / A / I / o / O enter Insert mode; counts are rejected" =
+  let t = run (create "  ab\ncd") (keys "aX<Esc>AY<Esc>IZ<Esc>") in
+  show t;
+  [%expect
+    {|
+    (Enter_insert After_cursor)
+    (Insert_text X)
+    Exit_insert
+    (Enter_insert Line_end)
+    (Insert_text Y)
+    Exit_insert
+    (Enter_insert First_nonblank)
+    (Insert_text Z)
+    Exit_insert
+    NORMAL 0:1 dirty
+    >  |ZX abY
+    > cd
+    |}];
+  let t = run t (keys "oq<Esc>Or<Esc>") in
+  show t;
+  [%expect
+    {|
+    Open_line_below
+    (Insert_text q)
+    Exit_insert
+    Open_line_above
+    (Insert_text r)
+    Exit_insert
+    NORMAL 1:1 dirty
+    >  ZX abY
+    >  |r
+    >  q
+    > cd
+    |}];
+  let t = run t (keys "u") in
+  show t;
+  [%expect
+    {|
+    Undo
+    NORMAL 1:1 dirty
+    >  ZX abY
+    >  |q
+    > cd
+    |}];
+  let t = run t (keys "3o") in
+  show t;
+  [%expect
+    {|
+    NORMAL 1:1 dirty notice="o does not take a count"
+    >  ZX abY
+    >  |q
+    > cd
+    |}];
+  let t = run t (keys "2a") in
+  show t;
+  [%expect
+    {|
+    NORMAL 1:1 dirty notice="a does not take a count"
+    >  ZX abY
+    >  |q
+    > cd
+    |}]
+;;
+
+let%expect_test "o then j k, paste, and Enter keep the indentation literal" =
+  let t = run (create "\tab") (keys "ojk") in
+  show t;
+  print_s [%sexp (Text_buffer.to_string (Editor.text t.editor) : string)];
+  [%expect
+    {|
+    Open_line_below
+    (Insert_text j)
+    Delete_backward
+    Exit_insert
+    NORMAL 1:0 dirty
+    > 	ab
+    > |
+     "\tab\
+    \n\t"
+    |}];
+  (* The paste is literal; Enter after it indents like the pasted line. *)
+  let t = run t (keys "o" @ [ Keymap.Input.Paste "x\n  y" ] @ keys "<CR>z<Esc>") in
+  show t;
+  print_s [%sexp (Text_buffer.to_string (Editor.text t.editor) : string)];
+  [%expect
+    {|
+    Open_line_below
+    (Insert_text"x\n  y")
+    Insert_newline
+    (Insert_text z)
+    Exit_insert
+    NORMAL 4:2 dirty
+    > 	ab
+    >
+    > 	x
+    >   y
+    >   |z
+     "\tab\
+    \n\t\
+    \n\tx\
+    \n  y\
+    \n  z"
     |}]
 ;;

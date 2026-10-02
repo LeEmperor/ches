@@ -1,19 +1,27 @@
 open! Core
 
-module Direction = struct
+let max_count = 999_999
+
+module Insert_position = struct
   type t =
-    | Left
-    | Right
-    | Up
-    | Down
-  [@@deriving sexp_of, equal, enumerate]
+    | Before_cursor
+    | After_cursor
+    | Line_end
+    | First_nonblank
+  [@@deriving sexp_of, equal]
 end
 
 type t =
-  | Move of Direction.t
-  | Enter_insert
+  | Move of
+      { motion : Motion.t
+      ; count : int option [@sexp.option]
+      }
+  | Enter_insert of Insert_position.t
+  | Open_line_below
+  | Open_line_above
   | Exit_insert
   | Insert_text of string
+  | Insert_newline
   | Delete_backward
   | Delete_forward
   | Insert_soft_tab of int

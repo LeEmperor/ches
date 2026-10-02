@@ -12,6 +12,15 @@ type t =
 
 let char c = Char (Uchar.of_char c)
 
+let digit = function
+  | Char u ->
+    let code = Uchar.to_scalar u in
+    if code >= Char.to_int '0' && code <= Char.to_int '9'
+    then Some (code - Char.to_int '0')
+    else None
+  | Ctrl _ | Enter | Tab | Backspace | Delete | Escape -> None
+;;
+
 let is_control u =
   let code = Uchar.to_scalar u in
   code < 0x20 || (code >= 0x7f && code < 0xa0)

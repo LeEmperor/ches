@@ -19,10 +19,13 @@ module Config = struct
   type t =
     { tab : tab
     ; insert_escape : (char * char) option
+    ; normal : Bindings.t
     }
   [@@deriving sexp_of]
 
-  let default = { tab = Spaces 2; insert_escape = Some ('j', 'k') }
+  let default =
+    { tab = Spaces 2; insert_escape = Some ('j', 'k'); normal = Bindings.default }
+  ;;
 end
 
 module Action = struct
@@ -39,6 +42,7 @@ end
 
 type t =
   { config : Config.t
+  ; count : int option (** Digits typed before a Normal-mode sequence. *)
   ; pending : Key.t list (** Keys of an incomplete Normal-mode sequence, in order. *)
   ; escape_started : bool
   (** The previous input inserted the first character of [config.insert_escape]. *)
@@ -50,58 +54,48 @@ let create (config : Config.t) =
   (match config.tab with
    | Spaces n when n < 1 -> raise_s [%message "Keymap.create: [Spaces n] needs n >= 1"]
    | Spaces _ | Literal_tab -> ());
-  { config; pending = []; escape_started = false; notice = None }
+  { config; count = None; pending = []; escape_started = false; notice = None }
 ;;
 
 (* The state between sequences: only the configuration carries over. *)
 let reset t = create t.config
+let cancel t notice = { (reset t) with notice = Some notice }, []
 
-let normal_bindings : (Key.t list * Action.t) list =
-  let leader = Key.char ' ' in
-  let editor keys (command : Command.t) = List.map keys ~f:Key.char, Action.Editor command in
-  let view c (command : View_command.t) =
-    [ leader; Key.char 'v'; Key.char c ], Action.View command
-  in
-  [ editor [ 'h' ] (Move Left)
-  ; editor [ 'j' ] (Move Down)
-  ; editor [ 'k' ] (Move Up)
-  ; editor [ 'l' ] (Move Right)
-  ; editor [ 'i' ] Enter_insert
-  ; editor [ 'x' ] Delete_char
-  ; editor [ 'u' ] Undo
-  ; ([ Ctrl 'r' ], Editor Redo)
-  ; editor [ ' '; 'w' ] Save
-  ; editor [ ' '; 'q' ] Quit
-  ; editor [ ' '; 'Q' ] Force_quit
-  ; view 'c' Toggle_centered
-  ; view 'h' (Shift (-2))
-  ; view 'l' (Shift 2)
-  ; view 'H' (Shift (-10))
-  ; view 'L' (Shift 10)
-  ; view '-' (Adjust_width (-10))
-  ; view '+' (Adjust_width 10)
-  ; view '=' (Adjust_width 10)
-  ; view 'r' Reset
-  ]
+let keys_to_string ?count keys =
+  Option.to_list (Option.map count ~f:Int.to_string) @ List.map keys ~f:Key.to_string_hum
+  |> String.concat ~sep:" "
 ;;
 
-let keys_to_string keys = List.map keys ~f:Key.to_string_hum |> String.concat ~sep:" "
+let resolve t ~keys (target : Bindings.Target.t) =
+  match target, t.count with
+  | Move motion, Some _ when not (Motion.takes_count motion) ->
+    cancel t (keys_to_string keys ^ " does not take a count")
+  | Move motion, count -> reset t, [ Action.Editor (Move { motion; count }) ]
+  | Editor command, None -> reset t, [ Editor command ]
+  | View command, None -> reset t, [ View command ]
+  | (Editor _ | View _), Some _ ->
+    cancel t (keys_to_string keys ^ " does not take a count")
+;;
 
 let feed_normal_key t (key : Key.t) =
-  let keys = t.pending @ [ key ] in
-  match List.Assoc.find normal_bindings keys ~equal:[%equal: Key.t list] with
-  | Some action -> reset t, [ action ]
-  | None ->
-    let is_prefix (sequence, _) =
-      List.is_prefix sequence ~prefix:keys ~equal:Key.equal
-    in
-    if List.exists normal_bindings ~f:is_prefix
-    then { (reset t) with pending = keys }, []
-    else (
-      match t.pending, key with
-      | [], _ | _, Escape -> reset t, []
-      | _ :: _, _ ->
-        { (reset t) with notice = Some (keys_to_string keys ^ " is not bound") }, [])
+  match key, Key.digit key with
+  | Escape, _ -> reset t, []
+  (* Digits extend a count before a sequence; [0] starts one only after another digit,
+     so that it can be bound on its own. *)
+  | _, Some digit when List.is_empty t.pending && (digit > 0 || Option.is_some t.count) ->
+    let count = (Option.value t.count ~default:0 * 10) + digit in
+    if count > Command.max_count
+    then cancel t (sprintf "Count is too large: the maximum is %d" Command.max_count)
+    else { (reset t) with count = Some count }, []
+  | _ ->
+    let keys = t.pending @ [ key ] in
+    (match Bindings.find t.config.normal keys with
+     | Bound target -> resolve t ~keys target
+     | Prefix -> { (reset t) with count = t.count; pending = keys }, []
+     | Unbound ->
+       if List.is_empty t.pending && Option.is_none t.count
+       then reset t, []
+       else cancel t (keys_to_string ?count:t.count keys ^ " is not bound"))
 ;;
 
 let feed_insert_key t (key : Key.t) =
@@ -127,7 +121,8 @@ let feed_insert_key t (key : Key.t) =
         (match t.config.tab with
          | Literal_tab -> [ Insert_text "\t" ]
          | Spaces width -> [ Insert_soft_tab width ])
-      | Char _ | Enter | Ctrl _ ->
+      | Enter -> [ Insert_newline ]
+      | Char _ | Ctrl _ ->
         (match Key.text key with
          | Some text -> [ Insert_text text ]
          | None -> [])
@@ -142,11 +137,15 @@ let feed t ~(mode : Mode.t) (input : Input.t) =
   match mode, input with
   | _, Key (Ctrl 'c') -> { (reset t) with notice = Some quit_hint }, []
   | Normal, Key key -> feed_normal_key t key
-  | Normal, Paste _ -> { (reset t) with notice = Some "Paste ignored in Normal mode" }, []
+  | Normal, Paste _ -> cancel t "Paste ignored in Normal mode"
   | Insert, Key key -> feed_insert_key t key
   | Insert, Paste text ->
     reset t, if String.is_empty text then [] else [ Action.Editor (Insert_text text) ]
 ;;
 
-let pending t = if List.is_empty t.pending then None else Some (keys_to_string t.pending)
+let pending t =
+  if List.is_empty t.pending && Option.is_none t.count
+  then None
+  else Some (keys_to_string ?count:t.count t.pending)
+;;
 let notice t = t.notice

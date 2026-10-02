@@ -111,6 +111,10 @@ val prev_boundary : t -> int -> int option
     specially. *)
 val next_boundary : t -> int -> int option
 
+(** The code point starting at boundary [offset], which must be less than
+    [length t]. *)
+val uchar_at : t -> int -> Uchar.t
+
 (** Zero-based code-point column of boundary [offset] within its line. *)
 val column_of_offset : t -> int -> int
 

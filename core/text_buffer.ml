@@ -202,6 +202,12 @@ let next_boundary t offset =
     Some (offset + width))
 ;;
 
+let uchar_at t offset =
+  check_boundary t ~fn:"uchar_at" offset;
+  if offset = length t then invalid_arg "Text_buffer.uchar_at: offset is the text length";
+  Stdlib.Uchar.utf_decode_uchar (Stdlib.String.get_utf_8_uchar t.text offset)
+;;
+
 (* O(line length). A rope storing code-point counts could make these logarithmic. *)
 let column_of_offset t offset =
   let start = line_start t (line_of_offset t offset) in

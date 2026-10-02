@@ -32,6 +32,9 @@ type t =
 (** [char c] is [Char] of the ASCII character [c]. *)
 val char : char -> t
 
+(** The value of an ASCII digit key [Char '0'] to [Char '9']. *)
+val digit : t -> int option
+
 (** For messages, e.g. ["x"], ["Space"], ["Ctrl-r"], ["Escape"]. *)
 val to_string_hum : t -> string
 

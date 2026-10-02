@@ -400,6 +400,171 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "counted movement"
+launch tall.txt
+# The pending count is shown until its command runs.
+keys 2
+expect_status "2"
+keys 0
+expect_status "20"
+keys j
+expect_status "21:1"
+status_line | grep -qE ' 20 ' && fail "status line still shows the count" || ok "count cleared"
+read -r _ y _ <<< "$(cursor)"
+row "$y" | grep -qF " 21 line 21" && ok "cursor row shows line 21" || fail "cursor row is not line 21"
+keys 5 l
+expect_status "21:6"
+keys 5 h
+expect_status "21:1"
+keys 2 0 k
+expect_status "1:1"
+# Counts clamp at the ends of the document and the line, scrolling as needed. The
+# file ends with LF, so its last line is the empty line 201.
+keys 9 9 9 j
+expect_status "201:1"
+expect_screen "200 line 200"
+keys k 9 9 9 9 9 9 l
+expect_status "200:8"
+# Line 1 is shorter, so the cursor stops at its last column.
+keys 9 9 9 9 9 9 k
+expect_status "1:6"
+expect_screen "  1 line 1"
+# An oversized count, Escape, an unbound continuation, and a command that takes no
+# count each cancel the count; none of it leaks into the next key.
+keys 1 0 0 0 0 0 0
+expect_status "Count is too large"
+keys j
+expect_status "2:6"
+keys 1 2 Escape j
+expect_status "3:6"
+keys 3 z
+expect_status "3 z is not bound"
+keys j
+expect_status "4:6"
+keys 3 x
+expect_status "x does not take a count"
+keys j
+expect_status "5:6"
+expect_no_screen "[+]"
+keys Space q
+expect_exit 0
+
+# Counted vertical moves keep the column across shorter lines.
+printf 'abcdefgh\nab\nabcdefgh\n' > "$work/columns.txt"
+launch columns.txt
+keys 5 l 2 j
+expect_status "3:6"
+keys k
+expect_status "2:2"
+keys j
+expect_status "3:6"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "word, line, and document motions"
+{
+  printf 'let foo_bar = baz(1, 2);\n'
+  printf '  \tindented line\n'
+  printf '\n'
+  for i in $(seq 4 120); do printf 'line %s\n' "$i"; done
+} > "$work/motions.txt"
+launch motions.txt
+keys w
+expect_status "1:5"
+keys w w
+expect_status "1:15"
+keys e
+expect_status "1:17"
+keys W
+expect_status "1:22"
+keys b B
+expect_status "1:15"
+keys 3 w
+expect_status "1:20"
+keys '$'
+expect_status "1:24"
+keys 0
+expect_status "1:1"
+keys j '^'
+expect_status "2:4"
+keys 2 '$'
+expect_status "3:1"
+keys w
+expect_status "4:1"
+# G alone is the last line (the empty one after the final LF); a count picks a line.
+keys G
+expect_status "121:1"
+expect_screen "120 line 120"
+keys 5 0 G
+expect_status "50:1"
+read -r _ y _ <<< "$(cursor)"
+row "$y" | grep -qF " 50 line 50" && ok "cursor row shows line 50" || fail "cursor row is not line 50"
+keys g
+expect_status "g"
+keys Escape j
+expect_status "51:1"
+keys g g
+expect_status "1:1"
+expect_screen "  1 let foo_bar"
+keys 2 0 g g
+expect_status "20:1"
+keys 1 0 j 0
+expect_status "30:1"
+keys 3 '^'
+expect_status "does not take a count"
+expect_no_screen "[+]"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "Insert entry (a, A, I, o, O) and autoindent"
+printf 'if x:\n  call()\n' > "$work/insert.txt"
+launch insert.txt
+keys j I
+expect_status "INSERT"
+type_text do_
+keys Escape
+expect_status "2:5"
+keys A
+type_text ' # ok'
+keys Escape
+expect_status "2:16"
+# o and O copy the line's indentation, which stays if nothing more is typed.
+keys o
+expect_status "3:3"
+type_text 'next()'
+keys Escape
+expect_status "3:8"
+keys O
+expect_status "3:3"
+keys Escape
+expect_status "3:2"
+expect_screen "  4   next()"
+# Undoing the opened line restores the cursor from before O.
+keys u
+expect_status "3:8"
+expect_screen "  3   next()"
+# Enter copies the indentation too.
+keys A Enter
+expect_status "4:3"
+type_text 'end()'
+keys Escape
+expect_status "4:7"
+keys g g w a
+type_text y
+keys Escape
+expect_status "1:5"
+keys 3 o
+expect_status "o does not take a count"
+keys Space w
+expect_status "Wrote"
+printf 'if xy:\n  do_call() # ok\n  next()\n  end()\n' > "$work/insert.expected"
+expect_file "$work/insert.txt" "$work/insert.expected"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
 section "layout commands (Space v)"
 # Where the tile's top corners are, in cells from the left.
 tile_left() { local line prefix; line=$(row 0); prefix=${line%%╭*}; echo "${#prefix}"; }

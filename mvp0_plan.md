@@ -586,6 +586,10 @@ Acceptance:
 MVP0 is complete here. Further features require a new milestone rather than
 stretching this phase indefinitely.
 
+**Done (2026-10-01).** `dune build`, `dune runtest`, and `scripts/smoke.sh`
+pass, and the owner accepted the editor after trying it in a real terminal.
+MVP0 is complete.
+
 ## Likely next milestones, not MVP0 requirements
 
 1. Word/line motions, `a`, and composable operators such as `dd/dw`.

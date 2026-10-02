@@ -75,26 +75,70 @@ let edit t ~text ~cursor =
   set_cursor { t with text; revision = t.revision + 1; history } cursor
 ;;
 
-let move t (direction : Command.Direction.t) =
+let check_count count =
+  if count < 1 || count > Command.max_count
+  then invalid_argf "count %d is not between 1 and %d" count Command.max_count ()
+;;
+
+let move t motion ~count =
+  Option.iter count ~f:check_count;
+  if Option.is_some count && not (Motion.takes_count motion)
+  then invalid_argf "%s takes no count" (Sexp.to_string [%sexp (motion : Motion.t)]) ();
   let t = commit t in
+  let offset =
+    Motion.destination
+      t.text
+      motion
+      ~cursor:t.cursor
+      ~preferred_column:t.preferred_column
+      ~count
+  in
+  if Motion.keeps_preferred_column motion
+  then { t with cursor = normalize t.text t.mode offset }
+  else set_cursor t offset
+;;
+
+(* The leading spaces and TABs of [line]. *)
+let indentation text line =
+  let start = B.line_start text line in
+  let first_nonblank =
+    Motion.destination text First_nonblank ~cursor:start ~preferred_column:0 ~count:None
+  in
+  B.slice text ~pos:start ~len:(first_nonblank - start)
+;;
+
+let enter_insert t (position : Command.Insert_position.t) =
   let line = cursor_line t in
-  match direction with
-  | Left ->
-    if t.cursor > B.line_start t.text line
-    then set_cursor t (Option.value_exn (B.prev_boundary t.text t.cursor))
-    else set_cursor t t.cursor
-  | Right ->
-    let last = normalize t.text t.mode (B.line_end t.text line) in
-    if t.cursor < last
-    then set_cursor t (Option.value_exn (B.next_boundary t.text t.cursor))
-    else set_cursor t t.cursor
-  | Up | Down ->
-    let target = if Command.Direction.equal direction Up then line - 1 else line + 1 in
-    if target < 0 || target >= B.line_count t.text
-    then t
+  let offset =
+    match position with
+    | Before_cursor -> t.cursor
+    | After_cursor ->
+      if t.cursor < B.line_end t.text line
+      then Option.value_exn (B.next_boundary t.text t.cursor)
+      else t.cursor
+    | Line_end -> B.line_end t.text line
+    | First_nonblank -> B.line_start t.text line + String.length (indentation t.text line)
+  in
+  set_cursor { t with mode = Insert } offset
+;;
+
+(* The new line's indentation and LF are the first edit of the Insert transaction, so
+   that undoing it also removes the typing that follows. *)
+let open_line t ~below =
+  let line = cursor_line t in
+  let indent = indentation t.text line in
+  let at, s, cursor =
+    if below
+    then (
+      let at = B.line_end t.text line in
+      at, "\n" ^ indent, at + 1 + String.length indent)
     else (
-      let offset = B.offset_of_column t.text ~line:target t.preferred_column in
-      { t with cursor = normalize t.text t.mode offset })
+      let at = B.line_start t.text line in
+      at, indent ^ "\n", at + String.length indent)
+  in
+  match B.insert t.text ~at s with
+  | Ok text -> edit { t with mode = Insert } ~text ~cursor
+  | Error e -> raise_s [%message "indentation is valid text" (e : B.Invalid_text.t)]
 ;;
 
 let exit_insert t =
@@ -117,6 +161,12 @@ let insert_text t s =
     | Error e ->
       let message = "Rejected text: " ^ B.Invalid_text.to_string_hum e in
       { t with message = Some (Error message) })
+;;
+
+let insert_newline t =
+  let line = cursor_line t in
+  let before_cursor = t.cursor - B.line_start t.text line in
+  insert_text t ("\n" ^ String.prefix (indentation t.text line) before_cursor)
 ;;
 
 let delete_backward t =
@@ -189,9 +239,10 @@ let quit t =
 let dispatch t (command : Command.t) =
   let applies =
     match command, t.mode with
-    | Enter_insert, Insert
+    | (Enter_insert _ | Open_line_below | Open_line_above), Insert
     | ( ( Exit_insert
         | Insert_text _
+        | Insert_newline
         | Delete_backward
         | Delete_forward
         | Insert_soft_tab _
@@ -205,10 +256,13 @@ let dispatch t (command : Command.t) =
   else (
     let t = { t with message = None } in
     match command with
-    | Move direction -> move t direction, []
-    | Enter_insert -> set_cursor { t with mode = Insert } t.cursor, []
+    | Move { motion; count } -> move t motion ~count, []
+    | Enter_insert position -> enter_insert t position, []
+    | Open_line_below -> open_line t ~below:true, []
+    | Open_line_above -> open_line t ~below:false, []
     | Exit_insert -> exit_insert t, []
     | Insert_text s -> insert_text t s, []
+    | Insert_newline -> insert_newline t, []
     | Delete_backward -> delete_backward t, []
     | Delete_forward -> delete_forward t, []
     | Insert_soft_tab width -> insert_soft_tab t width, []
