@@ -667,3 +667,76 @@ let%expect_test "toggling the gutter keeps the cursor on its cell of a wide line
     cursor: 29,0 Block
     |}]
 ;;
+
+let%expect_test "a block selection is drawn by display cells" =
+  (* Block 2-4: TAB cells inside it only, a wide glyph cut by its edge whole, and
+     nothing on short and empty lines. *)
+  let t = run ~width:40 ~height:9 (ui "0123456789\n\tabc\na界bcd\nab\n\n0123456789") (keys "2l<C-v>5j2l") in
+  show_styled ~width:40 ~height:9 t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Gutter[  5 ] Text[01] Selection[234] Text[56789                        ] Border[│]
+    Border[│] Gutter[  4 ] Text[  ] Selection[   ] Text[   abc                       ] Border[│]
+    Border[│] Gutter[  3 ] Text[a] Selection[界bc] Text[d                            ] Border[│]
+    Border[│] Gutter[  2 ] Text[ab                                ] Border[│]
+    Border[│] Gutter[  1 ] Text[                                  ] Border[│]
+    Border[│] Gutter_cursor_line[6   ] Text_cursor_line[01] Selection[234] Text_cursor_line[56789                        ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode (Visual Blockwise))[ VISUAL BLOCK ] Status[ f.txt                6:5 ]
+    |}];
+  (* After $, each line to its own end. *)
+  let t = run ~width:40 ~height:9 t (keys "$") in
+  show_styled ~width:40 ~height:9 t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Gutter[  5 ] Text[01] Selection[23456789] Text[                        ] Border[│]
+    Border[│] Gutter[  4 ] Text[  ] Selection[      abc] Text[                       ] Border[│]
+    Border[│] Gutter[  3 ] Text[a] Selection[界bcd] Text[                            ] Border[│]
+    Border[│] Gutter[  2 ] Text[ab                                ] Border[│]
+    Border[│] Gutter[  1 ] Text[                                  ] Border[│]
+    Border[│] Gutter_cursor_line[6   ] Text_cursor_line[01] Selection[23456789] Text_cursor_line[                        ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode (Visual Blockwise))[ VISUAL BLOCK ] Status[ f.txt               6:11 ]
+    |}]
+;;
+
+let%expect_test "a block selection clips at the viewport's edges" =
+  let line = String.concat (List.init 6 ~f:(fun i -> sprintf "%d________" i)) in
+  let t = run ~width:30 ~height:6 (ui (line ^ "\n" ^ line)) (keys "10l<C-v>j25l") in
+  show_styled ~width:30 ~height:6 t;
+  show ~width:30 ~height:6 t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[────────────────────╮]
+    Border[│] Gutter[  1 ] Selection[______2________3________] Border[│]
+    Border[│] Gutter_cursor_line[2   ] Selection[______2________3________] Border[│]
+    Border[│] Gutter[    ] Text[                        ] Border[│]
+    Border[╰────────────────────────────╯]
+    (Mode (Visual Blockwise))[ VISUAL BLOCK ] Status[ f.txt     2:36 ]
+    ╭─ f.txt ────────────────────╮|
+    │  1 ______2________3________│|
+    │2   ______2________3________│|
+    │                            │|
+    ╰────────────────────────────╯|
+     VISUAL BLOCK  f.txt     2:36 |
+    cursor: 28,2 Block
+    |}]
+;;
+
+let%test_unit "a TAB cut by the viewport's edge keeps its block highlight" =
+  (* Block from the TAB at cells 16-23 to cell 41 on the next line. *)
+  let t =
+    run ~width:30 ~height:6 (ui (String.make 16 'a' ^ "\t" ^ String.make 40 'b' ^ "\n" ^ String.make 60 'a')) (keys "16l<C-v>j18l")
+  in
+  let scroll = Ui_state.fitted_scroll t ~width:30 ~height:6 in
+  assert (scroll.left > 16 && scroll.left < 24);
+  let frame = Frame.render t ~width:30 ~height:6 in
+  let row = List.nth_exn frame.rows 1 in
+  (* The first text cell is part of a TAB inside the block. *)
+  let gutter = 1 + 4 in
+  let rec style_at spans x =
+    match spans with
+    | [] -> assert false
+    | (s : Span.t) :: rest -> if x < s.width then s.style else style_at rest (x - s.width)
+  in
+  assert (Style.equal (style_at row gutter) Selection)
+;;

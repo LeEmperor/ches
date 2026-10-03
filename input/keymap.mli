@@ -29,6 +29,11 @@
         Normal  p / P                   Paste after / before; count repeats the register
        Normal  : e ! Enter             Force-reload the associated file
        Normal  x / X                  Delete character(s) under / before cursor
+      Normal  v / V / Ctrl-v         Enter_visual (Characterwise / Linewise / Blockwise)
+      Visual  v / V / Ctrl-v         Switch selection kind, keeping the anchor
+      Visual  motions, counts        Move, extending the selection
+      Visual  d / y / c              Visual_delete / Visual_yank / Visual_change
+      Visual  Escape                 Exit_visual
       Normal  u                      Undo
       Normal  Ctrl-r                 Redo
       Normal  Ctrl-e / Ctrl-y        View (Scroll Line_down / Line_up)

@@ -59,7 +59,7 @@ let of_glyphs ?highlight glyphs ~left ~cols ~(text : Style.t) ~(special : Style.
           let visible = Int.min stop right - first in
           let clipped =
             match kind with
-            | Tab -> blank text visible
+            | Tab -> blank style visible
             | Escape ->
               create
                 special

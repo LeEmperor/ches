@@ -82,6 +82,46 @@ let%expect_test "Visual bindings select, cancel, and apply a selection" =
     |}]
 ;;
 
+let%expect_test "Ctrl-v selects a block; counts extend it; v, V and Ctrl-v switch kinds" =
+  let t = run (create "abcd\nefgh\nijkl") (keys "l<C-v>2jl") in
+  show t;
+  print_s [%sexp (Editor.block t.editor : Block.t option)];
+  [%expect {|
+    (Move(motion Right))
+    (Enter_visual Blockwise)
+    (Move(motion Down)(count 2))
+    (Move(motion Right))
+    VISUAL BLOCK 2:2
+    > abcd
+    > efgh
+    > ij|kl
+    (((first_line 0) (last_line 2) (left 1) (right (3))))
+    |}];
+  let t = run t (keys "vV<C-v>") in
+  show t;
+  print_s [%sexp (Editor.selection t.editor : Editor.Selection.t option)];
+  [%expect {|
+    (Enter_visual Characterwise)
+    (Enter_visual Linewise)
+    (Enter_visual Blockwise)
+    VISUAL BLOCK 2:2
+    > abcd
+    > efgh
+    > ij|kl
+    (((anchor 1) (active 12) (kind Blockwise)))
+    |}];
+  (* A count before Ctrl-v is rejected; Escape leaves the cursor where it is. *)
+  let t = run t (keys "<Esc>3<C-v>") in
+  show t;
+  [%expect {|
+    Exit_visual
+    NORMAL 2:2 notice="Ctrl-v does not take a count"
+    > abcd
+    > efgh
+    > ij|kl
+    |}]
+;;
+
 let%expect_test "delete grammar composes motions, counts, doubled lines, and cancellation" =
   let t = run (create "one two three\nfour\nfive") (keys "dwe") in
   show t;

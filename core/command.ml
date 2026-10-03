@@ -46,7 +46,7 @@ type t =
       }
   | Search_word of { forward : bool }
   | Clear_search_highlight
-  | Enter_visual of [ `Characterwise | `Linewise ]
+  | Enter_visual of [ `Characterwise | `Linewise | `Blockwise ]
   | Exit_visual
   | Visual_delete
   | Visual_yank

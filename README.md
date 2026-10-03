@@ -93,7 +93,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `x` / `X` | Delete character(s) under / before the cursor |
 | Normal | `y{motion}` / `yy` | Yank by motion / whole line(s) |
 | Normal | `p` / `P` | Paste the unnamed register after / before the cursor or line |
-| Normal | `v` / `V` | Start characterwise / linewise Visual selection |
+| Normal | `v` / `V` / `Ctrl-v` | Start characterwise / linewise / blockwise Visual selection |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -112,8 +112,8 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, hybrid numbers |
 | Normal | `Escape` | Cancel a pending count or `Space` sequence |
 | Visual | motions, `%` | Extend the selection |
-| Visual | `v` / `V` | Switch characterwise / linewise selection, preserving its anchor |
-| Visual | `d` / `c` / `y` | Delete / change / yank the selected range |
+| Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
+| Visual | `d` / `c` / `y` | Delete / change / yank the selected range (not yet for blocks) |
 | Visual | `Escape` | Cancel selection without moving the cursor |
 | Insert | text, `Backspace`, `Delete` | Edit |
 | Insert | `Enter` | New line, indented like the current one |
@@ -219,9 +219,22 @@ losing the anchor. Selection highlighting takes precedence over search and
 current-line highlighting while the terminal cursor remains visible. `d`, `c`,
 and `y` use the same typed unnamed register and range behavior as their Normal
 mode counterparts. Delete and change are each one undo step; yank returns to
-Normal mode at the selected range's start without changing history. Blockwise
-selection, Visual paste, text objects, and search prompts in Visual mode are not
-supported.
+Normal mode at the selected range's start without changing history. Visual paste,
+text objects, and search prompts in Visual mode are not supported.
+
+As in Vim, `l`, `j`, `k`, and `$` in Visual mode can put the cursor on the line
+break after the last character, so `v$` selects through the end of the line
+including its newline (`v$d` on `abc` / `def` leaves `def`). Leaving Visual mode
+steps back off the line break.
+
+`Ctrl-v` selects a rectangle of screen columns, as in Vim. Each corner covers the
+whole character it is on, so a corner on a TAB or wide character covers all of
+its cells; reversed and upward selections give the same rectangle. After `$` the
+block reaches each line's own end until another horizontal move. TAB cells are
+highlighted only where they fall inside the block, a wide character cut by an
+edge is highlighted whole, and lines shorter than the block show no highlight.
+Selecting changes nothing; `d`, `c`, and `y` on a block are not supported yet
+(they leave the selection and report so).
 
 `f{character}`/`F{character}` find a literal code point strictly forward or
 backward on the current line; `t`/`T` stop just before/after it. Counts repeat

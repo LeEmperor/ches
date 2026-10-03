@@ -843,6 +843,13 @@ let gen_command =
      ; Undo
      ; Redo
      ; Save
+     ; Enter_visual `Characterwise
+     ; Enter_visual `Linewise
+     ; Enter_visual `Blockwise
+     ; Exit_visual
+     ; Visual_yank
+     ; Visual_delete
+     ; Visual_change
      ]
      @ List.concat_map Motion.all ~f:(fun m ->
        if Motion.takes_count m
@@ -854,9 +861,13 @@ let check_cursor t =
   let text = Editor.text t in
   let cursor = Editor.cursor t in
   assert (Text_buffer.is_boundary text cursor);
+  (match Editor.selection t, Editor.mode t with
+   | Some _, Visual _ | None, (Normal | Insert) -> ()
+   | _ -> raise_s [%message "selection out of Visual mode" (t |> show : unit)]);
   match Editor.mode t with
   | Insert -> ()
-  | Normal | Visual _ ->
+  | Visual _ -> ()
+  | Normal ->
     let line = Text_buffer.line_of_offset text cursor in
     let start = Text_buffer.line_start text line in
     let stop = Text_buffer.line_end text line in
@@ -898,6 +909,217 @@ let%expect_test "Visual selections extend with motions, switch kind, and apply o
     > |X two
     NORMAL 0:2 rev=3
     > on|e two
+    |}]
+;;
+
+(* The selection, then the block as [first_line-last_line:left-right] in display
+   columns ([$] for line ends). *)
+let show_block t =
+  show t;
+  print_s [%sexp (Editor.selection t : Editor.Selection.t option)];
+  Option.iter (Editor.block t) ~f:(fun block ->
+    printf
+      "block %d-%d:%d-%s\n"
+      block.first_line
+      block.last_line
+      block.left
+      (Option.value_map block.right ~default:"$" ~f:(fun right -> Int.to_string (right - 1))))
+;;
+
+let%expect_test "blockwise Visual selections extend with motions and counts" =
+  let t = run (create "abcdefgh\nabcdefgh\nabcdefgh") [ move Right; Enter_visual `Blockwise; move ~count:2 Down; move ~count:3 Right ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 2:4 rev=0
+    > abcdefgh
+    > abcdefgh
+    > abcd|efgh
+    (((anchor 1) (active 22) (kind Blockwise)))
+    block 0-2:1-4
+    |}];
+  (* Up and left past the anchor: the same columns, reversed. *)
+  let t = run t [ move ~count:2 Up; move ~count:4 Left ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 0:0 rev=0
+    > |abcdefgh
+    > abcdefgh
+    > abcdefgh
+    (((anchor 1) (active 0) (kind Blockwise)))
+    block 0-0:0-1
+    |}];
+  let t = run t [ move ~count:2 Down; move ~count:4 Right; move Up ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 1:4 rev=0
+    > abcdefgh
+    > abcd|efgh
+    > abcdefgh
+    (((anchor 1) (active 13) (kind Blockwise)))
+    block 0-1:1-4
+    |}]
+;;
+
+let%expect_test "blockwise selections over short lines, TABs, wide characters, and $" =
+  (* As in Vim, a vertical move onto a short line puts the Visual cursor on its line
+     break, which becomes the block's corner. *)
+  let t = run (create "abcdefgh\nab\nabcdefgh") [ move ~count:5 Right; Enter_visual `Blockwise; move Down ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 1:2 rev=0
+    > abcdefgh
+    > ab|
+    > abcdefgh
+    (((anchor 5) (active 11) (kind Blockwise)))
+    block 0-1:2-5
+    |}];
+  let t = run t [ move Down ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 2:5 rev=0
+    > abcdefgh
+    > ab
+    > abcde|fgh
+    (((anchor 5) (active 17) (kind Blockwise)))
+    block 0-2:5-5
+    |}];
+  (* [$] reaches every line's end, and sticks through vertical moves. *)
+  let t = run (create "abcdefgh\nab\nabcd") [ move Right; Enter_visual `Blockwise; move Line_end; move ~count:2 Down ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 2:4 rev=0
+    > abcdefgh
+    > ab
+    > abcd|
+    (((anchor 1) (active 16) (kind Blockwise)))
+    block 0-2:1-$
+    |}];
+  let t = run t [ move Left ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 2:3 rev=0
+    > abcdefgh
+    > ab
+    > abc|d
+    (((anchor 1) (active 15) (kind Blockwise)))
+    block 0-2:1-3
+    |}];
+  (* A corner on a TAB or wide character covers all of its cells. *)
+  let t = run (create "\tab\n0123456789") [ Enter_visual `Blockwise; move Down ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 1:7 rev=0
+    > 	ab
+    > 0123456|789
+    (((anchor 0) (active 11) (kind Blockwise)))
+    block 0-1:0-7
+    |}];
+  let t = run (create "abcdef\na界bcd") [ move Right; Enter_visual `Blockwise; move Down ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 1:1 rev=0
+    > abcdef
+    > a|界bcd
+    (((anchor 1) (active 8) (kind Blockwise)))
+    block 0-1:1-2
+    |}]
+;;
+
+let%expect_test "switching selection kinds keeps the anchor; Escape keeps the cursor" =
+  let t = run (create "one\ntwo\nthree") [ move Right; Enter_visual `Characterwise; move Down; Enter_visual `Blockwise ] in
+  show_block t;
+  let t = run t [ Enter_visual `Linewise ] in
+  show_block t;
+  let t = run t [ Enter_visual `Blockwise; move Right; Exit_visual ] in
+  show_block t;
+  [%expect {|
+    VISUAL BLOCK 1:1 rev=0
+    > one
+    > t|wo
+    > three
+    (((anchor 1) (active 5) (kind Blockwise)))
+    block 0-1:1-1
+    VISUAL LINE 1:1 rev=0
+    > one
+    > t|wo
+    > three
+    (((anchor 1) (active 5) (kind Linewise)))
+    NORMAL 1:2 rev=0
+    > one
+    > tw|o
+    > three
+    ()
+    |}]
+;;
+
+let%expect_test "selection changes leave text, history, and registers alone" =
+  let t = run (create "abc\ndef") [ Yank_lines 1 ] in
+  let t = run t [ Enter_visual `Blockwise; move Down; move Line_end; Enter_visual `Characterwise; Enter_visual `Blockwise; move Left; Exit_visual ] in
+  show t;
+  print_s [%sexp (Editor.unnamed_register t : Register.t option)];
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    NORMAL 1:2 rev=0
+    > abc
+    > de|f
+    (((text "abc\n") (kind Linewise)))
+    0
+    |}];
+  (* Operators on blocks are not supported yet: nothing changes, and the selection
+     stays. *)
+  List.iter [ Visual_delete; Visual_yank; Visual_change ] ~f:(fun command ->
+    let t = run (create "abc\ndef") [ Enter_visual `Blockwise; move Down; command ] in
+    show_block t);
+  [%expect {|
+    VISUAL BLOCK 1:0 rev=0 (Error"Block operators are not supported yet")
+    > abc
+    > |def
+    (((anchor 0) (active 4) (kind Blockwise)))
+    block 0-1:0-0
+    VISUAL BLOCK 1:0 rev=0 (Error"Block operators are not supported yet")
+    > abc
+    > |def
+    (((anchor 0) (active 4) (kind Blockwise)))
+    block 0-1:0-0
+    VISUAL BLOCK 1:0 rev=0 (Error"Block operators are not supported yet")
+    > abc
+    > |def
+    (((anchor 0) (active 4) (kind Blockwise)))
+    block 0-1:0-0
+    |}]
+;;
+
+let%expect_test "in Visual mode, l and $ reach the line break, so v$ selects the LF" =
+  let t = run (create "abc\ndef") [ Enter_visual `Characterwise; move Line_end ] in
+  show t;
+  let t = run t [ Visual_delete ] in
+  show t;
+  [%expect {|
+    VISUAL 0:3 rev=0
+    > abc|
+    > def
+    NORMAL 0:0 rev=1 dirty
+    > |def
+    |}];
+  let t = run (create "abc\ndef") [ Enter_visual `Characterwise; move ~count:5 Right ] in
+  show t;
+  let t = run t [ Exit_visual ] in
+  show t;
+  [%expect {|
+    VISUAL 0:3 rev=0
+    > abc|
+    > def
+    NORMAL 0:2 rev=0
+    > ab|c
+    > def
+    |}];
+  (* Other motions still stop on a character. *)
+  let t = run (create "abc  \ndef") [ Enter_visual `Characterwise; move (Word_end Small); move (Word_forward Small) ] in
+  show t;
+  [%expect {|
+    VISUAL 1:0 rev=0
+    > abc
+    > |def
     |}]
 ;;
 
@@ -973,6 +1195,8 @@ let%test_unit "random commands keep the cursor valid; undo/redo round-trips" =
           t')
       in
       let final = Editor.text t in
+      (* Undo does not apply in Visual mode. *)
+      let t, _ = Editor.dispatch t Exit_visual in
       let t, steps = undo_all t in
       check_cursor t;
       [%test_result: string]

@@ -10,6 +10,9 @@
     - Normal mode: on a code point of a nonempty line (never on its LF or past its
       end), or at the start of an empty line, including the empty final line after a
       trailing LF.
+    - Visual mode: as Normal mode, except that [Right], [Up], [Down] and [Line_end]
+      may also leave it on a line's end (its line break), as in Vim, so that [v$]
+      selects the LF. Leaving Visual mode steps back off it.
 
     [Move] goes to {!Motion.destination}, which clamps at line and document
     boundaries rather than failing; a move already at its boundary is a no-op. The
@@ -51,6 +54,11 @@
       Undo, Redo, Save, Quit,
       Force_quit                       yes     yes
     v}
+
+    In Visual mode only [Move], [Enter_visual], [Exit_visual] and the [Visual_*]
+    commands apply. [Enter_visual] switches the selection kind, keeping the anchor.
+    In a blockwise selection the [Visual_*] commands are not supported yet: they
+    leave the selection and report an [Error].
 
     [Exit_insert] steps left one code point when that does not cross a line start.
 
@@ -103,7 +111,7 @@ module Selection : sig
   type t =
     { anchor : int
     ; active : int
-    ; kind : [ `Characterwise | `Linewise ]
+    ; kind : [ `Characterwise | `Linewise | `Blockwise ]
     }
   [@@deriving sexp_of, equal]
 end
@@ -136,6 +144,11 @@ val is_dirty : t -> bool
 (** Byte offset; see the cursor rules above. *)
 val cursor : t -> int
 val selection : t -> Selection.t option
+
+(** The rectangle of a blockwise selection, which reaches every line's end after
+    [Line_end] until another move resets the preferred column. [None] for other
+    selections. *)
+val block : t -> Block.t option
 
 (** Zero-based line of the cursor. *)
 val cursor_line : t -> int

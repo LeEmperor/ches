@@ -43,7 +43,7 @@ module Target : sig
     | Search_prompt of { forward : bool }
     | Repeat_search of { opposite : bool }
     | Search_word of { forward : bool }
-    | Visual of [ `Characterwise | `Linewise ]
+    | Visual of [ `Characterwise | `Linewise | `Blockwise ]
   [@@deriving sexp_of, equal]
 end
 

@@ -19,7 +19,7 @@ module Target = struct
     | Search_prompt of { forward : bool }
     | Repeat_search of { opposite : bool }
     | Search_word of { forward : bool }
-    | Visual of [ `Characterwise | `Linewise ]
+    | Visual of [ `Characterwise | `Linewise | `Blockwise ]
   [@@deriving sexp_of, equal]
 end
 
@@ -132,6 +132,7 @@ let default =
      ; [ Key.char '#' ], Search_word { forward = false }
      ; [ Key.char 'v' ], Visual `Characterwise
      ; [ Key.char 'V' ], Visual `Linewise
+     ; [ Ctrl 'v' ], Visual `Blockwise
     ; editor [ 'i' ] (Enter_insert Before_cursor)
     ; editor [ 'a' ] (Enter_insert After_cursor)
     ; editor [ 'A' ] (Enter_insert Line_end)

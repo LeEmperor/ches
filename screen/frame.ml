@@ -110,6 +110,25 @@ let render ui ~width ~height =
                    then `Current else `Match)
   in
   let selection = Editor.selection editor in
+  let block = Editor.block editor in
+  (* A block edge inside a TAB highlights only the TAB's cells within the block, so
+     the TAB is drawn as separate runs of spaces at the edges. *)
+  let split_tabs glyphs ~edges =
+    Array.concat_map glyphs ~f:(fun (glyph : Cell_map.Glyph.t) ->
+      match glyph.kind with
+      | Plain | Escape -> [| glyph |]
+      | Tab ->
+        let stop = glyph.col + glyph.width in
+        let cuts =
+          List.filter edges ~f:(fun edge -> edge > glyph.col && edge < stop)
+          |> List.dedup_and_sort ~compare:Int.compare
+        in
+        let bounds = (glyph.col :: cuts) @ [ stop ] in
+        List.zip_exn (List.drop_last_exn bounds) (List.tl_exn bounds)
+        |> List.map ~f:(fun (col, stop) ->
+          { glyph with col; width = stop - col; text = String.make (stop - col) ' ' })
+        |> Array.of_list)
+  in
   let area_on_row layout y =
     List.find areas ~f:(fun { rect; layout = l; _ } ->
       Geometry.Area.equal_layout l layout && y >= rect.y && y < rect.y + rect.height)
@@ -158,8 +177,20 @@ let render ui ~width ~height =
           in
           let line_start = Text_buffer.line_start text line in
           let search_highlight = search_highlighter line_start in
+          let glyphs = Cell_map.glyphs (Text_buffer.line_text text line) in
+          let block_columns =
+            match block with
+            | Some block when line >= block.first_line && line <= block.last_line ->
+              Some (Block.columns block glyphs)
+            | Some _ | None -> None
+          in
+          let glyphs =
+            match block_columns with
+            | Some (left, stop) -> split_tabs glyphs ~edges:[ left; stop ]
+            | None -> glyphs
+          in
            Span.of_glyphs
-             (Cell_map.glyphs (Text_buffer.line_text text line))
+             glyphs
             ~left:scroll.left
             ~cols:viewport.width
              ~text:text_style
@@ -167,6 +198,12 @@ let render ui ~width ~height =
               ~highlight:(fun glyph ->
                 let offset = line_start + glyph.pos in
                 match selection with
+                | Some { kind = `Blockwise; _ } ->
+                  (match block_columns with
+                   | Some (left, stop)
+                     when glyph.width > 0 && glyph.col < stop && glyph.col + glyph.width > left ->
+                     Some `Selection
+                   | Some _ | None -> search_highlight offset)
                 | Some { Editor.Selection.anchor; active; kind = `Linewise } when line >= Int.min (Text_buffer.line_of_offset text anchor) (Text_buffer.line_of_offset text active) && line <= Int.max (Text_buffer.line_of_offset text anchor) (Text_buffer.line_of_offset text active) -> Some `Selection
                 | Some { Editor.Selection.anchor; active; kind = `Characterwise } when offset >= Int.min anchor active && offset <= Int.max anchor active -> Some `Selection
                 | _ -> search_highlight offset))

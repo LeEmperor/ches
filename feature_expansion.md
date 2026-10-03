@@ -967,6 +967,31 @@ Acceptance:
 
 Stop before block operators or insertion.
 
+**Done (2026-10-03).** ``Visual `Blockwise`` (status `VISUAL BLOCK`) joins the
+selection kinds in `Mode`, `Command.Enter_visual`, `Editor.Selection`, and
+`Bindings.Target.Visual`; `Ctrl-v` is bound in `Bindings.default`. The new pure
+`core/block.ml` resolves a selection: `Block.of_corners` gives the rectangle
+(first/last line, first display column, and the column after the last or `None`
+after `$`), `Block.rows` one byte range per line ordered last line first, with
+`before`/`after` counting the cells of a TAB or wide glyph that stick out past an
+edge, and `Block.columns` the cells to draw. `Editor.block` derives the rectangle
+from the selection and the sticky-`$` preferred column, so no extra state is
+kept. As settled, in Visual mode `l`, `j`/`k`, and `$` may leave the cursor on the
+line break (Vim's `selection=inclusive` behavior, checked with `vim -Nu NONE`:
+`vlll` on `abc` reaches column 3, and `5l Ctrl-v j` onto `ab` gives block 2-5); this
+also makes characterwise `v$` include the LF. The frame splits a TAB at block
+edges so only its covered cells are highlighted; wide and escape glyphs cut by an
+edge are highlighted whole; short lines show nothing past their text. A TAB cut
+by the viewport's edge now keeps its highlight (`Span.of_glyphs`). Until
+Phase 16, `d`/`y`/`c` on a block report `Block operators are not supported yet`
+and keep the selection. Not done, deliberately: pressing the current kind's key
+again does not leave Visual mode (as before for `v`/`V`), and `o` (swap corners)
+is not bound. Tests: `test/test_block.ml` (including a property test that rows
+tile the selected cells), editor, keymap, and frame expect tests, Visual commands
+in the random-command property test, and a smoke section. Four smoke checks
+(`cursor row is not line ...`, `wrong character under the cursor`) fail on the
+unmodified HEAD as well: they read the cursor while the smear animation runs.
+
 ### Phase 16 — Blockwise operators and register
 
 **Goal:** existing Visual operators act predictably on rectangular selections.

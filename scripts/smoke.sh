@@ -657,6 +657,45 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "blockwise Visual selection (Ctrl-v)"
+printf 'abcdefgh\n\tab\nab\nabcdefgh\n' > "$work/block.txt"
+cp "$work/block.txt" "$work/block.expected"
+launch block.txt
+colored_row_has() { t capture-pane -e -p -t "$session" | grep -qF -- "$1"; }
+# Block from column 2 down to line 4, column 4.
+keys 2 l C-v 3 j l l
+expect_status "VISUAL BLOCK"
+expect_status "4:5"
+char_under_cursor_is() { [ "$(char_under_cursor)" = "$1" ]; }
+# Polled: the smear animation hides the cursor while it runs.
+if poll char_under_cursor_is e; then ok "cursor on the block's corner"; else fail "cursor not on e"; fi
+# The selected cells are drawn in another style, so the first line no longer comes
+# out as one run of text.
+if poll colored_row_has "cde" && ! colored_row_has "abcdefgh"; then
+  ok "block cells highlighted"
+else
+  fail "block cells not highlighted"
+fi
+save_screen "block-selection"
+# $ puts the Visual cursor on the line break and the block reaches each line's end.
+keys '$'
+expect_status "4:9"
+save_screen "block-selection-dollar"
+# Block operators are not supported yet: nothing changes.
+keys d
+expect_status "Block operators are not supported yet"
+expect_status "VISUAL BLOCK"
+# Escape keeps the cursor, stepping back off the line break; nothing was edited, so a
+# plain quit works.
+keys Escape
+expect_status "NORMAL"
+expect_status "4:8"
+if poll colored_row_has "abcdefgh"; then ok "highlight cleared"; else fail "highlight remains"; fi
+keys Space q
+expect_exit 0
+expect_file "$work/block.txt" "$work/block.expected"
+
+# ---------------------------------------------------------------------------
 section "layout commands (Space v)"
 # Where the tile's top corners are, in cells from the left.
 tile_left() { local line prefix; line=$(row 0); prefix=${line%%╭*}; echo "${#prefix}"; }

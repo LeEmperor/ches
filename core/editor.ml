@@ -15,7 +15,7 @@ module Selection = struct
   type t =
     { anchor : int
     ; active : int
-    ; kind : [ `Characterwise | `Linewise ]
+    ; kind : [ `Characterwise | `Linewise | `Blockwise ]
     }
   [@@deriving sexp_of, equal]
 end
@@ -125,11 +125,13 @@ let preferred_column_at t offset =
 (* The preferred column after [$]: every line's end, however long. *)
 let line_end_column = Int.max_value
 
-(* In Normal mode, step back off the end of a nonempty line. *)
-let normalize text (mode : Mode.t) offset =
+(* In Normal mode, step back off the end of a nonempty line. Visual mode may stay on
+   the line break when [line_break], as Vim's does after [l], [j], [k] and [$]. *)
+let normalize ?(line_break = false) text (mode : Mode.t) offset =
   match mode with
   | Insert -> offset
-   | Normal | Visual _ ->
+  | Visual _ when line_break -> offset
+  | Normal | Visual _ ->
     let line = B.line_of_offset text offset in
     if offset = B.line_end text line && offset > B.line_start text line
     then Option.value_exn (B.prev_boundary text offset)
@@ -137,8 +139,8 @@ let normalize text (mode : Mode.t) offset =
 ;;
 
 (* Place the cursor for anything but a vertical move. *)
-let set_cursor t offset =
-  let cursor = normalize t.text t.mode offset in
+let set_cursor ?line_break t offset =
+  let cursor = normalize ?line_break t.text t.mode offset in
   { t with cursor; preferred_column = preferred_column_at t cursor }
 ;;
 
@@ -174,21 +176,44 @@ let move t motion ~count =
   | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
   | Ok (offset, matched) ->
     let t = match motion with Motion.Find find -> { t with last_find = Some (find, matched) } | _ -> t in
+    let line_break =
+      match motion with
+      | Right | Up | Down | Line_end -> true
+      | _ -> false
+    in
     let t =
       match motion with
       | _ when Motion.keeps_preferred_column motion ->
-        { t with cursor = normalize t.text t.mode offset }
-      | Line_end -> { (set_cursor t offset) with preferred_column = line_end_column }
-      | _ -> set_cursor t offset
+        { t with cursor = normalize ~line_break t.text t.mode offset }
+      | Line_end ->
+        { (set_cursor ~line_break t offset) with preferred_column = line_end_column }
+      | _ -> set_cursor ~line_break t offset
     in
     match t.selection with
     | None -> t
     | Some selection -> { t with selection = Some { selection with active = t.cursor } }
 ;;
 
+let block t =
+  match t.selection with
+  | Some { anchor; active; kind = `Blockwise } ->
+    Some
+      (Block.of_corners
+         t.text
+         ~cell_width:t.cell_width
+         ~anchor
+         ~active
+         ~to_line_end:(t.preferred_column = line_end_column))
+  | Some { kind = `Characterwise | `Linewise; _ } | None -> None
+;;
+
+(* Blockwise operators come with a blockwise register (phase 16). *)
+let block_operator_message = Message.Error "Block operators are not supported yet"
+
 let selection_range t selection =
   match selection.Selection.kind with
   | `Linewise -> Range.linewise t.text ~cursor:selection.anchor ~destination:selection.active
+  | `Blockwise -> raise_s [%message "A block has one range per line; see [Block.rows]"]
   | `Characterwise ->
     let start = Int.min selection.anchor selection.active in
     let stop = Int.max selection.anchor selection.active in
@@ -212,6 +237,7 @@ let leave_visual t ~cursor =
 let visual_yank t =
   match t.selection with
   | None -> t
+  | Some { kind = `Blockwise; _ } -> { t with message = Some block_operator_message }
   | Some selection ->
     let range = selection_range t selection in
     let selected = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
@@ -226,6 +252,7 @@ let visual_yank t =
 let visual_delete t ~change =
   match t.selection with
   | None -> t
+  | Some { kind = `Blockwise; _ } -> { t with message = Some block_operator_message }
   | Some selection ->
     let range = selection_range t selection in
     if range.start = range.stop
