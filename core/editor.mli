@@ -57,8 +57,26 @@
 
     In Visual mode only [Move], [Enter_visual], [Exit_visual] and the [Visual_*]
     commands apply. [Enter_visual] switches the selection kind, keeping the anchor.
-    In a blockwise selection the [Visual_*] commands are not supported yet: they
-    leave the selection and report an [Error].
+
+    {2 Blockwise operators}
+
+    On a blockwise selection, [Visual_yank] and [Visual_delete] put the block in the
+    register as rows (see {!Block.contents}), and leave the cursor at the block's
+    top-left. [Visual_delete] removes each line's {!Block.rows} range, last line
+    first, as one undo step; a TAB or wide glyph cut by an edge leaves a space for
+    each of its cells outside the block. [Visual_change] is not supported yet: it
+    keeps the selection and reports an [Error].
+
+    [Paste] of a block register puts row {i i} at the same display column on the
+    {i i}th line from the cursor: before the cursor's code point for [P], after it for
+    [p] (at it on an empty line). A count repeats each row along its line, padding
+    every repetition but the last to the block's width, and the last too when text
+    follows; padding counts a TAB in a row by its cells where it lands, so text after
+    the block lines up (Vim counts every TAB as a full tab stop). Lines shorter than
+    the column are padded with spaces, a TAB under the column is split into spaces,
+    and a wide glyph under it moves right. Rows beyond the document's last line add
+    lines (before a final LF, which stays final). The cursor goes to the first row's
+    start; the paste is one undo step.
 
     [Exit_insert] steps left one code point when that does not cross a line start.
 
@@ -160,8 +178,9 @@ val cursor_column : t -> int
     that applies in the current mode. *)
 val message : t -> Message.t option
 
-(** The unnamed internal register. Successful deletes and yanks replace it; history
-    does not restore it. *)
+(** The unnamed internal register. Successful deletes and yanks replace it, except
+    that an empty characterwise yank or a block of empty rows leaves it; history does
+    not restore it. *)
 val unnamed_register : t -> Register.t option
 val search_case : t -> Search_case.t
 

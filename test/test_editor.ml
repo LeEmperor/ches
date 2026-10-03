@@ -132,7 +132,7 @@ let%expect_test "yank shares ranges, leaves the editor unchanged, and paste hono
   show t;
   [%expect {|
     true
-    (((text "one ") (kind Characterwise)))
+    ((Text (text "one ") (kind Characterwise)))
     NORMAL 0:8 rev=1 dirty
     > oone one| ne two
     >   three
@@ -850,6 +850,9 @@ let gen_command =
      ; Visual_yank
      ; Visual_delete
      ; Visual_change
+     ; Paste { before = false; count = 1 }
+     ; Paste { before = true; count = 2 }
+     ; Yank_lines 1
      ]
      @ List.concat_map Motion.all ~f:(fun m ->
        if Motion.takes_count m
@@ -902,9 +905,9 @@ let%expect_test "Visual selections extend with motions, switch kind, and apply o
     > |one
     > two
     > three
-    (((text  "one\
-            \ntwo\
-            \n") (kind Linewise)))
+    ((Text (text  "one\
+                 \ntwo\
+                 \n") (kind Linewise)))
     NORMAL 0:0 rev=2 dirty
     > |X two
     NORMAL 0:2 rev=3
@@ -1062,30 +1065,318 @@ let%expect_test "selection changes leave text, history, and registers alone" =
     NORMAL 1:2 rev=0
     > abc
     > de|f
-    (((text "abc\n") (kind Linewise)))
+    ((Text (text "abc\n") (kind Linewise)))
     0
     |}];
-  (* Operators on blocks are not supported yet: nothing changes, and the selection
-     stays. *)
-  List.iter [ Visual_delete; Visual_yank; Visual_change ] ~f:(fun command ->
-    let t = run (create "abc\ndef") [ Enter_visual `Blockwise; move Down; command ] in
-    show_block t);
+  (* Changing a block needs block insert: nothing changes, and the selection stays. *)
+  let t = run (create "abc\ndef") [ Enter_visual `Blockwise; move Down; Visual_change ] in
+  show_block t;
   [%expect {|
-    VISUAL BLOCK 1:0 rev=0 (Error"Block operators are not supported yet")
+    VISUAL BLOCK 1:0 rev=0 (Error"Block change is not supported yet")
     > abc
     > |def
     (((anchor 0) (active 4) (kind Blockwise)))
     block 0-1:0-0
-    VISUAL BLOCK 1:0 rev=0 (Error"Block operators are not supported yet")
+    |}]
+;;
+
+(* Like [show], with spaces as [·] and TABs as [<T>], then the register. *)
+let show_visible t =
+  let visible s =
+    String.concat_map s ~f:(function
+      | ' ' -> "·"
+      | '\t' -> "<T>"
+      | c -> String.of_char c)
+  in
+  let text = Text_buffer.to_string (Editor.text t) in
+  let cursor = Editor.cursor t in
+  printf
+    "%s %d:%d rev=%d%s%s\n"
+    (Mode.to_string (Editor.mode t))
+    (Editor.cursor_line t)
+    (Editor.cursor_column t)
+    (Editor.revision t)
+    (if Editor.is_dirty t then " dirty" else "")
+    (match Editor.message t with
+     | None -> ""
+     | Some message -> " " ^ Sexp.to_string [%sexp (message : Editor.Message.t)]);
+  visible (String.prefix text cursor) ^ "|" ^ visible (String.drop_prefix text cursor)
+  |> String.split ~on:'\n'
+  |> List.iter ~f:(fun line -> print_endline ("> " ^ line));
+  match Editor.unnamed_register t with
+  | Some (Block { rows; width }) ->
+    printf "register %d: %s\n" width (String.concat ~sep:" / " (List.map rows ~f:visible))
+  | register -> print_s [%sexp (register : Register.t option)]
+;;
+
+(* Go to zero-based [line] and code-point [column]. *)
+let goto (line, column) =
+  [ move First_line; move Line_start ]
+  @ (if line > 0 then [ move ~count:line Down ] else [])
+  @ [ move Line_start ]
+  @ if column > 0 then [ move ~count:column Right ] else []
+;;
+
+(* Select a block with corners at [anchor] and [active], then [$] if [to_line_end]. *)
+let select_block ?(to_line_end = false) anchor active =
+  goto anchor @ [ Enter_visual `Blockwise ] @ goto active @ if to_line_end then [ move Line_end ] else []
+;;
+
+let%expect_test "block delete and yank over short lines, as Vim" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ Visual_delete ]) in
+  show_visible t;
+  [%expect {|
+    NORMAL 0:3 rev=1 dirty
+    > abc|gh
+    > ab
+    > abcgh
+    register 3: def / ··· / def
+    |}];
+  (* One undo step, which leaves the register. *)
+  let t = run t [ Undo ] in
+  show_visible t;
+  let t = run t [ Redo ] in
+  show_visible t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    NORMAL 2:5 rev=2
+    > abcdefgh
+    > ab
+    > abcde|fgh
+    register 3: def / ··· / def
+    NORMAL 0:3 rev=3 dirty
+    > abc|gh
+    > ab
+    > abcgh
+    register 3: def / ··· / def
+    1
+    |}];
+  (* A yank changes nothing but the register, and leaves the cursor top-left. *)
+  let t = run (create s) (select_block (2, 5) (0, 3) @ [ Visual_yank ]) in
+  show_visible t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    NORMAL 0:3 rev=0
+    > abc|defgh
+    > ab
+    > abcdefgh
+    register 3: def / ··· / def
+    0
+    |}];
+  (* Lines that end inside the block give their text; those that end at or before its
+     first column give nothing or a row of spaces, as in Vim. *)
+  let t = run (create "abcd\nab\na\n\nabcdefgh") (select_block (0, 2) (4, 5) @ [ Visual_delete ]) in
+  show_visible t;
+  [%expect {|
+    NORMAL 0:1 rev=1 dirty
+    > a|b
+    > ab
+    > a
+    >
+    > abgh
+    register 4: cd /  / ···· / ···· / cdef
+    |}]
+;;
+
+let%expect_test "block delete and yank after $ reach every line's end" =
+  let t = run (create "abcdefgh\nab\nabcd") (select_block ~to_line_end:true (0, 1) (2, 1) @ [ Visual_delete ]) in
+  show_visible t;
+  [%expect {|
+    NORMAL 0:0 rev=1 dirty
+    > |a
+    > a
+    > a
+    register 7: bcdefgh / b / bcd
+    |}];
+  (* The paste pads rows to the widest one when text follows. *)
+  let t =
+    run (create "ab\nabcdefgh\nxyz\nxyz") (select_block ~to_line_end:true (0, 1) (1, 1) @ [ Visual_yank ] @ goto (2, 1) @ [ Paste { before = false; count = 1 } ])
+  in
+  show_visible t;
+  [%expect {|
+    NORMAL 2:2 rev=1 dirty
+    > ab
+    > abcdefgh
+    > xy|b······z
+    > xybcdefghz
+    register 7: b / bcdefgh
+    |}]
+;;
+
+let%expect_test "block edges inside a TAB split it; inside a wide glyph leave a space" =
+  let s = "0123456789ab\n\tabc\n0123456789ab" in
+  List.iter [ (0, 2), (2, 4); (0, 6), (2, 9); (0, 8), (2, 9) ] ~f:(fun (anchor, active) ->
+    show_visible (run (create s) (select_block anchor active @ [ Visual_delete ])));
+  [%expect {|
+    NORMAL 0:2 rev=1 dirty
+    > 01|56789ab
+    > ·····abc
+    > 0156789ab
+    register 3: 234 / ··· / 234
+    NORMAL 0:6 rev=1 dirty
+    > 012345|ab
+    > ······c
+    > 012345ab
+    register 4: 6789 / ··ab / 6789
+    NORMAL 0:8 rev=1 dirty
+    > 01234567|ab
+    > <T>c
+    > 01234567ab
+    register 2: 89 / ab / 89
+    |}];
+  let s = "abcdef\na界bcd\nabcdef" in
+  List.iter [ (0, 2), (2, 3); (0, 0), (2, 1) ] ~f:(fun (anchor, active) ->
+    show_visible (run (create s) (select_block anchor active @ [ Visual_delete ])));
+  [%expect {|
+    NORMAL 0:2 rev=1 dirty
+    > ab|ef
+    > a·cd
+    > abef
+    register 2: cd / ·b / cd
+    NORMAL 0:0 rev=1 dirty
+    > |cdef
+    > ·bcd
+    > cdef
+    register 2: ab / a· / ab
+    |}];
+  (* Multibyte rows keep their code points; a combining mark stays with its base. *)
+  let t = run (create "日本語\n日本語") (select_block (0, 1) (1, 1) @ [ Visual_delete ]) in
+  show_visible t;
+  let t = run (create "e\u{0301}x\nab") (select_block (0, 0) (1, 0) @ [ Visual_delete ]) in
+  show_visible t;
+  [%expect {|
+    NORMAL 0:1 rev=1 dirty
+    > 日|語
+    > 日語
+    register 2: 本 / 本
+    NORMAL 0:0 rev=1 dirty
+    > |x
+    > b
+    register 1: é / a
+    |}]
+;;
+
+let%expect_test "block paste lines rows up by display column" =
+  let yank = select_block (0, 0) (1, 1) @ [ Visual_yank; move Down ] in
+  List.iter
+    [ Paste { before = false; count = 1 }
+    ; Paste { before = true; count = 1 }
+    ; Paste { before = false; count = 2 }
+    ]
+    ~f:(fun paste -> show_visible (run (create "abcd\nefgh") (yank @ [ paste ])));
+  [%expect {|
+    NORMAL 1:1 rev=1 dirty
+    > abcd
+    > e|abfgh
+    > ·ef
+    register 2: ab / ef
+    NORMAL 1:0 rev=1 dirty
+    > abcd
+    > |abefgh
+    > ef
+    register 2: ab / ef
+    NORMAL 1:1 rev=1 dirty
+    > abcd
+    > e|ababfgh
+    > ·efef
+    register 2: ab / ef
+    |}];
+  (* Lines added past the end keep a final LF final; undo is one step back to the
+     original text and cursor, and keeps the register. *)
+  let t = run (create "abcd\nefgh\n") (yank @ [ Paste { before = false; count = 1 } ]) in
+  show_visible t;
+  let t = run t [ Undo ] in
+  show_visible t;
+  [%expect {|
+    NORMAL 1:1 rev=1 dirty
+    > abcd
+    > e|abfgh
+    > ·ef
+    >
+    register 2: ab / ef
+    NORMAL 1:0 rev=2
+    > abcd
+    > |efgh
+    >
+    register 2: ab / ef
+    |}];
+  (* Short lines are padded up to the column; an empty row adds no trailing spaces
+     where nothing follows. *)
+  let t = run (create "abc\nd\nefg") (select_block (0, 1) (2, 2) @ [ Visual_yank ] @ goto (2, 2) @ [ Paste { before = false; count = 1 } ]) in
+  show_visible t;
+  [%expect {|
+    NORMAL 2:3 rev=1 dirty
     > abc
-    > |def
-    (((anchor 0) (active 4) (kind Blockwise)))
-    block 0-1:0-0
-    VISUAL BLOCK 1:0 rev=0 (Error"Block operators are not supported yet")
+    > d
+    > efg|bc
+    > ···
+    > ···fg
+    register 2: bc /  / fg
+    |}];
+  (* A TAB under the column is split; a wide glyph moves right. *)
+  List.iter [ "\tabc", (2, 3); "a界bcd", (2, 1) ] ~f:(fun (last, cursor) ->
+    let s = "zw\nzw\nabcde\n" ^ last in
+    show_visible
+      (run (create s) (select_block (0, 0) (1, 1) @ [ Visual_yank ] @ goto cursor @ [ Paste { before = false; count = 1 } ])));
+  [%expect {|
+    NORMAL 2:4 rev=1 dirty
+    > zw
+    > zw
+    > abcd|zwe
+    > ····zw····abc
+    register 2: zw / zw
+    NORMAL 2:2 rev=1 dirty
+    > zw
+    > zw
+    > ab|zwcde
+    > a·zw界bcd
+    register 2: zw / zw
+    |}]
+;;
+
+let%expect_test "block paste pads a row with a TAB by where it lands" =
+  (* Vim counts the TAB as a full tab stop and misaligns the following text; here the
+     [Y] after each row lines up. *)
+  let t = run (create "a\tb\nbcdefghij\nXYZ\nXYZ") (select_block (0, 0) (1, 7) @ [ Visual_yank ] @ goto (2, 0) @ [ Paste { before = false; count = 1 } ]) in
+  show_visible t;
+  [%expect {|
+    NORMAL 2:1 rev=1 dirty
+    > a<T>b
+    > bcdefghij
+    > X|a<T>·YZ
+    > XbcdefghiYZ
+    register 8: a<T> / bcdefghi
+    |}]
+;;
+
+let%expect_test "an all-empty block keeps the register; an empty register reports it" =
+  let t = run (create "\n\nabc") (select_block (0, 0) (1, 0) @ [ Visual_yank ]) in
+  show_visible t;
+  let t = run t [ Paste { before = false; count = 1 } ] in
+  show_visible t;
+  [%expect {|
+    NORMAL 0:0 rev=0
+    > |
+    >
     > abc
-    > |def
-    (((anchor 0) (active 4) (kind Blockwise)))
-    block 0-1:0-0
+    ()
+    NORMAL 0:0 rev=0 (Error"Nothing in register")
+    > |
+    >
+    > abc
+    ()
+    |}];
+  (* A counted paste is one undo step. *)
+  let t = run (create "ab\nab") (select_block (0, 0) (1, 1) @ [ Visual_yank; Paste { before = false; count = 3 } ]) in
+  show_visible t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    NORMAL 0:1 rev=1 dirty
+    > a|abababb
+    > aabababb
+    register 2: ab / ab
+    1
     |}]
 ;;
 

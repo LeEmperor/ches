@@ -1018,6 +1018,33 @@ Acceptance:
 Stop before `I`/`A` block insert unless implementing `c` requires a shared,
 separately tested prerequisite.
 
+**Done (2026-10-03), except Visual block `c`, deferred to Phase 17.**
+`Register.t` is now ``Text { text; kind }`` or ``Block { rows; width }``: one row
+per line, top first, and the block's width in display cells (the widest row
+after `$`). `Block.contents` builds the rows with the settled rules, checked
+again with `vim -Nu NONE`: a line shorter than the block's first column gives
+`width` spaces, one ending exactly at that column gives `""`, one ending inside
+the block its unpadded text, and the inside cells of a TAB or wide glyph cut by an
+edge become spaces. Visual block `d` replaces each `Block.rows` range (last line
+first) with `before + after` spaces, in one transaction; `d` and `y` leave the
+cursor at the block's top-left. An all-empty block (only empty rows) leaves the
+register unchanged, as an empty characterwise yank does. `Block.insertion` gives
+the byte position, TAB split, and padding for inserting at a display column; it
+is meant to be shared with Phase 17's `I`/`A`. Block `p`/`P` follow the settled
+paste examples, and each paste is one transaction. Deliberate differences from
+Vim: (1) after `$`, a line too short for the block yields `width` spaces where Vim
+yields one more; (2) the padding after a pasted row measures a TAB in the row at
+the column where it lands, keeping following text aligned, where Vim counts every
+TAB as a full tab stop; (3) a block that includes the empty line after a final
+LF (a line in this editor, not in Vim) gets a row for it, and rows pasted past
+the last line are added before that line so the LF stays final. `c` on a block
+still reports `Block change is not supported yet` and keeps the selection.
+Tests: `test/test_block.ml` (`contents`, `insertion`), editor expect tests for
+the settled delete/yank/paste examples, undo/redo, and register persistence,
+block paste and yank in the random-command property test, and a
+`blockwise delete, yank, and paste` smoke section. The same five smoke checks
+fail with and without this change (smear-cursor timing, as noted for Phase 15).
+
 ### Phase 17 — Live block insert and software cursors
 
 **Goal:** `Ctrl-v` selection followed by `I` performs a live replicated Insert

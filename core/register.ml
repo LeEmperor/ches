@@ -8,7 +8,12 @@ module Kind = struct
 end
 
 type t =
-  { text : string
-  ; kind : Kind.t
-  }
+  | Text of
+      { text : string
+      ; kind : Kind.t
+      }
+  | Block of
+      { rows : string list
+      ; width : int
+      }
 [@@deriving sexp_of, equal]

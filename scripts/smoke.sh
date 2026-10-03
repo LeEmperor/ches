@@ -681,9 +681,9 @@ save_screen "block-selection"
 keys '$'
 expect_status "4:9"
 save_screen "block-selection-dollar"
-# Block operators are not supported yet: nothing changes.
-keys d
-expect_status "Block operators are not supported yet"
+# Changing a block needs block insert, which is not supported yet: nothing changes.
+keys c
+expect_status "Block change is not supported yet"
 expect_status "VISUAL BLOCK"
 # Escape keeps the cursor, stepping back off the line break; nothing was edited, so a
 # plain quit works.
@@ -694,6 +694,38 @@ if poll colored_row_has "abcdefgh"; then ok "highlight cleared"; else fail "high
 keys Space q
 expect_exit 0
 expect_file "$work/block.txt" "$work/block.expected"
+
+# ---------------------------------------------------------------------------
+section "blockwise delete, yank, and paste"
+printf 'abcdefgh\nab\nabcdefgh\n' > "$work/blockop.txt"
+printf 'defabcgh\n   ab\ndefabcgh\n' > "$work/blockop.expected"
+launch blockop.txt
+# Delete columns 4-6 of all three lines; the short middle line is untouched, and the
+# cursor goes to the block's top-left.
+keys 3 l C-v 2 j l l d
+expect_status "NORMAL"
+expect_status "1:4"
+expect_screen "1   abcgh"
+expect_screen "  1 ab"
+expect_screen "  2 abcgh"
+# One undo step restores all three lines (and the cursor, on the third); redo
+# deletes them again.
+keys u
+expect_screen "  2 abcdefgh"
+expect_screen "3   abcdefgh"
+keys C-r
+expect_screen "1   abcgh"
+# P puts the register's rows (with spaces for the short line) at the start of each
+# line, lined up.
+keys 0 P
+expect_screen "1   defabcgh"
+expect_screen "  1    ab"
+expect_screen "  2 defabcgh"
+expect_status "1:1"
+keys Space w
+expect_file "$work/blockop.txt" "$work/blockop.expected"
+keys Space q
+expect_exit 0
 
 # ---------------------------------------------------------------------------
 section "layout commands (Space v)"

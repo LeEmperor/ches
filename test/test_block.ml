@@ -237,3 +237,70 @@ let%test_unit "rows tile each line's selected cells at code-point boundaries" =
         let within = Int.max 0 (Int.min stop (Cell_layout.total_width glyphs) - left) in
         [%test_result: int] (cells - row.before - row.after) ~expect:within))
 ;;
+
+let%expect_test "contents: register rows and width" =
+  let contents ?(to_line_end = false) s ~anchor:(anchor_line, anchor_col) ~active:(active_line, active_col) =
+    let text = of_string_exn s in
+    let at line col = Text_buffer.offset_of_column text ~line col in
+    let block =
+      Block.of_corners
+        text
+        ~cell_width:Cell_width.f
+        ~anchor:(at anchor_line anchor_col)
+        ~active:(at active_line active_col)
+        ~to_line_end
+    in
+    print_s [%sexp (Block.contents text ~cell_width:Cell_width.f block : string list * int)]
+  in
+  (* Too short for the block: spaces; ending at its first column: empty; inside it:
+     unpadded. *)
+  contents "abcdefgh\nab\nabc\nabcd" ~anchor:(0, 3) ~active:(3, 5);
+  contents ~to_line_end:true "abcdefgh\n\nabcd" ~anchor:(0, 2) ~active:(2, 2);
+  [%expect {|
+    ((de "  " "" d) 2)
+    ((cdefgh "      " cd) 6)
+    |}];
+  (* Cut TABs and wide glyphs give spaces for their cells inside the block; a whole
+     TAB stays a TAB. *)
+  contents "0123456789ab\n\tabc" ~anchor:(0, 2) ~active:(1, 0);
+  contents "0123456789ab\n\tabc" ~anchor:(0, 6) ~active:(1, 2);
+  contents "0123456789ab\n\tabc" ~anchor:(0, 3) ~active:(1, 1);
+  contents "abcdef\na界bcd" ~anchor:(0, 2) ~active:(1, 3);
+  contents "x\u{0301}y\n界\u{0301}z" ~anchor:(0, 0) ~active:(1, 0);
+  [%expect {|
+    ((01234567 "\t") 8)
+    ((6789 "  ab") 4)
+    ((345678 "     a") 6)
+    ((cde " bc") 3)
+    (("x\204\129y" "\231\149\140\204\129") 2)
+    |}]
+;;
+
+let%expect_test "insertion at a display column" =
+  let insertion s ~line ~col =
+    let text = of_string_exn s in
+    print_s
+      [%sexp (Block.insertion text ~cell_width:Cell_width.f ~line ~col : Block.Insertion.t)]
+  in
+  (* Inside a line, at its end, and past it. *)
+  insertion "abc" ~line:0 ~col:1;
+  insertion "abc" ~line:0 ~col:3;
+  insertion "x\nabc" ~line:1 ~col:5;
+  [%expect {|
+    ((pos 1) (remove 0) (pad_before 0) (pad_after 0) (at_end false))
+    ((pos 3) (remove 0) (pad_before 0) (pad_after 0) (at_end true))
+    ((pos 5) (remove 0) (pad_before 2) (pad_after 0) (at_end true))
+    |}];
+  (* A TAB is split; a wide glyph is not; a TAB's own edges need no split. *)
+  insertion "\tabc" ~line:0 ~col:4;
+  insertion "\tabc" ~line:0 ~col:8;
+  insertion "a界b" ~line:0 ~col:2;
+  [%expect {|
+    ((pos 0) (remove 1) (pad_before 4) (pad_after 4) (at_end false))
+    ((pos 1) (remove 0) (pad_before 0) (pad_after 0) (at_end false))
+    ((pos 1) (remove 0) (pad_before 1) (pad_after 0) (at_end false))
+    |}];
+  (* After the zero-width marks on the code point before the column. *)
+  insertion "e\u{0301}x" ~line:0 ~col:1;
+  [%expect {| ((pos 3) (remove 0) (pad_before 0) (pad_after 0) (at_end false)) |}]
+;;

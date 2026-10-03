@@ -67,3 +67,44 @@ val columns : t -> Cell_layout.Glyph.t array -> int * int
 (** One row per line of the block, ordered from the last line to the first: editing
     the rows in this order leaves the offsets of the rows not yet edited valid. *)
 val rows : Text_buffer.t -> cell_width:Cell_layout.Width.t -> t -> Row.t list
+
+(** What a block yank or delete puts in the register: one row per line, top first,
+    and the block's width in display cells, as in Vim.
+
+    A row is the text of its line's range from {!rows}, except that the cells of a TAB
+    or wide glyph cut by an edge that lie inside the block become spaces (dropping
+    any zero-width marks on it). A line too short to reach the block's first column
+    gives a row of [width] spaces; a line that reaches the block but ends inside it
+    gives only its text, so rows can be narrower than [width]. Vim pads too-short
+    lines after [$] with one more space than its width; this gives [width].
+
+    The width is that of the rectangle, or after [$] that of the widest row. *)
+val contents : Text_buffer.t -> cell_width:Cell_layout.Width.t -> t -> string list * int
+
+(** Where text inserted at a display column of a line goes, as for a blockwise paste
+    (and, later, block insert). *)
+module Insertion : sig
+  type t =
+    { pos : int (** Byte offset at which to insert. *)
+    ; remove : int
+    (** Bytes at [pos] that the insertion replaces: 1 when the column is inside a TAB,
+        which is split into spaces, otherwise 0. *)
+    ; pad_before : int
+    (** Spaces to insert before the text: up to the column on a line too short to
+        reach it, or for the part of a split TAB or of a wide glyph before the
+        column. A wide glyph is not split: it moves right, whole, after the text. *)
+    ; pad_after : int (** Spaces after the text: the rest of a split TAB. *)
+    ; at_end : bool (** Nothing follows the insertion on its line. *)
+    }
+  [@@deriving sexp_of, equal]
+end
+
+(** Insertion at display column [col] of [line]: before the code point starting at
+    [col] (after any zero-width marks on the code point before it), or at the
+    line's end. *)
+val insertion
+  :  Text_buffer.t
+  -> cell_width:Cell_layout.Width.t
+  -> line:int
+  -> col:int
+  -> Insertion.t

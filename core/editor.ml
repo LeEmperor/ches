@@ -207,8 +207,27 @@ let block t =
   | Some { kind = `Characterwise | `Linewise; _ } | None -> None
 ;;
 
-(* Blockwise operators come with a blockwise register (phase 16). *)
-let block_operator_message = Message.Error "Block operators are not supported yet"
+(* Changing a block needs block insert (phase 17). *)
+let block_change_message = Message.Error "Block change is not supported yet"
+
+(* Replace [len] bytes at [pos] with [s], which is valid text. *)
+let replace text ~pos ~len s =
+  let text = if len = 0 then text else B.delete text ~pos ~len in
+  if String.is_empty s
+  then text
+  else
+    B.insert text ~at:pos s
+    |> Result.map_error ~f:B.Invalid_text.to_string_hum
+    |> Result.ok_or_failwith
+;;
+
+(* The register of a block, unless all its rows are empty. *)
+let block_register t block =
+  let rows, width = Block.contents t.text ~cell_width:t.cell_width block in
+  if List.for_all rows ~f:String.is_empty
+  then t.unnamed_register
+  else Some (Register.Block { rows; width })
+;;
 
 let selection_range t selection =
   match selection.Selection.kind with
@@ -237,14 +256,17 @@ let leave_visual t ~cursor =
 let visual_yank t =
   match t.selection with
   | None -> t
-  | Some { kind = `Blockwise; _ } -> { t with message = Some block_operator_message }
+  | Some { kind = `Blockwise; _ } ->
+    let block = Option.value_exn (block t) in
+    let top_left = (List.last_exn (Block.rows t.text ~cell_width:t.cell_width block)).start in
+    leave_visual { t with unnamed_register = block_register t block } ~cursor:top_left
   | Some selection ->
     let range = selection_range t selection in
     let selected = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
     let t =
       if String.is_empty selected && Register.Kind.equal range.kind Characterwise
       then t
-      else { t with unnamed_register = Some { Register.text = selected; kind = range.kind } }
+      else { t with unnamed_register = Some (Register.Text { text = selected; kind = range.kind }) }
     in
     leave_visual t ~cursor:(Int.min selection.anchor selection.active)
 ;;
@@ -252,7 +274,27 @@ let visual_yank t =
 let visual_delete t ~change =
   match t.selection with
   | None -> t
-  | Some { kind = `Blockwise; _ } -> { t with message = Some block_operator_message }
+  | Some { kind = `Blockwise; _ } when change -> { t with message = Some block_change_message }
+  | Some { kind = `Blockwise; _ } ->
+    let block = Option.value_exn (block t) in
+    let unnamed_register = block_register t block in
+    (* The rows come last line first, so each edit leaves the offsets of the rows
+       above it valid. A TAB or wide glyph cut by an edge leaves spaces for its cells
+       outside the block. *)
+    let text, top_left =
+      List.fold
+        (Block.rows t.text ~cell_width:t.cell_width block)
+        ~init:(t.text, 0)
+        ~f:(fun (text, _) row ->
+          ( replace
+              text
+              ~pos:row.start
+              ~len:(row.stop - row.start)
+              (String.make (row.before + row.after) ' ')
+          , row.start + row.before ))
+    in
+    let t = { t with mode = Normal; selection = None; unnamed_register } in
+    if B.equal text t.text then set_cursor t top_left else commit (edit t ~text ~cursor:top_left)
   | Some selection ->
     let range = selection_range t selection in
     if range.start = range.stop
@@ -261,7 +303,7 @@ let visual_delete t ~change =
       let deleted = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
       let text = B.delete t.text ~pos:range.start ~len:(range.stop - range.start) in
       let mode = if change then Mode.Insert else Mode.Normal in
-      let t = edit { t with mode; selection = None; unnamed_register = Some { Register.text = deleted; kind = range.kind } } ~text ~cursor:range.start in
+      let t = edit { t with mode; selection = None; unnamed_register = Some (Register.Text { text = deleted; kind = range.kind }) } ~text ~cursor:range.start in
       if change then t else commit t)
 ;;
 
@@ -394,7 +436,7 @@ let delete_range t (range : Range.t) =
     let t = edit t ~text ~cursor:range.start in
     commit
       { t with
-        unnamed_register = Some { Register.text = deleted; kind = range.kind }
+        unnamed_register = Some (Register.Text { text = deleted; kind = range.kind })
       })
 ;;
 
@@ -463,7 +505,7 @@ let yank_range t (range : Range.t) =
   let text = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
   if String.is_empty text && Register.Kind.equal range.kind Characterwise
   then t
-  else { t with unnamed_register = Some { Register.text; kind = range.kind } }
+  else { t with unnamed_register = Some (Register.Text { text; kind = range.kind }) }
 ;;
 
 let yank_motion t motion ~count =
@@ -573,11 +615,105 @@ let repeat_text t text count =
   else Ok (String.concat (List.init count ~f:(fun _ -> text)))
 ;;
 
+(* The display cells of [row] drawn from column [col]: TAB widths depend on it. *)
+let row_width t row ~col =
+  let lead = col % Cell_layout.tab_stop in
+  Cell_layout.total_width
+    (Cell_layout.glyphs ~width:t.cell_width (String.make lead ' ' ^ row))
+  - lead
+;;
+
+(* Row [i] of the register goes to the same display column on the [i]th line from the
+   cursor, repeated [count] times. Each repetition but the last is padded to the
+   block's width, and the last too when text follows it. Short lines are padded up to
+   the column; lines past the end of the document are added (after the empty line
+   that follows a final LF, so the LF stays final). *)
+let paste_block t ~before ~count ~rows ~width =
+  let line = cursor_line t in
+  let line_start = B.line_start t.text line in
+  let first, cells =
+    Cell_layout.cursor_span
+      (Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line))
+      ~pos:(t.cursor - line_start)
+      ~insertion:false
+  in
+  let col = if before || t.cursor = B.line_end t.text line then first else first + cells in
+  let ends_with_lf = String.is_suffix (B.to_string t.text) ~suffix:"\n" in
+  let lines = B.line_count t.text - if ends_with_lf then 1 else 0 in
+  let rows = List.mapi rows ~f:(fun i row -> line + i, row) in
+  let existing, added = List.partition_tf rows ~f:(fun (line, _) -> line < lines) in
+  let insertions =
+    List.map existing ~f:(fun (line, row) ->
+      row, Block.insertion t.text ~cell_width:t.cell_width ~line ~col)
+  in
+  (* Repetitions are at most [String.length row + width] bytes each. *)
+  let limit = Sys.max_string_length - B.length t.text in
+  let size =
+    List.fold_until
+      (List.map insertions ~f:(fun (row, i) -> row, i.pad_before + i.pad_after)
+       @ List.map added ~f:(fun (_, row) -> row, col + 1))
+      ~init:0
+      ~finish:Option.some
+      ~f:(fun size (row, extra) ->
+        let repetition = String.length row + width in
+        if repetition > (limit - size - extra) / count
+        then Stop None
+        else Continue (size + extra + (repetition * count)))
+  in
+  match size with
+  | None -> { t with message = Some (Error "Paste is too large") }
+  | Some _ ->
+    let body row ~col ~at_end =
+      let buffer = Buffer.create (String.length row * count) in
+      let rec repeat j col =
+        if j < count
+        then (
+          Buffer.add_string buffer row;
+          let cells = row_width t row ~col in
+          let pad = if j < count - 1 || not at_end then Int.max 0 (width - cells) else 0 in
+          Buffer.add_string buffer (String.make pad ' ');
+          repeat (j + 1) (col + cells + pad))
+      in
+      repeat 0 col;
+      Buffer.contents buffer
+    in
+    let text =
+      match added with
+      | [] -> t.text
+      | added ->
+        let lines =
+          List.map added ~f:(fun (_, row) -> String.make col ' ' ^ body row ~col ~at_end:true)
+        in
+        let s =
+          if ends_with_lf
+          then String.concat (List.map lines ~f:(fun line -> line ^ "\n"))
+          else String.concat (List.map lines ~f:(fun line -> "\n" ^ line))
+        in
+        replace t.text ~pos:(B.length t.text) ~len:0 s
+    in
+    let text =
+      List.fold_right insertions ~init:text ~f:(fun (row, (i : Block.Insertion.t)) text ->
+        let s =
+          String.make i.pad_before ' '
+          ^ body row ~col ~at_end:i.at_end
+          ^ String.make i.pad_after ' '
+        in
+        replace text ~pos:i.pos ~len:i.remove s)
+    in
+    let cursor =
+      match insertions with
+      | (_, i) :: _ -> i.pos + i.pad_before
+      | [] -> B.line_start text line + col
+    in
+    if B.equal text t.text then t else commit (edit t ~text ~cursor)
+;;
+
 let paste t ~before ~count =
   check_count count;
   match t.unnamed_register with
   | None -> { t with message = Some (Error "Nothing in register") }
-  | Some { Register.text; kind = Characterwise } ->
+  | Some (Block { rows; width }) -> paste_block t ~before ~count ~rows ~width
+  | Some (Text { text; kind = Characterwise }) ->
     (match repeat_text t text count with
      | Error message -> { t with message = Some (Error message) }
      | Ok inserted when String.is_empty inserted -> t
@@ -595,7 +731,7 @@ let paste t ~before ~count =
        in
        let cursor = Option.value_exn (B.prev_boundary text (at + String.length inserted)) in
        commit (edit t ~text ~cursor))
-  | Some { Register.text; kind = Linewise } ->
+  | Some (Text { text; kind = Linewise }) ->
     let one = if String.is_suffix text ~suffix:"\n" then text else text ^ "\n" in
     (match repeat_text t one count with
      | Error message -> { t with message = Some (Error message) }

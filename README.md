@@ -113,7 +113,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Escape` | Cancel a pending count or `Space` sequence |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
-| Visual | `d` / `c` / `y` | Delete / change / yank the selected range (not yet for blocks) |
+| Visual | `d` / `c` / `y` | Delete / change / yank the selected range (`c` not yet for blocks) |
 | Visual | `Escape` | Cancel selection without moving the cursor |
 | Insert | text, `Backspace`, `Delete` | Edit |
 | Insert | `Enter` | New line, indented like the current one |
@@ -192,8 +192,8 @@ type it, with any keys of the sequence after it (`20 g`).
 `d` waits for a supported motion: `dw`, `db`, `de`, `d$`, `dj`, `dgg`, `dG`,
 `d_`, `dg_`, `d%`, and `diw` are available. `dd` deletes the current line, `D` is
 `d$`, and `x`/`X` delete forward/backward without crossing a line break. A
-successful delete replaces the unnamed internal register (characterwise or
-linewise). Escape cancels a pending `d` sequence without changing text or that
+successful delete replaces the unnamed internal register (characterwise,
+linewise, or blockwise). Escape cancels a pending `d` sequence without changing text or that
 register. Every complete delete, including a counted one, is one undo step.
 
 `y` accepts the same supported motions (apart from the deliberately narrow `diw`
@@ -233,8 +233,23 @@ its cells; reversed and upward selections give the same rectangle. After `$` the
 block reaches each line's own end until another horizontal move. TAB cells are
 highlighted only where they fall inside the block, a wide character cut by an
 edge is highlighted whole, and lines shorter than the block show no highlight.
-Selecting changes nothing; `d`, `c`, and `y` on a block are not supported yet
-(they leave the selection and report so).
+Selecting changes nothing.
+
+`d` and `y` on a block put it in the register as one row per line, as Vim does:
+a line too short to reach the block contributes a row of spaces (one that ends at
+the block's first column, nothing), a line ending inside it only its text, and a
+TAB or wide character cut by an edge spaces for its cells inside the block. `d`
+removes the selected cells, leaving spaces for the outside cells of a cut TAB or
+wide character, in one undo step; both leave the cursor at the block's top-left.
+`p`/`P` with a block register put each row after/before the cursor's column on
+successive lines: short lines are padded up to the column, a TAB under it is split
+into spaces, a wide character under it moves right, and rows past the last line
+add lines (keeping a final newline final). Rows are padded to the block's width
+when text follows them, so it stays lined up; a count repeats each row along its
+line. A paste is one undo step with the cursor at its top-left. Unlike Vim,
+padding measures a TAB inside a row where it lands rather than as a full tab
+stop. `c` on a block is not supported yet (it leaves the selection and reports
+so); it arrives with block insert.
 
 `f{character}`/`F{character}` find a literal code point strictly forward or
 backward on the current line; `t`/`T` stop just before/after it. Counts repeat

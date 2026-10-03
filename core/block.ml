@@ -86,3 +86,100 @@ let row text ~cell_width t line : Row.t =
 let rows text ~cell_width t =
   List.init (t.last_line - t.first_line + 1) ~f:(fun i -> row text ~cell_width t (t.last_line - i))
 ;;
+
+(* The bytes of glyph [i] in [line]. *)
+let glyph_bytes line glyphs i =
+  let pos = glyphs.(i).Cell_layout.Glyph.pos in
+  let stop = if i + 1 < Array.length glyphs then glyphs.(i + 1).pos else String.length line in
+  String.sub line ~pos ~len:(stop - pos)
+;;
+
+let width text ~cell_width t =
+  match t.right with
+  | Some right -> right - t.left
+  | None ->
+    List.range t.first_line t.last_line ~stop:`inclusive
+    |> List.fold ~init:0 ~f:(fun width line ->
+      let left, stop = columns t (glyphs text ~cell_width line) in
+      Int.max width (stop - left))
+;;
+
+let row_text text ~cell_width t ~width (row : Row.t) =
+  let line = B.line_text text row.line in
+  let glyphs = Cell_layout.glyphs ~width:cell_width line in
+  let left, stop = columns t glyphs in
+  if Cell_layout.total_width glyphs < t.left
+  then String.make width ' '
+  else (
+    let line_start = B.line_start text row.line in
+    let buffer = Buffer.create (row.stop - row.start + row.before + row.after) in
+    (* A glyph cut by an edge becomes spaces for its cells inside the block, and takes
+       its zero-width marks with it. *)
+    let cut = ref false in
+    Array.iteri glyphs ~f:(fun i (glyph : Cell_layout.Glyph.t) ->
+      let pos = line_start + glyph.pos in
+      if pos >= row.start && pos < row.stop
+      then
+        if glyph.width > 0 && (glyph.col < left || glyph.col + glyph.width > stop)
+        then (
+          cut := true;
+          let inside = Int.min (glyph.col + glyph.width) stop - Int.max glyph.col left in
+          Buffer.add_string buffer (String.make inside ' '))
+        else if glyph.width > 0 || not !cut
+        then (
+          cut := false;
+          Buffer.add_string buffer (glyph_bytes line glyphs i)));
+    Buffer.contents buffer)
+;;
+
+let contents text ~cell_width t =
+  let width = width text ~cell_width t in
+  List.rev_map (rows text ~cell_width t) ~f:(row_text text ~cell_width t ~width), width
+;;
+
+module Insertion = struct
+  type t =
+    { pos : int
+    ; remove : int
+    ; pad_before : int
+    ; pad_after : int
+    ; at_end : bool
+    }
+  [@@deriving sexp_of, equal]
+end
+
+let insertion text ~cell_width ~line ~col : Insertion.t =
+  let glyphs = glyphs text ~cell_width line in
+  let line_start = B.line_start text line in
+  let line_end = B.line_end text line in
+  let total = Cell_layout.total_width glyphs in
+  let at ?(remove = 0) ?(pad_before = 0) ?(pad_after = 0) pos =
+    { Insertion.pos
+    ; remove
+    ; pad_before
+    ; pad_after
+    ; at_end = pos = line_end && remove = 0
+    }
+  in
+  if col >= total
+  then at line_end ~pad_before:(col - total)
+  else (
+    match
+      Array.find glyphs ~f:(fun glyph ->
+        glyph.width > 0 && glyph.col < col && col < glyph.col + glyph.width)
+    with
+    | Some ({ kind = Tab; _ } as glyph) ->
+      at
+        (line_start + glyph.pos)
+        ~remove:1
+        ~pad_before:(col - glyph.col)
+        ~pad_after:(glyph.col + glyph.width - col)
+    | Some glyph -> at (line_start + glyph.pos) ~pad_before:(col - glyph.col)
+    | None ->
+      (* Zero-width marks stay after their base, except at the very start of a line. *)
+      (match
+         Array.findi glyphs ~f:(fun i glyph -> glyph.col >= col && (glyph.width > 0 || i = 0))
+       with
+       | Some (_, glyph) -> at (line_start + glyph.pos)
+       | None -> at line_end))
+;;
