@@ -73,9 +73,10 @@ val total_width : Glyph.t array -> int
 val cursor_span : Glyph.t array -> pos:int -> insertion:bool -> int * int
 
 (** The display column a cursor at byte [pos] aims for when it moves vertically, as
-    Vim's [curswant]: the first cell of {!cursor_span}, except that a cursor on a TAB
-    (not an insertion point) uses the TAB's last cell, where Vim shows it. *)
-val column : Glyph.t array -> pos:int -> insertion:bool -> int
+    Vim's [curswant]: the first cell of {!cursor_span}, except that with
+    [~tab_end:true] a cursor on a TAB uses the TAB's last cell, where Vim shows a
+    Normal-mode cursor. *)
+val column : Glyph.t array -> pos:int -> tab_end:bool -> int
 
 (** The byte offset of the code point covering display column [col], skipping
     zero-width code points; [None] when [col] is at or past {!total_width}. A column

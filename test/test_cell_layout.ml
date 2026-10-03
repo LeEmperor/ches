@@ -7,8 +7,8 @@ let%expect_test "display columns of cursors, and the code points covering column
   let line = "\tx\228\184\173e\204\129" in
   let glyphs = Cell_layout.glyphs ~width:Cell_width.f line in
   List.iter [ 0; 1; 2; 5; 6; 8 ] ~f:(fun pos ->
-    let normal = Cell_layout.column glyphs ~pos ~insertion:false in
-    let insert = Cell_layout.column glyphs ~pos ~insertion:true in
+    let normal = Cell_layout.column glyphs ~pos ~tab_end:true in
+    let insert = Cell_layout.column glyphs ~pos ~tab_end:false in
     print_s [%message (pos : int) (normal : int) (insert : int)]);
   [%expect
     {|

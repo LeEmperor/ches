@@ -123,11 +123,12 @@ It also exits with an error if its standard input is not a terminal.
 
 Movement stops at the ends of a line: `h` and `l` do not wrap to the next line.
 `j` and `k` keep the column you were aiming for across shorter lines; every other
-motion sets that column to where it lands (after `$`, unlike Vim, `j` and `k` do
-not stick to line ends). As in Vim, that column is a screen column, so `j` and
+motion sets that column to where it lands, except that after `$`, as in Vim, `j`
+and `k` stick to line ends. As in Vim, that column is a screen column, so `j` and
 `k` line up on screen around TABs and wide characters, landing on whichever
-character covers the column; on a TAB in Normal mode the cursor aims for the
-TAB's last cell. Leaving Insert mode steps the cursor back one character,
+character covers the column; on a TAB the cursor aims for the TAB's last cell
+(its first cell in Insert mode, and in Visual mode at or before where the
+selection started). Leaving Insert mode steps the cursor back one character,
 as in Vim. Motions never change the text, the undo history, or `[+]`.
 
 ### Words and lines

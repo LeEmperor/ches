@@ -380,8 +380,7 @@ let%expect_test "word and line motions reset the preferred column" =
   let t = move t Down in
   show_cursor t;
   show_cursor (move t Down);
-  (* Unlike Vim, $ sets the preferred column to the last character's column; the cursor
-     does not then stick to line ends. *)
+  (* As in Vim, after $ the cursor sticks to line ends. *)
   let t = move (move t Up) Line_end in
   show_cursor t;
   show_cursor (move t Down ~count:2);
@@ -390,7 +389,7 @@ let%expect_test "word and line motions reset the preferred column" =
     1:0 |x
     2:3 abc|defgh
     0:6 ab cde|f
-    2:6 abcdef|gh
+    2:7 abcdefg|h
     |}]
 ;;
 
@@ -442,6 +441,56 @@ let%expect_test "vertical moves keep a display column across TABs and wide chara
     1:8 abcdefgh|ij
     1:0 |abcdefghij
     1:1 a|界b
+    |}]
+;;
+
+(* Checked against Vim 9.1. *)
+let%expect_test "after $, vertical moves stick to line ends" =
+  let t = move (create "abc\nabcdefgh\nab\n\nabcdefghij") Line_end in
+  show_cursor (move t Down);
+  show_cursor (move t Down ~count:2);
+  (* An empty line keeps it sticky; a count on $ still sticks. *)
+  show_cursor (move (move t Down ~count:3) Down);
+  show_cursor (move (move (create "abcdefgh\nabc\nabcdefghij") Line_end ~count:2) Down);
+  [%expect
+    {|
+    1:7 abcdefg|h
+    2:1 a|b
+    4:9 abcdefghi|j
+    2:9 abcdefghi|j
+    |}];
+  (* Any other horizontal move ends it, and g_ and A do not start it. *)
+  show_cursor (move (move t Left) Down);
+  show_cursor (move (move (create "abc  \nabcdefgh") Last_nonblank) Down);
+  let t = create "abc\nabcdefgh" in
+  let t = fst (Editor.dispatch t (Enter_insert Line_end)) in
+  let t = fst (Editor.dispatch t Exit_insert) in
+  show_cursor (move t Down);
+  [%expect
+    {|
+    1:1 a|bcdefgh
+    1:2 ab|cdefgh
+    1:2 ab|cdefgh
+    |}]
+;;
+
+(* Checked against Vim 9.1. *)
+let%expect_test "in Visual mode, a cursor on a TAB at or before the anchor aims for its start" =
+  let visual t = fst (Editor.dispatch t (Enter_visual `Characterwise)) in
+  (* Onto the TAB before the anchor: its first cell. *)
+  show_cursor (move (move (visual (move (create "\tab\n0123456789") Right ~count:2)) Line_start) Down);
+  (* Back onto the TAB at the anchor: its first cell. *)
+  show_cursor (move (move (visual (move (create "\tab\n0123456789") Right)) Left) Down);
+  (* After the anchor: its last cell, as in Normal mode. *)
+  show_cursor (move (move (visual (create "x\tab\n0123456789")) Right) Down);
+  (* Entering Visual mode on the TAB keeps the Normal-mode column. *)
+  show_cursor (move (visual (create "\tab\n0123456789")) Down);
+  [%expect
+    {|
+    1:0 |0123456789
+    1:0 |0123456789
+    1:7 0123456|789
+    1:7 0123456|789
     |}]
 ;;
 

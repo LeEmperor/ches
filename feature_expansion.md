@@ -294,7 +294,8 @@ Acceptance:
 - Trailing LF: the empty line after a final LF is a real line in this editor, so
   bare `G` and `w` after the last word go there (Vim has no such line).
 - `$` resets the preferred column to the last character's column; Vim's sticky
-  end-of-line column (`curswant = MAXCOL`) is deferred.
+  end-of-line column (`curswant = MAXCOL`) is deferred. *(Superseded 2026-10-03:
+  `$` is now sticky, as in Vim; see the column model decision below.)*
 - `0` is bound to `Line_start` and is a count digit only after another digit.
   `^` rejects counts in the keymap (`3^` → `^ does not take a count`); the
   editor raises `Invalid_argument` for a count on a motion that takes none.
@@ -837,11 +838,94 @@ that layout with Notty's widths, and `Editor.create` takes the same function
 (`~cell_width`). The preferred column of `j`/`k` and soft-tab widths are display
 columns, checked against Vim 9.1 for TABs, wide and combining characters, short
 lines, and Insert-mode insertion points (`test/test_motion.ml`,
-`test/test_editor.ml`, `test/test_cell_layout.ml`). Still open before Phase 15:
-the policy past short line ends (skip, clamp, or pad), block edges inside a TAB
-or wide glyph, Vim's Visual-mode TAB-start exception, sticky `$`
-(`curswant = MAXCOL`, which block `$`/`A` will need), and `I`/`A`/Backspace
-examples.
+`test/test_editor.ml`, `test/test_cell_layout.ml`).
+
+**Decision (owner, 2026-10-03): follow Vim for every open column question.** Sticky
+`$` and the Visual-mode TAB rule below are implemented and tested; the rest are
+the reference examples for Phases 15-17.
+
+### Settled column semantics (Vim 9.1 reference)
+
+Observed with `vim -Nu NONE` (default `tabstop=8`, `selection=inclusive`,
+`virtualedit=`, empty `backspace`). Columns are zero-based display cells. In the
+examples `·` is a space and `<T>` a TAB; "block 3-5" means a `Ctrl-v` selection of
+display columns 3 to 5 inclusive.
+
+**Preferred column (implemented).**
+- `$` sets the preferred column to "end of line": later `j`/`k` go to each line's
+  last character, through empty lines, until another move resets it. A count on
+  `$` sticks too. `g_`, `A`, and every horizontal move do not stick.
+- On a TAB the preferred column is the TAB's last cell in Normal mode, its first
+  cell in Insert mode, and in Visual mode its first cell when the cursor is at or
+  before the anchor (`\tab`: `l v h j` lands on column 0, `x\tab`: `v l j` on
+  column 7). Entering Visual mode does not recompute it.
+
+**Block bounds.** The block spans from the smallest first cell to the largest last
+cell of its two corners, so a corner on a TAB or wide glyph covers the whole
+glyph (anchor on a leading TAB, cursor below: block 0-7). Reversed and
+upward/leftward blocks resolve to the same rectangle; `v`/`V`/`Ctrl-v` keep the
+anchor. After `$` the block extends to every line's own end. In Visual mode `$`
+puts the cursor on the line break, so `v$d` on `abc`/`def` leaves `def` (this
+also changes characterwise Visual `$`; do it with Phase 15).
+
+**Short lines** (block 3-5 over `abcdefgh` / `ab` / `abcdefgh`):
+
+| Op | Result | Register |
+|---|---|---|
+| `d` | `abcgh` / `ab` / `abcgh` | `def`, `···`, `def` (block width 3) |
+| `IXY` | `abcXYdefgh` / `ab` / `abcXYdefgh` (short line skipped) | |
+| `AXY` | `abcdefXYgh` / `ab····XY` / `abcdefXYgh` (padded) | |
+| `cXY` | `abcXYgh` / `ab` / `abcXYgh` | as `d` |
+
+A line ending inside the block (block 2-5 over `abcd`) loses `cd` and yanks `cd`
+unpadded; `A` pads it (`abcd··XY`). An empty line reaches column 0, so `I` from
+column 0 inserts on it. With `$` (block from column 1 over `abcdefgh` / `ab` /
+`abcd`): `d` leaves `a` on each line and yanks `bcdefgh`, `b`, `bcd` (width 7,
+ragged); `AXY` appends at each end; `IX` gives `aXbcdefgh` / `aXb` / `aXbcd`.
+
+**Block paste.** Row *i* goes to the same display column on the *i*th line from
+the cursor. Lines shorter than that column are padded with spaces; lines past
+the end of the document are appended (`abcd`/`efgh`, yank block `ab`/`ef`, `jp`
+gives `eabfgh` / `·ef`). When text follows the insertion point every row is
+padded to the block width, `$` registers included (`xyb······z`); at a line end
+no trailing padding is added. A count repeats each row horizontally (`2p` gives
+`xababyz`).
+
+**Edges inside a TAB** (TAB at 0-7 on the middle line of `0123456789ab` /
+`<T>abc` / `0123456789ab`): the TAB is split into spaces, keeping the cells
+outside the block.
+
+| Op | Middle line | Register row |
+|---|---|---|
+| `d`, block 2-4 | `·····abc` | `···` |
+| `d`, block 6-9 | `······c` | `··ab` |
+| `IX` at 2 | `··X······abc` | |
+| `AX` after 4 | `·····X···abc` | |
+| `cX`, block 2-4 | `··X···abc` | `···` |
+| `p` of `zw` at 4 | `····zw····abc` | |
+
+A block starting at column 0 or 8 leaves the TAB intact (`X<T>abc`, `<T>Xabc`).
+
+**Edges inside a wide glyph** (`界` at 1-2 on the middle line of `abcdef` /
+`a界bcd` / `abcdef`): a glyph cut by a block edge leaves a space for its uncovered
+half. `d` of block 2-3 gives `a·cd` and yanks `·b`; block 0-1 gives `·bcd` and
+yanks `a·`. Inserting at column 2 (`I`, `A` after column 1, or `p`) pads to the
+column and moves the glyph right whole: `a·X界bcd`, `a·zw界b`. Combining marks
+stay with their base character.
+
+**Block insert.**
+- After `d`, `y`, `c`, `I`, `A`, or `p` the cursor is at the block's top-left.
+- A count repeats the inserted text (`2IX` gives `XXabc`).
+- Escape with nothing typed changes nothing and records no undo step.
+- Backspace within the text typed in this session removes it from every line
+  (Vim's result for `IXYZ<BS>` is `XY` on each line). At the insertion column it
+  does nothing, as with Vim's default empty `backspace`.
+- Enter: Vim abandons the replication and only the first line keeps the edit
+  (`IX<CR>Y` gives `abX` / `Ycdefgh` / `abcdefgh`). The live equivalent is to
+  remove the replicated copies on Enter and continue as an ordinary Insert on the
+  first line; decide at Phase 17 whether that or rejecting Enter is preferable.
+- Replicating live while typing (rather than on Escape, as Vim does) remains the
+  owner-requested deviation.
 
 **Preferred target:** use display-cell columns with behavior close to
 Vim/Neovim. Before implementation, settle examples against Neovim for TABs,

@@ -69,7 +69,7 @@ let create ?path ?(search_case = Search_case.Smart) ~cell_width text =
       Cell_layout.column
         (Cell_layout.glyphs ~width:cell_width (B.line_text text 0))
         ~pos:0
-        ~insertion:false
+        ~tab_end:true
   ; cell_width
   ; history = History.empty
   ; unnamed_register = None
@@ -99,17 +99,31 @@ let search_state t =
 let cursor_line t = B.line_of_offset t.text t.cursor
 let cursor_column t = B.column_of_offset t.text t.cursor
 
-(* The display column of boundary [offset], as a cursor in [mode] aims for it. *)
-let display_column t (mode : Mode.t) offset =
+(* The display column of boundary [offset]. *)
+let display_column t offset ~tab_end =
   let line = B.line_of_offset t.text offset in
   Cell_layout.column
     (Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line))
     ~pos:(offset - B.line_start t.text line)
-    ~insertion:
-      (match mode with
-       | Insert -> true
-       | Normal | Visual _ -> false)
+    ~tab_end
 ;;
+
+(* The preferred column of a cursor at [offset], as Vim's [curswant]. A cursor on a TAB
+   aims for the TAB's last cell, where Vim shows it, except in Insert mode and, in
+   Visual mode, at or before the anchor. *)
+let preferred_column_at t offset =
+  display_column
+    t
+    offset
+    ~tab_end:
+      (match t.mode, t.selection with
+       | Insert, _ -> false
+       | Visual _, Some { anchor; _ } -> offset > anchor
+       | (Normal | Visual _), _ -> true)
+;;
+
+(* The preferred column after [$]: every line's end, however long. *)
+let line_end_column = Int.max_value
 
 (* In Normal mode, step back off the end of a nonempty line. *)
 let normalize text (mode : Mode.t) offset =
@@ -125,7 +139,7 @@ let normalize text (mode : Mode.t) offset =
 (* Place the cursor for anything but a vertical move. *)
 let set_cursor t offset =
   let cursor = normalize t.text t.mode offset in
-  { t with cursor; preferred_column = display_column t t.mode cursor }
+  { t with cursor; preferred_column = preferred_column_at t cursor }
 ;;
 
 let snapshot t = { History.text = t.text; cursor = t.cursor }
@@ -161,9 +175,11 @@ let move t motion ~count =
   | Ok (offset, matched) ->
     let t = match motion with Motion.Find find -> { t with last_find = Some (find, matched) } | _ -> t in
     let t =
-      if Motion.keeps_preferred_column motion
-      then { t with cursor = normalize t.text t.mode offset }
-      else set_cursor t offset
+      match motion with
+      | _ when Motion.keeps_preferred_column motion ->
+        { t with cursor = normalize t.text t.mode offset }
+      | Line_end -> { (set_cursor t offset) with preferred_column = line_end_column }
+      | _ -> set_cursor t offset
     in
     match t.selection with
     | None -> t
@@ -314,12 +330,12 @@ let check_width width =
 
 let insert_soft_tab t width =
   check_width width;
-  insert_text t (String.make (width - (display_column t Insert t.cursor % width)) ' ')
+  insert_text t (String.make (width - (display_column t t.cursor ~tab_end:false % width)) ' ')
 ;;
 
 let delete_soft_tab_backward t width =
   check_width width;
-  let column = display_column t Insert t.cursor in
+  let column = display_column t t.cursor ~tab_end:false in
   let stop = if column = 0 then 0 else (column - 1) / width * width in
   (* Spaces are one byte and one display column each. *)
   let rec start pos column =

@@ -24,10 +24,11 @@
     lines, including the lines a counted move passes over, and land on the code point
     covering it (see {!Cell_layout}), so moves line up on screen around TABs and wide
     characters. Every other command that moves the cursor resets the preference to
-    the resulting display column: the cursor's first cell, or a TAB's last cell for
-    a cursor on a TAB outside Insert mode, as in Vim. After [Line_end] that is the
-    last character's column (unlike Vim, the cursor does not then stick to line
-    ends).
+    the resulting display column: the cursor's first cell, except that on a TAB it
+    is the TAB's last cell in Normal mode and in Visual mode after the anchor, as in
+    Vim. [Line_end] instead makes the cursor stick to line ends: later [Up]/[Down]
+    go to the last character of each line until another move resets the
+    preference.
 
     {2 Commands by mode}
 

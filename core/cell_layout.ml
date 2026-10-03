@@ -100,14 +100,14 @@ let cursor_span glyphs ~pos ~insertion =
       preceding (i - 1), 1)
 ;;
 
-let column glyphs ~pos ~insertion =
+let column glyphs ~pos ~tab_end =
   match
     Array.binary_search glyphs `First_equal_to pos ~compare:(fun (g : Glyph.t) pos ->
       Int.compare g.pos pos)
   with
-  | Some i when (not insertion) && Kind.equal glyphs.(i).kind Tab ->
+  | Some i when tab_end && Kind.equal glyphs.(i).kind Tab ->
     glyphs.(i).col + glyphs.(i).width - 1
-  | _ -> fst (cursor_span glyphs ~pos ~insertion)
+  | _ -> fst (cursor_span glyphs ~pos ~insertion:false)
 ;;
 
 let pos_of_column glyphs col =
