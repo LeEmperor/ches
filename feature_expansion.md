@@ -831,6 +831,18 @@ A cheaper implementation would use code-point columns and clamp each line with
 would stop lining up on screen around TABs and wide characters and would likely
 need semantic rework later.
 
+**Status (2026-10-03): shared mapping extracted.** `core/cell_layout.ml` now
+holds the glyph layout with an injected width function; `screen/Cell_map` is
+that layout with Notty's widths, and `Editor.create` takes the same function
+(`~cell_width`). The preferred column of `j`/`k` and soft-tab widths are display
+columns, checked against Vim 9.1 for TABs, wide and combining characters, short
+lines, and Insert-mode insertion points (`test/test_motion.ml`,
+`test/test_editor.ml`, `test/test_cell_layout.ml`). Still open before Phase 15:
+the policy past short line ends (skip, clamp, or pad), block edges inside a TAB
+or wide glyph, Vim's Visual-mode TAB-start exception, sticky `$`
+(`curswant = MAXCOL`, which block `$`/`A` will need), and `I`/`A`/Backspace
+examples.
+
 **Preferred target:** use display-cell columns with behavior close to
 Vim/Neovim. Before implementation, settle examples against Neovim for TABs,
 wide and combining characters, short lines, reversed selections, `I`/`A`, and

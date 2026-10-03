@@ -26,8 +26,13 @@ end
 type t
 
 (** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing
-    exists there. The error says which path could not be opened, and why. *)
-val open_file : ?keymap_config:Keymap.Config.t -> string -> t Or_error.t
+    exists there. The error says which path could not be opened, and why.
+    [cell_width] is passed to [Editor.create]. *)
+val open_file
+  :  ?keymap_config:Keymap.Config.t
+  -> cell_width:Cell_layout.Width.t
+  -> string
+  -> t Or_error.t
 
 (** Default [keymap_config] is [Keymap.Config.default]. *)
 val create : ?keymap_config:Keymap.Config.t -> Editor.t -> t

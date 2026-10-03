@@ -46,6 +46,7 @@ type t =
   ; saved_revision : int
   ; cursor : int
   ; preferred_column : int
+  ; cell_width : Cell_layout.Width.t
   ; history : History.t
   ; unnamed_register : Register.t option
   ; message : Message.t option
@@ -56,7 +57,7 @@ type t =
   ; selection : Selection.t option
   }
 
-let create ?path ?(search_case = Search_case.Smart) text =
+let create ?path ?(search_case = Search_case.Smart) ~cell_width text =
   { text
   ; path
   ; mode = Normal
@@ -64,7 +65,12 @@ let create ?path ?(search_case = Search_case.Smart) text =
   ; saved = text
   ; saved_revision = 0
   ; cursor = 0
-  ; preferred_column = 0
+  ; preferred_column =
+      Cell_layout.column
+        (Cell_layout.glyphs ~width:cell_width (B.line_text text 0))
+        ~pos:0
+        ~insertion:false
+  ; cell_width
   ; history = History.empty
   ; unnamed_register = None
   ; message = None
@@ -93,6 +99,18 @@ let search_state t =
 let cursor_line t = B.line_of_offset t.text t.cursor
 let cursor_column t = B.column_of_offset t.text t.cursor
 
+(* The display column of boundary [offset], as a cursor in [mode] aims for it. *)
+let display_column t (mode : Mode.t) offset =
+  let line = B.line_of_offset t.text offset in
+  Cell_layout.column
+    (Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line))
+    ~pos:(offset - B.line_start t.text line)
+    ~insertion:
+      (match mode with
+       | Insert -> true
+       | Normal | Visual _ -> false)
+;;
+
 (* In Normal mode, step back off the end of a nonempty line. *)
 let normalize text (mode : Mode.t) offset =
   match mode with
@@ -107,7 +125,7 @@ let normalize text (mode : Mode.t) offset =
 (* Place the cursor for anything but a vertical move. *)
 let set_cursor t offset =
   let cursor = normalize t.text t.mode offset in
-  { t with cursor; preferred_column = B.column_of_offset t.text cursor }
+  { t with cursor; preferred_column = display_column t t.mode cursor }
 ;;
 
 let snapshot t = { History.text = t.text; cursor = t.cursor }
@@ -128,7 +146,7 @@ let check_count count =
 let resolve_motion t motion ~count =
   match motion with
   | Motion.Find find -> Motion.find_destination t.text find ~cursor:t.cursor ~count:(Option.value count ~default:1) ~skip:None
-  | _ -> Motion.destination t.text motion ~cursor:t.cursor ~preferred_column:t.preferred_column ~count |> Result.map ~f:(fun x -> x, -1)
+  | _ -> Motion.destination t.text motion ~cell_width:t.cell_width ~cursor:t.cursor ~preferred_column:t.preferred_column ~count |> Result.map ~f:(fun x -> x, -1)
 ;;
 
 let move t motion ~count =
@@ -205,10 +223,17 @@ let visual_delete t ~change =
 ;;
 
 (* The leading spaces and TABs of [line]. *)
-let indentation text line =
+let indentation t line =
+  let text = t.text in
   let start = B.line_start text line in
   let first_nonblank =
-    Motion.destination text First_nonblank ~cursor:start ~preferred_column:0 ~count:None
+    Motion.destination
+      text
+      First_nonblank
+      ~cell_width:t.cell_width
+      ~cursor:start
+      ~preferred_column:0
+      ~count:None
     |> Result.ok
     |> Option.value_exn ~message:"First_nonblank never fails"
   in
@@ -225,7 +250,7 @@ let enter_insert t (position : Command.Insert_position.t) =
       then Option.value_exn (B.next_boundary t.text t.cursor)
       else t.cursor
     | Line_end -> B.line_end t.text line
-    | First_nonblank -> B.line_start t.text line + String.length (indentation t.text line)
+    | First_nonblank -> B.line_start t.text line + String.length (indentation t line)
   in
   set_cursor { t with mode = Insert } offset
 ;;
@@ -234,7 +259,7 @@ let enter_insert t (position : Command.Insert_position.t) =
    that undoing it also removes the typing that follows. *)
 let open_line t ~below =
   let line = cursor_line t in
-  let indent = indentation t.text line in
+  let indent = indentation t line in
   let at, s, cursor =
     if below
     then (
@@ -274,7 +299,7 @@ let insert_text t s =
 let insert_newline t =
   let line = cursor_line t in
   let before_cursor = t.cursor - B.line_start t.text line in
-  insert_text t ("\n" ^ String.prefix (indentation t.text line) before_cursor)
+  insert_text t ("\n" ^ String.prefix (indentation t line) before_cursor)
 ;;
 
 let delete_backward t =
@@ -289,14 +314,14 @@ let check_width width =
 
 let insert_soft_tab t width =
   check_width width;
-  insert_text t (String.make (width - (cursor_column t % width)) ' ')
+  insert_text t (String.make (width - (display_column t Insert t.cursor % width)) ' ')
 ;;
 
 let delete_soft_tab_backward t width =
   check_width width;
-  let column = cursor_column t in
+  let column = display_column t Insert t.cursor in
   let stop = if column = 0 then 0 else (column - 1) / width * width in
-  (* Spaces are one byte and one column each. *)
+  (* Spaces are one byte and one display column each. *)
   let rec start pos column =
     if column > stop && String.equal (B.slice t.text ~pos:(pos - 1) ~len:1) " "
     then start (pos - 1) (column - 1)
@@ -369,7 +394,7 @@ let delete_motion t motion ~count =
   | t, Ok (Motion.Find find, destination) ->
     Range.resolve_destination t.text find ~cursor:t.cursor ~destination |> delete_range t
   | t, Ok (motion, _) ->
-    (match Range.resolve t.text motion ~cursor:t.cursor ~preferred_column:t.preferred_column ~count with
+    (match Range.resolve t.text motion ~cell_width:t.cell_width ~cursor:t.cursor ~preferred_column:t.preferred_column ~count with
      | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
      | Ok range -> delete_range t range)
 ;;
@@ -410,7 +435,7 @@ let yank_motion t motion ~count =
        yank_range { t with last_find = Some (find, matched) }
          (Range.resolve_destination t.text find ~cursor:t.cursor ~destination))
   | _ ->
-    (match Range.resolve t.text motion ~cursor:t.cursor ~preferred_column:t.preferred_column ~count with
+    (match Range.resolve t.text motion ~cell_width:t.cell_width ~cursor:t.cursor ~preferred_column:t.preferred_column ~count with
      | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }
      | Ok range -> yank_range t range)
 ;;
@@ -585,6 +610,7 @@ let paste t ~before ~count =
            Motion.destination
              text
              First_nonblank
+             ~cell_width:t.cell_width
              ~cursor:(B.line_start text first_line)
              ~preferred_column:0
              ~count:None
@@ -737,14 +763,14 @@ let handle_outcome t (outcome : Effect.Outcome.t) =
          message = Some (Error (sprintf "Failed to reload %s: %s" path (Error.to_string_hum error)))
        }
      | Ok text ->
-       { t with
-         text
-       ; saved = text
-       ; saved_revision = t.revision + 1
-       ; revision = t.revision + 1
-       ; cursor = 0
-       ; preferred_column = 0
-       ; history = History.empty
-       ; message = Some (Info (sprintf "Reloaded %s" path))
-       })
+       set_cursor
+         { t with
+           text
+         ; saved = text
+         ; saved_revision = t.revision + 1
+         ; revision = t.revision + 1
+         ; history = History.empty
+         ; message = Some (Info (sprintf "Reloaded %s" path))
+         }
+         0)
 ;;

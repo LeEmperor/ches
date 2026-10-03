@@ -37,8 +37,9 @@
       when given a count [n], clamped to the document; without a count, of the first
       or last line. The empty line after a trailing LF is the last line.
     - [Left]/[Right] move by code points within the line; [Up]/[Down] move by lines,
-      to the {i preferred column}, clamped to the line's length. All four clamp at
-      their boundaries.
+      to the code point covering the {i preferred column}, a display column (see
+      {!Cell_layout}), or to the line's end when the line is shorter. All four clamp
+      at their boundaries.
 
     {2 Matching delimiters}
 
@@ -121,11 +122,13 @@ val takes_count : t -> bool
 val keeps_preferred_column : t -> bool
 
 (** The destination from [cursor]. [count] is [None] when none was given; a given
-    count must be positive. [preferred_column] is the code-point column [Up]/[Down]
-    aim for. Only [Matching_delimiter] can fail; the others clamp. *)
+    count must be positive. [preferred_column] is the display column [Up]/[Down]
+    aim for, measured with [cell_width]. Only [Matching_delimiter] can fail; the
+    others clamp. *)
 val destination
   :  Text_buffer.t
   -> t
+  -> cell_width:Cell_layout.Width.t
   -> cursor:int
   -> preferred_column:int
   -> count:int option

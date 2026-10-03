@@ -10,7 +10,7 @@ let handle ?(width = 40) ?(height = 6) s =
          (Text_buffer.of_string s)
          ~f:Text_buffer.Invalid_text.to_string_hum)
   in
-  let controller = Ches_app.Controller.create (Editor.create ~path:"f.txt" text) in
+  let controller = Ches_app.Controller.create (Editor.create ~path:"f.txt" ~cell_width:Ches_screen.Cell_map.width text) in
   let exit () = Bonsai_term.Effect.print_s [%sexp "EXIT"] in
   let handle =
     Bonsai_term_test.create_handle (Ches_ui.Editor_view.app controller ~exit)

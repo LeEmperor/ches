@@ -4,6 +4,7 @@ open Ches_core
 let create s =
   Editor.create
     ~path:"f.txt"
+    ~cell_width:Cell_width.f
     (Text_buffer.of_string s
      |> Result.map_error ~f:Text_buffer.Invalid_text.to_string_hum
      |> Result.ok_or_failwith)
@@ -390,6 +391,57 @@ let%expect_test "word and line motions reset the preferred column" =
     2:3 abc|defgh
     0:6 ab cde|f
     2:6 abcdef|gh
+    |}]
+;;
+
+(* Each case was checked against Vim 9.1 ([vim -Nu NONE], default tab stop of 8). *)
+let%expect_test "vertical moves keep a display column across TABs and wide characters" =
+  let down ?(right = 0) ?(insert = false) text =
+    let t = create text in
+    let t = if right = 0 then t else move t Right ~count:right in
+    let t =
+      if insert then fst (Editor.dispatch t (Enter_insert Before_cursor)) else t
+    in
+    let t = move t Down in
+    show_cursor t;
+    t
+  in
+  (* On a TAB, the cursor aims for the TAB's last cell, where Vim shows it. *)
+  ignore (down "\tx\nabcdefghij" : Editor.t);
+  (* A column inside a TAB lands on the TAB. *)
+  ignore (down "abcdefghij\n\tx" ~right:2 : Editor.t);
+  ignore (down "\tx\nabcdefghij" ~right:1 : Editor.t);
+  ignore (down "abcdefghij\n\tx" ~right:9 : Editor.t);
+  (* A column inside a wide character lands on it, and the preference survives. *)
+  show_cursor (move (down "abcdef\na\xe7\x95\x8cb" ~right:2) Up);
+  ignore (down "a\xe7\x95\x8cb\nabcdef" ~right:1 : Editor.t);
+  ignore (down "a\xe7\x95\x8cb\nabcdef" ~right:2 : Editor.t);
+  (* A combining mark takes no cell. *)
+  ignore (down "abcdef\nae\xcc\x81f" ~right:2 : Editor.t);
+  [%expect
+    {|
+    1:7 abcdefg|hij
+    1:0 |\tx
+    1:8 abcdefgh|ij
+    1:1 \t|x
+    1:1 a|界b
+    0:2 ab|cdef
+    1:1 a|bcdef
+    1:3 abc|def
+    1:3 aé|f
+    |}];
+  (* An insertion point aims for its own cell, so before a TAB it aims for the TAB's
+     first cell. *)
+  ignore (down "abcdefghij\n\tx" ~right:3 ~insert:true : Editor.t);
+  ignore (down "\tx\nabcdefghij" ~right:1 ~insert:true : Editor.t);
+  ignore (down "\tx\nabcdefghij" ~insert:true : Editor.t);
+  ignore (down "abcdef\na\xe7\x95\x8cb" ~right:2 ~insert:true : Editor.t);
+  [%expect
+    {|
+    1:0 |\tx
+    1:8 abcdefgh|ij
+    1:0 |abcdefghij
+    1:1 a|界b
     |}]
 ;;
 

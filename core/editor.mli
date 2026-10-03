@@ -20,10 +20,14 @@
     [Motion.takes_count], raises [Invalid_argument]. Moves change no text, revision,
     dirty state, or history (beyond closing an Insert transaction).
 
-    [Up]/[Down] keep a preferred code-point column across shorter lines, including the
-    lines a counted move passes over. Every other command that moves the cursor
-    resets the preference to the resulting column; after [Line_end] that is the last
-    character's column (unlike Vim, the cursor does not then stick to line ends).
+    [Up]/[Down] keep a preferred {i display} column (Vim's [curswant]) across shorter
+    lines, including the lines a counted move passes over, and land on the code point
+    covering it (see {!Cell_layout}), so moves line up on screen around TABs and wide
+    characters. Every other command that moves the cursor resets the preference to
+    the resulting display column: the cursor's first cell, or a TAB's last cell for
+    a cursor on a TAB outside Insert mode, as in Vim. After [Line_end] that is the
+    last character's column (unlike Vim, the cursor does not then stick to line
+    ends).
 
     {2 Commands by mode}
 
@@ -58,9 +62,9 @@
     line. Indentation stays when Insert mode is left without typing anything more.
     [Insert_text] never indents, so pastes are literal.
 
-    Soft-tab widths are in code-point columns, so a TAB before the cursor counts as
-    one column. They must be at least 1; otherwise the command raises
-    [Invalid_argument].
+    Soft-tab widths are in display columns, as Vim's ['softtabstop']: a TAB before
+    the cursor counts for the cells it occupies. They must be at least 1; otherwise
+    the command raises [Invalid_argument].
 
     {2 Undo}
 
@@ -112,8 +116,15 @@ module Search_case : sig
 end
 
 (** A Normal-mode editor at the start of [text], which is considered saved. Use
-    [Text_buffer.empty] for a file that does not exist yet. *)
-val create : ?path:string -> ?search_case:Search_case.t -> Text_buffer.t -> t
+    [Text_buffer.empty] for a file that does not exist yet. [cell_width] must be the
+    width function the frontend draws with, so that display columns agree with the
+    screen. *)
+val create
+  :  ?path:string
+  -> ?search_case:Search_case.t
+  -> cell_width:Cell_layout.Width.t
+  -> Text_buffer.t
+  -> t
 
 val text : t -> Text_buffer.t
 val path : t -> string option

@@ -124,7 +124,10 @@ It also exits with an error if its standard input is not a terminal.
 Movement stops at the ends of a line: `h` and `l` do not wrap to the next line.
 `j` and `k` keep the column you were aiming for across shorter lines; every other
 motion sets that column to where it lands (after `$`, unlike Vim, `j` and `k` do
-not stick to line ends). Leaving Insert mode steps the cursor back one character,
+not stick to line ends). As in Vim, that column is a screen column, so `j` and
+`k` line up on screen around TABs and wide characters, landing on whichever
+character covers the column; on a TAB in Normal mode the cursor aims for the
+TAB's last cell. Leaving Insert mode steps the cursor back one character,
 as in Vim. Motions never change the text, the undo history, or `[+]`.
 
 ### Words and lines
@@ -248,7 +251,7 @@ deliberately the only `:` command currently supported; an unknown command
 reports feedback without changing the buffer.
 
 Soft tabs work like Vim's `softtabstop`: `Tab` inserts spaces up to the next
-multiple of 2 columns, and in Insert mode `Backspace` deletes spaces back to the
+multiple of 2 screen columns (a TAB before the cursor counts for its width), and in Insert mode `Backspace` deletes spaces back to the
 previous multiple, or one character if there is no space before the cursor.
 `Backspace` at the start of a line joins it to the line above, and `Delete` at
 the end of a line joins the line below. `x` never deletes a line break.
@@ -297,7 +300,7 @@ message. Saving writes the text back exactly as it is, including whether it
 ends with a newline.
 
 Cursor movement and deletion work on Unicode code points, and the status-line
-column counts code points. On screen, characters take their terminal width (CJK
+column counts code points; `j`/`k` and soft tabs use screen columns. On screen, characters take their terminal width (CJK
 characters take two cells), a TAB expands to the next multiple of 8 cells, and
 control characters are drawn as escape forms (see [Screen](#screen)).
 
@@ -451,7 +454,10 @@ their own with
 `dune build ./core/ches_core.cmxa ./input/ches_input.cmxa ./app/ches_app.cmxa`.
 Only `ches_app` touches the filesystem. `ches_screen` must not depend on Bonsai
 or Bonsai_term; it uses Notty only for its code-point width table, so that its
-cell counts agree with what Notty draws.
+cell counts agree with what Notty draws. The cell layout itself lives in
+`ches_core` (`Cell_layout`) with the width function passed in: the frontend
+creates the editor with the same `Cell_map.width` it draws with, so screen
+columns in editing semantics and on screen cannot disagree.
 
 ## Terminal smoke test
 

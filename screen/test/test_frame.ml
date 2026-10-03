@@ -340,7 +340,7 @@ let%expect_test "the filename in the top border is cut from the left, then omitt
     |}];
   (* With no path, the border is unbroken. *)
   let no_path =
-    Ui_state.create (Ches_app.Controller.create (Ches_core.Editor.create Ches_core.Text_buffer.empty))
+    Ui_state.create (Ches_app.Controller.create (Ches_core.Editor.create ~cell_width:Cell_map.width Ches_core.Text_buffer.empty))
   in
   show ~width:30 ~height:6 no_path;
   [%expect {|

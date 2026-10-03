@@ -15,7 +15,7 @@ let create ?(config = Keymap.Config.default) ?(path = "f.txt") s =
     |> Result.map_error ~f:Text_buffer.Invalid_text.to_string_hum
     |> Result.ok_or_failwith
   in
-  { editor = Editor.create ~path text; keymap = Keymap.create config }
+  { editor = Editor.create ~path ~cell_width:Cell_width.f text; keymap = Keymap.create config }
 ;;
 
 (* Feed [inputs] through the keymap and the editor, as a frontend would, printing the

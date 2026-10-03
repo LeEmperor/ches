@@ -19,13 +19,13 @@ let create ?(keymap_config = Keymap.Config.default) editor =
   { editor; keymap = Keymap.create keymap_config; dispatched = false }
 ;;
 
-let open_file ?keymap_config path =
+let open_file ?keymap_config ~cell_width path =
   match File_io.read path with
   | Error error ->
     Or_error.error_string
       (sprintf "Cannot open %s: %s" path (Error.to_string_hum error))
-  | Ok (Existing text) -> Ok (create ?keymap_config (Editor.create ~path text))
-  | Ok Missing -> Ok (create ?keymap_config (Editor.create ~path Text_buffer.empty))
+  | Ok (Existing text) -> Ok (create ?keymap_config (Editor.create ~path ~cell_width text))
+  | Ok Missing -> Ok (create ?keymap_config (Editor.create ~path ~cell_width Text_buffer.empty))
 ;;
 
 let editor t = t.editor

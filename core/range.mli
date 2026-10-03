@@ -16,6 +16,7 @@ val linewise : Text_buffer.t -> cursor:int -> destination:int -> t
 val resolve
   :  Text_buffer.t
   -> Motion.t
+  -> cell_width:Cell_layout.Width.t
   -> cursor:int
   -> preferred_column:int
   -> count:int option

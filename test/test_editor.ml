@@ -8,7 +8,7 @@ let of_string_exn s =
   |> Result.ok_or_failwith
 ;;
 
-let create ?(path = "f.txt") s = Editor.create ~path (of_string_exn s)
+let create ?(path = "f.txt") s = Editor.create ~path ~cell_width:Cell_width.f (of_string_exn s)
 let move ?count motion = Move { motion; count }
 let insert = Enter_insert Before_cursor
 
@@ -712,7 +712,7 @@ let%expect_test "a new file starts clean and empty and can still be saved" =
 ;;
 
 let%expect_test "save without a path" =
-  show (run (Editor.create Text_buffer.empty) [ Save ]);
+  show (run (Editor.create ~cell_width:Cell_width.f Text_buffer.empty) [ Save ]);
   [%expect
     {|
     NORMAL 0:0 rev=0 (Error"No file name")
@@ -906,7 +906,7 @@ let%expect_test "search uses smart ASCII case by default and supports explicit p
   show t;
   let t = run t [ Search { query = Some "Phase"; forward = true; count = 1; whole_word = false } ] in
   show t;
-  let insensitive = Editor.create ~search_case:Editor.Search_case.Insensitive (of_string_exn "phase Phase") in
+  let insensitive = Editor.create ~cell_width:Cell_width.f ~search_case:Editor.Search_case.Insensitive (of_string_exn "phase Phase") in
   let insensitive = run insensitive [ Search { query = Some "Phase"; forward = true; count = 1; whole_word = false } ] in
   show insensitive;
   [%expect {|
@@ -973,6 +973,26 @@ let%expect_test "soft tabs insert spaces to the next multiple of the width" =
     {|
     NORMAL 0:0 rev=5
     > |
+    |}]
+;;
+
+let%expect_test "soft tabs count a TAB by its display cells, as Vim's softtabstop" =
+  (* The TAB ends at display column 8, so a width-4 soft tab adds 4 spaces. *)
+  let t = run (create "\t") [ Enter_insert Line_end; Insert_soft_tab 4 ] in
+  show t;
+  [%expect
+    {|
+    INSERT 0:5 rev=1 dirty
+    > 	    |
+    |}];
+  (* From display column 10 back to 8: the two spaces after the TAB. *)
+  let t = run (create "\t  x") [ Enter_insert Line_end; move Left ] in
+  let t = run t [ insert; Delete_soft_tab_backward 4 ] in
+  show t;
+  [%expect
+    {|
+    INSERT 0:1 rev=1 dirty
+    > 	|x
     |}]
 ;;
 

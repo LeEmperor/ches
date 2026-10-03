@@ -8,7 +8,7 @@ let ui ?(path = "f.txt") ?prefs s =
     |> Result.map_error ~f:Text_buffer.Invalid_text.to_string_hum
     |> Result.ok_or_failwith
   in
-  Ui_state.create ?prefs (Ches_app.Controller.create (Editor.create ~path text))
+  Ui_state.create ?prefs (Ches_app.Controller.create (Editor.create ~path ~cell_width:Cell_map.width text))
 ;;
 
 (* Keys in [Key_notation]'s notation, as UI inputs. *)

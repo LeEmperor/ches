@@ -27,7 +27,7 @@ let print_file ~dir path =
 ;;
 
 let open_file ~dir path =
-  match Controller.open_file path with
+  match Controller.open_file ~cell_width:Cell_width.f path with
   | Ok t -> Some t
   | Error error ->
     print_endline (hide_dir ~dir (Error.to_string_hum error));
@@ -269,7 +269,7 @@ let%expect_test "dirty quit is refused and forced quit leaves the file untouched
 ;;
 
 let%expect_test "last_input_dispatched reports whether an input ran any command" =
-  let t = Controller.create (Editor.create ~path:"f.txt" Text_buffer.empty) in
+  let t = Controller.create (Editor.create ~path:"f.txt" ~cell_width:Cell_width.f Text_buffer.empty) in
   print_s [%sexp (Controller.last_input_dispatched t : bool)];
   ignore
     (List.fold [ "q"; " "; "x"; "u"; "<C-c>"; "i" ] ~init:t ~f:(fun t keys ->
@@ -295,7 +295,7 @@ let%expect_test "last_input_dispatched reports whether an input ran any command"
 ;;
 
 let%expect_test "view commands are returned for the frontend and touch no editor state" =
-  let t = Controller.create (Editor.create ~path:"f.txt" Text_buffer.empty) in
+  let t = Controller.create (Editor.create ~path:"f.txt" ~cell_width:Cell_width.f Text_buffer.empty) in
   let before = Controller.editor t in
   let t = run t " vL vc vr" in
   [%expect {|

@@ -49,8 +49,8 @@ let characterwise text motion ~cursor ~destination ~inclusive =
   { start; stop; kind = Characterwise }
 ;;
 
-let resolve text motion ~cursor ~preferred_column ~count =
-  Motion.destination text motion ~cursor ~preferred_column ~count
+let resolve text motion ~cell_width ~cursor ~preferred_column ~count =
+  Motion.destination text motion ~cell_width ~cursor ~preferred_column ~count
   |> Result.map ~f:(fun destination ->
     match Motion.kind motion with
     | Linewise -> linewise text ~cursor ~destination

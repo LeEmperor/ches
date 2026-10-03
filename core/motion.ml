@@ -342,7 +342,16 @@ let find_destination text find ~cursor ~count ~skip =
 
 let clamp_line text line = Int.clamp_exn line ~min:0 ~max:(B.line_count text - 1)
 
-let destination text t ~cursor ~preferred_column ~count : (int, Failure.t) Result.t =
+(* The boundary of [line] at display column [column], or its end when the line is
+   shorter. *)
+let offset_of_display_column text ~cell_width ~line column =
+  let start = B.line_start text line in
+  match Cell_layout.pos_of_column (Cell_layout.glyphs ~width:cell_width (B.line_text text line)) column with
+  | Some pos -> start + pos
+  | None -> B.line_end text line
+;;
+
+let destination text t ~cell_width ~cursor ~preferred_column ~count : (int, Failure.t) Result.t =
   let n = Option.value count ~default:1 in
   let line = B.line_of_offset text cursor in
   match t with
@@ -356,7 +365,7 @@ let destination text t ~cursor ~preferred_column ~count : (int, Failure.t) Resul
     Ok
       (if target = line
        then cursor
-       else B.offset_of_column text ~line:target preferred_column)
+       else offset_of_display_column text ~cell_width ~line:target preferred_column)
   | Word_forward word -> Ok (repeat n cursor ~step:(word_forward text word))
   | Word_backward word -> Ok (repeat n cursor ~step:(word_backward text word))
   | Word_end word -> Ok (repeat n cursor ~step:(word_end text word))

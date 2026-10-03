@@ -1,7 +1,7 @@
 (executable
  (name ches)
  (public_name ches)
- (libraries ches_app ches_ui core async core_unix core_unix.command_unix
+ (libraries ches_app ches_screen ches_ui core async core_unix core_unix.command_unix
   core_unix.filename_unix)
  (preprocess
   (pps ppx_jane)))

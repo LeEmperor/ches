@@ -29,7 +29,9 @@ let command =
        if not (Core_unix.isatty Core_unix.stdin)
        then fail (Error.of_string "standard input is not a terminal")
        else (
-         match Ches_app.Controller.open_file path with
+         match
+           Ches_app.Controller.open_file ~cell_width:Ches_screen.Cell_map.width path
+         with
          | Error error -> fail error
          | Ok controller ->
            (match%bind Ches_ui.Editor_view.run controller with
