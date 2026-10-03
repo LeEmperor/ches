@@ -1,5 +1,25 @@
 # Search highlighting performance
 
+## Implemented (2026-10-03)
+
+Highlighting now scans visible lines plus a query-length lookback for multiline
+matches entering the viewport. Each line starts with a binary lookup into ordered
+match ranges, then advances alongside its glyphs. Navigation scans directionally
+and stops at the requested occurrence; counts exceeding a full cycle are reduced
+modulo the match count. Both paths use the shared `core/search_match.ml` matcher.
+
+Regression tests cover navigation ordering, wrap/count behavior, UTF-8,
+overlapping matches, horizontal scrolling, multiline viewport boundaries, and a
+20,000-line dense-match fixture. A headless CPU-time benchmark of a fixed 100×24
+viewport measured approximately 0.06 ms per render for 200, 20,000, and 200,000
+lines containing repeated `signal assign`; nearby navigation measured about
+0.001 ms. These measurements exclude terminal output and file loading, and are
+not a reproduction of the original file. Input cancellation and deadlines remain
+future work; absent/distant matches can still require a full navigation scan,
+and highlighting currently scans entire visible lines.
+
+The investigation below describes the previous implementation.
+
 ## Report
 
 Searching for `sign` with `/` in a roughly 20,000-line `loader_core.v` file caused significant lag in Ches, while Neovim remained responsive. The query matches common substrings in `signal` and `assign`.

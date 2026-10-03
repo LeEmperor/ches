@@ -55,42 +55,59 @@ let render ui ~width ~height =
     | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)
     | Some _ | None -> Editor.search_state editor
   in
-  let small_word_class offset =
-    if offset < 0 || offset >= Text_buffer.length text then None else
-    let code = Uchar.to_scalar (Text_buffer.uchar_at text offset) in
-    if code = 0x20 || code = 0x09 || code = 0x0A then None
-    else if code >= 0x80 || Char.is_alphanum (Char.of_int_exn code) || code = Char.to_int '_'
-    then Some `Identifier else Some `Punctuation
-  in
-  let is_match ~at query whole_word case_sensitive =
-    let source = Text_buffer.to_string text in
-    at + String.length query <= String.length source
-    && String.for_alli query ~f:(fun i c ->
-      let lower c =
-        let n = Char.to_int c in
-        if n >= Char.to_int 'A' && n <= Char.to_int 'Z' then Char.of_int_exn (n + 32) else c
-      in
-      if case_sensitive then Char.equal source.[at + i] c else Char.equal (lower source.[at + i]) (lower c))
-    && (not whole_word
-        || let class_ = small_word_class at in
-           let before = if at = 0 then None else small_word_class (Option.value_exn (Text_buffer.prev_boundary text at)) in
-           let stop = at + String.length query in
-           let after = if stop = Text_buffer.length text then None else small_word_class stop in
-           not ([%equal: [ `Identifier | `Punctuation ] option] class_ before)
-           && not ([%equal: [ `Identifier | `Punctuation ] option] class_ after))
-  in
   let matches =
     match search with
     | None -> []
     | Some (query, _, _, _) when String.is_empty query -> []
     | Some (query, whole_word, case_sensitive, current) ->
+      if viewport.height <= 0 || viewport.width <= 0 || scroll.top >= line_count
+      then []
+      else
+      let first = Text_buffer.line_start text scroll.top in
+      let last_line = Int.min (line_count - 1) (scroll.top + viewport.height - 1) in
+      let stop = Text_buffer.line_end text last_line in
+      (* A multiline literal can begin above the viewport and still overlap it.
+         Look back only far enough for such a match, aligned to UTF-8. *)
+      let rec align at =
+        if Text_buffer.is_boundary text at then at else align (at + 1)
+      in
+      let start = align (Int.max 0 (first - String.length query + 1)) in
       let rec loop at acc =
-        if at >= Text_buffer.length text then List.rev acc
+        if at >= stop then List.rev acc
         else
-          let acc = if is_match ~at query whole_word case_sensitive then at :: acc else acc in
+          let acc =
+            if at + String.length query > first
+               && Search_match.matches text ~query ~whole_word ~case_sensitive ~at
+            then (at, String.length query, current) :: acc else acc
+          in
           loop (Option.value_exn (Text_buffer.next_boundary text at)) acc
       in
-      loop 0 [] |> List.map ~f:(fun start -> start, String.length query, current)
+      loop start []
+  in
+  let matches = Array.of_list matches in
+  let search_highlighter first =
+    (* Rows need not be constructed in screen order. Start each line with a
+       binary lookup, then advance monotonically as its glyphs are visited. *)
+    let rec lower_bound lo hi =
+      if lo = hi then lo
+      else
+        let mid = lo + (hi - lo) / 2 in
+        let start, len, _ = matches.(mid) in
+        if start + len <= first then lower_bound (mid + 1) hi
+        else lower_bound lo mid
+    in
+    let index = ref (lower_bound 0 (Array.length matches)) in
+    fun offset ->
+      while !index < Array.length matches
+            && (let start, len, _ = matches.(!index) in start + len <= offset) do
+        incr index
+      done;
+      if !index = Array.length matches then None
+      else
+        let start, _, current = matches.(!index) in
+        if start > offset then None
+        else Some (if Option.value_map current ~default:false ~f:(Int.equal start)
+                   then `Current else `Match)
   in
   let selection = Editor.selection editor in
   let area_on_row layout y =
@@ -139,6 +156,8 @@ let render ui ~width ~height =
             then Style.Text_cursor_line, Style.Special_cursor_line
             else Text, Special
           in
+          let line_start = Text_buffer.line_start text line in
+          let search_highlight = search_highlighter line_start in
            Span.of_glyphs
              (Cell_map.glyphs (Text_buffer.line_text text line))
             ~left:scroll.left
@@ -146,13 +165,11 @@ let render ui ~width ~height =
              ~text:text_style
              ~special:special_style
               ~highlight:(fun glyph ->
-                let offset = Text_buffer.line_start text line + glyph.pos in
+                let offset = line_start + glyph.pos in
                 match selection with
                 | Some { Editor.Selection.anchor; active; kind = `Linewise } when line >= Int.min (Text_buffer.line_of_offset text anchor) (Text_buffer.line_of_offset text active) && line <= Int.max (Text_buffer.line_of_offset text anchor) (Text_buffer.line_of_offset text active) -> Some `Selection
                 | Some { Editor.Selection.anchor; active; kind = `Characterwise } when offset >= Int.min anchor active && offset <= Int.max anchor active -> Some `Selection
-                | _ -> List.find_map matches ~f:(fun (start, len, current) ->
-                         Option.some_if (offset >= start && offset < start + len)
-                            (if Option.value_map current ~default:false ~f:(Int.equal start) then `Current else `Match))))
+                | _ -> search_highlight offset))
       in
       let side = if border then [ Span.create Border "│" ~width:1 ] else [] in
       side @ gutter_spans @ text_spans @ side)

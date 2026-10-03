@@ -470,38 +470,7 @@ let repeat_find t ~opposite ~count =
     |> Result.map ~f:(fun (destination, matched) -> original_find, destination, matched)
 ;;
 
-let ascii_lower c =
-  let n = Char.to_int c in
-  if n >= Char.to_int 'A' && n <= Char.to_int 'Z' then Char.of_int_exn (n + 32) else c
-;;
-
-let ascii_equal_case_insensitive a b =
-  Char.equal (ascii_lower a) (ascii_lower b)
-;;
-
-let is_match ~case_sensitive text ~at query =
-  at + String.length query <= String.length text
-  && String.for_alli query ~f:(fun i c ->
-    if case_sensitive then Char.equal text.[at + i] c else ascii_equal_case_insensitive text.[at + i] c)
-;;
-
-let small_word_class text offset =
-  if offset < 0 || offset >= B.length text then None else
-  let code = Uchar.to_scalar (B.uchar_at text offset) in
-  if code = 0x20 || code = 0x09 || code = 0x0A then None
-  else if code >= 0x80 || Char.is_alphanum (Char.of_int_exn code) || code = Char.to_int '_'
-  then Some `Identifier else Some `Punctuation
-;;
-
-let whole_word_match text ~case_sensitive ~at query =
-  is_match ~case_sensitive (B.to_string text) ~at query
-  && let class_ = small_word_class text at in
-     let before = if at = 0 then None else small_word_class text (Option.value_exn (B.prev_boundary text at)) in
-     let stop = at + String.length query in
-     let after = if stop = B.length text then None else small_word_class text stop in
-     not ([%equal: [ `Identifier | `Punctuation ] option] class_ before)
-     && not ([%equal: [ `Identifier | `Punctuation ] option] class_ after)
-;;
+let small_word_class = Search_match.small_word_class
 
 let search t ~query ~forward ~count ~whole_word =
   check_count count;
@@ -515,27 +484,32 @@ let search t ~query ~forward ~count ~whole_word =
   if String.is_empty query
   then { t with message = Some (Error "No previous search") }
   else (
-    let source = B.to_string t.text in
     let case_sensitive = case_sensitive t.search_case query in
-    let rec boundaries p acc =
-      if p = B.length t.text then List.rev (p :: acc)
-      else boundaries (Option.value_exn (B.next_boundary t.text p)) (p :: acc)
+    let step = if direction then B.next_boundary else B.prev_boundary in
+    let edge = if direction then 0 else B.length t.text in
+    (* Visit at most one full cycle before reducing large counts modulo the
+       number of matches. Ordinary searches stop at the first destination. *)
+    let rec scan position ~wrapped ~remaining ~found =
+      match position with
+      | None when not wrapped -> scan (Some edge) ~wrapped:true ~remaining ~found
+      | None -> finish_cycle ~remaining ~found
+      | Some at when wrapped && (if direction then at > t.cursor else at < t.cursor) ->
+        finish_cycle ~remaining ~found
+      | Some at ->
+        if Search_match.matches t.text ~query ~whole_word ~case_sensitive ~at
+        then if remaining = 1 then Some (at, wrapped)
+          else scan (step t.text at) ~wrapped ~remaining:(remaining - 1) ~found:(found + 1)
+        else scan (step t.text at) ~wrapped ~remaining ~found
+    and finish_cycle ~remaining ~found =
+      if found = 0 then None
+      else
+        scan (step t.text t.cursor) ~wrapped:false
+          ~remaining:(((remaining - 1) % found) + 1) ~found:0
+        |> Option.map ~f:(fun (at, _) -> at, true)
     in
-    let candidates = boundaries 0 [] |> List.filter ~f:(fun p -> if whole_word then whole_word_match t.text ~case_sensitive ~at:p query else is_match ~case_sensitive source ~at:p query) in
-    let ordered =
-      if direction
-      then List.filter candidates ~f:(fun p -> p > t.cursor) @ List.filter candidates ~f:(fun p -> p <= t.cursor)
-      else List.rev (List.filter candidates ~f:(fun p -> p < t.cursor)) @ List.rev (List.filter candidates ~f:(fun p -> p >= t.cursor))
-    in
-    let nth_exn xs n = List.nth_exn xs n in
-    match ordered with
-    | [] -> { t with last_search = Some (query, direction, whole_word, None); search_visible = true; message = Some (Error ("Pattern not found: " ^ query)) }
-    | ordered ->
-      let offset = nth_exn ordered ((count - 1) % List.length ordered) in
-      let wrapped =
-        count > List.length (List.take_while ordered ~f:(fun p -> if direction then p > t.cursor else p < t.cursor))
-        || if direction then offset <= t.cursor else offset >= t.cursor
-      in
+    match scan (step t.text t.cursor) ~wrapped:false ~remaining:count ~found:0 with
+    | None -> { t with last_search = Some (query, direction, whole_word, None); search_visible = true; message = Some (Error ("Pattern not found: " ^ query)) }
+    | Some (offset, wrapped) ->
       let t = set_cursor { t with last_search = Some (query, direction, whole_word, Some offset); search_visible = true } offset in
       if wrapped then { t with message = Some (Info "Search wrapped") } else t)
 ;;

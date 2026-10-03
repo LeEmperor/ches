@@ -76,6 +76,68 @@ let%expect_test "a search prompt previews highlights without moving the cursor" 
     |}]
 ;;
 
+let%test_unit "offscreen dense matches do not change viewport highlights" =
+  let visible = "signal assign\nsignal assign\nsignal assign\n" in
+  let render source =
+    let prefs = { Geometry.Prefs.default with line_numbers = Off } in
+    let t = run ~width:40 ~height:6 (ui ~prefs source) (keys "/sign") in
+    Frame.render t ~width:40 ~height:6
+  in
+  let small = render (visible ^ "tail") in
+  let large = render (visible ^ String.concat (List.init 20_000 ~f:(fun _ -> "signal assign\n"))) in
+  (* The status line includes the document length; compare the text rows. *)
+  [%test_result: string]
+    (Frame.to_string_styled { large with rows = List.take large.rows 5 })
+    ~expect:(Frame.to_string_styled { small with rows = List.take small.rows 5 })
+;;
+
+let%test_unit "overlapping search highlights survive horizontal scrolling" =
+  let t = run ~width:30 ~height:6 (ui (String.make 80 'a')) (keys "50l/aaa") in
+  let scroll = Ui_state.fitted_scroll t ~width:30 ~height:6 in
+  assert (scroll.left > 0);
+  let frame = Frame.render t ~width:30 ~height:6 in
+  let row = List.nth_exn frame.rows 1 in
+  assert (List.exists row ~f:(fun span -> Style.equal span.style Search_match));
+  List.iter row ~f:(fun span ->
+    if String.contains span.text 'a' then assert (Style.equal span.style Search_match))
+;;
+
+let%test_unit "multiline highlights overlap both viewport edges and retain overlap precedence" =
+  let open Ches_core in
+  let source = "éaaa\néaaa\néaaa\néaaa\néaaa\néaaa\néaaa" in
+  let text = Text_buffer.of_string source
+             |> Result.map_error ~f:Text_buffer.Invalid_text.to_string_hum
+             |> Result.ok_or_failwith in
+  List.iter [ "aaa"; "a\néa"; "éaaa\néaaa\néaaa" ] ~f:(fun query ->
+    let editor = Editor.create ~cell_width:Cell_map.width text in
+    let editor, _ = Editor.dispatch editor
+        (Search { query = Some query; forward = true; count = 1; whole_word = false }) in
+    let t = Ui_state.create (Ches_app.Controller.create editor)
+            |> fun t -> run ~width:40 ~height:6 t (keys "3jzt") in
+    let geometry = Ui_state.geometry t ~width:40 ~height:6 in
+    let scroll = Ui_state.fitted_scroll t ~width:40 ~height:6 in
+    assert (scroll.top > 0);
+    let frame = Frame.render t ~width:40 ~height:6 in
+    let candidates = List.init (Text_buffer.length text) ~f:Fn.id
+        |> List.filter ~f:(fun at -> Text_buffer.is_boundary text at
+             && Search_match.matches text ~query ~whole_word:false ~case_sensitive:false ~at) in
+    let current = Option.bind (Editor.search_state editor) ~f:(fun (_, _, _, at) -> at) in
+    List.iteri frame.rows ~f:(fun y spans ->
+      if y >= geometry.text.y && y < geometry.text.y + geometry.text.height then (
+        let line = scroll.top + y - geometry.text.y in
+        let glyphs = Cell_map.glyphs (Text_buffer.line_text text line) in
+        let cells = List.concat_map spans ~f:(fun span -> List.init span.width ~f:(fun _ -> span.style)) in
+        Array.iter glyphs ~f:(fun glyph ->
+          let offset = Text_buffer.line_start text line + glyph.pos in
+          let matched = List.find candidates ~f:(fun start -> start <= offset && offset < start + String.length query) in
+          let expected = match matched with
+            | Some start when Option.value_map current ~default:false ~f:(Int.equal start) -> Style.Search_match_current
+            | Some _ -> Search_match
+            | None -> if line = Editor.cursor_line (Ches_app.Controller.editor (Ui_state.controller t))
+                      then Text_cursor_line else Text in
+          assert (Style.equal (List.nth_exn cells (geometry.text.x + glyph.col)) expected)))))
+;;
+
 let%expect_test "an empty file" =
   show ~width:30 ~height:6 (ui "");
   [%expect

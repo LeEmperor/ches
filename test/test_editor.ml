@@ -919,6 +919,47 @@ let%expect_test "search uses smart ASCII case by default and supports explicit p
     |}]
 ;;
 
+let%test_unit "directional search preserves exhaustive ordering and count semantics" =
+  List.iter [ ""; "aaaa"; "éa éA a aé\n\na"; "a aa A a\n" ] ~f:(fun source ->
+    let text = of_string_exn source in
+    List.iter [ "a"; "aa"; "A"; "é"; "a\n"; "missing" ] ~f:(fun query ->
+      List.iter [ false; true ] ~f:(fun whole_word ->
+        List.iter [ false; true ] ~f:(fun forward ->
+          let candidates =
+            List.init (Text_buffer.length text) ~f:Fn.id
+            |> List.filter ~f:(fun at ->
+              Text_buffer.is_boundary text at
+              && Search_match.matches text ~query ~whole_word
+                   ~case_sensitive:(String.equal query "A") ~at)
+          in
+          (* Visit all cursor positions reachable by normal motions. *)
+          List.iter (List.init (Text_buffer.line_count text) ~f:Fn.id) ~f:(fun line ->
+            List.iter (List.init (String.length (Text_buffer.line_text text line) + 1) ~f:Fn.id) ~f:(fun column ->
+              let motions = [ move ~count:(line + 1) First_line ]
+                  @ (if column = 0 then [] else [ move ~count:column Right ]) in
+              let t = run (create source) motions in
+              let cursor = Editor.cursor t in
+              let before, after = List.partition_tf candidates ~f:(fun at ->
+                if forward then at > cursor else at < cursor) in
+              let ordered = if forward then before @ after else List.rev before @ List.rev after in
+              List.iter [ 1; 2; 3; 7; 999_999 ] ~f:(fun count ->
+                let result = run t [ Search { query = Some query; forward; count; whole_word } ] in
+                let expected =
+                  if List.is_empty ordered then None
+                  else Some (List.nth_exn ordered ((count - 1) % List.length ordered))
+                in
+                let actual = Option.bind (Editor.search_state result) ~f:(fun (_, _, _, at) -> at) in
+                [%test_result: int option] actual ~expect:expected;
+                let message =
+                  match expected with
+                  | None -> Some (Editor.Message.Error ("Pattern not found: " ^ query))
+                  | Some _ when count > List.length before -> Some (Info "Search wrapped")
+                  | Some _ -> None
+                in
+                assert (Option.equal Editor.Message.equal (Editor.message result) message);
+                assert (Editor.revision result = 0 && not (Editor.is_dirty result)))))))));
+;;
+
 let%test_unit "random commands keep the cursor valid; undo/redo round-trips" =
   Quickcheck.test
     (Quickcheck.Generator.both gen_text (Quickcheck.Generator.list gen_command))
