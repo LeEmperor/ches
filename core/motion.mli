@@ -134,6 +134,15 @@ val destination
   -> count:int option
   -> (int, Failure.t) Result.t
 
+(** The boundary of [line] at display column [column], measured with [cell_width], or
+    the line's end when the line is shorter. *)
+val offset_of_display_column
+  :  Text_buffer.t
+  -> cell_width:Cell_layout.Width.t
+  -> line:int
+  -> int
+  -> int
+
 val find_destination
   :  Text_buffer.t
   -> Find.t

@@ -29,7 +29,10 @@ type t =
   { width : int
   ; height : int
   ; rows : Span.t list list
-  ; cursor : Cursor.t option (** [None] when there is no text cell to put it in. *)
+  ; cursor : Cursor.t option
+  (** [None] when there is no text cell to put it in, while the smear animation runs,
+      and during a block insert, whose cursor is drawn as a styled cell instead
+      ([Style.Insert_cursor]) so that the theme can color it. *)
   ; smear : (int * int) list (** Filled cells for the animated-cursor overlay. *)
   }
 [@@deriving sexp_of]

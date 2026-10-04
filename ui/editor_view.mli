@@ -8,8 +8,11 @@
 open! Core
 open Bonsai_term
 
+(** [font] gives the font styles of each part of the screen; the default is
+    {!Theme.Font.default}. *)
 val app
   :  ?smear_enabled:bool
+  -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> Ches_app.Controller.t
   -> exit:(unit -> unit Effect.t)
   -> dimensions:Dimensions.t Bonsai.t
@@ -18,8 +21,11 @@ val app
 
 (** Draws a frame. Each span is forced to its computed width, so a grapheme cluster
     that the terminal library measures differently cannot shift the layout. *)
-val draw : Ches_screen.Frame.t -> View.t
+val draw : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
 
 (** Runs the editor in the terminal until it exits. SIGTERM and SIGHUP end the process
     with status 1, discarding unsaved changes, after restoring the terminal. *)
-val run : Ches_app.Controller.t -> unit Async.Deferred.Or_error.t
+val run
+  :  ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+  -> Ches_app.Controller.t
+  -> unit Async.Deferred.Or_error.t

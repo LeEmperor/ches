@@ -110,6 +110,30 @@ let%expect_test "colon e! discards buffer changes and reloads the file" =
       |}])
 ;;
 
+let%expect_test "colon e! keeps the cursor's line and column, clamped to the new text" =
+  with_temp_dir (fun dir ->
+    let path = dir ^/ "reload.txt" in
+    let print_cursor t =
+      let editor = Controller.editor t in
+      let text = Editor.text editor in
+      let line = Editor.cursor_line editor in
+      printf "line %d, column %d\n" line (Editor.cursor editor - Text_buffer.line_start text line)
+    in
+    Out_channel.write_all path ~data:"one\ntwo\nthree\nfour\n";
+    let t = Option.value_exn (open_file ~dir path) in
+    let t = run t "jjll" in
+    print_cursor t;
+    [%expect {| line 2, column 2 |}];
+    Out_channel.write_all path ~data:"ONE\nTWO\nTHREE!\nFOUR\n";
+    let t = run t ":e!<CR>" in
+    print_cursor t;
+    [%expect {| line 2, column 2 |}];
+    Out_channel.write_all path ~data:"a\nb";
+    let t = run t ":e!<CR>" in
+    print_cursor t;
+    [%expect {| line 1, column 0 |}])
+;;
+
 let%expect_test "a missing file starts clean and empty, and saving creates it" =
   with_temp_dir (fun dir ->
     let path = dir ^/ "new.txt" in
@@ -312,5 +336,19 @@ let%expect_test "view commands are returned for the frontend and touch no editor
     (("phys_equal before (Controller.editor t)" true)
      ("Controller.last_input_dispatched t" false)
      ("Ches_input.Keymap.pending (Controller.keymap t)" ()))
+    |}]
+;;
+
+let%expect_test "the newest clipboard request is kept until taken" =
+  let t = Controller.create (Editor.create ~cell_width:Cell_width.f Text_buffer.empty) in
+  let t = run t "ione<CR>two<Esc>kyyj" in
+  let t, text = Controller.take_clipboard t in
+  print_s [%sexp (text : string option)];
+  let t = run t "k" in
+  let _, text = Controller.take_clipboard t in
+  print_s [%sexp (text : string option)];
+  [%expect {|
+    ("one\n")
+    ()
     |}]
 ;;

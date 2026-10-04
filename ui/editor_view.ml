@@ -3,8 +3,8 @@ open Bonsai_term
 open Bonsai.Let_syntax
 open Ches_screen
 
-let draw_span ({ text; width; style } : Frame.Span.t) =
-  let attrs = Theme.attrs style in
+let draw_span ?font ({ text; width; style } : Frame.Span.t) =
+  let attrs = Theme.attrs ?font style in
   let view = View.text ~attrs text in
   let drawn = View.width view in
   if drawn = width
@@ -14,7 +14,7 @@ let draw_span ({ text; width; style } : Frame.Span.t) =
   else View.hcat [ view; View.rectangle ~attrs ~width:(width - drawn) ~height:1 () ]
 ;;
 
-let draw_smear (frame : Frame.t) =
+let draw_smear ?font (frame : Frame.t) =
   let cells = List.sort frame.smear ~compare:(fun (x1, y1) (x2, y2) -> [%compare: int * int] (y1, x1) (y2, x2)) in
   match cells with
   | [] -> View.none
@@ -27,7 +27,7 @@ let draw_smear (frame : Frame.t) =
         | (x, _) :: rest ->
           let gap = Int.max 0 (x - previous_x) in
           View.transparent_rectangle ~width:gap ~height:1
-          :: View.text ~attrs:(Theme.attrs Smear) "█"
+          :: View.text ~attrs:(Theme.attrs ?font Smear) "█"
           :: loop (x + 1) rest
       in
       View.hcat (loop 0 cells)
@@ -40,12 +40,13 @@ let draw_smear (frame : Frame.t) =
          View.transparent_rectangle ~width:0 ~height:(Int.max 0 (y - previous_y - 1)) :: [ row_view row ]))
 ;;
 
-let draw (frame : Frame.t) =
+let draw ?font (frame : Frame.t) =
   let base =
     View.vcat
-      (List.map frame.rows ~f:(fun spans -> View.hcat (List.map spans ~f:draw_span)))
+      (List.map frame.rows ~f:(fun spans ->
+         View.hcat (List.map spans ~f:(draw_span ?font))))
   in
-  View.zcat [ draw_smear frame; base ]
+  View.zcat [ draw_smear ?font frame; base ]
 ;;
 
 let cursor (frame : Frame.t) : Cursor.t option =
@@ -58,22 +59,29 @@ let cursor (frame : Frame.t) : Cursor.t option =
     })
 ;;
 
-let app ?(smear_enabled = false) controller ~exit ~dimensions (local_ graph) =
+let app ?(smear_enabled = false) ?font controller ~exit ~dimensions (local_ graph) =
   let model, inject =
     Bonsai.state_machine_with_input
       ~default_model:(Ui_state.create ~smear_enabled controller)
-      ~apply_action:(fun context dimensions model inputs ->
-        match dimensions with
+      ~apply_action:(fun context input model inputs ->
+        match input with
         | Inactive -> model
-        | Active { Dimensions.width; height } ->
+        | Active ({ Dimensions.width; height }, write_to_tty) ->
           let was_running = not (Ui_state.exited model) in
           let model, status = Ui_state.apply_all model ~width ~height inputs in
+          let model, clipboard = Ui_state.take_clipboard model in
+          Option.iter clipboard ~f:(fun text ->
+            Bonsai.Apply_action_context.schedule_event
+              context
+              (write_to_tty (Osc52.set_clipboard text)));
           (match status with
            | Exit when was_running ->
              Bonsai.Apply_action_context.schedule_event context (exit ())
            | Exit | Running -> ());
           model)
-      dimensions
+      (let%arr dimensions
+       and write_to_tty = Expert.Write_to_tty.write_string_to_tty graph in
+       dimensions, write_to_tty)
       graph
   in
   let get_current_time = Bonsai.Clock.get_current_time graph in
@@ -104,7 +112,7 @@ let app ?(smear_enabled = false) controller ~exit ~dimensions (local_ graph) =
     graph;
   let view =
     let%arr frame in
-    draw frame
+    draw ?font frame
   in
   let handler =
     let%arr inject in
@@ -116,7 +124,7 @@ let app ?(smear_enabled = false) controller ~exit ~dimensions (local_ graph) =
   ~view, ~handler
 ;;
 
-let run controller =
+let run ?font controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
@@ -127,5 +135,5 @@ let run controller =
     ~dispose:true
     ~mouse:No_mouse_events
     ~bpaste:true
-    (app ~smear_enabled:true controller)
+    (app ~smear_enabled:true ?font controller)
 ;;

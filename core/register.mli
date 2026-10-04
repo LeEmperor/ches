@@ -23,3 +23,7 @@ type t =
           them to this width when text follows. *)
       }
 [@@deriving sexp_of, equal]
+
+(** The register as plain text for the system clipboard: linewise text always ends
+    with LF, and a block's rows are joined by LF. *)
+val to_string : t -> string

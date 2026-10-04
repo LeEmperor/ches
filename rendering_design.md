@@ -20,8 +20,8 @@ MVP0 uses one document tile:
 - A cohesive dark palette with rich, selective accents.
 - Thin, single-cell borders; filename in the top border when space permits.
 - Muted line-number gutter and a subtle current-line background. Since MVP1
-  phase 4A the gutter has four styles (hybrid by default, absolute, relative,
-  off); see [`feature_expansion.md`](feature_expansion.md).
+  phase 4A the gutter has four styles (off by default, absolute, relative,
+  hybrid); see [`feature_expansion.md`](feature_expansion.md).
 - Clear mode badge, dirty indicator, position, and predictable feedback area.
 - Block cursor in Normal and bar cursor in Insert where supported.
 - No special icon font requirement. Labels remain understandable without color.
@@ -85,7 +85,7 @@ Use `Space v` as the view/layout prefix. Proposed MVP0 defaults:
 | `Space v =` | Same as `Space v +`, without needing Shift |
 | `Space v n` | Toggle absolute line numbers (MVP1 phase 4A) |
 | `Space v N` | Toggle relative line numbers (MVP1 phase 4A) |
-| `Space v r` | Restore centered layout, width 100, offset 0, hybrid line numbers |
+| `Space v r` | Restore centered layout, width 100, offset 0, no line numbers |
 
 Nudge/width commands select centered mode, so their purpose is visible even when
 invoked from full-width mode. Escape cancels a pending prefix. Unknown

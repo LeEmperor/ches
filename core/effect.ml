@@ -7,6 +7,7 @@ type t =
       ; revision : int
        }
   | Read_file of { path : string }
+  | Set_clipboard of string
   | Exit
 [@@deriving sexp_of, equal]
 

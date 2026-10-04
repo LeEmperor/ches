@@ -16,10 +16,13 @@ module Prefs = struct
     ; width : int
     ; offset : int
     ; line_numbers : Line_numbers.t
+    ; left_padding : int
     }
   [@@deriving sexp_of, equal]
 
-  let default = { centered = true; width = 100; offset = 0; line_numbers = Hybrid }
+  let default =
+    { centered = true; width = 100; offset = 0; line_numbers = Off; left_padding = 2 }
+  ;;
 end
 
 let min_decorated_text_width = 16
@@ -44,6 +47,7 @@ let min_bordered_text_height = 3
 type t =
   { tile : Rect.t
   ; border : bool
+  ; padding : int
   ; gutter : Rect.t
   ; gutter_digits : int
   ; text : Rect.t
@@ -66,17 +70,20 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
     | Off -> 0
     | Absolute | Relative | Hybrid -> gutter_digits + 1
   in
+  let full_padding = Int.max 0 prefs.left_padding in
+  (* The padding and gutter are dropped together, as one margin. *)
+  let full_margin = full_padding + full_gutter_width in
   let border =
     tile_height >= min_bordered_text_height + 2
-    && width >= 2 + full_gutter_width + min_decorated_text_width
+    && width >= 2 + full_margin + min_decorated_text_width
   in
   let border_width = if border then 1 else 0 in
-  let gutter_width =
-    if width - (2 * border_width) >= full_gutter_width + min_decorated_text_width
-    then full_gutter_width
-    else 0
+  let margin_fits =
+    width - (2 * border_width) >= full_margin + min_decorated_text_width
   in
-  let overhead = (2 * border_width) + gutter_width in
+  let padding = if margin_fits then full_padding else 0 in
+  let gutter_width = if margin_fits then full_gutter_width else 0 in
+  let overhead = (2 * border_width) + padding + gutter_width in
   let text_width =
     let available = Int.max 0 (width - overhead) in
     if prefs.centered then Int.min available (Int.max 0 prefs.width) else available
@@ -91,7 +98,7 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
   let inner_y = border_width in
   let inner_height = Int.max 0 (tile_height - (2 * border_width)) in
   let gutter =
-    { Rect.x = tile_x + border_width
+    { Rect.x = tile_x + border_width + padding
     ; y = inner_y
     ; width = gutter_width
     ; height = inner_height
@@ -119,6 +126,7 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
   in
   { tile
   ; border
+  ; padding
   ; gutter
   ; gutter_digits
   ; text =

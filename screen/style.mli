@@ -15,6 +15,12 @@ type t =
   | Search_special_match_current
   | Selection
   | Selection_special
+  | Insert_cursor
+  (** A block insert's own cursor, the insertion point the others copy. The
+      terminal cursor is hidden meanwhile, so that the theme can color this one. *)
+  | Insert_point
+  (** A block insert's insertion point on another line, drawn as a software cursor:
+      the terminal has only one cursor. *)
   | Gutter
   | Gutter_cursor_line
   | Border

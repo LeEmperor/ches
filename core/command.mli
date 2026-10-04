@@ -75,6 +75,9 @@ type t =
   | Visual_delete
   | Visual_yank
   | Visual_change
+  | Visual_insert of { append : bool; count : int }
+  (** Block insert: [I] before the block, or [A] ([append]) after it, on every line;
+      the text typed is inserted [count] times. Blockwise selections only. *)
   | Reload (** [:e!], discarding buffer changes and reading the associated path. *)
   | Undo
   | Redo

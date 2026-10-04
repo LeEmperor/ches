@@ -12,6 +12,8 @@ type t =
   | Search_special_match_current
   | Selection
   | Selection_special
+  | Insert_cursor
+  | Insert_point
   | Gutter
   | Gutter_cursor_line
   | Border

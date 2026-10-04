@@ -33,6 +33,7 @@
       Visual  v / V / Ctrl-v         Switch selection kind, keeping the anchor
       Visual  motions, counts        Move, extending the selection
       Visual  d / y / c              Visual_delete / Visual_yank / Visual_change
+      Visual  I / A                  Visual_insert (block insert); a count repeats
       Visual  Escape                 Exit_visual
       Normal  u                      Undo
       Normal  Ctrl-r                 Redo
@@ -99,6 +100,10 @@
 
     [Space v] is the prefix for layout commands ({!View_command.t}), which the frontend
     applies to its own view state; every other binding is an editor command.
+
+    In Visual mode, a pending sequence (such as [f] waiting for its character, or
+    the [g] of [g g]) takes the next key, so [v f d] finds a [d] rather than
+    deleting.
 
     Other keys are ignored. In Normal mode, a key that does not continue a pending
     count or sequence cancels it without producing commands, and sets {!notice}. A

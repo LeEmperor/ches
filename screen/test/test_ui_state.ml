@@ -46,10 +46,10 @@ let%expect_test "Ctrl-c hints at Space q, in either mode, and never exits" =
   [%expect
     {|
     (((kind Warning) (text "To quit, use Space q in Normal mode")))
-    1   abc                                           |
+      abc                                             |
                                                       |
      NORMAL  f.txt To quit, use Space q in Norma> 1:1 |
-    cursor: 4,0 Block
+    cursor: 2,0 Block
     |}];
   let t = run t (keys "ix<C-c>") in
   print_s [%sexp (text t : string)];
@@ -134,7 +134,7 @@ let%expect_test "after a resize the cursor stays visible, and the next input sta
   show_cursor ~width:30 ~height:8 t;
   [%expect {|
     ((top 21) (left 0))
-    cursor: 5,5 Block
+    cursor: 3,5 Block
     |}];
   (* One line up from there keeps the view where it was. *)
   let t = run ~width:30 ~height:8 t (keys "k") in
@@ -170,26 +170,31 @@ let%expect_test "Space v commands: feedback, centering, and clamped requests" =
       ~f:(fun t k -> step t k)
   in
   [%expect {|
-    " vl"  ((centered true) (width 100) (offset 2) (line_numbers Hybrid)) Offset +2 | tile x=29 w=106, text w=100
-    " vL"  ((centered true) (width 100) (offset 12) (line_numbers Hybrid)) Offset +12 | tile x=39 w=106, text w=100
-    " vH"  ((centered true) (width 100) (offset 2) (line_numbers Hybrid)) Offset +2 | tile x=29 w=106, text w=100
-    " vH"  ((centered true) (width 100) (offset -8) (line_numbers Hybrid)) Offset -8 | tile x=19 w=106, text w=100
-    " vh"  ((centered true) (width 100) (offset -10) (line_numbers Hybrid)) Offset -10 | tile x=17 w=106, text w=100
-    " v-"  ((centered true) (width 90) (offset -10) (line_numbers Hybrid)) Width 90 | tile x=22 w=96, text w=90
-    " v+"  ((centered true) (width 100) (offset -10) (line_numbers Hybrid)) Width 100 | tile x=17 w=106, text w=100
-    " v="  ((centered true) (width 110) (offset -10) (line_numbers Hybrid)) Width 110 | tile x=12 w=116, text w=110
-    " vc"  ((centered false) (width 110) (offset -10) (line_numbers Hybrid)) Full width | tile x=0 w=160, text w=154
-    " vc"  ((centered true) (width 110) (offset -10) (line_numbers Hybrid)) Centered | tile x=12 w=116, text w=110
-    " vr"  ((centered true) (width 100) (offset 0) (line_numbers Hybrid)) Layout reset | tile x=27 w=106, text w=100
+    " vl"  ((centered true) (width 100) (offset 2) (line_numbers Off) (left_padding 2)) Offset +2 | tile x=30 w=104, text w=100
+    " vL"  ((centered true) (width 100) (offset 12) (line_numbers Off) (left_padding 2)) Offset +12 | tile x=40 w=104, text w=100
+    " vH"  ((centered true) (width 100) (offset 2) (line_numbers Off) (left_padding 2)) Offset +2 | tile x=30 w=104, text w=100
+    " vH"  ((centered true) (width 100) (offset -8) (line_numbers Off) (left_padding 2)) Offset -8 | tile x=20 w=104, text w=100
+    " vh"  ((centered true) (width 100) (offset -10) (line_numbers Off)
+     (left_padding 2)) Offset -10 | tile x=18 w=104, text w=100
+    " v-"  ((centered true) (width 90) (offset -10) (line_numbers Off) (left_padding 2)) Width 90 | tile x=23 w=94, text w=90
+    " v+"  ((centered true) (width 100) (offset -10) (line_numbers Off)
+     (left_padding 2)) Width 100 | tile x=18 w=104, text w=100
+    " v="  ((centered true) (width 110) (offset -10) (line_numbers Off)
+     (left_padding 2)) Width 110 | tile x=13 w=114, text w=110
+    " vc"  ((centered false) (width 110) (offset -10) (line_numbers Off)
+     (left_padding 2)) Full width | tile x=0 w=160, text w=156
+    " vc"  ((centered true) (width 110) (offset -10) (line_numbers Off)
+     (left_padding 2)) Centered | tile x=13 w=114, text w=110
+    " vr"  ((centered true) (width 100) (offset 0) (line_numbers Off) (left_padding 2)) Layout reset | tile x=28 w=104, text w=100
     |}];
   (* Nudges and width changes select centered mode, from full width. *)
   let t = step (step t " vc") " vl" in
   let t = step (step t " vc") " v-" in
   [%expect {|
-    " vc"  ((centered false) (width 100) (offset 0) (line_numbers Hybrid)) Full width | tile x=0 w=160, text w=154
-    " vl"  ((centered true) (width 100) (offset 2) (line_numbers Hybrid)) Offset +2 | tile x=29 w=106, text w=100
-    " vc"  ((centered false) (width 100) (offset 2) (line_numbers Hybrid)) Full width | tile x=0 w=160, text w=154
-    " v-"  ((centered true) (width 90) (offset 2) (line_numbers Hybrid)) Width 90 | tile x=34 w=96, text w=90
+    " vc"  ((centered false) (width 100) (offset 0) (line_numbers Off) (left_padding 2)) Full width | tile x=0 w=160, text w=156
+    " vl"  ((centered true) (width 100) (offset 2) (line_numbers Off) (left_padding 2)) Offset +2 | tile x=30 w=104, text w=100
+    " vc"  ((centered false) (width 100) (offset 2) (line_numbers Off) (left_padding 2)) Full width | tile x=0 w=160, text w=156
+    " v-"  ((centered true) (width 90) (offset 2) (line_numbers Off) (left_padding 2)) Width 90 | tile x=35 w=94, text w=90
     |}];
   (* Requests are clamped: width to 20..500, offset to -500..500. *)
   let t = List.fold (List.init 20 ~f:(fun _ -> " v-")) ~init:t ~f:(fun t k -> run t (keys k)) in
@@ -201,10 +206,12 @@ let%expect_test "Space v commands: feedback, centering, and clamped requests" =
   let t = List.fold (List.init 120 ~f:(fun _ -> " vH")) ~init:t ~f:(fun t k -> run t (keys k)) in
   layout t;
   [%expect {|
-    ((centered true) (width 20) (offset 2) (line_numbers Hybrid)) Width 20 | tile x=69 w=26, text w=20
-    ((centered true) (width 500) (offset 2) (line_numbers Hybrid)) Width 500 (34 fit) | tile x=0 w=160, text w=154
-    ((centered true) (width 500) (offset 500) (line_numbers Hybrid)) Offset +500 (0 fit) | tile x=0 w=160, text w=154
-    ((centered true) (width 500) (offset -500) (line_numbers Hybrid)) Offset -500 (0 fit) | tile x=0 w=160, text w=154
+    ((centered true) (width 20) (offset 2) (line_numbers Off) (left_padding 2)) Width 20 | tile x=70 w=24, text w=20
+    ((centered true) (width 500) (offset 2) (line_numbers Off) (left_padding 2)) Width 500 (36 fit) | tile x=0 w=160, text w=156
+    ((centered true) (width 500) (offset 500) (line_numbers Off)
+     (left_padding 2)) Offset +500 (0 fit) | tile x=0 w=160, text w=156
+    ((centered true) (width 500) (offset -500) (line_numbers Off)
+     (left_padding 2)) Offset -500 (0 fit) | tile x=0 w=160, text w=156
     |}]
 ;;
 
@@ -218,14 +225,14 @@ let%expect_test "requests that do not fit are kept, and restored on a larger scr
   layout ~width:120 ~height:40 t;
   layout ~width:160 ~height:48 t;
   [%expect {|
-    ((centered true) (width 110) (offset 20) (line_numbers Hybrid)) Width 110 (74 fit) | tile x=0 w=80, text w=74
-    ((centered true) (width 110) (offset 20) (line_numbers Hybrid)) Width 110 (74 fit) | tile x=4 w=116, text w=110
-    ((centered true) (width 110) (offset 20) (line_numbers Hybrid)) Width 110 (74 fit) | tile x=42 w=116, text w=110
+    ((centered true) (width 110) (offset 20) (line_numbers Off) (left_padding 2)) Width 110 (76 fit) | tile x=0 w=80, text w=76
+    ((centered true) (width 110) (offset 20) (line_numbers Off) (left_padding 2)) Width 110 (76 fit) | tile x=6 w=114, text w=110
+    ((centered true) (width 110) (offset 20) (line_numbers Off) (left_padding 2)) Width 110 (76 fit) | tile x=43 w=114, text w=110
     |}];
   (* The feedback shows the effective value of the screen it was given. *)
   let t = run ~width:140 ~height:40 t (keys " vl") in
   layout ~width:140 ~height:40 t;
-  [%expect {| ((centered true) (width 110) (offset 22) (line_numbers Hybrid)) Offset +22 (+12 fit) | tile x=24 w=116, text w=110 |}]
+  [%expect {| ((centered true) (width 110) (offset 22) (line_numbers Off) (left_padding 2)) Offset +22 (+13 fit) | tile x=26 w=114, text w=110 |}]
 ;;
 
 let%expect_test "layout commands leave the document, cursor, history, and dirty state \
@@ -280,53 +287,53 @@ let%expect_test "the pending prefix and the cursor across layout changes" =
   in
   [%expect {|
     ╭─ f.txt ────────────────────────────────────────╮|
-    │  1 hello                                       │|
-    │2   world                                       │|
-    │  1                                             │|
+    │  hello                                         │|
+    │  world                                         │|
+    │                                                │|
     │                                                │|
     ╰────────────────────────────────────────────────╯|
      NORMAL  f.txt                                2:3 |
-    cursor: 7,2 Block
+    cursor: 5,2 Block
     ╭─ f.txt ────────────────────────────────────────╮|
-    │  1 hello                                       │|
-    │2   world                                       │|
-    │  1                                             │|
+    │  hello                                         │|
+    │  world                                         │|
+    │                                                │|
     │                                                │|
     ╰────────────────────────────────────────────────╯|
      NORMAL  f.txt                        Space v 2:3 |
-    cursor: 7,2 Block
+    cursor: 5,2 Block
     ╭─ f.txt ────────────────────────────────────────╮|
-    │  1 hello                                       │|
-    │2   world                                       │|
-    │  1                                             │|
+    │  hello                                         │|
+    │  world                                         │|
+    │                                                │|
     │                                                │|
     ╰────────────────────────────────────────────────╯|
-     NORMAL  f.txt Width 90 (44 fit)              2:3 |
-    cursor: 7,2 Block
-           ╭─ f.txt ──────────────────────────╮       |
-           │  1 hello                         │       |
-           │2   world                         │       |
-           │  1                               │       |
-           │                                  │       |
-           ╰──────────────────────────────────╯       |
+     NORMAL  f.txt Width 90 (46 fit)              2:3 |
+    cursor: 5,2 Block
+            ╭─ f.txt ────────────────────────╮        |
+            │  hello                         │        |
+            │  world                         │        |
+            │                                │        |
+            │                                │        |
+            ╰────────────────────────────────╯        |
      NORMAL  f.txt Width 30                       2:3 |
-    cursor: 14,2 Block
-    ╭─ f.txt ──────────────────────────╮              |
-    │  1 hello                         │              |
-    │2   world                         │              |
-    │  1                               │              |
-    │                                  │              |
-    ╰──────────────────────────────────╯              |
-     NORMAL  f.txt Offset -10 (-7 fit)            2:3 |
-    cursor: 7,2 Block
+    cursor: 13,2 Block
+    ╭─ f.txt ────────────────────────╮                |
+    │  hello                         │                |
+    │  world                         │                |
+    │                                │                |
+    │                                │                |
+    ╰────────────────────────────────╯                |
+     NORMAL  f.txt Offset -10 (-8 fit)            2:3 |
+    cursor: 5,2 Block
     ╭─ f.txt ────────────────────────────────────────╮|
-    │  1 hello                                       │|
-    │2   world                                       │|
-    │  1                                             │|
+    │  hello                                         │|
+    │  world                                         │|
+    │                                                │|
     │                                                │|
     ╰────────────────────────────────────────────────╯|
      NORMAL  f.txt Full width                     2:3 |
-    cursor: 7,2 Block
+    cursor: 5,2 Block
     |}]
 ;;
 
@@ -342,14 +349,20 @@ let%expect_test "Space v n / N toggle the line-number switches, with feedback" =
     List.fold [ " vn"; " vN"; " vn"; " vN"; " vN"; " vn"; " vN"; " vr" ] ~init:t ~f:step
   in
   [%expect {|
-    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Relative)) Line numbers: relative | tile x=27 w=106, text w=100
-    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Off)) Line numbers: off | tile x=29 w=102, text w=100
-    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Absolute)) Line numbers: absolute | tile x=27 w=106, text w=100
-    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Hybrid)) Line numbers: hybrid | tile x=27 w=106, text w=100
-    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Absolute)) Line numbers: absolute | tile x=27 w=106, text w=100
-    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Off)) Line numbers: off | tile x=29 w=102, text w=100
-    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Relative)) Line numbers: relative | tile x=27 w=106, text w=100
-    " vr"  ((centered true) (width 100) (offset 0) (line_numbers Hybrid)) Layout reset | tile x=27 w=106, text w=100
+    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Absolute)
+     (left_padding 2)) Line numbers: absolute | tile x=26 w=108, text w=100
+    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Hybrid)
+     (left_padding 2)) Line numbers: hybrid | tile x=26 w=108, text w=100
+    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Relative)
+     (left_padding 2)) Line numbers: relative | tile x=26 w=108, text w=100
+    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Off) (left_padding 2)) Line numbers: off | tile x=28 w=104, text w=100
+    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Relative)
+     (left_padding 2)) Line numbers: relative | tile x=26 w=108, text w=100
+    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Hybrid)
+     (left_padding 2)) Line numbers: hybrid | tile x=26 w=108, text w=100
+    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Absolute)
+     (left_padding 2)) Line numbers: absolute | tile x=26 w=108, text w=100
+    " vr"  ((centered true) (width 100) (offset 0) (line_numbers Off) (left_padding 2)) Layout reset | tile x=28 w=104, text w=100
     |}];
   (* On a screen too small for a gutter, the style is kept and the feedback says so. *)
   let t = step ~width:19 ~height:10 t " vn" in
@@ -357,10 +370,12 @@ let%expect_test "Space v n / N toggle the line-number switches, with feedback" =
   let t = step ~width:19 ~height:10 t " vN" in
   let (_ : Ui_state.t) = step ~width:19 ~height:10 t " vN" in
   [%expect {|
-    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Relative)) Line numbers: relative (no room) | tile x=0 w=19, text w=19
-    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Hybrid)) Line numbers: hybrid (no room) | tile x=0 w=19, text w=19
-    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Absolute)) Line numbers: absolute (no room) | tile x=0 w=19, text w=19
-    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Hybrid)) Line numbers: hybrid (no room) | tile x=0 w=19, text w=19
+    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Absolute)
+     (left_padding 2)) Line numbers: absolute (no room) | tile x=0 w=19, text w=19
+    " vn"  ((centered true) (width 100) (offset 0) (line_numbers Off) (left_padding 2)) Line numbers: off | tile x=0 w=19, text w=17
+    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Relative)
+     (left_padding 2)) Line numbers: relative (no room) | tile x=0 w=19, text w=19
+    " vN"  ((centered true) (width 100) (offset 0) (line_numbers Off) (left_padding 2)) Line numbers: off | tile x=0 w=19, text w=17
     |}]
 ;;
 
@@ -377,7 +392,8 @@ let%expect_test "line-number toggles leave the document, cursor, history, and di
   layout t;
   [%expect {|
     true
-    ((centered true) (width 100) (offset 0) (line_numbers Absolute)) Space v n does not take a count | tile x=27 w=106, text w=100
+    ((centered true) (width 100) (offset 0) (line_numbers Relative)
+     (left_padding 2)) Space v n does not take a count | tile x=26 w=108, text w=100
     |}]
 ;;
 
@@ -589,7 +605,7 @@ let%expect_test "horizontal scroll is kept when the cursor is not pushed" =
   let t = run t (keys "<C-e><C-e><C-y>") in
   print_s [%sexp (Ui_state.scroll t : Scroll.t)];
   [%expect {|
-    ((top 1) (left 66))
-    ((top 2) (left 66))
+    ((top 1) (left 64))
+    ((top 2) (left 64))
     |}]
 ;;

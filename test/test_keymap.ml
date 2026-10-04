@@ -72,6 +72,7 @@ let%expect_test "Visual bindings select, cancel, and apply a selection" =
     (Enter_visual Characterwise)
     (Move(motion Right))
     Visual_delete
+    (Set_clipboard ab)
     NORMAL 0:0 dirty
     > |c
     (Enter_visual Characterwise)
@@ -122,11 +123,110 @@ let%expect_test "Ctrl-v selects a block; counts extend it; v, V and Ctrl-v switc
     |}]
 ;;
 
+let%expect_test "Visual-block I, A, and c type on every line; jk leaves" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  let t = run (create s) (keys "3l<C-v>2jIXY<Esc>") in
+  show t;
+  [%expect {|
+    (Move(motion Right)(count 3))
+    (Enter_visual Blockwise)
+    (Move(motion Down)(count 2))
+    (Visual_insert(append false)(count 1))
+    (Insert_text X)
+    (Insert_text Y)
+    Exit_insert
+    NORMAL 0:3 dirty
+    > abc|XYdefgh
+    > ab
+    > abcXYdefgh
+    |}];
+  (* A count repeats the text; the jk escape takes back its j on every line. *)
+  let t = run (create s) (keys "3l<C-v>2jl2AXjk") in
+  show t;
+  [%expect {|
+    (Move(motion Right)(count 3))
+    (Enter_visual Blockwise)
+    (Move(motion Down)(count 2))
+    (Move(motion Right))
+    (Visual_insert(append true)(count 2))
+    (Insert_text X)
+    (Insert_text j)
+    Delete_backward
+    Exit_insert
+    NORMAL 0:3 dirty
+    > abc|deXXfgh
+    > ab   XX
+    > abcdeXXfgh
+    |}];
+  let t = run (create s) (keys "3l<C-v>2jlcZ<BS>Wjk") in
+  show t;
+  [%expect {|
+    (Move(motion Right)(count 3))
+    (Enter_visual Blockwise)
+    (Move(motion Down)(count 2))
+    (Move(motion Right))
+    Visual_change
+    (Set_clipboard  "de\
+                   \n  \
+                   \nde")
+    (Insert_text Z)
+    (Delete_soft_tab_backward 2)
+    (Insert_text W)
+    (Insert_text j)
+    Delete_backward
+    Exit_insert
+    NORMAL 0:3 dirty
+    > abc|Wfgh
+    > ab
+    > abcWfgh
+    |}];
+  (* Enter and Delete are refused; paste is literal text on every line. *)
+  let t = run (create s) (keys "3l<C-v>2jI<CR><Del>") in
+  let t = run t [ Paste "P" ] in
+  show t;
+  [%expect {|
+    (Move(motion Right)(count 3))
+    (Enter_visual Blockwise)
+    (Move(motion Down)(count 2))
+    (Visual_insert(append false)(count 1))
+    Insert_newline
+    Delete_forward
+    (Insert_text P)
+    INSERT 0:4 dirty
+    > abcP|defgh
+    > ab
+    > abcPdefgh
+    |}]
+;;
+
+let%expect_test "in Visual mode a pending f takes the next key, even d, I or A" =
+  let t = run (create "abcdefgh") (keys "vfdd") in
+  show t;
+  [%expect {|
+    (Enter_visual Characterwise)
+    (Move(motion(Find((target U+0064)(direction Forward)(till false)))))
+    Visual_delete
+    (Set_clipboard abcd)
+    NORMAL 0:0 dirty
+    > |efgh
+    |}];
+  let t = run (create "abcdeIAh") (keys "<C-v>fIfA") in
+  show t;
+  [%expect {|
+    (Enter_visual Blockwise)
+    (Move(motion(Find((target U+0049)(direction Forward)(till false)))))
+    (Move(motion(Find((target U+0041)(direction Forward)(till false)))))
+    VISUAL BLOCK 0:6
+    > abcdeI|Ah
+    |}]
+;;
+
 let%expect_test "delete grammar composes motions, counts, doubled lines, and cancellation" =
   let t = run (create "one two three\nfour\nfive") (keys "dwe") in
   show t;
   [%expect {|
     (Delete_motion(motion(Word_forward Small)))
+    (Set_clipboard "one ")
     (Move(motion(Word_end Small)))
     NORMAL 0:2 dirty
     > tw|o three
@@ -137,6 +237,7 @@ let%expect_test "delete grammar composes motions, counts, doubled lines, and can
   show t;
   [%expect {|
     (Delete_motion(motion(Word_forward Small))(count 6))
+    (Set_clipboard "a b c d")
     NORMAL 0:0 dirty
     > |
     |}];
@@ -144,6 +245,9 @@ let%expect_test "delete grammar composes motions, counts, doubled lines, and can
   show t;
   [%expect {|
     (Delete_lines 2)
+    (Set_clipboard  "a\
+                   \nb\
+                   \n")
     NORMAL 0:0 dirty
     > |c
     |}];
@@ -151,6 +255,7 @@ let%expect_test "delete grammar composes motions, counts, doubled lines, and can
   show t;
   [%expect {|
     (Delete_chars_forward 1)
+    (Set_clipboard a)
     NORMAL 0:0 dirty
     > |bc
     |}]
@@ -163,6 +268,9 @@ let%expect_test "yank grammar composes motions and counts; paste repeats once" =
   show t;
   [%expect {|
     (Yank_lines 2)
+    (Set_clipboard  "a\
+                   \nb\
+                   \n")
     (Paste(before true)(count 1))
     NORMAL 0:0 dirty
     > |a
@@ -172,6 +280,7 @@ let%expect_test "yank grammar composes motions and counts; paste repeats once" =
     > c
     > d
     (Yank_motion(motion(Word_forward Small)))
+    (Set_clipboard "one ")
     (Paste(before false)(count 2))
     NORMAL 0:8 dirty
     > oone one| ne two
@@ -185,6 +294,7 @@ let%expect_test "diw deletes the small word at the cursor" =
     (Move(motion Right))
     (Move(motion Right))
     Delete_inner_word
+    (Set_clipboard foo)
     NORMAL 0:0 dirty
     > | + bar
     |}]
@@ -204,9 +314,11 @@ let%expect_test "finds take literal arguments, repeat, and compose with operator
     NORMAL 0:1
     > a|,b,c,d
     (Delete_motion(motion(Find((target U+0029)(direction Forward)(till false)))))
+    (Set_clipboard "one)")
     NORMAL 0:0 dirty
     > | two
     (Delete_motion(motion(Find((target U+002C)(direction Forward)(till true)))))
+    (Set_clipboard on)
     NORMAL 0:0 dirty
     > |e,two,three
     |}]
@@ -286,6 +398,7 @@ let%expect_test "Space q exits a clean document and refuses a dirty one" =
   [%expect
     {|
     (Delete_chars_forward 1)
+    (Set_clipboard a)
     Quit
     NORMAL 0:0 dirty (Error"Unsaved changes: save them or force quit")
     > |bc
@@ -296,6 +409,7 @@ let%expect_test "Space Q exits even with unsaved changes" =
   let _ = run (create "abc") (keys "x Q") in
   [%expect {|
     (Delete_chars_forward 1)
+    (Set_clipboard a)
     Force_quit
     Exit
     |}]
@@ -316,6 +430,7 @@ let%expect_test "Escape cancels a pending leader silently" =
     {|
     (Move(motion(Word_forward Small)))
     (Delete_chars_forward 1)
+    (Set_clipboard c)
     NORMAL 0:1 dirty
     > a|b
     |}]
@@ -358,6 +473,7 @@ let%expect_test "repeated sequences leave no pending state behind" =
     Save
     (Write_file (path f.txt) (text abc) (revision 0))
     (Delete_chars_forward 1)
+    (Set_clipboard a)
     Save
     (Write_file (path f.txt) (text bc) (revision 1))
     NORMAL 0:0 dirty
@@ -462,7 +578,9 @@ let%expect_test "u undoes and Ctrl-r redoes" =
   [%expect
     {|
     (Delete_chars_forward 1)
+    (Set_clipboard a)
     (Delete_chars_forward 1)
+    (Set_clipboard b)
     Undo
     NORMAL 0:0 dirty
     > |bc
@@ -835,6 +953,7 @@ let%expect_test "Space v layout bindings produce view actions, shown tagged" =
   show t;
   [%expect {|
     (Delete_chars_forward 1)
+    (Set_clipboard a)
     (View(Shift 2))
     (View Toggle_centered)
     Undo
@@ -1044,6 +1163,7 @@ let%expect_test "counted x works while unsupported commands reject a count" =
   [%expect
     {|
     (Delete_chars_forward 3)
+    (Set_clipboard abc)
     NORMAL 0:0 dirty
     > |
     |}];

@@ -914,7 +914,10 @@ column and moves the glyph right whole: `a·X界bcd`, `a·zw界b`. Combining mar
 stay with their base character.
 
 **Block insert.**
-- After `d`, `y`, `c`, `I`, `A`, or `p` the cursor is at the block's top-left.
+- After `d`, `y`, `I`, `A`, or `p` the cursor is at the block's top-left. *(Corrected
+  at Phase 17 against `vim.tiny` 9.1: after `c`, and after `I`/`A` with nothing
+  typed, Vim leaves Insert as usual, one character left of the insertion end: `cXY`
+  leaves it on `Y`, an empty `I` before column 3 on column 2.)*
 - A count repeats the inserted text (`2IX` gives `XXabc`).
 - Escape with nothing typed changes nothing and records no undo step.
 - Backspace within the text typed in this session removes it from every line
@@ -924,6 +927,8 @@ stay with their base character.
   (`IX<CR>Y` gives `abX` / `Ycdefgh` / `abcdefgh`). The live equivalent is to
   remove the replicated copies on Enter and continue as an ordinary Insert on the
   first line; decide at Phase 17 whether that or rejecting Enter is preferable.
+  *(Decided at Phase 17: Enter is refused with a message, as are pasted text
+  containing LF and Delete, which in Vim also abandons the replication.)*
 - Replicating live while typing (rather than on Escape, as Vim does) remains the
   owner-requested deviation.
 
@@ -1085,6 +1090,53 @@ Acceptance:
   and dirty state.
 - Build, tests, terminal smoke checks, and manual cursor/contrast/flicker review
   pass. Record terminal-dependent visual checks that could not be performed.
+
+**Done (2026-10-03).** `Command.Visual_insert { append; count }` is `I`/`A` in Visual
+mode (bound in `Keymap.feed_visual_key` beside `d`/`y`/`c`, with the count typed
+before it), and Visual block `c` now works. The editor holds a private
+`Block_insert` state while in Insert mode: the text when the insert began, one
+`Block.insertion` per participating line (top first; the cursor's is the first),
+the text typed so far, and the count. Every input recomputes the text as the base
+with the typed text inserted at every point, bottom line first, so each input is
+one revision and one `edit` in the visit's transaction, and Backspace back to
+nothing restores the base exactly, padding included; an insert that changed nothing
+records no undo step. Checked again with `vim.tiny -Nu NONE` (9.1) in tmux: `I`
+and `c` skip lines narrower than the left edge (a line ending exactly there, or an
+empty line with the edge at column 0, takes part; for `c` measured after the
+delete), `A` pads short lines, `$A` appends at each line's end, a count repeats the
+text on leaving, Backspace stops at the insertion column, and the cursor rules
+noted above. `Insert_newline`, text with LF, and `Delete_forward` are refused with
+an `Error` and change nothing; `Move`, `Undo`, and `Redo` end the block insert and
+then act as in ordinary Insert. Soft tabs use the cursor's column. `I`/`A` on a
+characterwise or linewise selection report an `Error` (Vim's `v_I`/`v_A` there do
+something else, not implemented). `Editor.block_insert_points` gives each point as
+line and display column, which before anything is typed can be inside a TAB or
+past a short line's end. `Ui_state` puts the terminal cursor at the first point
+(and scrolls to keep it visible), and `Frame` draws the others as a new
+`Style.Insert_point` cell, splitting a TAB so only that cell is
+marked, marking a wide glyph whole, and adding blank cells past a line's end.
+*(Owner follow-up, same day: the cursor's own point is drawn the same way as
+`Style.Insert_cursor`, and the terminal cursor is hidden during a block insert, so
+that the main cursor can have its own color. The colors are the `Theme.Role`s
+`Block_cursor` (blue, `#7aa2f7`) and `Block_copy` (light grey, `#d0d0d0`). Recoloring
+the terminal cursor itself (OSC 12) was rejected: Bonsai_term has no API for it and
+many terminals ignore it. While block-inserting, the cursor is a cell rather than a
+bar.)*
+Off-screen points are clipped like text and keep their positions. Software cursors
+are never animated: the smear follows only the terminal cursor, and while it runs
+the software cursors stay drawn. Also fixed on the way: soft-tab Backspace
+(`Delete_soft_tab_backward`, the default Backspace) raised after a multibyte
+character, found by adding soft-tab commands to the random-command test; and in
+Visual mode a pending sequence now takes the next key, so `v f d` finds `d`
+instead of deleting. Tests: editor expect tests for every settled example above,
+TABs, wide characters, refusals, counts, `jk`, soft tabs, moving and undo during
+the insert; `Visual_insert` and soft tabs in the random-command property test with
+a block-insert invariant; keymap, frame (software cursors before and after typing,
+inside TABs and wide glyphs, past line ends, off screen), and a `block insert (I,
+A, c)` smoke section. The five smoke checks noted for Phase 16 still fail, and fail
+identically on an unmodified HEAD build (smear-cursor timing). Not checked: the
+manual cursor/contrast/flicker review in a real terminal (added to the README's
+hand checks); tmux cannot show the cursor's shape.
 
 ### Estimated scope
 

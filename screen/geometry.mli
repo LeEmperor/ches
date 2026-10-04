@@ -3,14 +3,16 @@
     rectangles computed here. All measurements are display cells.
 
     The status line is the bottom row of the screen, across its full width. The tile
-    fills the rows above it. Within the tile, a single-cell border surrounds a
-    line-number gutter (unless line numbers are [Off]) and the text viewport. The
+    fills the rows above it. Within the tile, a single-cell border surrounds blank
+    left padding (when requested), a line-number gutter (unless line numbers are
+    [Off]), and the text viewport. The
     gutter is as wide in every numbered style, so switching between them never moves
     the text.
 
-    On a small screen the border is dropped first, then the gutter, so the text keeps
-    at least {!min_decorated_text_width} cells while either is shown. With line
-    numbers [Off], the border needs no room for a gutter. Any dimensions, including
+    On a small screen the border is dropped first, then the padding and gutter
+    together, so the text keeps at least {!min_decorated_text_width} cells while any
+    of them is shown. With line numbers [Off], the border needs no room for a
+    gutter. Any dimensions, including
     zero, are accepted. *)
 
 open! Core
@@ -33,10 +35,13 @@ module Prefs : sig
     ; width : int (** Preferred text width when centered. *)
     ; offset : int (** Shift of the centered tile; negative is left. *)
     ; line_numbers : Line_numbers.t (** [Off] has no gutter. *)
+    ; left_padding : int
+    (** Blank cells between the left border and the gutter, or the text when
+        there is no gutter. Counted outside the text width; negative is 0. *)
     }
   [@@deriving sexp_of, equal]
 
-  (** Centered, width 100, offset 0, hybrid line numbers. *)
+  (** Centered, width 100, offset 0, no line numbers, left padding 2. *)
   val default : t
 end
 
@@ -64,6 +69,8 @@ end
 type t =
   { tile : Rect.t (** Includes the border. *)
   ; border : bool
+  ; padding : int
+  (** Left padding cells: [Prefs.left_padding], or 0 when the screen has no room. *)
   ; gutter : Rect.t (** Zero width when there is no gutter. *)
   ; gutter_digits : int (** Digit cells; the gutter adds one separator cell. *)
   ; text : Rect.t

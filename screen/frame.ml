@@ -39,6 +39,7 @@ let render ui ~width ~height =
   let scroll = Ui_state.fitted_scroll ui ~width ~height in
   let { Geometry.tile
       ; border
+      ; padding
       ; gutter
       ; gutter_digits
       ; text = viewport
@@ -111,6 +112,29 @@ let render ui ~width ~height =
   in
   let selection = Editor.selection editor in
   let block = Editor.block editor in
+  (* A block insert's points, all drawn as styled cells: the first, the cursor's own,
+     in its own style, so that the theme can color it, which it cannot do for the
+     terminal cursor (hidden meanwhile). They are never animated. *)
+  let insert_points =
+    List.mapi (Editor.block_insert_points editor) ~f:(fun i (line, col) ->
+      line, (col, if i = 0 then `Insert_cursor else `Insert_point))
+  in
+  (* Blank cells up to and including a point past the line's end, so it can be drawn:
+     before anything is typed, [A] can aim past a short line's end. *)
+  let extend_to_point glyphs ~line_length point =
+    let total = Cell_map.total_width glyphs in
+    match point with
+    | Some col when col >= total ->
+      let blank ~kind col width =
+        { Cell_map.Glyph.pos = line_length; col; width; text = String.make width ' '; kind }
+      in
+      Array.concat
+        [ glyphs
+        ; (if col > total then [| blank ~kind:Tab total (col - total) |] else [||])
+        ; [| blank ~kind:Plain col 1 |]
+        ]
+    | Some _ | None -> glyphs
+  in
   (* A block edge inside a TAB highlights only the TAB's cells within the block, so
      the TAB is drawn as separate runs of spaces at the edges. *)
   let split_tabs glyphs ~edges =
@@ -135,7 +159,7 @@ let render ui ~width ~height =
   in
   let rule n = String.concat (List.init n ~f:(fun _ -> "─")) in
   let tile_row y =
-    let inner = viewport.width + gutter.width in
+    let inner = padding + gutter.width + viewport.width in
     if border && y = tile.y
     then (
       let top =
@@ -150,6 +174,13 @@ let render ui ~width ~height =
       let line = scroll.top + (y - viewport.y) in
       let on_cursor_line = line = cursor_line in
       let exists = line < line_count in
+      (* Styled as text, so the cursor line's highlight runs across it. *)
+      let padding_spans =
+        if padding = 0
+        then []
+        else
+          [ Span.blank (if exists && on_cursor_line then Text_cursor_line else Text) padding ]
+      in
       let gutter_spans =
         if gutter.width = 0
         then []
@@ -177,18 +208,27 @@ let render ui ~width ~height =
           in
           let line_start = Text_buffer.line_start text line in
           let search_highlight = search_highlighter line_start in
-          let glyphs = Cell_map.glyphs (Text_buffer.line_text text line) in
+          let line_text = Text_buffer.line_text text line in
+          let line_length = String.length line_text in
+          let glyphs = Cell_map.glyphs line_text in
           let block_columns =
             match block with
             | Some block when line >= block.first_line && line <= block.last_line ->
               Some (Block.columns block glyphs)
             | Some _ | None -> None
           in
-          let glyphs =
-            match block_columns with
-            | Some (left, stop) -> split_tabs glyphs ~edges:[ left; stop ]
-            | None -> glyphs
+          let point = List.Assoc.find insert_points line ~equal:Int.equal in
+          let glyphs = extend_to_point glyphs ~line_length (Option.map point ~f:fst) in
+          (* A point inside a TAB marks only its own cell. *)
+          let edges =
+            (match block_columns with
+             | Some (left, stop) -> [ left; stop ]
+             | None -> [])
+            @ match point with
+            | Some (col, _) -> [ col; col + 1 ]
+            | None -> []
           in
+          let glyphs = if List.is_empty edges then glyphs else split_tabs glyphs ~edges in
            Span.of_glyphs
              glyphs
             ~left:scroll.left
@@ -197,6 +237,12 @@ let render ui ~width ~height =
              ~special:special_style
               ~highlight:(fun glyph ->
                 let offset = line_start + glyph.pos in
+                match point with
+                | Some (col, style)
+                  when glyph.width > 0 && glyph.col <= col && col < glyph.col + glyph.width ->
+                  Some style
+                | Some _ | None when glyph.pos >= line_length -> None
+                | Some _ | None ->
                 match selection with
                 | Some { kind = `Blockwise; _ } ->
                   (match block_columns with
@@ -209,7 +255,7 @@ let render ui ~width ~height =
                 | _ -> search_highlight offset))
       in
       let side = if border then [ Span.create Border "│" ~width:1 ] else [] in
-      side @ gutter_spans @ text_spans @ side)
+      side @ padding_spans @ gutter_spans @ text_spans @ side)
   in
   let rows =
     List.init height ~f:(fun y ->
@@ -226,7 +272,7 @@ let render ui ~width ~height =
   let animation = Ui_state.animation ui in
   let smear = Animation.cells animation ~width ~height in
   let cursor =
-    if Animation.active animation
+    if Animation.active animation || not (List.is_empty insert_points)
     then None
     else
       Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) ->

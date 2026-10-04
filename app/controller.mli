@@ -46,6 +46,12 @@ val keymap : t -> Keymap.t
     input. [false] before any input. *)
 val last_input_dispatched : t -> bool
 
+(** The newest text the editor asked to put on the system clipboard (see
+    [Effect.Set_clipboard]) since the last take, and the controller with it cleared.
+    The controller cannot reach the terminal, so a frontend takes it after
+    {!handle_input} and sets the clipboard itself; older requests were superseded. *)
+val take_clipboard : t -> t * string option
+
 (** Feeds [input] through the keymap in the editor's current mode, dispatches the
     resulting editor commands, and performs their effects. The view commands are
     returned, in order, for the frontend to apply; they touch no state here. Actions

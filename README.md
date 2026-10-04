@@ -109,11 +109,12 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
 | Normal | `Space v s` | Toggle the animated smear cursor (on by default) |
-| Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, hybrid numbers |
+| Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
 | Normal | `Escape` | Cancel a pending count or `Space` sequence |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
-| Visual | `d` / `c` / `y` | Delete / change / yank the selected range (`c` not yet for blocks) |
+| Visual | `d` / `c` / `y` | Delete / change / yank the selected range |
+| Visual | `I` / `A` | On a block: insert before / append after it on every line; `2I` repeats the text |
 | Visual | `Escape` | Cancel selection without moving the cursor |
 | Insert | text, `Backspace`, `Delete` | Edit |
 | Insert | `Enter` | New line, indented like the current one |
@@ -205,6 +206,15 @@ inserted code point; linewise paste puts it at the first non-blank of its first
 inserted line. An unset register reports feedback. Undo and redo do not restore
 the register.
 
+Whenever a delete or yank replaces the register, ches also copies its text to the
+system clipboard, like Vim's `clipboard=unnamedplus`. Linewise text ends with a
+newline, and a block's rows are joined by newlines. The copy is an OSC 52 escape
+sequence sent to the terminal, so it reaches the clipboard of the machine running
+the terminal, including over SSH. The terminal must allow it: Ghostty, kitty and
+WezTerm do by default; under tmux, set `set-clipboard on`. `p`
+still pastes the internal register; paste from the system clipboard with the
+terminal's own paste.
+
 `dw` stops at a line end rather than consuming its newline and the next line's
 indentation. `d%` includes both matching delimiters; an unmatched `%` does
 nothing. Linewise deletes at EOF preserve the editor's invariant that an empty
@@ -248,8 +258,25 @@ add lines (keeping a final newline final). Rows are padded to the block's width
 when text follows them, so it stays lined up; a count repeats each row along its
 line. A paste is one undo step with the cursor at its top-left. Unlike Vim,
 padding measures a TAB inside a row where it lands rather than as a full tab
-stop. `c` on a block is not supported yet (it leaves the selection and reports
-so); it arrives with block insert.
+stop.
+
+`I` and `A` on a block start a block insert: Insert mode with an insertion point
+on every line of the block, before its left edge for `I` and after its right edge
+for `A` (after `$`, at each line's own end). `c` deletes the block and inserts at
+its left edge. Unlike Vim, which copies the text to the other lines when you leave
+Insert mode, typing appears on every line as you type. Every insertion point is
+drawn as a colored cell: the cursor itself, on the top line, in blue, and its copies
+on the other lines in light grey (the terminal's own cursor is hidden meanwhile;
+change the colors with `Block_cursor` and `Block_copy` in `ui/theme.ml`).
+As in Vim, `I` and `c` skip lines too short to reach the left edge, `A` pads short
+lines with spaces, a TAB under the insertion column is split into spaces, and a
+wide character there moves right. Backspace (and soft-tab Backspace) removes only
+what was typed in this insert. Enter, a paste containing a newline, and Delete are
+refused with a message, because they would make the lines differ. A count (`2I`)
+repeats the typed text when you leave. The whole insert, including `c`'s
+deletion, is one undo step, and none if nothing was typed. After `I` or `A` the
+cursor goes to the block's top-left, as in Vim. `I` and `A` on a characterwise
+or linewise selection are not supported (they report so).
 
 `f{character}`/`F{character}` find a literal code point strictly forward or
 backward on the current line; `t`/`T` stop just before/after it. Counts repeat
@@ -355,15 +382,16 @@ The text sits in a tile centered on the screen, 100 cells wide when there is
 room, with the filename in its top border. The status line at the bottom shows
 the mode, filename, `[+]` when there are unsaved changes, pending keys, the line
 and column (one-based; the column counts code points), and the latest message.
-On a small screen the border goes first, then the gutter; status fields are
-dropped from the least important up.
+Between the left border and the gutter (or the text, with no gutter) are 2 blank
+cells of padding, outside the text width. On a small screen the border goes
+first, then the padding and gutter together; status fields are dropped from the
+least important up.
 
-Line numbers are hybrid by default: the cursor line shows its own number,
-left-aligned, and every other line its distance from the cursor, as with Vim's
-`number` and `relativenumber` both set. `Space v n` and `Space v N` toggle those
-two switches independently, giving four styles: hybrid (both), absolute (`n`
-only), relative (`N` only; the cursor line shows `0`), and off (neither, with no
-gutter). The gutter is `max(3, digits in the line count)` cells plus a separator
+Line numbers are off by default. `Space v n` and `Space v N` toggle Vim's
+`number` and `relativenumber` switches independently, giving four styles: off
+(neither, with no gutter), absolute (`n` only), relative (`N` only; the cursor
+line shows `0`), and hybrid (both: the cursor line shows its own number,
+left-aligned, and every other line its distance from the cursor). The gutter is `max(3, digits in the line count)` cells plus a separator
 in every numbered style, so switching between them or moving the cursor never
 shifts the text. With numbers off, a centered tile with room keeps its text width
 and narrows, so the text moves left by about half a gutter; at full width, or when
@@ -406,8 +434,9 @@ the cursor; they take no count.
 ### Layout controls
 
 The default layout is a centered tile with a text width of 100 cells, an
-offset of 0, and hybrid line numbers. The text width counts only text cells, not
-the gutter or border.
+offset of 0, and no line numbers. The text width counts only text cells, not
+the padding, gutter, or border. The left padding has no key; it is
+`left_padding` in `Geometry.Prefs.default` (`screen/geometry.ml`).
 `Space v r` returns to this default.
 
 The `Space v` commands change the layout, never the document: they make no
@@ -427,6 +456,10 @@ starts with the default layout.
 
 The colors are one dark theme, near-black neutral grays with a few colored
 accents, defined in `ui/theme.ml`.
+Font styles (bold, italic, underline) are set per part of the screen by
+`Theme.Font.default` and can be replaced in code with `Editor_view.run ~font`;
+the terminal still chooses the typeface, and a terminal without italics may
+ignore them.
 Everything is also readable without color: the mode, `[+]`, and messages are
 text, and escape forms are bracketed.
 
@@ -515,7 +548,7 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
 - tabs, wide characters, and control characters
 - a fast burst of keys with a paste in it, and a paste in Normal mode
 - every `Space v` command, with clamping and restoring on resize
-- line-number styles: both toggles, the hybrid default, a rejected count,
+- line-number styles: both toggles from the default (none), a rejected count,
   `Space v r`, renumbering as the cursor moves, and a toggle while too small
 - view scrolling: `Ctrl-e`/`Ctrl-y` with counts and a pushed cursor, `Ctrl-d`/
   `Ctrl-u`, `zt`/`zb`/`zz` and a rejected count, scrolling past the end, resizing
@@ -548,6 +581,9 @@ The smoke script cannot check these, so check them in a real terminal:
   exit. tmux does not report cursor shape.
 - The colors look right: the review screens, and a live session at about 80×24
   and 160×48.
+- During a block insert (`Ctrl-v`, `2j`, `I`, then type), the cursor's cell is
+  blue, the other lines' insertion points are grey cells, and none of them flicker
+  while you type, including while the smear animation runs.
 - Nothing flickers while typing fast, scrolling, or resizing.
 - Pasting from the terminal's own clipboard inserts text literally in Insert mode.
   This depends on the terminal; the script pastes through tmux.

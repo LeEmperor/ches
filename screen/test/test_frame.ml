@@ -4,15 +4,19 @@ open Helpers
 
 let lines n = String.concat (List.init n ~f:(fun i -> sprintf "line %d\n" (i + 1)))
 
+(* The default has padding and no line numbers; tests about line numbers start from
+   hybrid, without padding. *)
+let hybrid = { Geometry.Prefs.default with line_numbers = Hybrid; left_padding = 0 }
+
 let%expect_test "a small file at 80x24 in the centered tile" =
   show ~width:80 ~height:24 (ui "let foo x = x + 1\n\nlet bar = foo 41\n");
   [%expect
     {|
     ╭─ f.txt ──────────────────────────────────────────────────────────────────────╮|
-    │1   let foo x = x + 1                                                         │|
-    │  1                                                                           │|
-    │  2 let bar = foo 41                                                          │|
-    │  3                                                                           │|
+    │  let foo x = x + 1                                                           │|
+    │                                                                              │|
+    │  let bar = foo 41                                                            │|
+    │                                                                              │|
     │                                                                              │|
     │                                                                              │|
     │                                                                              │|
@@ -32,7 +36,7 @@ let%expect_test "a small file at 80x24 in the centered tile" =
     │                                                                              │|
     ╰──────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  f.txt                                                              1:1 |
-    cursor: 5,1 Block
+    cursor: 3,1 Block
     |}]
 ;;
 
@@ -41,10 +45,10 @@ let%expect_test "styles" =
   [%expect
     {|
     Border[╭─] Title[ f.txt ] Border[────────────────────╮]
-    Border[│] Gutter_cursor_line[1   ] Text_cursor_line[ab      c] Special_cursor_line[^A] Text_cursor_line[             ] Border[│]
-    Border[│] Gutter[  1 ] Text[                        ] Border[│]
-    Border[│] Gutter[  2 ] Text[x                       ] Border[│]
-    Border[│] Gutter[    ] Text[                        ] Border[│]
+    Border[│] Text_cursor_line[  ab      c] Special_cursor_line[^A] Text_cursor_line[               ] Border[│]
+    Border[│] Text[                            ] Border[│]
+    Border[│] Text[  x                         ] Border[│]
+    Border[│] Text[                            ] Border[│]
     Border[╰────────────────────────────╯]
     (Mode Normal)[ NORMAL ] Status[ f.txt            1:1 ]
     |}]
@@ -55,9 +59,9 @@ let%expect_test "search matches and the current match have distinct styles" =
   show_styled ~width:40 ~height:6 t;
   [%expect {|
     Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
-    Border[│] Gutter_cursor_line[1   ] Search_match[one] Text_cursor_line[ two ] Search_match_current[one] Text_cursor_line[                       ] Border[│]
-    Border[│] Gutter[    ] Text[                                  ] Border[│]
-    Border[│] Gutter[    ] Text[                                  ] Border[│]
+    Border[│] Text_cursor_line[  ] Search_match[one] Text_cursor_line[ two ] Search_match_current[one] Text_cursor_line[                         ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text[                                      ] Border[│]
     Border[╰──────────────────────────────────────╯]
     (Mode Normal)[ NORMAL ] Status[ f.txt                      1:9 ]
     |}]
@@ -68,9 +72,9 @@ let%expect_test "a search prompt previews highlights without moving the cursor" 
   show_styled ~width:40 ~height:6 t;
   [%expect {|
     Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
-    Border[│] Gutter_cursor_line[1   ] Search_match[wo] Text_cursor_line[rd t] Search_match[wo] Text_cursor_line[ ] Search_match[wo] Text_cursor_line[rd                     ] Border[│]
-    Border[│] Gutter[    ] Text[                                  ] Border[│]
-    Border[│] Gutter[    ] Text[                                  ] Border[│]
+    Border[│] Text_cursor_line[  ] Search_match[wo] Text_cursor_line[rd t] Search_match[wo] Text_cursor_line[ ] Search_match[wo] Text_cursor_line[rd                       ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text[                                      ] Border[│]
     Border[╰──────────────────────────────────────╯]
     (Mode Normal)[ NORMAL ] Status[ f.txt                  ] Pending[/wo] Status[ 1:1 ]
     |}]
@@ -143,12 +147,12 @@ let%expect_test "an empty file" =
   [%expect
     {|
     ╭─ f.txt ────────────────────╮|
-    │1                           │|
+    │                            │|
     │                            │|
     │                            │|
     ╰────────────────────────────╯|
      NORMAL  f.txt            1:1 |
-    cursor: 5,1 Block
+    cursor: 3,1 Block
     |}]
 ;;
 
@@ -158,28 +162,28 @@ let%expect_test "a tall file scrolls to keep the cursor visible" =
   [%expect
     {|
     ╭─ f.txt ────────────────────╮|
-    │  4 line 5                  │|
-    │  3 line 6                  │|
-    │  2 line 7                  │|
-    │  1 line 8                  │|
-    │9   line 9                  │|
+    │  line 5                    │|
+    │  line 6                    │|
+    │  line 7                    │|
+    │  line 8                    │|
+    │  line 9                    │|
     ╰────────────────────────────╯|
      NORMAL  f.txt            9:1 |
-    cursor: 5,5 Block
+    cursor: 3,5 Block
     |}];
   let t = run ~width:30 ~height:8 t (keys "kkkkkkkkk") in
   show ~width:30 ~height:8 t;
   [%expect
     {|
     ╭─ f.txt ────────────────────╮|
-    │1   line 1                  │|
-    │  1 line 2                  │|
-    │  2 line 3                  │|
-    │  3 line 4                  │|
-    │  4 line 5                  │|
+    │  line 1                    │|
+    │  line 2                    │|
+    │  line 3                    │|
+    │  line 4                    │|
+    │  line 5                    │|
     ╰────────────────────────────╯|
      NORMAL  f.txt            1:1 |
-    cursor: 5,1 Block
+    cursor: 3,1 Block
     |}]
 ;;
 
@@ -191,9 +195,9 @@ let%expect_test "a wide line scrolls horizontally, and the cursor follows" =
   [%expect
     {|
     ╭─ f.txt ────────────────────╮|
-    │1   _______1________2_______│|
-    │  1 ort                     │|
-    │  2                         │|
+    │  0________1________2_______│|
+    │  short                     │|
+    │                            │|
     ╰────────────────────────────╯|
      NORMAL  f.txt           1:26 |
     cursor: 28,1 Block
@@ -204,12 +208,12 @@ let%expect_test "a wide line scrolls horizontally, and the cursor follows" =
   [%expect
     {|
     ╭─ f.txt ────────────────────╮|
-    │  1 0________1________2_____│|
-    │2   short                   │|
-    │  1                         │|
+    │  0________1________2_______│|
+    │  short                     │|
+    │                            │|
     ╰────────────────────────────╯|
      NORMAL  f.txt            2:5 |
-    cursor: 9,2 Block
+    cursor: 7,2 Block
     |}]
 ;;
 
@@ -222,12 +226,12 @@ let%expect_test "control characters, C1 controls and bidi overrides show escape 
   [%expect
     {|
     ╭─ f.txt ──────────────────────────────╮|
-    │1   ^[[31mred^[[0m                    │|
-    │  1 <85>x<202e>y<feff>z               │|
-    │  2                                   │|
+    │  ^[[31mred^[[0m                      │|
+    │  <85>x<202e>y<feff>z                 │|
+    │                                      │|
     ╰──────────────────────────────────────╯|
      NORMAL  f.txt                      1:1 |
-    cursor: 5,1 Block
+    cursor: 3,1 Block
     |}]
 ;;
 
@@ -236,12 +240,12 @@ let%expect_test "tabs, wide and zero-width characters" =
   [%expect
     {|
     ╭─ f.txt ──────────────────────────────╮|
-    │1           x                         │|
-    │  1 中文é!                            │|
-    │  2                                   │|
+    │          x                           │|
+    │  中文é!                              │|
+    │                                      │|
     ╰──────────────────────────────────────╯|
      NORMAL  f.txt                      1:1 |
-    cursor: 5,1 Block
+    cursor: 3,1 Block
     |}]
 ;;
 
@@ -253,25 +257,25 @@ let%expect_test "clipping at the text viewport's edges is exact to the cell" =
   show ~width:20 ~height:6 t;
   [%expect
     {|
-      2       cd        |
-      1 23456789abcde中 |
-    3   23456789abc^[[0m|
-      1 <x              |
-      2 [x              |
+    ╭─ f.txt ──────────╮|
+    │        cd        │|
+    │  23456789abcde中 │|
+    │  23456789abc^[[0m│|
+    ╰──────────────────╯|
      NORMAL  f.txt 3:17 |
-    cursor: 19,2 Block
+    cursor: 18,3 Block
     |}];
   let t = run ~width:20 ~height:6 t (keys "kk") in
   show ~width:20 ~height:6 t;
   [%expect
     {|
-    1   ab      cd      |
-      1 0123456789abcde>|
-      2 0123456789abc^[[|
-      3 0中x            |
-      4 0^[x            |
+    ╭─ f.txt ──────────╮|
+    │  ab      cd      │|
+    │  0123456789abcde>│|
+    │  0123456789abc^[[│|
+    ╰──────────────────╯|
      NORMAL  f.txt  1:5 |
-    cursor: 13,0 Block
+    cursor: 12,1 Block
     |}]
 ;;
 
@@ -287,11 +291,11 @@ let%expect_test "the cursor sits on the first cell of a TAB, wide character, or 
      : Ui_state.t);
   [%expect
     {|
-    cursor: 4,0 Block
-    cursor: 12,0 Block
+    cursor: 2,0 Block
+    cursor: 10,0 Block
+    cursor: 11,0 Block
     cursor: 13,0 Block
-    cursor: 15,0 Block
-    cursor: 15,0 Bar
+    cursor: 13,0 Bar
     |}]
 ;;
 
@@ -394,9 +398,9 @@ let%expect_test "the filename in the top border is cut from the left, then omitt
   show_styled ~width:30 ~height:6 (ui ~path:"a\027b.txt" "");
   [%expect {|
     Border[╭─] Title[ a] Title_special[^[] Title[b.txt ] Border[─────────────────╮]
-    Border[│] Gutter_cursor_line[1   ] Text_cursor_line[                        ] Border[│]
-    Border[│] Gutter[    ] Text[                        ] Border[│]
-    Border[│] Gutter[    ] Text[                        ] Border[│]
+    Border[│] Text_cursor_line[                            ] Border[│]
+    Border[│] Text[                            ] Border[│]
+    Border[│] Text[                            ] Border[│]
     Border[╰────────────────────────────╯]
     (Mode Normal)[ NORMAL ] Status[ a] Status_special[^[] Status[b.txt         1:1 ]
     |}];
@@ -407,12 +411,12 @@ let%expect_test "the filename in the top border is cut from the left, then omitt
   show ~width:30 ~height:6 no_path;
   [%expect {|
     ╭────────────────────────────╮|
-    │1                           │|
+    │                            │|
     │                            │|
     │                            │|
     ╰────────────────────────────╯|
      NORMAL                   1:1 |
-    cursor: 5,1 Block
+    cursor: 3,1 Block
     |}]
 ;;
 
@@ -438,7 +442,7 @@ let%expect_test "line-number styles" =
   (* Hybrid, relative, off, absolute; the cursor on the third line, and a row past the
      end of the document. *)
   let (_ : Ui_state.t) =
-    List.fold [ "jj"; " vn"; " vN"; " vn" ] ~init:(ui text) ~f:(fun t k ->
+    List.fold [ "jj"; " vn"; " vN"; " vn" ] ~init:(ui ~prefs:hybrid text) ~f:(fun t k ->
       let t = run ~width:30 ~height:9 t (keys k) in
       printf "%S\n" k;
       show ~width:30 ~height:9 t;
@@ -501,7 +505,12 @@ let%expect_test "line numbers at both ends, and after edits add or remove lines"
     t
   in
   let (_ : Ui_state.t) =
-    ui text |> after "" |> after "G" |> after "kkonew<Esc>" |> after "u" |> after " vN"
+    ui ~prefs:hybrid text
+    |> after ""
+    |> after "G"
+    |> after "kkonew<Esc>"
+    |> after "u"
+    |> after " vN"
   in
   [%expect {|
     ""
@@ -565,7 +574,7 @@ let%expect_test "line numbers at both ends, and after edits add or remove lines"
 let%expect_test "wide line counts keep the gutter width in every style" =
   let text n = String.concat (List.init n ~f:(fun i -> sprintf "%d\n" (i + 1))) in
   List.iter [ 1000; 120000 ] ~f:(fun n ->
-    let t = run ~width:30 ~height:6 (ui (text n)) (keys "500G") in
+    let t = run ~width:30 ~height:6 (ui ~prefs:hybrid (text n)) (keys "500G") in
     List.iter [ ""; " vN"; " vn" ] ~f:(fun k ->
       let t = run ~width:30 ~height:6 t (keys k) in
       show ~width:30 ~height:6 t));
@@ -616,7 +625,7 @@ let%expect_test "wide line counts keep the gutter width in every style" =
 ;;
 
 let%expect_test "line numbers off on a tiny screen" =
-  let t = run ~width:18 ~height:6 (ui "abc\ndef\n") (keys " vn vN") in
+  let t = run ~width:18 ~height:6 (ui ~prefs:hybrid "abc\ndef\n") (keys " vn vN") in
   show ~width:18 ~height:6 t;
   let t = run ~width:18 ~height:6 t (keys " vn") in
   show ~width:18 ~height:6 t;
@@ -639,7 +648,13 @@ let%expect_test "line numbers off on a tiny screen" =
 ;;
 
 let%expect_test "toggling the gutter keeps the cursor on its cell of a wide line" =
-  let t = run ~width:30 ~height:5 (ui "0123456789abcdefghijklmnopqrstuvwxyz") (keys "$") in
+  let t =
+    run
+      ~width:30
+      ~height:5
+      (ui ~prefs:hybrid "0123456789abcdefghijklmnopqrstuvwxyz")
+      (keys "$")
+  in
   let (_ : Ui_state.t) =
     List.fold [ ""; " vn vN"; " vn" ] ~init:t ~f:(fun t k ->
       let t = run ~width:30 ~height:5 t (keys k) in
@@ -675,12 +690,12 @@ let%expect_test "a block selection is drawn by display cells" =
   show_styled ~width:40 ~height:9 t;
   [%expect {|
     Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
-    Border[│] Gutter[  5 ] Text[01] Selection[234] Text[56789                        ] Border[│]
-    Border[│] Gutter[  4 ] Text[  ] Selection[   ] Text[   abc                       ] Border[│]
-    Border[│] Gutter[  3 ] Text[a] Selection[界bc] Text[d                            ] Border[│]
-    Border[│] Gutter[  2 ] Text[ab                                ] Border[│]
-    Border[│] Gutter[  1 ] Text[                                  ] Border[│]
-    Border[│] Gutter_cursor_line[6   ] Text_cursor_line[01] Selection[234] Text_cursor_line[56789                        ] Border[│]
+    Border[│] Text[  01] Selection[234] Text[56789                          ] Border[│]
+    Border[│] Text[    ] Selection[   ] Text[   abc                         ] Border[│]
+    Border[│] Text[  a] Selection[界bc] Text[d                              ] Border[│]
+    Border[│] Text[  ab                                  ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text_cursor_line[  01] Selection[234] Text_cursor_line[56789                          ] Border[│]
     Border[╰──────────────────────────────────────╯]
     (Mode (Visual Blockwise))[ VISUAL BLOCK ] Status[ f.txt                6:5 ]
     |}];
@@ -689,12 +704,12 @@ let%expect_test "a block selection is drawn by display cells" =
   show_styled ~width:40 ~height:9 t;
   [%expect {|
     Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
-    Border[│] Gutter[  5 ] Text[01] Selection[23456789] Text[                        ] Border[│]
-    Border[│] Gutter[  4 ] Text[  ] Selection[      abc] Text[                       ] Border[│]
-    Border[│] Gutter[  3 ] Text[a] Selection[界bcd] Text[                            ] Border[│]
-    Border[│] Gutter[  2 ] Text[ab                                ] Border[│]
-    Border[│] Gutter[  1 ] Text[                                  ] Border[│]
-    Border[│] Gutter_cursor_line[6   ] Text_cursor_line[01] Selection[23456789] Text_cursor_line[                        ] Border[│]
+    Border[│] Text[  01] Selection[23456789] Text[                          ] Border[│]
+    Border[│] Text[    ] Selection[      abc] Text[                         ] Border[│]
+    Border[│] Text[  a] Selection[界bcd] Text[                              ] Border[│]
+    Border[│] Text[  ab                                  ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text_cursor_line[  01] Selection[23456789] Text_cursor_line[                          ] Border[│]
     Border[╰──────────────────────────────────────╯]
     (Mode (Visual Blockwise))[ VISUAL BLOCK ] Status[ f.txt               6:11 ]
     |}]
@@ -707,14 +722,14 @@ let%expect_test "a block selection clips at the viewport's edges" =
   show ~width:30 ~height:6 t;
   [%expect {|
     Border[╭─] Title[ f.txt ] Border[────────────────────╮]
-    Border[│] Gutter[  1 ] Selection[______2________3________] Border[│]
-    Border[│] Gutter_cursor_line[2   ] Selection[______2________3________] Border[│]
-    Border[│] Gutter[    ] Text[                        ] Border[│]
+    Border[│] Text[  ] Selection[________2________3________] Border[│]
+    Border[│] Text_cursor_line[  ] Selection[________2________3________] Border[│]
+    Border[│] Text[                            ] Border[│]
     Border[╰────────────────────────────╯]
     (Mode (Visual Blockwise))[ VISUAL BLOCK ] Status[ f.txt     2:36 ]
     ╭─ f.txt ────────────────────╮|
-    │  1 ______2________3________│|
-    │2   ______2________3________│|
+    │  ________2________3________│|
+    │  ________2________3________│|
     │                            │|
     ╰────────────────────────────╯|
      VISUAL BLOCK  f.txt     2:36 |
@@ -725,7 +740,13 @@ let%expect_test "a block selection clips at the viewport's edges" =
 let%test_unit "a TAB cut by the viewport's edge keeps its block highlight" =
   (* Block from the TAB at cells 16-23 to cell 41 on the next line. *)
   let t =
-    run ~width:30 ~height:6 (ui (String.make 16 'a' ^ "\t" ^ String.make 40 'b' ^ "\n" ^ String.make 60 'a')) (keys "16l<C-v>j18l")
+    run
+      ~width:30
+      ~height:6
+      (ui
+         ~prefs:hybrid
+         (String.make 16 'a' ^ "\t" ^ String.make 40 'b' ^ "\n" ^ String.make 60 'a'))
+      (keys "16l<C-v>j18l")
   in
   let scroll = Ui_state.fitted_scroll t ~width:30 ~height:6 in
   assert (scroll.left > 16 && scroll.left < 24);
@@ -739,4 +760,153 @@ let%test_unit "a TAB cut by the viewport's edge keeps its block highlight" =
     | (s : Span.t) :: rest -> if x < s.width then s.style else style_at rest (x - s.width)
   in
   assert (Style.equal (style_at row gutter) Selection)
+;;
+
+let%expect_test "block insert draws its cursor and a copy on each other line" =
+  (* [A] after cells 3-4: the short line's point is past its end until text is typed
+     there. The top line's point is the cursor, in its own style; the terminal
+     cursor is hidden. *)
+  let t = run (ui "abcdefgh\nab\nabcdefgh") (keys "3l<C-v>2jlA") in
+  show_styled t;
+  show_cursor t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Text_cursor_line[  abcde] Insert_cursor[f] Text_cursor_line[gh                            ] Border[│]
+    Border[│] Text[  ab   ] Insert_point[ ] Text[                              ] Border[│]
+    Border[│] Text[  abcde] Insert_point[f] Text[gh                            ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode Insert)[ INSERT ] Status[ f.txt                      1:6 ]
+    cursor: none
+    |}];
+  let t = run t (keys "X") in
+  show_styled t;
+  show_cursor t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Text_cursor_line[  abcdeX] Insert_cursor[f] Text_cursor_line[gh                           ] Border[│]
+    Border[│] Text[  ab   X] Insert_point[ ] Text[                             ] Border[│]
+    Border[│] Text[  abcdeX] Insert_point[f] Text[gh                           ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode Insert)[ INSERT ] Status[ f.txt ] Dirty[[+]] Status[                  1:7 ]
+    cursor: none
+    |}];
+  (* Leaving removes them. *)
+  let t = run t (keys "<Esc>") in
+  show_styled t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Text_cursor_line[  abcdeXfgh                           ] Border[│]
+    Border[│] Text[  ab   X                              ] Border[│]
+    Border[│] Text[  abcdeXfgh                           ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode Normal)[ NORMAL ] Status[ f.txt ] Dirty[[+]] Status[                  1:4 ]
+    |}]
+;;
+
+let%expect_test "software cursors inside a TAB or wide character, and past a short top line" =
+  let t = run ~height:7 (ui "0123456789\n\tabc\na界bcd") (keys "2l<C-v>2jI") in
+  show_styled ~height:7 t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Text_cursor_line[  0] Insert_cursor[1] Text_cursor_line[23456789                          ] Border[│]
+    Border[│] Text[   ] Insert_point[ ] Text[      abc                         ] Border[│]
+    Border[│] Text[  a] Insert_point[界] Text[bcd                              ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode Insert)[ INSERT ] Status[ f.txt                      1:2 ]
+    |}];
+  (* The cursor's own point can be past its line's end too, where typing will put the
+     text; the terminal cursor is hidden while the points are drawn. *)
+  let t = run ~height:7 (ui "ab\nabcdefgh") (keys "j5l<C-v>kA") in
+  show_styled ~height:7 t;
+  show_cursor ~height:7 t;
+  [%expect {|
+    Border[╭─] Title[ f.txt ] Border[──────────────────────────────╮]
+    Border[│] Text_cursor_line[  ab    ] Insert_cursor[ ] Text_cursor_line[                             ] Border[│]
+    Border[│] Text[  abcdef] Insert_point[g] Text[h                            ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[│] Text[                                      ] Border[│]
+    Border[╰──────────────────────────────────────╯]
+    (Mode Insert)[ INSERT ] Status[ f.txt                      1:3 ]
+    cursor: none
+    |}]
+;;
+
+let%expect_test "software cursors off screen are not drawn but keep their places" =
+  let t = run ~height:5 (ui (String.concat ~sep:"\n" (List.init 8 ~f:(fun i -> sprintf "abc%d" i)))) (keys "l<C-v>7jI") in
+  show ~height:5 t;
+  print_s [%sexp (Ches_core.Editor.block_insert_points (Ches_app.Controller.editor (Ui_state.controller t)) : (int * int) list)];
+  [%expect {|
+      abc0                                  |
+      abc1                                  |
+      abc2                                  |
+      abc3                                  |
+     INSERT  f.txt                      1:2 |
+    cursor: none
+    ((0 1) (1 1) (2 1) (3 1) (4 1) (5 1) (6 1) (7 1))
+    |}];
+  (* Typing reaches them all the same. *)
+  let t = run ~height:5 t (keys "X<Esc>G") in
+  show ~height:5 t;
+  [%expect {|
+      aXbc4                                 |
+      aXbc5                                 |
+      aXbc6                                 |
+      aXbc7                                 |
+     NORMAL  f.txt [+]                  8:1 |
+    cursor: 2,3 Block
+    |}];
+  (* After $, [A] aims at each line's end: a short line's point is left of the view. *)
+  let t = run ~width:30 ~height:6 (ui (String.make 40 'a' ^ "\nbbbbb")) (keys "<C-v>j$AX") in
+  show ~width:30 ~height:6 t;
+  [%expect {|
+    ╭─ f.txt ────────────────────╮|
+    │  aaaaaaaaaaaaaaaaaaaaaaaaX │|
+    │                            │|
+    │                            │|
+    ╰────────────────────────────╯|
+     INSERT  f.txt [+]       1:42 |
+    cursor: none
+    |}]
+;;
+
+let%expect_test "left padding, with and without line numbers" =
+  let text = "abc\ndef\n" in
+  List.iter [ Line_numbers.Off; Hybrid ] ~f:(fun line_numbers ->
+    let prefs = { Geometry.Prefs.default with line_numbers; left_padding = 2 } in
+    show ~width:30 ~height:6 (run ~width:30 ~height:6 (ui ~prefs text) (keys "j")));
+  [%expect {|
+    ╭─ f.txt ────────────────────╮|
+    │  abc                       │|
+    │  def                       │|
+    │                            │|
+    ╰────────────────────────────╯|
+     NORMAL  f.txt            2:1 |
+    cursor: 3,2 Block
+    ╭─ f.txt ────────────────────╮|
+    │    1 abc                   │|
+    │  2   def                   │|
+    │    1                       │|
+    ╰────────────────────────────╯|
+     NORMAL  f.txt            2:1 |
+    cursor: 7,2 Block
+    |}]
+;;
+
+let%expect_test "left padding takes the cursor line's style" =
+  let prefs = { Geometry.Prefs.default with left_padding = 2 } in
+  show_styled ~width:20 ~height:5 (ui ~prefs "ab\ncd");
+  [%expect {|
+    Text_cursor_line[  ab                ]
+    Text[  cd                ]
+    Text[                    ]
+    Text[                    ]
+    (Mode Normal)[ NORMAL ] Status[ f.txt  1:1 ]
+    |}]
 ;;

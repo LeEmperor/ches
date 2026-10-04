@@ -58,6 +58,11 @@ let prefs t = t.prefs
 let scroll t = t.scroll
 let message t = t.message
 let pasting t = Option.is_some t.paste
+
+let take_clipboard t =
+  let controller, text = Controller.take_clipboard t.controller in
+  { t with controller }, text
+;;
 let exited t = t.exited
 let animation t = t.animation
 
@@ -70,19 +75,29 @@ let geometry t ~width ~height =
       (Text_buffer.line_count (Editor.text (Controller.editor t.controller)))
 ;;
 
+(* The cursor's line and cells. A block insert's cursor is at its first insertion
+   point, which before anything is typed can be inside a TAB or past the line's end,
+   where the cursor's offset cannot be. *)
+let cursor_cells editor =
+  match Editor.block_insert_points editor with
+  | (line, col) :: _ -> line, (col, 1)
+  | [] ->
+    let text = Editor.text editor in
+    let line = Editor.cursor_line editor in
+    ( line
+    , Cell_map.cursor_span
+        (Cell_map.glyphs (Text_buffer.line_text text line))
+        ~pos:(Editor.cursor editor - Text_buffer.line_start text line)
+        ~insertion:
+          (match Editor.mode editor with
+           | Insert -> true
+           | Normal | Visual _ -> false) )
+;;
+
 let fitted_scroll t ~width ~height =
   let editor = Controller.editor t.controller in
   let text = Editor.text editor in
-  let line = Editor.cursor_line editor in
-  let span =
-    Cell_map.cursor_span
-      (Cell_map.glyphs (Text_buffer.line_text text line))
-      ~pos:(Editor.cursor editor - Text_buffer.line_start text line)
-      ~insertion:
-        (match Editor.mode editor with
-         | Insert -> true
-          | Normal | Visual _ -> false)
-  in
+  let line, span = cursor_cells editor in
   let { Geometry.text = viewport; _ } = geometry t ~width ~height in
   Scroll.fit
     t.scroll
@@ -95,16 +110,7 @@ let fitted_scroll t ~width ~height =
 ;;
 
 let cursor_position t ~width ~height =
-  let editor = Controller.editor t.controller in
-  let text = Editor.text editor in
-  let cursor_line = Editor.cursor_line editor in
-  let line_text = Text_buffer.line_text text cursor_line in
-  let start, _ =
-    Cell_map.cursor_span
-      (Cell_map.glyphs line_text)
-      ~pos:(Editor.cursor editor - Text_buffer.line_start text cursor_line)
-      ~insertion:true
-  in
+  let cursor_line, (start, _) = cursor_cells (Controller.editor t.controller) in
   let scroll = fitted_scroll t ~width ~height in
   let { Geometry.text = viewport; _ } = geometry t ~width ~height in
   let x = start - scroll.left and y = cursor_line - scroll.top in

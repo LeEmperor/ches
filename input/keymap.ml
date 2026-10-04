@@ -315,12 +315,21 @@ let feed_insert_key t (key : Key.t) =
 ;;
 
 let feed_visual_key t key =
-  match key with
-  | Key.Escape -> reset t, [ Action.Editor Command.Exit_visual ]
-  | Key.Char c when Uchar.to_scalar c = Char.to_int 'd' -> reset t, [ Action.Editor Command.Visual_delete ]
-  | Key.Char c when Uchar.to_scalar c = Char.to_int 'y' -> reset t, [ Action.Editor Command.Visual_yank ]
-  | Key.Char c when Uchar.to_scalar c = Char.to_int 'c' -> reset t, [ Action.Editor Command.Visual_change ]
-  | _ -> feed_normal_key t key
+  let visual_insert ~append =
+    reset t, [ Action.Editor (Command.Visual_insert { append; count = Option.value t.count ~default:1 }) ]
+  in
+  (* A pending sequence, such as [f] waiting for its character, takes the key. *)
+  if (not (List.is_empty t.pending)) || Option.is_some t.find
+  then feed_normal_key t key
+  else (
+    match key with
+    | Key.Escape -> reset t, [ Action.Editor Command.Exit_visual ]
+    | Key.Char c when Uchar.to_scalar c = Char.to_int 'd' -> reset t, [ Action.Editor Command.Visual_delete ]
+    | Key.Char c when Uchar.to_scalar c = Char.to_int 'y' -> reset t, [ Action.Editor Command.Visual_yank ]
+    | Key.Char c when Uchar.to_scalar c = Char.to_int 'c' -> reset t, [ Action.Editor Command.Visual_change ]
+    | Key.Char c when Uchar.to_scalar c = Char.to_int 'I' -> visual_insert ~append:false
+    | Key.Char c when Uchar.to_scalar c = Char.to_int 'A' -> visual_insert ~append:true
+    | _ -> feed_normal_key t key)
 ;;
 
 let quit_hint = "To quit, use Space q in Normal mode"

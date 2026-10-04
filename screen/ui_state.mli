@@ -45,12 +45,20 @@ val animation : t -> Animation.t
 (** Whether a bracketed paste is being collected. *)
 val pasting : t -> bool
 
+(** [Ches_app.Controller.take_clipboard] on the model's controller: what the frontend
+    should put on the system clipboard after the inputs it just applied. *)
+val take_clipboard : t -> t * string option
+
 (** Whether an input has returned [Exit]. From then on, {!apply} ignores its input and
     returns [Exit] again, so keys that arrive before the frontend has shut down (say,
     [Space w] typed right after [Space Q]) never run. *)
 val exited : t -> bool
 
-(** The visible cursor's terminal-cell coordinate, after applying layout and scroll. *)
+(** The visible cursor's terminal-cell coordinate, after applying layout and scroll.
+    During a block insert it is at the first of [Editor.block_insert_points], which
+    can be inside a TAB or past the line's end before anything is typed; the scroll
+    keeps that cell in view. {!Frame} then hides the terminal cursor and draws every
+    point as a styled cell instead; this position still drives the smear. *)
 val cursor_position : t -> width:int -> height:int -> (int * int) option
 
 (** Applies one input on a [width] x [height] screen.

@@ -64,8 +64,8 @@
     register as rows (see {!Block.contents}), and leave the cursor at the block's
     top-left. [Visual_delete] removes each line's {!Block.rows} range, last line
     first, as one undo step; a TAB or wide glyph cut by an edge leaves a space for
-    each of its cells outside the block. [Visual_change] is not supported yet: it
-    keeps the selection and reports an [Error].
+    each of its cells outside the block. [Visual_change] deletes the block the same
+    way and starts a block insert at its left edge.
 
     [Paste] of a block register puts row {i i} at the same display column on the
     {i i}th line from the cursor: before the cursor's code point for [P], after it for
@@ -79,6 +79,36 @@
     start; the paste is one undo step.
 
     [Exit_insert] steps left one code point when that does not cross a line start.
+
+    {2 Block insert}
+
+    [Visual_insert] on a blockwise selection, and [Visual_change] on one, enter Insert
+    mode with an insertion point on each line of the block (see
+    {!block_insert_points}), as Vim's [v_b_I], [v_b_A] and [v_b_c] do, except that
+    typing is applied to every line as it happens rather than on leaving:
+    - [I] ([append = false]) inserts at the block's left edge, skipping lines too short
+      to reach it; [c] does the same after deleting the block.
+    - [A] inserts after the block's right edge, padding short lines with spaces, or
+      after [Line_end] at each line's own end.
+    - A TAB under an insertion column is split into spaces and a wide glyph moves
+      right, as for a block paste ({!Block.insertion}). The padding appears only
+      while some text is typed.
+
+    [Insert_text] (without LF), [Insert_soft_tab], [Delete_backward] and
+    [Delete_soft_tab_backward] edit every line; the soft-tab column is the cursor's.
+    Deleting removes only text typed in this block insert: with nothing typed it
+    does nothing, as in Vim with its default ['backspace']. [Insert_newline], text
+    containing LF, and [Delete_forward] are refused with an [Error] and change
+    nothing, rather than letting the lines diverge. Each input is one revision; the
+    whole visit, including the deletion of [c], is one undo step, and none if it
+    changed nothing.
+
+    [Exit_insert] inserts [count - 1] more copies of the typed text on every line.
+    After [I] or [A] with something typed, the cursor goes to the block's top-left;
+    otherwise, and after [c], it steps left as from an ordinary Insert. [Move],
+    [Undo] and [Redo] end the block insert, keeping the text as it is, and then act
+    as in ordinary Insert mode. On a characterwise or linewise selection,
+    [Visual_insert] keeps the selection and reports an [Error].
 
     {2 Autoindent}
 
@@ -168,6 +198,12 @@ val selection : t -> Selection.t option
     selections. *)
 val block : t -> Block.t option
 
+(** The insertion points of a block insert, top line first, as zero-based line and
+    display column; the first is the cursor's. A point on a line too short to reach
+    its column (before anything is typed with [A]) is past the line's end, where
+    typing will put it. Empty outside a block insert. *)
+val block_insert_points : t -> (int * int) list
+
 (** Zero-based line of the cursor. *)
 val cursor_line : t -> int
 
@@ -186,6 +222,8 @@ val search_case : t -> Search_case.t
 
 val search_state : t -> (string * bool * bool * int option) option
 
+(** Applies [command]. When it replaces the unnamed register, the effects start with
+    [Set_clipboard] of the register's text (see {!Register.to_string}). *)
 val dispatch : t -> Command.t -> t * Effect.t list
 
 (** Record the outcome of an effect. A successful write marks the {i written} text as

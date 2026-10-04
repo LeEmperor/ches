@@ -131,12 +131,20 @@ shell() {
   poll screen_has "$marker" || fail "shell command did not finish: $1"
 }
 
+# Turns on hybrid line numbers from none, the default.
+hybrid_numbers() {
+  t send-keys -t "$session" Space v n Space v N
+  poll status_has "Line numbers: hybrid" || fail "hybrid line numbers did not turn on"
+}
+
+# Starts ches with hybrid line numbers, which the checks here are written against.
 launch() {
   shell "clear; stty -g > $work/stty.before"
   t send-keys -t "$session" -l "$ches $*"
   t send-keys -t "$session" Enter
   if poll alternate_is 1 && poll status_has "NORMAL"; then
     ok "launched ches $*"
+    hybrid_numbers
   else
     fail "ches $* did not start"
   fi
@@ -193,7 +201,7 @@ section "edit, save, quit, reopen"
 printf 'hello\nworld\n' > "$work/edit.txt"
 printf 'Hi hello\nwold\n' > "$work/edit.expected"
 launch edit.txt
-expect_cursor "5 1 1"
+expect_cursor "7 1 1"
 keys i
 type_text "Hi "
 keys Escape
@@ -234,7 +242,7 @@ keys l l
 expect_status "1:3"
 keys h
 expect_status "1:2"
-expect_cursor "6 1 1"
+expect_cursor "8 1 1"
 keys i Enter
 expect_status "2:1"
 expect_screen "  1 a "
@@ -286,7 +294,7 @@ section "empty and missing files"
 launch empty.txt
 expect_screen "1    "
 expect_status "1:1"
-expect_cursor "5 1 1"
+expect_cursor "7 1 1"
 keys Space q
 expect_exit 0
 launch new.txt
@@ -360,13 +368,13 @@ else
 fi
 keys l
 expect_status "1:2"
-expect_cursor "6 1 1"
+expect_cursor "8 1 1"
 keys l
 expect_status "1:3"
-expect_cursor "13 1 1"
+expect_cursor "15 1 1"
 keys j
 expect_status "2:3"
-expect_cursor "9 2 1"
+expect_cursor "11 2 1"
 keys Space q
 expect_exit 0
 
@@ -380,7 +388,7 @@ read -r _ y _ <<< "$(cursor)"
 row "$y" | grep -qF "151 line 151" && ok "cursor row shows line 151" || fail "cursor row is not line 151"
 keys -N 150 k
 expect_status "1:1"
-expect_cursor "5 1 1"
+expect_cursor "7 1 1"
 expect_screen "1   line 1"
 
 section "resizing, including tiny sizes"
@@ -396,9 +404,9 @@ read -r x y flag <<< "$(cursor)"
 [ "$flag" = 1 ] && [ "$y" -lt 2 ] && ok "cursor in the text at 10x3" || fail "cursor not in the text at 10x3"
 resize 160 48
 expect_status "101:1"
-row 0 | grep -qE '^ {27}╭─' && ok "tile centered at 160x48" || fail "tile not centered at 160x48"
+row 0 | grep -qE '^ {26}╭─' && ok "tile centered at 160x48" || fail "tile not centered at 160x48"
 read -r x y flag <<< "$(cursor)"
-[ "$flag" = 1 ] && [ "$x" = 32 ] && [ "$y" -ge 1 ] && [ "$y" -le 45 ] \
+[ "$flag" = 1 ] && [ "$x" = 33 ] && [ "$y" -ge 1 ] && [ "$y" -le 45 ] \
   && ok "cursor in the text at 160x48" || fail "cursor not in the text at 160x48: $x $y $flag"
 resize 80 24
 expect_status "101:1"
@@ -571,7 +579,7 @@ launch match.txt
 # below, and the view scrolls to show it.
 keys %
 expect_status "150:1"
-expect_cursor_row "│150 ) (* end *)"
+expect_cursor_row "│  150 ) (* end *)"
 keys %
 expect_status "1:11"
 expect_cursor_row "1   let f x = ("
@@ -681,10 +689,6 @@ save_screen "block-selection"
 keys '$'
 expect_status "4:9"
 save_screen "block-selection-dollar"
-# Changing a block needs block insert, which is not supported yet: nothing changes.
-keys c
-expect_status "Block change is not supported yet"
-expect_status "VISUAL BLOCK"
 # Escape keeps the cursor, stepping back off the line break; nothing was edited, so a
 # plain quit works.
 keys Escape
@@ -728,78 +732,138 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "block insert (I, A, c)"
+printf 'abcdefgh\nab\nabcdefgh\n' > "$work/blockins.txt"
+printf 'ZcXYdefgh.\nZ.\nZcXYdefgh.\n' > "$work/blockins.expected"
+launch blockins.txt
+# Row N (from 0) of the screen with its colors.
+colored_row() { t capture-pane -e -p -t "$session" | sed -n "$(($1 + 1))p"; }
+colored_line_has() { colored_row "$1" | grep -qF -- "$2"; }
+# I before column 4 of all three lines (the short middle line is skipped). Typing
+# shows on every line at once, before leaving Insert mode.
+keys 3 l C-v 2 j I
+expect_status "INSERT"
+keys X Y
+expect_screen "1   abcXYdefgh"
+expect_screen "  2 abcXYdefgh"
+expect_status "INSERT"
+# Every insertion point, the cursor's own included, is drawn as a styled cell that
+# splits its line's text; the terminal cursor is hidden meanwhile.
+if poll colored_line_has 3 "abcXY" && ! colored_line_has 3 "abcXYdefgh" \
+   && colored_line_has 1 "abcXY" && ! colored_line_has 1 "abcXYdefgh"; then
+  ok "insertion points drawn on both lines"
+else
+  fail "insertion points not drawn"
+fi
+cursor_flag_is() { local flag; read -r _ _ flag <<< "$(cursor)"; [ "$flag" = "$1" ]; }
+if poll cursor_flag_is 0; then ok "terminal cursor hidden"; else fail "terminal cursor shown: $(cursor)"; fi
+save_screen "block-insert"
+# The jk escape leaves, with the cursor at the block's top-left; one undo step
+# removes the text from every line, and redo restores it.
+keys j k
+expect_status "NORMAL"
+expect_status "1:4"
+if poll cursor_flag_is 1; then ok "terminal cursor back"; else fail "terminal cursor still hidden"; fi
+expect_screen "  2 abcXYdefgh"
+keys u
+expect_screen "  2 abcdefgh"
+keys C-r
+expect_screen "  2 abcXYdefgh"
+# After $, A appends at each line's own end.
+keys g g 0 C-v 2 j '$' A . Escape
+expect_screen "1   abcXYdefgh."
+expect_screen "  1 ab."
+# c replaces the block's cells on every line that reaches it.
+keys g g 0 C-v 2 j l c Z Escape
+expect_screen "1   ZcXYdefgh."
+expect_screen "  1 Z."
+# Enter would make the lines diverge, so it is refused.
+keys g g 0 C-v j I Enter
+expect_status "Block insert cannot add a line break"
+keys Escape
+expect_status "NORMAL"
+keys Space w
+expect_file "$work/blockins.txt" "$work/blockins.expected"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
 section "layout commands (Space v)"
 # Where the tile's top corners are, in cells from the left.
 tile_left() { local line prefix; line=$(row 0); prefix=${line%%╭*}; echo "${#prefix}"; }
 tile_right() { local line prefix; line=$(row 0); prefix=${line%%╮*}; echo "${#prefix}"; }
 tile_is() { [ "$(tile_left) $(tile_right)" = "$1 $2" ]; }
 # Waits for FEEDBACK in the status line, then checks the tile's corners and that the
-# cursor is visible on the first text cell of line 1.
+# cursor is visible on the first text cell of line 1, TEXT cells (default 7, after
+# the border, padding, and gutter) from the left corner.
 expect_layout() {
-  local feedback=$1 left=$2 right=$3
+  local feedback=$1 left=$2 right=$3 text=${4:-7}
   expect_status "$feedback"
   if poll tile_is "$left" "$right"; then
     ok "tile spans $left..$right"
   else
     fail "tile spans $(tile_left)..$(tile_right), expected $left..$right"
   fi
-  expect_cursor "$((left + 5)) 1 1"
+  expect_cursor "$((left + text)) 1 1"
 }
 resize 160 48
 launch edit.txt
-expect_layout "1:1" 27 132
+expect_layout "1:1" 26 133
 keys Space v
 expect_status "Space v"
 keys L
-expect_layout "Offset +10" 37 142
+expect_layout "Offset +10" 36 143
 keys Space v h
-expect_layout "Offset +8" 35 140
+expect_layout "Offset +8" 34 141
 keys Space v H
-expect_layout "Offset -2" 25 130
+expect_layout "Offset -2" 24 131
 keys Space v l
-expect_layout "Offset 0" 27 132
+expect_layout "Offset 0" 26 133
 keys Space v -
-expect_layout "Width 90" 32 127
+expect_layout "Width 90" 31 128
 keys Space v =
-expect_layout "Width 100" 27 132
+expect_layout "Width 100" 26 133
 keys Space v +
-expect_layout "Width 110" 22 137
+expect_layout "Width 110" 21 138
 keys Space v c
 expect_layout "Full width" 0 159
 keys Space v c
-expect_layout "Centered" 22 137
+expect_layout "Centered" 21 138
 for _ in 1 2 3 4 5 6; do keys Space v L; done
-expect_layout "Offset +60 (+22 fit)" 44 159
+expect_layout "Offset +60 (+21 fit)" 42 159
 # A screen too small for the request clamps the tile; a larger one restores it.
 resize 100 30
 if poll tile_is 0 99; then ok "tile clamped to 100 columns"; else fail "tile not clamped at 100x30"; fi
-expect_cursor "5 1 1"
+expect_cursor "7 1 1"
 resize 10 3
 cursor_is() { [ "$(cursor)" = "$1" ]; }
 poll cursor_is "0 0 1" && ok "cursor visible on the text at 10x3" \
   || fail "cursor not on the text at 10x3: $(cursor)"
 resize 160 48
-if poll tile_is 44 159; then ok "requested placement restored at 160x48"; else fail "placement not restored"; fi
+if poll tile_is 42 159; then ok "requested placement restored at 160x48"; else fail "placement not restored"; fi
 expect_cursor "49 1 1"
 # Full width ignores the offset; Space v l from full width centers again.
 keys Space v c
 expect_layout "Full width" 0 159
 keys Space v l
-expect_layout "Offset +62 (+22 fit)" 44 159
+expect_layout "Offset +62 (+21 fit)" 42 159
+# Space v r also turns the line numbers off.
 keys Space v r
-expect_layout "Layout reset" 27 132
+expect_layout "Layout reset" 28 131 3
+hybrid_numbers
 for _ in 1 2 3 4 5 6 7 8 9 10; do keys Space v -; done
-expect_layout "Width 20" 67 92
+expect_layout "Width 20" 66 93
 for _ in $(seq 1 50); do keys Space v +; done
-expect_layout "Width 500 (154 fit)" 0 159
+expect_layout "Width 500 (152 fit)" 0 159
 keys Space v r
-expect_layout "Layout reset" 27 132
+expect_layout "Layout reset" 28 131 3
+hybrid_numbers
 keys Space v z
 expect_status "Space v z is not bound"
 # After Escape, l moves the cursor instead of nudging the tile.
 keys Space v Escape l
 expect_status "1:2"
-poll tile_is 27 132 && ok "Escape cancels Space v" || fail "Escape did not cancel Space v"
+poll tile_is 26 133 && ok "Escape cancels Space v" || fail "Escape did not cancel Space v"
 keys h
 expect_status "1:1"
 # None of this touched the document: no dirty marker, nothing to undo, a plain quit.
@@ -810,8 +874,8 @@ expect_status "Already at oldest change"
 keys i Space v c Escape
 expect_screen "1    vcHi hello"
 expect_status "1:3"
-poll tile_is 27 132 && ok "tile unmoved by Insert-mode text" || fail "tile moved"
-expect_cursor "34 1 1"
+poll tile_is 26 133 && ok "tile unmoved by Insert-mode text" || fail "tile moved"
+expect_cursor "35 1 1"
 keys u
 expect_screen "1   Hi hello"
 keys Space q
@@ -825,51 +889,54 @@ resize 160 48
 launch tall.txt
 keys 2 j
 expect_status "3:1"
-# Hybrid by default: the cursor line's own number, left-aligned; distances elsewhere.
-expect_cursor_row "│3   line 3"
-expect_screen "│  2 line 1"
-expect_screen "│  2 line 5"
+# Hybrid (as launched): the cursor line's own number, left-aligned; distances
+# elsewhere.
+expect_cursor_row "│  3   line 3"
+expect_screen "│    2 line 1"
+expect_screen "│    2 line 5"
 keys Space v n
 expect_status "Line numbers: relative"
-expect_cursor_row "│  0 line 3"
-expect_screen "│  2 line 1"
+expect_cursor_row "│    0 line 3"
+expect_screen "│    2 line 1"
 # Neither switch: no gutter, and the centered tile narrows around the same text width.
 keys Space v N
 expect_status "Line numbers: off"
-poll tile_is 29 130 && ok "tile narrows without a gutter" || fail "tile spans $(tile_left)..$(tile_right) without a gutter"
-expect_cursor_row "│line 3"
-expect_cursor "30 3 1"
+poll tile_is 28 131 && ok "tile narrows without a gutter" || fail "tile spans $(tile_left)..$(tile_right) without a gutter"
+expect_cursor_row "│  line 3"
+expect_cursor "31 3 1"
 keys Space v n
 expect_status "Line numbers: absolute"
-poll tile_is 27 132 && ok "gutter back" || fail "tile spans $(tile_left)..$(tile_right) with a gutter"
-expect_cursor_row "│  3 line 3"
-expect_cursor "32 3 1"
+poll tile_is 26 133 && ok "gutter back" || fail "tile spans $(tile_left)..$(tile_right) with a gutter"
+expect_cursor_row "│    3 line 3"
+expect_cursor "33 3 1"
 # A count is rejected, and the style kept.
 keys 3 Space v N
 expect_status "Space v N does not take a count"
-expect_cursor_row "│  3 line 3"
+expect_cursor_row "│    3 line 3"
 keys Space v N
 expect_status "Line numbers: hybrid"
-expect_cursor_row "│3   line 3"
-# Space v r restores hybrid with the rest of the layout.
+expect_cursor_row "│  3   line 3"
+# Space v r turns them off with the rest of the layout.
 keys Space v N
 expect_status "Line numbers: absolute"
 keys Space v r
 expect_status "Layout reset"
-expect_cursor_row "│3   line 3"
+expect_cursor_row "│  line 3"
+hybrid_numbers
+expect_cursor_row "│  3   line 3"
 # Moving the cursor renumbers; the text never shifts.
 keys j
 expect_status "4:1"
-expect_cursor_row "│4   line 4"
-expect_screen "│  1 line 3"
-expect_cursor "32 4 1"
+expect_cursor_row "│  4   line 4"
+expect_screen "│    1 line 3"
+expect_cursor "33 4 1"
 # Too small for a gutter: the style is still switched, and shows when there is room.
 resize 18 6
 expect_screen "line 4"
 keys Space v N
 resize 160 48
 expect_status "Line numbers: absolute (no room)"
-expect_cursor_row "│  4 line 4"
+expect_cursor_row "│    4 line 4"
 status_has "[+]" && fail "line-number toggles made the document dirty" || ok "document still clean"
 keys Space q
 expect_exit 0
@@ -877,64 +944,64 @@ resize 80 24
 
 # ---------------------------------------------------------------------------
 section "view scrolling (Ctrl-e/y/d/u, zz/zt/zb)"
-# At 80x24 the text viewport has 21 rows, from screen row 1; text starts at column 5.
+# At 80x24 the text viewport has 21 rows, from screen row 1; text starts at column 7.
 resize 80 24
 launch tall.txt
 keys 1 0 j
 expect_status "11:1"
 # Ctrl-e scrolls the view; the cursor stays on its line while it is visible.
 keys C-e
-expect_screen "│  9 line 2 "
+expect_screen "│    9 line 2 "
 expect_status "11:1"
-expect_cursor "5 10 1"
+expect_cursor "7 10 1"
 keys 5 C-e
-expect_screen "│  4 line 7 "
-expect_cursor "5 5 1"
+expect_screen "│    4 line 7 "
+expect_cursor "7 5 1"
 # ... and is pushed down when its line would leave the top.
 keys 1 0 C-e
 expect_status "17:1"
-expect_cursor_row "│17  line 17"
-expect_cursor "5 1 1"
+expect_cursor_row "│  17  line 17"
+expect_cursor "7 1 1"
 keys 2 0 C-y
-expect_screen "│ 16 line 1 "
+expect_screen "│   16 line 1 "
 expect_status "17:1"
-expect_cursor "5 17 1"
+expect_cursor "7 17 1"
 # Ctrl-d / Ctrl-u move the view and cursor by half the viewport (10 lines).
 keys C-d
 expect_status "27:1"
-expect_cursor "5 17 1"
+expect_cursor "7 17 1"
 keys C-u
 expect_status "17:1"
-expect_cursor "5 17 1"
+expect_cursor "7 17 1"
 # zt / zb / zz place the cursor line; the cursor itself stays.
 keys 5 0 G
 expect_status "50:1"
 keys z t
-expect_cursor "5 1 1"
+expect_cursor "7 1 1"
 keys z b
-expect_cursor "5 21 1"
+expect_cursor "7 21 1"
 keys z z
-expect_cursor "5 11 1"
+expect_cursor "7 11 1"
 expect_status "50:1"
 keys 3 z z
 expect_status "z z does not take a count"
-expect_cursor "5 11 1"
+expect_cursor "7 11 1"
 # Past the end: the last line can reach the top, and moving within the view keeps it.
 keys G 9 9 9 C-e
 expect_status "201:1"
-expect_cursor "5 1 1"
+expect_cursor "7 1 1"
 keys k
 expect_status "200:1"
-expect_cursor "5 1 1"
+expect_cursor "7 1 1"
 keys j
-expect_cursor "5 2 1"
+expect_cursor "7 2 1"
 # Resizing after scrolling keeps the cursor visible: 7 rows, filled to the end.
 resize 40 10
-expect_cursor "5 7 1"
-expect_screen "│  6 line 195"
+expect_cursor "7 7 1"
+expect_screen "│    6 line 195"
 # Back at the size of the last key, before any key, the view is as it was.
 resize 80 24
-expect_cursor "5 2 1"
+expect_cursor "7 2 1"
 # Tiny terminals: two rows still scroll; with no text rows nothing changes.
 keys g g
 resize 10 3
@@ -962,11 +1029,11 @@ launch wide.txt
 keys -N 250 l
 expect_status "1:251"
 read -r x _ _ <<< "$(cursor)"
-[ "$x" -ge 5 ] && [ "$x" -le 78 ] && ok "cursor inside the text" || fail "cursor outside the text: $x"
+[ "$x" -ge 7 ] && [ "$x" -le 78 ] && ok "cursor inside the text" || fail "cursor outside the text: $x"
 [ "$(char_under_cursor)" = 0 ] && ok "cursor on the 251st character" || fail "wrong character under the cursor"
 keys j
 expect_status "2:5"
-expect_cursor "9 2 1"
+expect_cursor "11 2 1"
 expect_screen "  1 0123456789"
 keys Space q
 expect_exit 0

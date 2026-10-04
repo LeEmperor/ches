@@ -51,6 +51,7 @@ type t =
   | Visual_delete
   | Visual_yank
   | Visual_change
+  | Visual_insert of { append : bool; count : int }
   | Reload
   | Undo
   | Redo

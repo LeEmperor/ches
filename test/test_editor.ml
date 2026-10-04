@@ -66,6 +66,7 @@ let%expect_test "operator deletion resolves ranges, preserves failed-register co
   let t = run (create "one two\n  three\nlast") [ Delete_motion { motion = Word_forward Small; count = None } ] in
   show t;
   [%expect {|
+    (Set_clipboard "one ")
     NORMAL 0:0 rev=1 dirty
     > |two
     >   three
@@ -74,6 +75,7 @@ let%expect_test "operator deletion resolves ranges, preserves failed-register co
   let t = run t [ Delete_motion { motion = Word_forward Small; count = Some 2 } ] in
   show t;
   [%expect {|
+    (Set_clipboard two)
     NORMAL 0:0 rev=2 dirty
     > |
     >   three
@@ -104,6 +106,7 @@ let%expect_test "inclusive line-end and matching-delimiter ranges include their 
   let t = run (create "abc\ndef") [ Delete_motion { motion = Line_end; count = None } ] in
   show t;
   [%expect {|
+    (Set_clipboard abc)
     NORMAL 0:0 rev=1 dirty
     > |
     > def
@@ -111,6 +114,7 @@ let%expect_test "inclusive line-end and matching-delimiter ranges include their 
   let t = run (create "(x)") [ Delete_motion { motion = Matching_delimiter; count = None } ] in
   show t;
   [%expect {|
+    (Set_clipboard "(x)")
     NORMAL 0:0 rev=1 dirty
     > |
     |}]
@@ -131,6 +135,7 @@ let%expect_test "yank shares ranges, leaves the editor unchanged, and paste hono
   let t = run t [ Move { motion = Down; count = None }; Yank_lines 1; Paste { before = true; count = 2 } ] in
   show t;
   [%expect {|
+    (Set_clipboard "one ")
     true
     ((Text (text "one ") (kind Characterwise)))
     NORMAL 0:8 rev=1 dirty
@@ -142,6 +147,7 @@ let%expect_test "yank shares ranges, leaves the editor unchanged, and paste hono
     >   three
     > last
     true
+    (Set_clipboard "  three\n")
     NORMAL 1:2 rev=3 dirty
     > one two
     >   |three
@@ -157,10 +163,12 @@ let%expect_test "linewise paste supplies separators for a final line without LF"
   let t = run (create "a\n") [ Yank_lines 1; Paste { before = false; count = 1 } ] in
   show t;
   [%expect {|
+    (Set_clipboard "  b\n")
     NORMAL 1:2 rev=1 dirty
     > a
     >   |b
     >   b
+    (Set_clipboard "a\n")
     NORMAL 1:0 rev=1 dirty
     > a
     > |a
@@ -428,6 +436,7 @@ let%expect_test "multibyte movement and deletion" =
   show t;
   [%expect
     {|
+    (Set_clipboard "\230\151\165")
     NORMAL 0:1 rev=1 dirty
     > a|🐹b
     |}];
@@ -450,6 +459,7 @@ let%expect_test "multibyte movement and deletion" =
   show t;
   [%expect
     {|
+    (Set_clipboard b)
     NORMAL 0:0 rev=3 dirty
     > |a
     |}]
@@ -524,6 +534,8 @@ let%expect_test "movement and save split transactions; x is standalone" =
   show t;
   [%expect
     {|
+    (Set_clipboard a)
+    (Set_clipboard b)
     NORMAL 0:0 rev=2 dirty
     > |c
     |}];
@@ -563,6 +575,7 @@ let%expect_test "redo survives mode changes but not a new edit" =
   show t;
   [%expect
     {|
+    (Set_clipboard a)
     NORMAL 0:0 rev=3 dirty
     > |bc
     |}];
@@ -623,6 +636,7 @@ let%expect_test "undoing back to the saved text clears dirty; revision still adv
   show t;
   [%expect
     {|
+    (Set_clipboard a)
     NORMAL 0:0 rev=1 dirty
     > |bc
     |}];
@@ -651,6 +665,7 @@ let%expect_test "successful save marks the text saved" =
   show (finish t write (Ok ()));
   [%expect
     {|
+    (Set_clipboard a)
     NORMAL 0:0 rev=1 (Info"Wrote f.txt (2 bytes)")
     > |bc
     |}]
@@ -661,6 +676,7 @@ let%expect_test "failed save keeps the document dirty" =
   show (finish t write (Error (Error.of_string "Permission denied")));
   [%expect
     {|
+    (Set_clipboard a)
     NORMAL 0:0 rev=1 dirty (Error"Failed to write f.txt: Permission denied")
     > |bc
     |}]
@@ -673,6 +689,8 @@ let%expect_test "completing an older save leaves newer text dirty" =
   show t;
   [%expect
     {|
+    (Set_clipboard a)
+    (Set_clipboard b)
     NORMAL 0:0 rev=2 dirty (Info"Wrote f.txt (2 bytes)")
     > |c
     |}];
@@ -727,6 +745,7 @@ let%expect_test "quit refuses unsaved changes; force quit does not" =
   show t;
   [%expect
     {|
+    (Set_clipboard a)
     INSERT 0:0 rev=1 dirty (Error"Unsaved changes: save them or force quit")
     > |bc
     |}];
@@ -850,6 +869,10 @@ let gen_command =
      ; Visual_yank
      ; Visual_delete
      ; Visual_change
+     ; Visual_insert { append = false; count = 1 }
+     ; Visual_insert { append = true; count = 2 }
+     ; Insert_soft_tab 2
+     ; Delete_soft_tab_backward 2
      ; Paste { before = false; count = 1 }
      ; Paste { before = true; count = 2 }
      ; Yank_lines 1
@@ -867,6 +890,18 @@ let check_cursor t =
   (match Editor.selection t, Editor.mode t with
    | Some _, Visual _ | None, (Normal | Insert) -> ()
    | _ -> raise_s [%message "selection out of Visual mode" (t |> show : unit)]);
+  (* Block insert points are only in Insert mode, on distinct lines in order, the
+     first on the cursor's line. *)
+  (match Editor.block_insert_points t with
+   | [] -> ()
+   | (first, _) :: _ as points ->
+     let lines = List.map points ~f:fst in
+     if not
+          (Mode.equal (Editor.mode t) Insert
+           && first = Editor.cursor_line t
+           && List.is_sorted_strictly lines ~compare:Int.compare
+           && List.for_all lines ~f:(fun line -> line < Text_buffer.line_count text))
+     then raise_s [%message "bad block insert points" (points : (int * int) list)]);
   match Editor.mode t with
   | Insert -> ()
   | Visual _ -> ()
@@ -901,6 +936,9 @@ let%expect_test "Visual selections extend with motions, switch kind, and apply o
   show t;
   [%expect {|
     (((anchor 0) (active 5) (kind Characterwise)))
+    (Set_clipboard  "one\
+                   \ntwo\
+                   \n")
     NORMAL 0:0 rev=0
     > |one
     > two
@@ -908,6 +946,7 @@ let%expect_test "Visual selections extend with motions, switch kind, and apply o
     ((Text (text  "one\
                  \ntwo\
                  \n") (kind Linewise)))
+    (Set_clipboard one)
     NORMAL 0:0 rev=2 dirty
     > |X two
     NORMAL 0:2 rev=3
@@ -1062,21 +1101,12 @@ let%expect_test "selection changes leave text, history, and registers alone" =
   print_s [%sexp (Editor.unnamed_register t : Register.t option)];
   print_s [%sexp (undo_steps t : int)];
   [%expect {|
+    (Set_clipboard "abc\n")
     NORMAL 1:2 rev=0
     > abc
     > de|f
     ((Text (text "abc\n") (kind Linewise)))
     0
-    |}];
-  (* Changing a block needs block insert: nothing changes, and the selection stays. *)
-  let t = run (create "abc\ndef") [ Enter_visual `Blockwise; move Down; Visual_change ] in
-  show_block t;
-  [%expect {|
-    VISUAL BLOCK 1:0 rev=0 (Error"Block change is not supported yet")
-    > abc
-    > |def
-    (((anchor 0) (active 4) (kind Blockwise)))
-    block 0-1:0-0
     |}]
 ;;
 
@@ -1127,6 +1157,9 @@ let%expect_test "block delete and yank over short lines, as Vim" =
   let t = run (create s) (select_block (0, 3) (2, 5) @ [ Visual_delete ]) in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "def\
+                   \n   \
+                   \ndef")
     NORMAL 0:3 rev=1 dirty
     > abc|gh
     > ab
@@ -1157,6 +1190,9 @@ let%expect_test "block delete and yank over short lines, as Vim" =
   show_visible t;
   print_s [%sexp (undo_steps t : int)];
   [%expect {|
+    (Set_clipboard  "def\
+                   \n   \
+                   \ndef")
     NORMAL 0:3 rev=0
     > abc|defgh
     > ab
@@ -1169,6 +1205,11 @@ let%expect_test "block delete and yank over short lines, as Vim" =
   let t = run (create "abcd\nab\na\n\nabcdefgh") (select_block (0, 2) (4, 5) @ [ Visual_delete ]) in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "cd\
+                   \n\
+                   \n    \
+                   \n    \
+                   \ncdef")
     NORMAL 0:1 rev=1 dirty
     > a|b
     > ab
@@ -1183,6 +1224,9 @@ let%expect_test "block delete and yank after $ reach every line's end" =
   let t = run (create "abcdefgh\nab\nabcd") (select_block ~to_line_end:true (0, 1) (2, 1) @ [ Visual_delete ]) in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "bcdefgh\
+                   \nb\
+                   \nbcd")
     NORMAL 0:0 rev=1 dirty
     > |a
     > a
@@ -1195,6 +1239,8 @@ let%expect_test "block delete and yank after $ reach every line's end" =
   in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "b\
+                   \nbcdefgh")
     NORMAL 2:2 rev=1 dirty
     > ab
     > abcdefgh
@@ -1209,16 +1255,25 @@ let%expect_test "block edges inside a TAB split it; inside a wide glyph leave a 
   List.iter [ (0, 2), (2, 4); (0, 6), (2, 9); (0, 8), (2, 9) ] ~f:(fun (anchor, active) ->
     show_visible (run (create s) (select_block anchor active @ [ Visual_delete ])));
   [%expect {|
+    (Set_clipboard  "234\
+                   \n   \
+                   \n234")
     NORMAL 0:2 rev=1 dirty
     > 01|56789ab
     > ·····abc
     > 0156789ab
     register 3: 234 / ··· / 234
+    (Set_clipboard  "6789\
+                   \n  ab\
+                   \n6789")
     NORMAL 0:6 rev=1 dirty
     > 012345|ab
     > ······c
     > 012345ab
     register 4: 6789 / ··ab / 6789
+    (Set_clipboard  "89\
+                   \nab\
+                   \n89")
     NORMAL 0:8 rev=1 dirty
     > 01234567|ab
     > <T>c
@@ -1229,11 +1284,17 @@ let%expect_test "block edges inside a TAB split it; inside a wide glyph leave a 
   List.iter [ (0, 2), (2, 3); (0, 0), (2, 1) ] ~f:(fun (anchor, active) ->
     show_visible (run (create s) (select_block anchor active @ [ Visual_delete ])));
   [%expect {|
+    (Set_clipboard  "cd\
+                   \n b\
+                   \ncd")
     NORMAL 0:2 rev=1 dirty
     > ab|ef
     > a·cd
     > abef
     register 2: cd / ·b / cd
+    (Set_clipboard  "ab\
+                   \na \
+                   \nab")
     NORMAL 0:0 rev=1 dirty
     > |cdef
     > ·bcd
@@ -1246,10 +1307,14 @@ let%expect_test "block edges inside a TAB split it; inside a wide glyph leave a 
   let t = run (create "e\u{0301}x\nab") (select_block (0, 0) (1, 0) @ [ Visual_delete ]) in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "\230\156\172\
+                   \n\230\156\172")
     NORMAL 0:1 rev=1 dirty
     > 日|語
     > 日語
     register 2: 本 / 本
+    (Set_clipboard  "e\204\129\
+                   \na")
     NORMAL 0:0 rev=1 dirty
     > |x
     > b
@@ -1266,16 +1331,22 @@ let%expect_test "block paste lines rows up by display column" =
     ]
     ~f:(fun paste -> show_visible (run (create "abcd\nefgh") (yank @ [ paste ])));
   [%expect {|
+    (Set_clipboard  "ab\
+                   \nef")
     NORMAL 1:1 rev=1 dirty
     > abcd
     > e|abfgh
     > ·ef
     register 2: ab / ef
+    (Set_clipboard  "ab\
+                   \nef")
     NORMAL 1:0 rev=1 dirty
     > abcd
     > |abefgh
     > ef
     register 2: ab / ef
+    (Set_clipboard  "ab\
+                   \nef")
     NORMAL 1:1 rev=1 dirty
     > abcd
     > e|ababfgh
@@ -1289,6 +1360,8 @@ let%expect_test "block paste lines rows up by display column" =
   let t = run t [ Undo ] in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "ab\
+                   \nef")
     NORMAL 1:1 rev=1 dirty
     > abcd
     > e|abfgh
@@ -1306,6 +1379,9 @@ let%expect_test "block paste lines rows up by display column" =
   let t = run (create "abc\nd\nefg") (select_block (0, 1) (2, 2) @ [ Visual_yank ] @ goto (2, 2) @ [ Paste { before = false; count = 1 } ]) in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "bc\
+                   \n\
+                   \nfg")
     NORMAL 2:3 rev=1 dirty
     > abc
     > d
@@ -1320,12 +1396,16 @@ let%expect_test "block paste lines rows up by display column" =
     show_visible
       (run (create s) (select_block (0, 0) (1, 1) @ [ Visual_yank ] @ goto cursor @ [ Paste { before = false; count = 1 } ])));
   [%expect {|
+    (Set_clipboard  "zw\
+                   \nzw")
     NORMAL 2:4 rev=1 dirty
     > zw
     > zw
     > abcd|zwe
     > ····zw····abc
     register 2: zw / zw
+    (Set_clipboard  "zw\
+                   \nzw")
     NORMAL 2:2 rev=1 dirty
     > zw
     > zw
@@ -1341,6 +1421,8 @@ let%expect_test "block paste pads a row with a TAB by where it lands" =
   let t = run (create "a\tb\nbcdefghij\nXYZ\nXYZ") (select_block (0, 0) (1, 7) @ [ Visual_yank ] @ goto (2, 0) @ [ Paste { before = false; count = 1 } ]) in
   show_visible t;
   [%expect {|
+    (Set_clipboard  "a\t\
+                   \nbcdefghi")
     NORMAL 2:1 rev=1 dirty
     > a<T>b
     > bcdefghij
@@ -1372,6 +1454,8 @@ let%expect_test "an all-empty block keeps the register; an empty register report
   show_visible t;
   print_s [%sexp (undo_steps t : int)];
   [%expect {|
+    (Set_clipboard  "ab\
+                   \nab")
     NORMAL 0:1 rev=1 dirty
     > a|abababb
     > aabababb
@@ -1389,6 +1473,7 @@ let%expect_test "in Visual mode, l and $ reach the line break, so v$ selects the
     VISUAL 0:3 rev=0
     > abc|
     > def
+    (Set_clipboard "abc\n")
     NORMAL 0:0 rev=1 dirty
     > |def
     |}];
@@ -1411,6 +1496,482 @@ let%expect_test "in Visual mode, l and $ reach the line break, so v$ selects the
     VISUAL 1:0 rev=0
     > abc
     > |def
+    |}]
+;;
+
+(* [show_visible], then the block insert's points as line:column. *)
+let show_points t =
+  show_visible t;
+  match Editor.block_insert_points t with
+  | [] -> ()
+  | points ->
+    printf
+      "points %s\n"
+      (String.concat ~sep:" " (List.map points ~f:(fun (line, col) -> sprintf "%d:%d" line col)))
+;;
+
+let block_insert ?(count = 1) () = Visual_insert { append = false; count }
+let block_append ?(count = 1) () = Visual_insert { append = true; count }
+
+let%expect_test "block I types on every line as it happens; one undo step" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ block_insert () ]) in
+  show_points t;
+  let t = run t [ Insert_text "X" ] in
+  show_points t;
+  let t = run t [ Insert_text "Y" ] in
+  show_points t;
+  let t = run t [ Exit_insert ] in
+  show_points t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    INSERT 0:3 rev=0
+    > abc|defgh
+    > ab
+    > abcdefgh
+    ()
+    points 0:3 2:3
+    INSERT 0:4 rev=1 dirty
+    > abcX|defgh
+    > ab
+    > abcXdefgh
+    ()
+    points 0:4 2:4
+    INSERT 0:5 rev=2 dirty
+    > abcXY|defgh
+    > ab
+    > abcXYdefgh
+    ()
+    points 0:5 2:5
+    NORMAL 0:3 rev=2 dirty
+    > abc|XYdefgh
+    > ab
+    > abcXYdefgh
+    ()
+    1
+    |}];
+  let t = run t [ Undo ] in
+  show_points t;
+  let t = run t [ Redo ] in
+  show_points t;
+  [%expect {|
+    NORMAL 0:3 rev=3
+    > abc|defgh
+    > ab
+    > abcdefgh
+    ()
+    NORMAL 0:5 rev=4 dirty
+    > abcXY|defgh
+    > ab
+    > abcXYdefgh
+    ()
+    |}]
+;;
+
+let%expect_test "block A pads short lines; after $ it appends at each line's end" =
+  let t =
+    run (create "abcdefgh\nab\nabcdefgh") (select_block (0, 3) (2, 5) @ [ block_append () ])
+  in
+  show_points t;
+  let t = run t (typed "XY") in
+  show_points t;
+  let t = run t [ Exit_insert ] in
+  show_points t;
+  [%expect {|
+    INSERT 0:6 rev=0
+    > abcdef|gh
+    > ab
+    > abcdefgh
+    ()
+    points 0:6 1:6 2:6
+    INSERT 0:8 rev=2 dirty
+    > abcdefXY|gh
+    > ab····XY
+    > abcdefXYgh
+    ()
+    points 0:8 1:8 2:8
+    NORMAL 0:3 rev=2 dirty
+    > abc|defXYgh
+    > ab····XY
+    > abcdefXYgh
+    ()
+    |}];
+  let t =
+    run
+      (create "abcdefgh\nab\nabcd")
+      (select_block ~to_line_end:true (0, 1) (2, 1) @ [ block_append () ] @ typed "XY" @ [ Exit_insert ])
+  in
+  show_points t;
+  [%expect {|
+    NORMAL 0:1 rev=2 dirty
+    > a|bcdefghXY
+    > abXY
+    > abcdXY
+    ()
+    |}];
+  (* A line ending inside the block is padded to its right edge. *)
+  let t =
+    run
+      (create "abcdefgh\nabcd\nabcdefgh")
+      (select_block (0, 2) (2, 5) @ [ block_append () ] @ typed "XY" @ [ Exit_insert ])
+  in
+  show_points t;
+  [%expect {|
+    NORMAL 0:2 rev=2 dirty
+    > ab|cdefXYgh
+    > abcd··XY
+    > abcdefXYgh
+    ()
+    |}]
+;;
+
+let%expect_test "block c deletes, then inserts on lines that still reach the left edge" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ Visual_change ]) in
+  show_points t;
+  let t = run t (typed "XY" @ [ Exit_insert ]) in
+  show_points t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    (Set_clipboard  "def\
+                   \n   \
+                   \ndef")
+    INSERT 0:3 rev=1 dirty
+    > abc|gh
+    > ab
+    > abcgh
+    register 3: def / ··· / def
+    points 0:3 2:3
+    NORMAL 0:4 rev=3 dirty
+    > abcX|Ygh
+    > ab
+    > abcXYgh
+    register 3: def / ··· / def
+    1
+    |}];
+  (* With nothing typed, it is a delete, leaving the cursor as Insert does. *)
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ Visual_change; Exit_insert ]) in
+  show_points t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    (Set_clipboard  "def\
+                   \n   \
+                   \ndef")
+    NORMAL 0:2 rev=1 dirty
+    > ab|cgh
+    > ab
+    > abcgh
+    register 3: def / ··· / def
+    1
+    |}];
+  (* A line ending inside the block still reaches its left edge after the delete. *)
+  let t =
+    run
+      (create "abcdefgh\nabcd\nabcdefgh")
+      (select_block (0, 2) (2, 5) @ [ Visual_change ] @ typed "XY" @ [ Exit_insert ])
+  in
+  show_points t;
+  [%expect {|
+    (Set_clipboard  "cdef\
+                   \ncd\
+                   \ncdef")
+    NORMAL 0:3 rev=3 dirty
+    > abX|Ygh
+    > abXY
+    > abXYgh
+    register 4: cdef / cd / cdef
+    |}]
+;;
+
+let%expect_test "which lines block I reaches: short, ending at the edge, and empty" =
+  let t =
+    run
+      (create "abcdefgh\nabc\nab\n\nabcdefgh")
+      (select_block (0, 3) (4, 5) @ [ block_insert () ] @ typed "XY" @ [ Exit_insert ])
+  in
+  show_points t;
+  [%expect {|
+    NORMAL 0:3 rev=2 dirty
+    > abc|XYdefgh
+    > abcXY
+    > ab
+    >
+    > abcXYdefgh
+    ()
+    |}];
+  let t =
+    run
+      (create "abcdefgh\n\nabcdefgh")
+      (select_block (0, 0) (2, 0) @ [ block_insert () ] @ typed "XY" @ [ Exit_insert ])
+  in
+  show_points t;
+  [%expect {|
+    NORMAL 0:0 rev=2 dirty
+    > |XYabcdefgh
+    > XY
+    > XYabcdefgh
+    ()
+    |}]
+;;
+
+let%expect_test "block insert with nothing typed changes nothing" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  List.iter [ block_insert (); block_append () ] ~f:(fun command ->
+    let t = run (create s) (select_block (0, 3) (2, 5) @ [ command; Exit_insert ]) in
+    show_points t;
+    print_s [%sexp (undo_steps t : int)]);
+  [%expect {|
+    NORMAL 0:2 rev=0
+    > ab|cdefgh
+    > ab
+    > abcdefgh
+    ()
+    0
+    NORMAL 0:5 rev=0
+    > abcde|fgh
+    > ab
+    > abcdefgh
+    ()
+    0
+    |}];
+  (* Typing and deleting it all, padding included, is no change either. *)
+  let t =
+    run
+      (create s)
+      (select_block (0, 3) (2, 5)
+       @ [ block_append (); Insert_text "X"; Delete_backward; Delete_backward ])
+  in
+  show_points t;
+  let t = run t [ Exit_insert ] in
+  show_points t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    INSERT 0:6 rev=2
+    > abcdef|gh
+    > ab
+    > abcdefgh
+    ()
+    points 0:6 1:6 2:6
+    NORMAL 0:5 rev=2
+    > abcde|fgh
+    > ab
+    > abcdefgh
+    ()
+    0
+    |}]
+;;
+
+let%expect_test "block insert Backspace, soft tabs, the jk escape, and a count" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ block_insert () ] @ typed "XYZ") in
+  let t = run t [ Delete_backward ] in
+  show_points t;
+  [%expect {|
+    INSERT 0:5 rev=4 dirty
+    > abcXY|defgh
+    > ab
+    > abcXYdefgh
+    ()
+    points 0:5 2:5
+    |}];
+  (* Soft tabs measure the cursor's column, 3 here. *)
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ block_insert (); Insert_soft_tab 4 ]) in
+  show_points t;
+  let t = run t [ Insert_soft_tab 4; Insert_text "x"; Delete_soft_tab_backward 4 ] in
+  show_points t;
+  let t = run t [ Delete_soft_tab_backward 4 ] in
+  show_points t;
+  let t = run t [ Delete_soft_tab_backward 4 ] in
+  show_points t;
+  [%expect {|
+    INSERT 0:4 rev=1 dirty
+    > abc·|defgh
+    > ab
+    > abc·defgh
+    ()
+    points 0:4 2:4
+    INSERT 0:8 rev=4 dirty
+    > abc·····|defgh
+    > ab
+    > abc·····defgh
+    ()
+    points 0:8 2:8
+    INSERT 0:4 rev=5 dirty
+    > abc·|defgh
+    > ab
+    > abc·defgh
+    ()
+    points 0:4 2:4
+    INSERT 0:3 rev=6
+    > abc|defgh
+    > ab
+    > abcdefgh
+    ()
+    points 0:3 2:3
+    |}];
+  (* The jk escape takes back the j before leaving. *)
+  let t =
+    run (create s) (select_block (0, 3) (2, 5) @ [ block_insert (); Insert_text "j"; Delete_backward; Exit_insert ])
+  in
+  show_points t;
+  [%expect {|
+    NORMAL 0:2 rev=2
+    > ab|cdefgh
+    > ab
+    > abcdefgh
+    ()
+    |}];
+  let t =
+    run (create s) (select_block (0, 3) (2, 5) @ [ block_insert ~count:2 () ] @ typed "XY")
+  in
+  show_points t;
+  let t = run t [ Exit_insert ] in
+  show_points t;
+  print_s [%sexp (undo_steps t : int)];
+  [%expect {|
+    INSERT 0:5 rev=2 dirty
+    > abcXY|defgh
+    > ab
+    > abcXYdefgh
+    ()
+    points 0:5 2:5
+    NORMAL 0:3 rev=3 dirty
+    > abc|XYXYdefgh
+    > ab
+    > abcXYXYdefgh
+    ()
+    1
+    |}]
+;;
+
+let%expect_test "block insert refuses line breaks, forward deletion, and invalid text" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ block_insert (); Insert_text "X" ]) in
+  List.iter [ Insert_newline; Insert_text "a\nb"; Delete_forward; Insert_text "\r" ] ~f:(fun command ->
+    show_points (run t [ command ]));
+  [%expect {|
+    INSERT 0:4 rev=1 dirty (Error"Block insert cannot add a line break")
+    > abcX|defgh
+    > ab
+    > abcXdefgh
+    ()
+    points 0:4 2:4
+    INSERT 0:4 rev=1 dirty (Error"Block insert cannot add a line break")
+    > abcX|defgh
+    > ab
+    > abcXdefgh
+    ()
+    points 0:4 2:4
+    INSERT 0:4 rev=1 dirty (Error"Block insert cannot delete forward")
+    > abcX|defgh
+    > ab
+    > abcXdefgh
+    ()
+    points 0:4 2:4
+    INSERT 0:4 rev=1 dirty (Error"Rejected text: carriage return (only LF line endings are supported) at byte offset 0")
+    > abcX|defgh
+    > ab
+    > abcXdefgh
+    ()
+    points 0:4 2:4
+    |}]
+;;
+
+let%expect_test "block insert into TABs and wide characters, as Vim" =
+  let tabs = "0123456789ab\n\tabc\n0123456789ab" in
+  let t = run (create tabs) (select_block (0, 2) (2, 4) @ [ block_insert () ]) in
+  show_points t;
+  let t = run t [ Insert_text "X" ] in
+  show_points t;
+  [%expect {|
+    INSERT 0:2 rev=0
+    > 01|23456789ab
+    > <T>abc
+    > 0123456789ab
+    ()
+    points 0:2 1:2 2:2
+    INSERT 0:3 rev=1 dirty
+    > 01X|23456789ab
+    > ··X······abc
+    > 01X23456789ab
+    ()
+    points 0:3 1:3 2:3
+    |}];
+  let t = run (create tabs) (select_block (0, 2) (2, 4) @ [ block_append (); Insert_text "X"; Exit_insert ]) in
+  show_points t;
+  let t = run (create tabs) (select_block (0, 2) (2, 4) @ [ Visual_change; Insert_text "X"; Exit_insert ]) in
+  show_points t;
+  [%expect {|
+    NORMAL 0:2 rev=1 dirty
+    > 01|234X56789ab
+    > ·····X···abc
+    > 01234X56789ab
+    ()
+    (Set_clipboard  "234\
+                   \n   \
+                   \n234")
+    NORMAL 0:2 rev=2 dirty
+    > 01|X56789ab
+    > ··X···abc
+    > 01X56789ab
+    register 3: 234 / ··· / 234
+    |}];
+  let wide = "abcdef\na界bcd\nabcdef" in
+  let t = run (create wide) (select_block (0, 2) (2, 3) @ [ block_insert (); Insert_text "X" ]) in
+  show_points t;
+  let t = run (create wide) (select_block (0, 0) (2, 1) @ [ block_append (); Insert_text "X" ]) in
+  show_points t;
+  [%expect {|
+    INSERT 0:3 rev=1 dirty
+    > abX|cdef
+    > a·X界bcd
+    > abXcdef
+    ()
+    points 0:3 1:3 2:3
+    INSERT 0:3 rev=1 dirty
+    > abX|cdef
+    > a·X界bcd
+    > abXcdef
+    ()
+    points 0:3 1:3 2:3
+    |}]
+;;
+
+let%expect_test "moving, undo, or a non-block selection end or refuse block insert" =
+  let s = "abcdefgh\nab\nabcdefgh" in
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ block_insert (); Insert_text "X"; move Right ]) in
+  show_points t;
+  let t = run t [ Insert_text "Y" ] in
+  show_points t;
+  [%expect {|
+    INSERT 0:5 rev=1 dirty
+    > abcXd|efgh
+    > ab
+    > abcXdefgh
+    ()
+    INSERT 0:6 rev=2 dirty
+    > abcXdY|efgh
+    > ab
+    > abcXdefgh
+    ()
+    |}];
+  let t = run (create s) (select_block (0, 3) (2, 5) @ [ block_insert (); Insert_text "X"; Undo ]) in
+  show_points t;
+  [%expect {|
+    INSERT 0:3 rev=2
+    > abc|defgh
+    > ab
+    > abcdefgh
+    ()
+    |}];
+  let t = run (create s) [ Enter_visual `Characterwise; move Down; block_insert () ] in
+  show_points t;
+  [%expect {|
+    VISUAL 1:0 rev=0 (Error"I and A need a block selection")
+    > abcdefgh
+    > |ab
+    > abcdefgh
+    ()
     |}]
 ;;
 
@@ -1605,6 +2166,15 @@ let%expect_test "soft-tab Backspace deletes spaces back to the previous multiple
     {|
     INSERT 0:1 rev=2 dirty
     > a|b
+    |}]
+;;
+
+let%expect_test "soft-tab Backspace after a multibyte character deletes it" =
+  let t = run (create "") [ insert; Insert_text "é"; Delete_soft_tab_backward 2 ] in
+  show t;
+  [%expect {|
+    INSERT 0:0 rev=2
+    > |
     |}]
 ;;
 
@@ -2053,5 +2623,26 @@ let%expect_test "%: an Insert transaction is closed, and a failed % still closes
     NORMAL 0:6 rev=4 dirty
     > (x)abc|d
     3
+    |}]
+;;
+
+let%expect_test "only commands that replace the register copy it to the clipboard" =
+  let t = create "one\ntwo\n" in
+  (* Moves, a paste, and an empty yank leave the register, so they request nothing. *)
+  let t = run t [ Yank_lines 1; move Down; Paste { before = false; count = 1 } ] in
+  let t = run t [ move Line_start; Yank_motion { motion = Left; count = None } ] in
+  (* Yanking equal text again still copies: the clipboard may have changed since. *)
+  let t = run t [ Yank_lines 1; Yank_lines 1 ] in
+  show t;
+  [%expect
+    {|
+    (Set_clipboard "one\n")
+    (Set_clipboard "one\n")
+    (Set_clipboard "one\n")
+    NORMAL 2:0 rev=1 dirty
+    > one
+    > two
+    > |one
+    >
     |}]
 ;;

@@ -15,6 +15,8 @@ module Role = struct
     | Special
     | Warning
     | Error
+    | Block_cursor
+    | Block_copy
   [@@deriving sexp_of, enumerate]
 
   let color t =
@@ -32,15 +34,55 @@ module Role = struct
       | Special -> 0xbb, 0x9a, 0xf7
       | Warning -> 0xe0, 0xaf, 0x68
       | Error -> 0xf7, 0x76, 0x8e
+      | Block_cursor -> 0x7a, 0xa2, 0xf7
+      | Block_copy -> 0xd0, 0xd0, 0xd0
     in
     Attr.Color.rgb ~r ~g ~b
   ;;
 end
 
-let attrs (style : Ches_screen.Style.t) =
-  let colors ?(attrs = []) fg bg =
-    Attr.fg (Role.color fg) :: Attr.bg (Role.color bg) :: attrs
-  in
+module Font = struct
+  type t =
+    | Bold
+    | Italic
+    | Underline
+  [@@deriving sexp_of, equal, enumerate]
+
+  let attr = function
+    | Bold -> Attr.bold
+    | Italic -> Attr.italic
+    | Underline -> Attr.underline
+  ;;
+
+  let default : Ches_screen.Style.t -> t list = function
+    | Title | Mode _ | Dirty | Pending | Error -> [ Bold ]
+    | Backdrop
+    | Text
+    | Text_cursor_line
+    | Special
+    | Special_cursor_line
+    | Search_match
+    | Search_match_current
+    | Search_special_match
+    | Search_special_match_current
+    | Selection
+    | Selection_special
+    | Insert_cursor
+    | Insert_point
+    | Gutter
+    | Gutter_cursor_line
+    | Border
+    | Title_special
+    | Status
+    | Status_special
+    | Info
+    | Warning
+    | Smear -> []
+  ;;
+end
+
+let colors (style : Ches_screen.Style.t) =
+  let colors fg bg = [ Attr.fg (Role.color fg); Attr.bg (Role.color bg) ] in
   match style with
   | Backdrop -> colors Foreground Backdrop
   | Text -> colors Foreground Background
@@ -53,23 +95,27 @@ let attrs (style : Ches_screen.Style.t) =
   | Search_special_match_current -> colors Background Insert_accent
   | Selection -> colors Background Warning
   | Selection_special -> colors Background Warning
+  | Insert_cursor -> colors Background Block_cursor
+  | Insert_point -> colors Background Block_copy
   | Gutter -> colors Muted Background
   | Gutter_cursor_line -> colors Foreground Current_line
   | Border -> colors Border Background
-  | Title -> colors ~attrs:[ Attr.bold ] Foreground Background
+  | Title -> colors Foreground Background
   | Title_special -> colors Special Background
   | Status -> colors Foreground Surface
   | Status_special -> colors Special Surface
-  | Mode Normal -> colors ~attrs:[ Attr.bold ] Background Normal_accent
-  | Mode Insert -> colors ~attrs:[ Attr.bold ] Background Insert_accent
-  | Mode (Visual _) -> colors ~attrs:[ Attr.bold ] Background Warning
-  | Dirty -> colors ~attrs:[ Attr.bold ] Warning Surface
-  | Pending -> colors ~attrs:[ Attr.bold ] Normal_accent Surface
+  | Mode Normal -> colors Background Normal_accent
+  | Mode Insert -> colors Background Insert_accent
+  | Mode (Visual _) -> colors Background Warning
+  | Dirty -> colors Warning Surface
+  | Pending -> colors Normal_accent Surface
   | Info -> colors Foreground Surface
   | Warning -> colors Warning Surface
-  | Error -> colors ~attrs:[ Attr.bold ] Error Surface
+  | Error -> colors Error Surface
   (* Notty cannot query the terminal's native cursor colour.  Ches leaves that cursor
      at the terminal default (normally white), so use an explicit near-white here
      rather than the Normal-mode blue accent while the replacement cursor is moving. *)
   | Smear -> [ Attr.fg (Attr.Color.rgb ~r:0xf5 ~g:0xf5 ~b:0xf5) ]
 ;;
+
+let attrs ?(font = Font.default) style = colors style @ List.map (font style) ~f:Font.attr

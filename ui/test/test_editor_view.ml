@@ -31,12 +31,12 @@ let%expect_test "the app renders, edits, and follows resizes" =
   Handle.show handle;
   [%expect
     {|
-    (cursor (((position ((x 5) (y 1))) (kind Block))))
+    (cursor (((position ((x 3) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
-    ││1   hello                             ││
-    ││  1 world                             ││
-    ││  2                                   ││
+    ││  hello                               ││
+    ││  world                               ││
+    ││                                      ││
     │╰──────────────────────────────────────╯│
     │ NORMAL  f.txt                      1:1 │
     └────────────────────────────────────────┘
@@ -45,12 +45,12 @@ let%expect_test "the app renders, edits, and follows resizes" =
   Handle.show handle;
   [%expect
     {|
-    (cursor (((position ((x 5) (y 2))) (kind Block))))
+    (cursor (((position ((x 3) (y 2))) (kind Block))))
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
-    ││  1 hello                             ││
-    ││2   xworld                            ││
-    ││  1                                   ││
+    ││  hello                               ││
+    ││  xworld                              ││
+    ││                                      ││
     │╰──────────────────────────────────────╯│
     │ NORMAL  f.txt [+]                  2:1 │
     └────────────────────────────────────────┘
@@ -75,10 +75,11 @@ let%expect_test "events in one frame all apply, in order" =
   Handle.show handle;
   [%expect
     {|
-    (cursor (((position ((x 6) (y 1))) (kind Block))))
+    ([write_string_to_tty] (string "\027]52;c;Yw==\007"))
+    (cursor (((position ((x 4) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
-    ││1   ab                                ││
+    ││  ab                                  ││
     ││                                      ││
     ││                                      ││
     │╰──────────────────────────────────────╯│
@@ -93,7 +94,7 @@ let%expect_test "Space q exits once; later input is ignored" =
   Handle.recompute_view handle;
   [%expect {|
     EXIT
-    (cursor (((position ((x 5) (y 1))) (kind Block))))
+    (cursor (((position ((x 3) (y 1))) (kind Block))))
     |}]
 ;;
 
@@ -105,12 +106,12 @@ let%expect_test "Space v layout commands move the tile, and resizes keep the req
   [%expect {|
     (cursor (((position ((x 19) (y 1))) (kind Block))))
     ┌──────────────────────────────────────────────────┐
-    │              ╭─ f.txt ──────────────────────────╮│
-    │              │1   abc                           ││
-    │              │                                  ││
-    │              │                                  ││
-    │              ╰──────────────────────────────────╯│
-    │ NORMAL  f.txt Offset +10 (+7 fit)            1:1 │
+    │                ╭─ f.txt ────────────────────────╮│
+    │                │  abc                           ││
+    │                │                                ││
+    │                │                                ││
+    │                ╰────────────────────────────────╯│
+    │ NORMAL  f.txt Offset +10 (+8 fit)            1:1 │
     └──────────────────────────────────────────────────┘
     |}];
   Bonsai_term_test.set_dimensions handle { width = 40; height = 6 };
@@ -118,21 +119,21 @@ let%expect_test "Space v layout commands move the tile, and resizes keep the req
   [%expect {|
     (cursor (((position ((x 9) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
-    │    ╭─ f.txt ──────────────────────────╮│
-    │    │1   abc                           ││
-    │    │                                  ││
-    │    │                                  ││
-    │    ╰──────────────────────────────────╯│
-    │ NORMAL  f.txt Offset +10 (+7 fit)  1:1 │
+    │      ╭─ f.txt ────────────────────────╮│
+    │      │  abc                           ││
+    │      │                                ││
+    │      │                                ││
+    │      ╰────────────────────────────────╯│
+    │ NORMAL  f.txt Offset +10 (+8 fit)  1:1 │
     └────────────────────────────────────────┘
     |}];
   send handle (chars " vc");
   Handle.show handle;
   [%expect {|
-    (cursor (((position ((x 5) (y 1))) (kind Block))))
+    (cursor (((position ((x 3) (y 1))) (kind Block))))
     ┌────────────────────────────────────────┐
     │╭─ f.txt ──────────────────────────────╮│
-    ││1   abc                               ││
+    ││  abc                                 ││
     ││                                      ││
     ││                                      ││
     │╰──────────────────────────────────────╯│

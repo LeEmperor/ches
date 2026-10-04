@@ -16,6 +16,9 @@ type t =
        same fields. *)
   | Read_file of { path : string }
   (** Read [path] for a forced reload, then report [Read_file_finished]. *)
+  | Set_clipboard of string
+  (** Put this text on the system clipboard. Requested whenever a command replaces
+      the unnamed register; nothing is reported back. *)
   | Exit (** Terminate the editor. *)
 [@@deriving sexp_of, equal]
 

@@ -37,6 +37,24 @@ let case_sensitive policy query =
   | Search_case.Smart -> has_ascii_uppercase query
 ;;
 
+(* A block insert (Visual block [I], [A] or [c]): the text typed so far goes in at one
+   insertion point on each participating line, and every edit is applied to all of
+   them at once. The text is always [base] with [typed] inserted, so Backspace back to
+   nothing restores [base] exactly, padding included. *)
+module Block_insert = struct
+  type t =
+    { base : B.t (* The text when the block insert began. *)
+    ; points : (int * int * Block.Insertion.t) list
+    (* Line, display column, and where to insert in [base]; top line first. The
+       cursor's insertion point is the first. *)
+    ; typed : string
+    ; count : int (* Copies of [typed] inserted on leaving. *)
+    ; top_left : int option
+    (* For [I] and [A], the block's first column: where the cursor goes on leaving
+       after typing. [None] for [c], which leaves as an ordinary Insert does. *)
+    }
+end
+
 type t =
   { text : B.t
   ; path : string option
@@ -55,6 +73,7 @@ type t =
   ; search_case : Search_case.t
   ; search_visible : bool
   ; selection : Selection.t option
+  ; block_insert : Block_insert.t option (* Only in Insert mode. *)
   }
 
 let create ?path ?(search_case = Search_case.Smart) ~cell_width text =
@@ -79,6 +98,7 @@ let create ?path ?(search_case = Search_case.Smart) ~cell_width text =
   ; search_case
   ; search_visible = false
   ; selection = None
+  ; block_insert = None
   }
 ;;
 
@@ -106,6 +126,14 @@ let display_column t offset ~tab_end =
     (Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line))
     ~pos:(offset - B.line_start t.text line)
     ~tab_end
+;;
+
+(* The display cells of [row] drawn from column [col]: TAB widths depend on it. *)
+let row_width t row ~col =
+  let lead = col % Cell_layout.tab_stop in
+  Cell_layout.total_width
+    (Cell_layout.glyphs ~width:t.cell_width (String.make lead ' ' ^ row))
+  - lead
 ;;
 
 (* The preferred column of a cursor at [offset], as Vim's [curswant]. A cursor on a TAB
@@ -207,9 +235,6 @@ let block t =
   | Some { kind = `Characterwise | `Linewise; _ } | None -> None
 ;;
 
-(* Changing a block needs block insert (phase 17). *)
-let block_change_message = Message.Error "Block change is not supported yet"
-
 (* Replace [len] bytes at [pos] with [s], which is valid text. *)
 let replace text ~pos ~len s =
   let text = if len = 0 then text else B.delete text ~pos ~len in
@@ -271,28 +296,31 @@ let visual_yank t =
     leave_visual t ~cursor:(Int.min selection.anchor selection.active)
 ;;
 
+(* The text without [block], and the offset of its top-left corner there. The rows come
+   last line first, so each edit leaves the offsets of the rows above it valid. A TAB
+   or wide glyph cut by an edge leaves spaces for its cells outside the block. *)
+let delete_block t block =
+  List.fold
+    (Block.rows t.text ~cell_width:t.cell_width block)
+    ~init:(t.text, 0)
+    ~f:(fun (text, _) row ->
+      ( replace
+          text
+          ~pos:row.start
+          ~len:(row.stop - row.start)
+          (String.make (row.before + row.after) ' ')
+      , row.start + row.before ))
+;;
+
+(* [change] applies to characterwise and linewise selections; changing a block is
+   [block_change], which needs block insert. *)
 let visual_delete t ~change =
   match t.selection with
   | None -> t
-  | Some { kind = `Blockwise; _ } when change -> { t with message = Some block_change_message }
   | Some { kind = `Blockwise; _ } ->
     let block = Option.value_exn (block t) in
     let unnamed_register = block_register t block in
-    (* The rows come last line first, so each edit leaves the offsets of the rows
-       above it valid. A TAB or wide glyph cut by an edge leaves spaces for its cells
-       outside the block. *)
-    let text, top_left =
-      List.fold
-        (Block.rows t.text ~cell_width:t.cell_width block)
-        ~init:(t.text, 0)
-        ~f:(fun (text, _) row ->
-          ( replace
-              text
-              ~pos:row.start
-              ~len:(row.stop - row.start)
-              (String.make (row.before + row.after) ' ')
-          , row.start + row.before ))
-    in
+    let text, top_left = delete_block t block in
     let t = { t with mode = Normal; selection = None; unnamed_register } in
     if B.equal text t.text then set_cursor t top_left else commit (edit t ~text ~cursor:top_left)
   | Some selection ->
@@ -406,9 +434,12 @@ let delete_soft_tab_backward t width =
   check_width width;
   let column = display_column t t.cursor ~tab_end:false in
   let stop = if column = 0 then 0 else (column - 1) / width * width in
-  (* Spaces are one byte and one display column each. *)
+  (* Spaces are one byte and one display column each. The code point before [pos] is
+     checked to be one byte first: slicing inside a multibyte one would raise. *)
   let rec start pos column =
-    if column > stop && String.equal (B.slice t.text ~pos:(pos - 1) ~len:1) " "
+    if column > stop
+       && [%equal: int option] (B.prev_boundary t.text pos) (Some (pos - 1))
+       && String.equal (B.slice t.text ~pos:(pos - 1) ~len:1) " "
     then start (pos - 1) (column - 1)
     else pos
   in
@@ -423,6 +454,201 @@ let delete_forward t =
   | None -> t
   | Some next ->
     edit t ~text:(B.delete t.text ~pos:t.cursor ~len:(next - t.cursor)) ~cursor:t.cursor
+;;
+
+(* {2 Block insert} *)
+
+(* [base] with [typed] at every insertion point, padded as the point requires; nothing
+   at all (no padding either) when [typed] is empty. The points are applied bottom
+   line first, so the offsets of those above stay valid. *)
+let block_insert_text (b : Block_insert.t) typed =
+  if String.is_empty typed
+  then b.base
+  else
+    List.fold_right b.points ~init:b.base ~f:(fun (_, _, (i : Block.Insertion.t)) text ->
+      replace
+        text
+        ~pos:i.pos
+        ~len:i.remove
+        (String.make i.pad_before ' ' ^ typed ^ String.make i.pad_after ' '))
+;;
+
+let block_insert_fits (b : Block_insert.t) typed =
+  let padding =
+    List.sum (module Int) b.points ~f:(fun (_, _, i) -> i.pad_before + i.pad_after)
+  in
+  String.length typed
+  <= (Sys.max_string_length - B.length b.base - padding) / List.length b.points
+;;
+
+let first_point (b : Block_insert.t) = List.hd_exn b.points
+
+(* The cursor: after [typed] on the top line. The top line is edited last, so its
+   offset is the same in [base]. *)
+let block_insert_cursor b typed =
+  let _, _, (i : Block.Insertion.t) = first_point b in
+  if String.is_empty typed then i.pos else i.pos + i.pad_before + String.length typed
+;;
+
+let set_typed t (b : Block_insert.t) typed =
+  if not (block_insert_fits b typed)
+  then { t with message = Some (Error "Insert is too large") }
+  else (
+    let text = block_insert_text b typed in
+    let cursor = block_insert_cursor b typed in
+    let t = { t with block_insert = Some { b with typed } } in
+    if B.equal text t.text then set_cursor t cursor else edit t ~text ~cursor)
+;;
+
+(* The display column after the typed text on the cursor's line. *)
+let block_insert_column t (b : Block_insert.t) =
+  let _, col, _ = first_point b in
+  col + row_width t b.typed ~col
+;;
+
+let block_insert_input t b s =
+  if String.mem s '\n'
+  then { t with message = Some (Error "Block insert cannot add a line break") }
+  else (
+    match B.validate s with
+    | Error e ->
+      { t with message = Some (Error ("Rejected text: " ^ B.Invalid_text.to_string_hum e)) }
+    | Ok () -> if String.is_empty s then t else set_typed t b (b.typed ^ s))
+;;
+
+(* Backspace removes only text typed in this block insert, as Vim's with its default
+   empty ['backspace']. *)
+let block_delete_backward t (b : Block_insert.t) =
+  if String.is_empty b.typed
+  then t
+  else (
+    let rec start i =
+      if i = 0 || Char.to_int b.typed.[i] land 0xC0 <> 0x80 then i else start (i - 1)
+    in
+    set_typed t b (String.prefix b.typed (start (String.length b.typed - 1))))
+;;
+
+let block_insert_soft_tab t b width =
+  check_width width;
+  block_insert_input t b (String.make (width - (block_insert_column t b % width)) ' ')
+;;
+
+let block_delete_soft_tab_backward t (b : Block_insert.t) width =
+  check_width width;
+  let column = block_insert_column t b in
+  let stop = if column = 0 then 0 else (column - 1) / width * width in
+  let spaces =
+    String.length b.typed - String.length (String.rstrip b.typed ~drop:(Char.equal ' '))
+  in
+  match Int.min spaces (column - stop) with
+  | 0 -> block_delete_backward t b
+  | n -> set_typed t b (String.drop_suffix b.typed n)
+;;
+
+(* Insert the count's copies of the typed text, then leave Insert mode. After [I] or
+   [A] with something typed the cursor goes to the block's top-left, as in Vim;
+   otherwise (and after [c]) it steps back from the insertion point as usual. *)
+let finish_block_insert t (b : Block_insert.t) =
+  let t = { t with block_insert = None } in
+  let t =
+    if b.count = 1 || String.is_empty b.typed
+    then t
+    else if String.length b.typed > Sys.max_string_length / b.count
+    then { t with message = Some (Error "Insert is too large") }
+    else (
+      let repeated = String.concat (List.init b.count ~f:(fun _ -> b.typed)) in
+      if block_insert_fits b repeated
+      then
+        edit t ~text:(block_insert_text b repeated) ~cursor:(block_insert_cursor b repeated)
+      else { t with message = Some (Error "Insert is too large") })
+  in
+  match b.top_left with
+  | Some left when not (String.is_empty b.typed) ->
+    let t = commit t in
+    let line, _, _ = first_point b in
+    let start = B.line_start t.text line in
+    let glyphs = Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line) in
+    let offset =
+      match Cell_layout.pos_of_column glyphs left with
+      | Some pos -> start + pos
+      | None -> B.line_end t.text line
+    in
+    set_cursor { t with mode = Normal } offset
+  | Some _ | None -> exit_insert t
+;;
+
+let block_insert_dispatch t b (command : Command.t) =
+  match command with
+  | Insert_text s -> block_insert_input t b s
+  | Insert_newline -> { t with message = Some (Error "Block insert cannot add a line break") }
+  | Delete_backward -> block_delete_backward t b
+  | Delete_forward -> { t with message = Some (Error "Block insert cannot delete forward") }
+  | Insert_soft_tab width -> block_insert_soft_tab t b width
+  | Delete_soft_tab_backward width -> block_delete_soft_tab_backward t b width
+  | Exit_insert -> finish_block_insert t b
+  | _ -> raise_s [%message "not a block insert command" (command : Command.t)]
+;;
+
+(* Where [I] (at the block's left edge) or [A] (after its right edge) inserts on each
+   line. [I] skips lines too short to reach the left edge, as Vim does; every other
+   line, including one that ends exactly there, takes part. [A] pads short lines, and
+   after [$] appends at each line's own end. *)
+let block_insertion_points t (block : Block.t) ~append =
+  List.range block.first_line block.last_line ~stop:`inclusive
+  |> List.filter_map ~f:(fun line ->
+    let width =
+      Cell_layout.total_width
+        (Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line))
+    in
+    if append
+    then Some (line, Option.value block.right ~default:width)
+    else Option.some_if (width >= block.left) (line, block.left))
+  |> List.map ~f:(fun (line, col) ->
+    line, col, Block.insertion t.text ~cell_width:t.cell_width ~line ~col)
+;;
+
+(* The top line always takes part: one corner is on it, at or after the left edge. *)
+let start_block_insert t ~points ~count ~top_left =
+  let b = { Block_insert.base = t.text; points; typed = ""; count; top_left } in
+  let _, _, (i : Block.Insertion.t) = first_point b in
+  set_cursor { t with mode = Insert; selection = None; block_insert = Some b } i.pos
+;;
+
+let visual_insert t ~append ~count =
+  check_count count;
+  match t.selection with
+  | None -> t
+  | Some { kind = `Characterwise | `Linewise; _ } ->
+    { t with message = Some (Error "I and A need a block selection") }
+  | Some { kind = `Blockwise; _ } ->
+    let block = Option.value_exn (block t) in
+    start_block_insert
+      t
+      ~points:(block_insertion_points t block ~append)
+      ~count
+      ~top_left:(Some block.left)
+;;
+
+(* Delete the block, then insert at its left edge on every line that still reaches
+   it, all in one undo step. *)
+let block_change t =
+  let block = Option.value_exn (block t) in
+  let unnamed_register = block_register t block in
+  let text, top_left = delete_block t block in
+  let t = { t with mode = Insert; selection = None; unnamed_register } in
+  let t = if B.equal text t.text then set_cursor t top_left else edit t ~text ~cursor:top_left in
+  start_block_insert
+    t
+    ~points:(block_insertion_points t block ~append:false)
+    ~count:1
+    ~top_left:None
+;;
+
+let block_insert_points t =
+  match t.block_insert with
+  | None -> []
+  | Some b ->
+    List.map b.points ~f:(fun (line, col, _) -> line, col + row_width t b.typed ~col)
 ;;
 
 (* Normal mode: the cursor is on a code point other than LF unless its line is
@@ -615,14 +841,6 @@ let repeat_text t text count =
   else Ok (String.concat (List.init count ~f:(fun _ -> text)))
 ;;
 
-(* The display cells of [row] drawn from column [col]: TAB widths depend on it. *)
-let row_width t row ~col =
-  let lead = col % Cell_layout.tab_stop in
-  Cell_layout.total_width
-    (Cell_layout.glyphs ~width:t.cell_width (String.make lead ' ' ^ row))
-  - lead
-;;
-
 (* Row [i] of the register goes to the same display column on the [i]th line from the
    cursor, repeated [count] times. Each repetition but the last is padded to the
    block's width, and the last too when text follows it. Short lines are padded up to
@@ -799,6 +1017,72 @@ let quit t =
   else t, [ Effect.Exit ]
 ;;
 
+let dispatch_command t (command : Command.t) =
+  match command with
+  | Move { motion; count } -> move t motion ~count, []
+  | Enter_insert position -> enter_insert t position, []
+  | Open_line_below -> open_line t ~below:true, []
+  | Open_line_above -> open_line t ~below:false, []
+  | Exit_insert -> exit_insert t, []
+  | Insert_text s -> insert_text t s, []
+  | Insert_newline -> insert_newline t, []
+  | Delete_backward -> delete_backward t, []
+  | Delete_forward -> delete_forward t, []
+  | Insert_soft_tab width -> insert_soft_tab t width, []
+  | Delete_soft_tab_backward width -> delete_soft_tab_backward t width, []
+  | Delete_char -> delete_char t, []
+  | Delete_chars_forward count -> delete_chars_forward t count, []
+  | Delete_chars_backward count -> delete_chars_backward t count, []
+  | Delete_motion { motion; count } -> delete_motion t motion ~count, []
+  | Delete_lines count -> delete_lines t count, []
+  | Delete_inner_word -> delete_inner_word t, []
+  | Yank_motion { motion; count } -> yank_motion t motion ~count, []
+  | Yank_lines count -> yank_lines t count, []
+  | Paste { before; count } -> paste t ~before ~count, []
+  | Repeat_find { opposite; count } ->
+    (match repeat_find t ~opposite ~count with
+     | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
+     | Ok (find, destination, matched) ->
+       let t = { t with last_find = Some (find, matched) } in
+       set_cursor t destination, [])
+  | Delete_repeat_find { opposite; count } ->
+    (match repeat_find t ~opposite ~count with
+     | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
+     | Ok (find, destination, matched) ->
+       delete_range { t with last_find = Some (find, matched) }
+         (Range.resolve_destination t.text find ~cursor:t.cursor ~destination), [])
+  | Yank_repeat_find { opposite; count } ->
+    (match repeat_find t ~opposite ~count with
+     | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
+     | Ok (find, destination, matched) ->
+       yank_range { t with last_find = Some (find, matched) }
+         (Range.resolve_destination t.text find ~cursor:t.cursor ~destination), [])
+  | Search { query; forward; count; whole_word } -> search t ~query ~forward ~count ~whole_word, []
+  | Search_word { forward } -> search_word t ~forward, []
+  | Clear_search_highlight -> { t with search_visible = false }, []
+  | Enter_visual kind -> enter_visual t kind, []
+  | Exit_visual ->
+    (match t.selection with
+     | None -> t, []
+     | Some selection -> leave_visual t ~cursor:selection.active, [])
+  | Visual_delete -> visual_delete t ~change:false, []
+  | Visual_yank -> visual_yank t, []
+  | Visual_change ->
+    (match t.selection with
+     | Some { kind = `Blockwise; _ } -> block_change t, []
+     | Some { kind = `Characterwise | `Linewise; _ } | None -> visual_delete t ~change:true, [])
+  | Visual_insert { append; count } -> visual_insert t ~append ~count, []
+  | Reload ->
+    (match t.path with
+     | None -> { t with message = Some (Error "No file name") }, []
+     | Some path -> t, [ Effect.Read_file { path } ])
+  | Undo -> restore t ~step:History.undo ~none_message:"Already at oldest change", []
+  | Redo -> restore t ~step:History.redo ~none_message:"Already at newest change", []
+  | Save -> save t
+  | Quit -> quit t
+  | Force_quit -> t, [ Effect.Exit ]
+;;
+
 let dispatch t (command : Command.t) =
   let applies =
     match command, t.mode with
@@ -821,10 +1105,11 @@ let dispatch t (command : Command.t) =
         | Yank_lines _
         | Paste _
           | Search _ | Search_word _ | Clear_search_highlight
-          | Visual_delete | Visual_yank | Visual_change
+          | Visual_delete | Visual_yank | Visual_change | Visual_insert _
          | Reload ), Insert -> false
-    | (Visual_delete | Visual_yank | Visual_change), Normal -> false
-    | (Move _ | Enter_visual _ | Exit_visual | Visual_delete | Visual_yank | Visual_change), Visual _ -> true
+    | (Visual_delete | Visual_yank | Visual_change | Visual_insert _), Normal -> false
+    | ( Move _ | Enter_visual _ | Exit_visual | Visual_delete | Visual_yank | Visual_change
+      | Visual_insert _ ), Visual _ -> true
     | (Delete_char | Delete_chars_forward _ | Delete_chars_backward _ | Delete_motion _ | Delete_lines _ | Delete_inner_word | Yank_motion _ | Yank_lines _ | Paste _ | Search _ | Search_word _ | Clear_search_highlight | Reload), Visual _ -> false
     | _, Visual _ -> false
     | _ -> true
@@ -833,65 +1118,30 @@ let dispatch t (command : Command.t) =
   then t, []
   else (
     let t = { t with message = None } in
-    match command with
-    | Move { motion; count } -> move t motion ~count, []
-    | Enter_insert position -> enter_insert t position, []
-    | Open_line_below -> open_line t ~below:true, []
-    | Open_line_above -> open_line t ~below:false, []
-    | Exit_insert -> exit_insert t, []
-    | Insert_text s -> insert_text t s, []
-    | Insert_newline -> insert_newline t, []
-    | Delete_backward -> delete_backward t, []
-    | Delete_forward -> delete_forward t, []
-    | Insert_soft_tab width -> insert_soft_tab t width, []
-    | Delete_soft_tab_backward width -> delete_soft_tab_backward t width, []
-    | Delete_char -> delete_char t, []
-    | Delete_chars_forward count -> delete_chars_forward t count, []
-    | Delete_chars_backward count -> delete_chars_backward t count, []
-    | Delete_motion { motion; count } -> delete_motion t motion ~count, []
-    | Delete_lines count -> delete_lines t count, []
-    | Delete_inner_word -> delete_inner_word t, []
-    | Yank_motion { motion; count } -> yank_motion t motion ~count, []
-    | Yank_lines count -> yank_lines t count, []
-    | Paste { before; count } -> paste t ~before ~count, []
-    | Repeat_find { opposite; count } ->
-      (match repeat_find t ~opposite ~count with
-       | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
-       | Ok (find, destination, matched) ->
-         let t = { t with last_find = Some (find, matched) } in
-         set_cursor t destination, [])
-    | Delete_repeat_find { opposite; count } ->
-      (match repeat_find t ~opposite ~count with
-       | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
-       | Ok (find, destination, matched) ->
-         delete_range { t with last_find = Some (find, matched) }
-           (Range.resolve_destination t.text find ~cursor:t.cursor ~destination), [])
-    | Yank_repeat_find { opposite; count } ->
-      (match repeat_find t ~opposite ~count with
-       | Error failure -> { t with message = Some (Error (Motion.Failure.to_string failure)) }, []
-       | Ok (find, destination, matched) ->
-         yank_range { t with last_find = Some (find, matched) }
-           (Range.resolve_destination t.text find ~cursor:t.cursor ~destination), [])
-    | Search { query; forward; count; whole_word } -> search t ~query ~forward ~count ~whole_word, []
-    | Search_word { forward } -> search_word t ~forward, []
-    | Clear_search_highlight -> { t with search_visible = false }, []
-    | Enter_visual kind -> enter_visual t kind, []
-    | Exit_visual ->
-      (match t.selection with
-       | None -> t, []
-       | Some selection -> leave_visual t ~cursor:selection.active, [])
-    | Visual_delete -> visual_delete t ~change:false, []
-    | Visual_yank -> visual_yank t, []
-    | Visual_change -> visual_delete t ~change:true, []
-    | Reload ->
-      (match t.path with
-       | None -> { t with message = Some (Error "No file name") }, []
-       | Some path -> t, [ Effect.Read_file { path } ])
-    | Undo -> restore t ~step:History.undo ~none_message:"Already at oldest change", []
-    | Redo -> restore t ~step:History.redo ~none_message:"Already at newest change", []
-    | Save -> save t
-    | Quit -> quit t
-    | Force_quit -> t, [ Effect.Exit ])
+    match t.block_insert, command with
+    | ( Some b
+      , ( Insert_text _
+        | Insert_newline
+        | Delete_backward
+        | Delete_forward
+        | Insert_soft_tab _
+        | Delete_soft_tab_backward _
+        | Exit_insert ) ) -> block_insert_dispatch t b command, []
+    (* Moving or restoring history ends a block insert, keeping what it inserted. *)
+    | Some _, (Move _ | Undo | Redo) -> dispatch_command { t with block_insert = None } command
+    | _ -> dispatch_command t command)
+;;
+
+(* Every yank or delete that replaces the register also copies it to the system
+   clipboard, as Vim does with [clipboard=unnamedplus]. A command that leaves the
+   register alone returns the same value, so physical equality detects a
+   replacement, even by equal text. *)
+let dispatch t command =
+  let t', effects = dispatch t command in
+  match t'.unnamed_register with
+  | Some register when not (phys_equal t.unnamed_register t'.unnamed_register) ->
+    t', Effect.Set_clipboard (Register.to_string register) :: effects
+  | Some _ | None -> t', effects
 ;;
 
 let handle_outcome t (outcome : Effect.Outcome.t) =
@@ -916,6 +1166,12 @@ let handle_outcome t (outcome : Effect.Outcome.t) =
          message = Some (Error (sprintf "Failed to reload %s: %s" path (Error.to_string_hum error)))
        }
      | Ok text ->
+       (* Keep the cursor's line and display column, as Vim's [:e!] does, so the view
+          stays where it was. *)
+       let line = Int.min (cursor_line t) (B.line_count text - 1) in
+       let offset =
+         Motion.offset_of_display_column text ~cell_width:t.cell_width ~line t.preferred_column
+       in
        set_cursor
          { t with
            text
@@ -923,7 +1179,8 @@ let handle_outcome t (outcome : Effect.Outcome.t) =
          ; saved_revision = t.revision + 1
          ; revision = t.revision + 1
          ; history = History.empty
+         ; block_insert = None
          ; message = Some (Info (sprintf "Reloaded %s" path))
          }
-         0)
+         offset)
 ;;
