@@ -23,6 +23,10 @@ module Scroll : sig
   val takes_count : t -> bool
 end
 
+module Status_position : sig
+  type t = Left | Right | Above | Below [@@deriving sexp_of, equal]
+end
+
 type t =
   | Toggle_centered (** Switch between the centered tile and full width. *)
   | Shift of int (** Move the centered tile by this many display cells; negative is left. *)
@@ -32,6 +36,10 @@ type t =
   | Toggle_relative_numbers
   (** Flip the relative line-number switch (Vim's ['relativenumber']). *)
   | Toggle_smear (** Enable or disable the animated terminal cursor. *)
+  | Toggle_status (** Show/hide the requested status cell, independent of zen. *)
+  | Position_status of Status_position.t (** Place status and request visibility. *)
+  | Adjust_status_size of int (** Adjust requested status cells along its split axis. *)
+  | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)
   | Reset (** Centered, at the default width and offset, with hybrid line numbers. *)
   | Scroll of
       { scroll : Scroll.t

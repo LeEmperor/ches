@@ -28,20 +28,22 @@ type t =
   }
 [@@deriving sexp_of]
 
-let render ?allocation ?(reserve_status_row = true) ui ~width ~height =
+let render ?allocation ?reserve_status_row ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
-  let pane_relative = Option.is_some allocation in
-  let allocation =
+  let workspace = Ui_state.workspace ui ~width ~height in
+  let pane_relative = Option.is_some allocation || Option.is_some workspace.status in
+  let allocation, default_reservation, status_pane =
     match allocation with
-    | None -> { Geometry.Rect.x = 0; y = 0; width; height }
+    | None -> workspace.document.rect, workspace.reserve_status_row, workspace.status
     | Some (rect : Geometry.Rect.t) ->
       let x = Int.clamp_exn rect.x ~min:0 ~max:width in
       let y = Int.clamp_exn rect.y ~min:0 ~max:height in
       let right = Int.clamp_exn (rect.x + Int.max 0 rect.width) ~min:x ~max:width in
       let bottom = Int.clamp_exn (rect.y + Int.max 0 rect.height) ~min:y ~max:height in
-      { Geometry.Rect.x; y; width = right - x; height = bottom - y }
+      { Geometry.Rect.x; y; width = right - x; height = bottom - y }, true, None
   in
+  let reserve_status_row = Option.value reserve_status_row ~default:default_reservation in
   let editor = Controller.editor (Ui_state.controller ui) in
   let text = Editor.text editor in
   let line_count = Text_buffer.line_count text in
@@ -62,6 +64,10 @@ let render ?allocation ?(reserve_status_row = true) ui ~width ~height =
     geometry
   in
   let fields = Status.fields ui in
+  let status_tile = Option.map status_pane ~f:(fun pane ->
+    let tile = Status.vertical ~rect:pane.Workspace.Pane.rect fields in
+    tile.rect, Array.of_list tile.rows)
+  in
   let search =
     match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
     | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)
@@ -269,16 +275,21 @@ let render ?allocation ?(reserve_status_row = true) ui ~width ~height =
   in
   let rows =
     List.init height ~f:(fun y ->
-      let row (rect : Geometry.Rect.t) spans =
-        Span.merge
-          ([ Span.blank Backdrop rect.x ]
-           @ spans
-           @ [ Span.blank Backdrop (width - rect.x - rect.width) ])
+      let document =
+        match area_on_row Status_row y with
+        | Some area -> [ area.rect, Status.render area fields ]
+        | None when y >= tile.y && y < tile.y + tile.height -> [ tile, tile_row y ]
+        | None -> []
       in
-      match area_on_row Status_row y with
-      | Some area -> row area.rect (Status.render area fields)
-       | None when y >= tile.y && y < tile.y + tile.height -> row tile (tile_row y)
-       | None -> [ Span.blank Backdrop width ])
+      let status = match status_tile with
+        | Some (rect, rows) when y >= rect.y && y < rect.y + rect.height -> [ rect, rows.(y - rect.y) ]
+        | Some _ | None -> []
+      in
+      let segments = List.sort (document @ status) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
+      let spans, right = List.fold segments ~init:([], 0) ~f:(fun (spans, right) (rect, content) ->
+        spans @ [ Span.blank Backdrop (rect.x - right) ] @ content, rect.x + rect.width)
+      in
+      Span.merge (spans @ [ Span.blank Backdrop (width - right) ]))
   in
   let animation = Ui_state.animation ui in
   let smear =

@@ -37,9 +37,11 @@ type t =
   }
 [@@deriving sexp_of]
 
-(** Render one document allocation against a screen-sized backdrop. The allocation
-    defaults to the full screen and is clipped to screen bounds before layout.
-    Status reservation defaults to true, preserving the full-screen presentation. *)
+(** Compose the effective workspace's document and optional status tile against a
+    screen-sized backdrop. Scrolling and cursor placement share its document geometry.
+    Compact/zen layouts retain bottom-row feedback. An explicit [allocation] instead
+    renders only the document there, clipped to screen bounds, reserving a status row
+    by default. [reserve_status_row] overrides either policy for headless callers. *)
 val render
   :  ?allocation:Geometry.Rect.t
   -> ?reserve_status_row:bool

@@ -29,6 +29,9 @@ end
 type t =
   { controller : Controller.t
   ; prefs : Geometry.Prefs.t
+  ; workspace_prefs : Workspace.Prefs.t
+  ; other_status_size : int (** Requested size for the inactive split axis. *)
+  ; zen : bool
   ; scroll : Scroll.t
   ; rows : int option
   (** Text rows the scroll was last fitted for: when they change, the fit fills the
@@ -40,9 +43,13 @@ type t =
   ; exited : bool
   }
 
-let create ?(prefs = Geometry.Prefs.default) ?(smear_enabled = false) controller =
+let create ?(prefs = Geometry.Prefs.default) ?(workspace_prefs = Workspace.Prefs.default)
+  ?(smear_enabled = false) controller =
   { controller
   ; prefs
+  ; workspace_prefs
+  ; other_status_size = (match workspace_prefs.split.axis with Horizontal -> 6 | Vertical -> 28)
+  ; zen = false
   ; scroll = Scroll.zero
   ; rows = None
   ; paste = None
@@ -55,6 +62,8 @@ let create ?(prefs = Geometry.Prefs.default) ?(smear_enabled = false) controller
 
 let controller t = t.controller
 let prefs t = t.prefs
+let workspace_prefs t = t.workspace_prefs
+let zen t = t.zen
 let scroll t = t.scroll
 let message t = t.message
 let pasting t = Option.is_some t.paste
@@ -75,8 +84,15 @@ let geometry_in t ~allocation ~reserve_status_row =
       (Text_buffer.line_count (Editor.text (Controller.editor t.controller)))
 ;;
 
+let workspace t ~width ~height =
+  let prefs = t.workspace_prefs in
+  Workspace.allocate (if t.zen then { prefs with status_visible = false } else prefs)
+    ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
+;;
+
 let geometry t ~width ~height =
-  geometry_in t ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height } ~reserve_status_row:true
+  Workspace.document_geometry (workspace t ~width ~height) t.prefs
+    ~line_count:(Text_buffer.line_count (Editor.text (Controller.editor t.controller)))
 ;;
 
 (* The cursor's line and cells. A block insert's cursor is at its first insertion
@@ -124,11 +140,13 @@ let cursor_position_in t ~allocation ~reserve_status_row =
 ;;
 
 let fitted_scroll t ~width ~height =
-  fitted_scroll_in t ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height } ~reserve_status_row:true
+  let workspace = workspace t ~width ~height in
+  fitted_scroll_in t ~allocation:workspace.document.rect ~reserve_status_row:workspace.reserve_status_row
 ;;
 
 let cursor_position t ~width ~height =
-  cursor_position_in t ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height } ~reserve_status_row:true
+  let workspace = workspace t ~width ~height in
+  cursor_position_in t ~allocation:workspace.document.rect ~reserve_status_row:workspace.reserve_status_row
 ;;
 
 let min_width = 20
@@ -143,7 +161,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_relative_numbers ->
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
-  | Scroll _ | Toggle_smear -> prefs
+  | Scroll _ | Toggle_smear | Toggle_status | Position_status _ | Adjust_status_size _ | Toggle_zen -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -169,6 +187,29 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   match view with
   | Scroll _ -> None
   | Toggle_smear -> Some (if Animation.enabled t.animation then "Smear cursor enabled" else "Smear cursor disabled")
+  | Toggle_zen -> Some (if t.zen then "Zen (status hidden)" else "Workspace restored")
+  | Toggle_status | Position_status _ | Adjust_status_size _ ->
+    let requested = t.workspace_prefs in
+    let location = match requested.split.axis, requested.split.first with
+      | Horizontal, Status -> "left"
+      | Horizontal, Document -> "right"
+      | Vertical, Status -> "above"
+      | Vertical, Document -> "below"
+    in
+    let fitted = workspace t ~width ~height in
+    let state =
+      if t.zen then "saved for workspace; zen"
+      else if not requested.status_visible then "hidden"
+      else if Option.is_none fitted.status then "compact"
+      else "shown"
+    in
+    let size = match fitted.status with
+      | None -> Int.to_string requested.split.status_size
+      | Some pane ->
+        let effective = match requested.split.axis with Horizontal -> pane.rect.width | Vertical -> pane.rect.height in
+        with_fit requested.split.status_size effective ~to_string:Int.to_string
+    in
+    Some (sprintf "Status %s %s (%s)" location size state)
   | Toggle_centered -> Some (if t.prefs.centered then "Centered" else "Full width")
   | Toggle_absolute_numbers | Toggle_relative_numbers ->
     let style = t.prefs.line_numbers in
@@ -229,6 +270,29 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
   | Scroll { scroll; count } -> scroll_view t ~width ~height scroll ~count
   | Toggle_smear -> { t with animation = Animation.set_enabled t.animation (not (Animation.enabled t.animation)) }
+  | Toggle_zen -> { t with zen = not t.zen }
+  | Toggle_status ->
+    { t with workspace_prefs = { t.workspace_prefs with status_visible = not t.workspace_prefs.status_visible } }
+  | Position_status position ->
+    let axis, first = match position with
+      | Left -> Workspace.Split.Axis.Horizontal, Workspace.Pane_id.Status
+      | Right -> Horizontal, Document
+      | Above -> Vertical, Status
+      | Below -> Vertical, Document
+    in
+    let split = t.workspace_prefs.split in
+    let status_size, other_status_size =
+      if Workspace.Split.Axis.equal axis split.axis then split.status_size, t.other_status_size
+      else t.other_status_size, split.status_size
+    in
+    { t with other_status_size
+    ; workspace_prefs = { status_visible = true; split = { axis; first; status_size } }
+    }
+  | Adjust_status_size cells ->
+    let split = t.workspace_prefs.split in
+    let minimum = match split.axis with Horizontal -> Workspace.min_status_width | Vertical -> Workspace.min_status_height in
+    let status_size = Int.clamp_exn (split.status_size + cells) ~min:minimum ~max:500 in
+    { t with workspace_prefs = { t.workspace_prefs with split = { split with status_size } } }
   | Toggle_centered
   | Shift _
   | Adjust_width _
@@ -247,7 +311,9 @@ let feed t ~width ~height (input : Keymap.Input.t) =
     match Keymap.notice (Controller.keymap controller), List.last views with
     | Some text, _ -> Some { Message.kind = Warning; text }
     | None, Some view ->
-      (match view_feedback t ~width ~height view with
+      (match t.message, view with
+       | Some { kind = Error; _ }, (Toggle_status | Position_status _ | Adjust_status_size _ | Toggle_zen) -> t.message
+       | _ -> match view_feedback t ~width ~height view with
        | Some text -> Some { Message.kind = Info; text }
        | None -> t.message)
     | None, None ->
@@ -285,6 +351,7 @@ and apply_running t ~width ~height (input : Input.t) =
     { t with animation = Animation.tick t.animation ~dt; animation_time = Some now }, Running
   | Key _ | Paste_start | Paste_end ->
     let before = cursor_position t ~width ~height in
+    let before_workspace = t.workspace_prefs and before_zen = t.zen in
     let t, status =
       match input, t.paste with
       | Paste_start, None -> { t with paste = Some [] }, Controller.Status.Running
@@ -302,7 +369,11 @@ and apply_running t ~width ~height (input : Input.t) =
     let t = refit t ~width ~height in
     let after = cursor_position t ~width ~height in
     let was_active = Animation.active t.animation in
-    let animation = Animation.retarget t.animation ~from:before ~to_:after in
+    let animation =
+      if not (Workspace.Prefs.equal before_workspace t.workspace_prefs) || Bool.(before_zen <> t.zen)
+      then Animation.create ~enabled:(Animation.enabled t.animation)
+      else Animation.retarget t.animation ~from:before ~to_:after
+    in
     { t with
       animation
     ; animation_time =

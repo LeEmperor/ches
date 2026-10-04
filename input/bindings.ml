@@ -99,6 +99,9 @@ let default =
   let view c (command : View_command.t) =
     [ leader; Key.char 'v'; Key.char c ], Target.View command
   in
+  let status c (command : View_command.t) =
+    [ leader; Key.char 'v'; Key.char 'p'; Key.char c ], Target.View command
+  in
   create
     [ move [ 'h' ] Left
     ; move [ 'j' ] Down
@@ -169,6 +172,15 @@ let default =
     ; view 'n' Toggle_absolute_numbers
     ; view 'N' Toggle_relative_numbers
     ; view 's' Toggle_smear
+    ; view 't' Toggle_status
+    ; view 'z' Toggle_zen
+    ; status 'h' (Position_status Left)
+    ; status 'l' (Position_status Right)
+    ; status 'k' (Position_status Above)
+    ; status 'j' (Position_status Below)
+    ; status '-' (Adjust_status_size (-2))
+    ; status '+' (Adjust_status_size 2)
+    ; status '=' (Adjust_status_size 2)
     ; view 'r' Reset
     ]
   |> Or_error.ok_exn

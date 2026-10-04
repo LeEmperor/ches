@@ -577,6 +577,27 @@ not readability or visual comfort; carry this pending check into the handoff.
 
 **Depends on:** phases 1–3 and recorded controls/zen restoration decisions.
 
+#### Phase 4 controls and restoration policy (approved 2026-10-04)
+
+- Normal-mode `Space v t` toggles requested status visibility. `Space v p h/l/k/j`
+  places status left/right/above/below and enables its requested visibility.
+  `Space v p -/+` changes its requested size by two cells (`=` aliases `+`). Sizes
+  are session-local, constrained to the allocator's axis minimum through 500 cells.
+  Keep separate side-by-side width (initially 28) and stacked height (initially 6),
+  restoring each on axis changes. Size controls do not implicitly show hidden status.
+- `Space v z` toggles zen: suppress the dedicated cell while retaining compact
+  bottom-row feedback and unchanged document placement preferences. Leaving zen
+  restores saved workspace intent, subject to normal compact fallback. Status
+  controls in zen update saved requests without leaving zen. Hidden-by-default
+  visibility and existing document controls (including document-only reset) remain.
+- Layout commands remain view actions; no new input destination or focus controls
+  are introduced. Paste remains one document interaction. Cancel smear animation
+  when workspace intent/zen changes so layout moves do not animate through status;
+  clip workspace smear output to the document text allocation.
+- Workspace visibility/placement/size and zen transitions preserve a current error
+  instead of overwriting it with layout feedback. Other existing message lifecycle
+  semantics are unchanged; full retained-error acknowledgement/resolution is phase 5.
+
 **Scope:** Connect workspace allocation and status rendering to UI state and frame
 rendering. Implement the agreed controls for showing/hiding and positioning status,
 compact fallback, and zen/workspace restoration. The document remains the only

@@ -35,9 +35,21 @@ end
 
 type t
 
-val create : ?prefs:Geometry.Prefs.t -> ?smear_enabled:bool -> Ches_app.Controller.t -> t
+val create
+  :  ?prefs:Geometry.Prefs.t
+  -> ?workspace_prefs:Workspace.Prefs.t
+  -> ?smear_enabled:bool
+  -> Ches_app.Controller.t
+  -> t
 val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
+val workspace_prefs : t -> Workspace.Prefs.t
+val zen : t -> bool
+
+(** Effective workspace allocation. Zen suppresses status without changing requested
+    visibility/placement/sizes. Width and height requests are remembered separately.
+    Status remains non-focusable; all input and paste still route to the document. *)
+val workspace : t -> width:int -> height:int -> Workspace.t
 val scroll : t -> Scroll.t
 val message : t -> Message.t option
 val animation : t -> Animation.t
