@@ -28,15 +28,26 @@ type t =
   }
 [@@deriving sexp_of]
 
-let render ui ~width ~height =
+let render ?allocation ?(reserve_status_row = true) ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
+  let pane_relative = Option.is_some allocation in
+  let allocation =
+    match allocation with
+    | None -> { Geometry.Rect.x = 0; y = 0; width; height }
+    | Some (rect : Geometry.Rect.t) ->
+      let x = Int.clamp_exn rect.x ~min:0 ~max:width in
+      let y = Int.clamp_exn rect.y ~min:0 ~max:height in
+      let right = Int.clamp_exn (rect.x + Int.max 0 rect.width) ~min:x ~max:width in
+      let bottom = Int.clamp_exn (rect.y + Int.max 0 rect.height) ~min:y ~max:height in
+      { Geometry.Rect.x; y; width = right - x; height = bottom - y }
+  in
   let editor = Controller.editor (Ui_state.controller ui) in
   let text = Editor.text editor in
   let line_count = Text_buffer.line_count text in
   let cursor_line = Editor.cursor_line editor in
-  let geometry = Ui_state.geometry ui ~width ~height in
-  let scroll = Ui_state.fitted_scroll ui ~width ~height in
+  let geometry = Ui_state.geometry_in ui ~allocation ~reserve_status_row in
+  let scroll = Ui_state.fitted_scroll_in ui ~allocation ~reserve_status_row in
   let { Geometry.tile
       ; border
       ; padding
@@ -266,15 +277,22 @@ let render ui ~width ~height =
       in
       match area_on_row Status_row y with
       | Some area -> row area.rect (Status.render area fields)
-      | None -> row tile (tile_row y))
+       | None when y >= tile.y && y < tile.y + tile.height -> row tile (tile_row y)
+       | None -> [ Span.blank Backdrop width ])
   in
   let animation = Ui_state.animation ui in
-  let smear = Animation.cells animation ~width ~height in
+  let smear =
+    Animation.cells animation ~width ~height
+    |> List.filter ~f:(fun (x, y) ->
+      not pane_relative
+      || (x >= viewport.x && x < viewport.x + viewport.width
+          && y >= viewport.y && y < viewport.y + viewport.height))
+  in
   let cursor =
     if Animation.active animation || not (List.is_empty insert_points)
     then None
     else
-      Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) ->
+       Option.map (Ui_state.cursor_position_in ui ~allocation ~reserve_status_row) ~f:(fun (x, y) ->
         { Cursor.x = x
         ; y
         ; shape =

@@ -1,7 +1,8 @@
 # Ches workspace, panes, and status tile
 
-Status: proposed architecture and staged implementation notes. No workspace or
-external-view protocol is implemented by this document.
+Status: phases 1–2 (pane-relative document geometry and minimal workspace allocation)
+implemented and software-verified. Status-tile rendering/integration and the
+external-view protocol remain unimplemented.
 
 ## Goal and scope
 
@@ -19,8 +20,12 @@ in another process or on another machine.
 
 ## Current implementation
 
-- `screen/geometry.ml` computes one document tile, its text/gutter rectangles, and
-  a bottom status row. `compute` explicitly reserves one row for status.
+- `screen/geometry.ml` computes one document tile and its text/gutter rectangles
+  within an allocation. `compute_in` explicitly chooses status-row reservation;
+  the full-screen `compute` wrapper retains the existing bottom status row.
+- `screen/workspace.ml` allocates stable document/status cells using a requested
+  two-leaf split, with compact fallback. It is headless and not yet connected to the
+  running application's UI state or frame composition.
 - `screen/ui_state.ml` owns one controller, layout preferences, scroll state,
   messages, and animation state.
 - `screen/status_field.ml` defines semantic field IDs and priority/fitting metadata.
@@ -322,8 +327,8 @@ part of this project. For example, a text-cache backend can be accepted through
 software verification. Below, geometry and allocation are verified internally;
 their user-visible effects receive human testing when the workspace is integrated.
 
-Before phase 2, agree on and record the initial status side, requested size,
-minimum usable sizes, and compact fallback thresholds. Before phase 3, record the
+Before phase 2, record the initial allocation and sizing policy, following the
+owner's placement/sizing direction below. Before phase 3, record the
 vertical field ordering and essential-feedback priorities. Before phase 4, agree
 on the initial controls and zen/restore behavior. Before phase 5, settle error
 retention, acknowledgement, and resolution behavior. An agent should raise these
@@ -352,13 +357,55 @@ Inspect rendering and cursor consumers in `ui/editor_view.ml` as necessary.
 **Human testing:** Not required for this internal refactor. User-visible placement
 and cursor behavior will be exercised in phase 4.
 
+#### Phase 1 completion and handoff (2026-10-04)
+
+- Added `Geometry.compute_in ~allocation ~reserve_status_row`. All document,
+  gutter, text, status, and title rectangles use terminal coordinates, including
+  nonzero origins. Width/offset preferences are interpreted inside the allocation;
+  negative dimensions normalize to zero without changing requested preferences.
+- Kept `Geometry.compute` and existing UI-state queries as full-screen wrappers
+  with one reserved status row. Added `Ui_state.geometry_in`, `fitted_scroll_in`,
+  and `cursor_position_in` for one shared allocation/status policy. Scroll remains
+  document-relative; the terminal cursor adds the viewport origin.
+- `Frame.render` accepts an optional allocation and explicit status reservation,
+  defaults to the original full-screen behavior, clips allocations to screen bounds,
+  and leaves rows outside the document/status allocation as backdrop. Pane-mode
+  smear cells clip to the text viewport. The Bonsai adapter already consumes frame
+  coordinates directly and required no changes. Input transitions remain full-screen
+  until workspace integration; no controls, pane registry, or allocator were added.
+- Added seven focused expect tests in `screen/test/test_pane_geometry.ml`: offset
+  geometry, status reservation, tiny/empty/negative dimensions, bounds and default
+  compatibility, backdrop placement, Unicode scrolling/clipping, translated bordered
+  rendering (including title/gutter/status/cursor), and screen-edge intersections.
+- Verification prerequisite/deviation: existing screen/theme tests referenced
+  document-style constructors removed by the earlier style refactor. Migrated their
+  assertions to `Style.document`/overlay checks. Restored human-readable spacing in
+  `Style.to_string_hum` for nested mode values so existing frame snapshots remain
+  unchanged. No editing behavior changed.
+- Passed, using `opam exec --switch=5.2.0+ox --`: `dune build` and the complete
+  `dune runtest` suite. `git diff --check` also passed.
+- Ran `scripts/smoke.sh`: it completed but exited 1 with five cursor assertions
+  failing during scrolling/counted movement/document motions. Failure captures show
+  the smear animation running and the terminal cursor hidden; those immediate
+  assertions do not wait for cursor restoration. Other checks, including edit/save,
+  resize, layout placement/restoration, and terminal restoration, passed. This
+  smoke-test synchronization gap is not claimed as verified or fixed by phase 1.
+  Screens were saved to `/tmp/ches-smoke-screens.WbL5hA`.
+- Phase 1's internal software acceptance criteria are satisfied; no human acceptance
+  gate is required. Offset panes are tested headlessly, not exposed interactively.
+  Phase 4 must exercise their visible placement/cursor behavior. Allocation choices
+  were subsequently resolved by the owner's direction and phase 2 policy below.
+  No commits or Git-state changes were made.
+
 ### Phase 2 — Minimal workspace allocation
 
-**Depends on:** phase 1 and recorded initial sizing/fallback decisions.
+**Depends on:** phase 1 and recorded initial allocation/sizing policy.
 
 **Scope:** Introduce stable pane identities and workspace rectangle allocation for
-one document and a non-focusable status region. Represent preferred side and
-requested dimensions separately from effective geometry. Support deterministic
+one document and a non-focusable status region. Status is content assigned to a
+layout cell, not an inherently left/right sidebar: its allocation must follow that
+cell wherever it is placed. Represent requested placement and dimensions separately
+from effective geometry. Support deterministic
 compact fallback and restoration after resize. Use a minimal layout representation
 that can grow toward the split-tree model; a general interactive layout editor is
 outside this phase.
@@ -369,7 +416,8 @@ outside this phase.
 **Acceptance criteria:**
 
 - Allocated rectangles remain in bounds and do not overlap.
-- Left/right placement and constrained allocations follow the recorded policy.
+- Status allocation follows its assigned cell, including nonzero origins;
+  representative placements and constrained allocations follow the recorded policy.
 - Shrinking and expanding restores requested layout rather than retaining clamped
   dimensions; wide terminals do not independently enable additional panes.
 - Document preferred width and comfortable placement remain expressible.
@@ -378,6 +426,62 @@ outside this phase.
 
 **Human testing:** Not required for the allocator alone. Actual space balance and
 fallback feel will be assessed in phase 4.
+
+#### Phase 2 allocation policy
+
+- Use a two-leaf split: horizontal (side by side) or vertical (stacked), with a
+  stable pane identity naming the first leaf. Status content is independent of
+  orientation/order; left, right, above, and below are all supported. No split-tree
+  editor or interactive controls are part of this phase.
+- Requested visibility defaults to off, preserving today's full-screen document and
+  bottom-row feedback. The initial split request is horizontal, document first,
+  status size 28 cells. A stacked layout can request an appropriate row count;
+  requested size is along the split axis, not intrinsically a width.
+- Simple internal minima: document allocation 16 columns by 1 row; status allocation
+  8 columns by 3 rows. These are permissive allocation guardrails, not guarantees
+  that every field or decoration fits. Vertical presentation will prioritize content
+  in phase 3. Clamp the requested status size between its axis minimum and the space
+  left after the document minimum; no divider/gap cells are allocated.
+- If both minima cannot fit, omit the dedicated status allocation, give the document
+  the entire workspace, and reserve its bottom row for compact feedback. Hidden
+  status uses the same compact presentation. With a dedicated status cell, do not
+  reserve a document status row. Empty/negative dimensions normalize safely.
+- Effective allocation is derived without modifying the request. Resizing restores
+  visibility, split order/orientation, and requested size automatically; extra space
+  never enables an unrequested pane. Document width/offset preferences remain
+  independent and are applied within the allocated document cell.
+
+#### Phase 2 completion and handoff (2026-10-04)
+
+- Added `screen/workspace.ml`/`.mli` with stable `Pane_id.Document`/`Status`, a
+  two-leaf `Split` request (axis, first identity, requested status size), independent
+  workspace `Prefs`, allocated `Pane` rectangles, and `Pane.focusable`. Only the
+  document is focusable; allocation does not create or own document/session state.
+- `Workspace.allocate` implements the recorded policy for arbitrary workspace
+  origins and horizontal/vertical ordering. It returns disjoint document/status
+  rectangles plus an explicit compact-row reservation flag. There is no synthetic
+  status pane when hidden or constrained; requested settings stay untouched.
+- `Workspace.document_geometry` bridges allocation to phase 1's pane-relative
+  geometry, preserving independent document width, offset, and full-width intent.
+  No changes to core editing, input routing, `Ui_state`, the Bonsai adapter, or
+  runtime frame composition were needed. Workspace integration remains phase 4.
+- Added six focused expect tests in `screen/test/test_workspace.ml`, covering all
+  four placements at an offset origin, exact fallback boundaries on both axes,
+  clamping, shrinking/expanding and hiding/restoring, opt-in visibility on wide
+  displays, document placement restoration, and tiny/negative dimensions. A bounded
+  allocation sweep also checks non-overlap, complete workspace coverage, identities,
+  and focusability across requests and constrained sizes.
+- Passed: `opam exec --switch=5.2.0+ox -- dune runtest` (complete suite),
+  `opam exec --switch=5.2.0+ox -- dune build`, and `git diff --check`.
+  No terminal smoke test was rerun: this is an internal-only allocator with no
+  application integration, and phase 1's animation-related smoke synchronization
+  gap remains unresolved. No manual acceptance is required for this phase.
+- Phase 2 software acceptance criteria are satisfied. The only sizing choices are
+  the simple recorded internal defaults; a general split tree and layout controls
+  were deliberately not added. Before phase 3, record vertical field ordering and
+  limited-space/essential-feedback priorities. Phase 4 still needs human feedback
+  on actual cell placement, presentation, and fallback feel. No commits or other
+  Git-state changes were made.
 
 ### Phase 3 — Vertical status presentation
 
@@ -501,8 +605,27 @@ starts; apply the same software/human acceptance distinction.
 
 ## Decisions still open
 
-- Initial status size and preferred side; compact fallback thresholds.
-- Exact split sizing representation and which layout commands ship first.
+### Owner direction for phase 2 (2026-10-04)
+
+- Status must work in whichever layout cell it is assigned to, wherever that cell
+  goes. Left/right examples are useful test cases, not a restriction on status
+  content or its placement contract. The layout owns the rectangle; status consumes
+  it without deciding where it belongs.
+- Target the owner's large monitors and laptop. This is a personal project; tuning
+  sizing and fallback for other users or a broad range of devices is not a goal.
+- Keep cell sizing simple. The previously suggested 28-cell width, 20-cell minimum,
+  40-cell document minimum, and 7-row threshold were not adopted. Modest internal
+  defaults are acceptable implementation choices to record, not decisions requiring
+  extensive sizing design. Retain bounds safety and requested-layout restoration.
+- This direction does not require a general interactive layout editor in phase 2.
+  Controls and zen behavior remain later decisions. Phase 2 records hidden-by-default
+  visibility as its initial internal policy, subject to integration feedback.
+
+### Remaining decisions
+
+- Vertical status field ordering and limited-space/essential-feedback priorities
+  before phase 3.
+- Which layout commands ship first, and zen/restore behavior, before phase 4.
 - Whether status follows the focused pane or also retains a pinned document summary.
 - First external producer and whether its output is semantic data or cell frames.
 - Refresh/freshness requirements and acceptable dropped-snapshot behavior for it.

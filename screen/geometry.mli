@@ -2,8 +2,10 @@
     status line go. Rendering, clipping, scrolling, and cursor placement all use the
     rectangles computed here. All measurements are display cells.
 
-    The status line is the bottom row of the screen, across its full width. The tile
-    fills the rows above it. Within the tile, a single-cell border surrounds blank
+    By default the status line is the bottom row of the screen, across its full
+    width. [compute_in] instead uses an allocated rectangle and explicitly chooses
+    whether to reserve its bottom row for status. The tile fills the remaining rows.
+    Within the tile, a single-cell border surrounds blank
     left padding (when requested), a line-number gutter (unless line numbers are
     [Off]), and the text viewport. The
     gutter is as wide in every numbered style, so switching between them never moves
@@ -74,7 +76,7 @@ type t =
   ; gutter : Rect.t (** Zero width when there is no gutter. *)
   ; gutter_digits : int (** Digit cells; the gutter adds one separator cell. *)
   ; text : Rect.t
-  ; status : Rect.t (** Zero height on a zero-height screen. *)
+  ; status : Rect.t (** Zero height when not reserved or the allocation has no rows. *)
   ; offset : int
   (** The effective offset of the tile from its centered position: [Prefs.offset]
       clamped to the screen, or 0 in full-width mode. *)
@@ -88,3 +90,15 @@ type t =
 val gutter_digits : line_count:int -> int
 
 val compute : Prefs.t -> width:int -> height:int -> line_count:int -> t
+
+(** Pane-relative layout in terminal coordinates. Negative dimensions become zero;
+    origins are preserved. Every rectangle lies within the normalized allocation
+    (empty rectangles may sit on its edge). Placement and effective [offset] are
+    relative to this allocation, not to the terminal. No status area is produced
+    when [reserve_status_row] is false. Preferences are never modified. *)
+val compute_in
+  :  Prefs.t
+  -> allocation:Rect.t
+  -> reserve_status_row:bool
+  -> line_count:int
+  -> t

@@ -101,9 +101,14 @@ let%test_unit "overlapping search highlights survive horizontal scrolling" =
   assert (scroll.left > 0);
   let frame = Frame.render t ~width:30 ~height:6 in
   let row = List.nth_exn frame.rows 1 in
-  assert (List.exists row ~f:(fun span -> Style.equal span.style Search_match));
+  let is_match (span : Span.t) =
+    match span.style with
+    | Document { overlay = Some Search_match; _ } -> true
+    | _ -> false
+  in
+  assert (List.exists row ~f:is_match);
   List.iter row ~f:(fun span ->
-    if String.contains span.text 'a' then assert (Style.equal span.style Search_match))
+    if String.contains span.text 'a' then assert (is_match span))
 ;;
 
 let%test_unit "multiline highlights overlap both viewport edges and retain overlap precedence" =
@@ -134,11 +139,12 @@ let%test_unit "multiline highlights overlap both viewport edges and retain overl
         Array.iter glyphs ~f:(fun glyph ->
           let offset = Text_buffer.line_start text line + glyph.pos in
           let matched = List.find candidates ~f:(fun start -> start <= offset && offset < start + String.length query) in
-          let expected = match matched with
-            | Some start when Option.value_map current ~default:false ~f:(Int.equal start) -> Style.Search_match_current
-            | Some _ -> Search_match
-            | None -> if line = Editor.cursor_line (Ches_app.Controller.editor (Ui_state.controller t))
-                      then Text_cursor_line else Text in
+           let overlay = match matched with
+             | Some start when Option.value_map current ~default:false ~f:(Int.equal start) -> Some Style.Overlay.Search_current
+             | Some _ -> Some Style.Overlay.Search_match
+             | None -> None in
+           let expected = Style.document ?overlay
+               ~current_line:(line = Editor.cursor_line (Ches_app.Controller.editor (Ui_state.controller t))) () in
           assert (Style.equal (List.nth_exn cells (geometry.text.x + glyph.col)) expected)))))
 ;;
 
@@ -759,7 +765,9 @@ let%test_unit "a TAB cut by the viewport's edge keeps its block highlight" =
     | [] -> assert false
     | (s : Span.t) :: rest -> if x < s.width then s.style else style_at rest (x - s.width)
   in
-  assert (Style.equal (style_at row gutter) Selection)
+  assert (match style_at row gutter with
+    | Document { overlay = Some Selection; _ } -> true
+    | _ -> false)
 ;;
 
 let%expect_test "block insert draws its cursor and a copy on each other line" =

@@ -66,13 +66,17 @@ let take_clipboard t =
 let exited t = t.exited
 let animation t = t.animation
 
-let geometry t ~width ~height =
-  Geometry.compute
+let geometry_in t ~allocation ~reserve_status_row =
+  Geometry.compute_in
     t.prefs
-    ~width
-    ~height
+    ~allocation
+    ~reserve_status_row
     ~line_count:
       (Text_buffer.line_count (Editor.text (Controller.editor t.controller)))
+;;
+
+let geometry t ~width ~height =
+  geometry_in t ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height } ~reserve_status_row:true
 ;;
 
 (* The cursor's line and cells. A block insert's cursor is at its first insertion
@@ -94,11 +98,11 @@ let cursor_cells editor =
            | Normal | Visual _ -> false) )
 ;;
 
-let fitted_scroll t ~width ~height =
+let fitted_scroll_in t ~allocation ~reserve_status_row =
   let editor = Controller.editor t.controller in
   let text = Editor.text editor in
   let line, span = cursor_cells editor in
-  let { Geometry.text = viewport; _ } = geometry t ~width ~height in
+  let { Geometry.text = viewport; _ } = geometry_in t ~allocation ~reserve_status_row in
   Scroll.fit
     t.scroll
     ~fill:(not ([%equal: int option] t.rows (Some viewport.height)))
@@ -109,14 +113,22 @@ let fitted_scroll t ~width ~height =
     ~line_count:(Text_buffer.line_count text)
 ;;
 
-let cursor_position t ~width ~height =
+let cursor_position_in t ~allocation ~reserve_status_row =
   let cursor_line, (start, _) = cursor_cells (Controller.editor t.controller) in
-  let scroll = fitted_scroll t ~width ~height in
-  let { Geometry.text = viewport; _ } = geometry t ~width ~height in
+  let scroll = fitted_scroll_in t ~allocation ~reserve_status_row in
+  let { Geometry.text = viewport; _ } = geometry_in t ~allocation ~reserve_status_row in
   let x = start - scroll.left and y = cursor_line - scroll.top in
   if x >= 0 && x < viewport.width && y >= 0 && y < viewport.height
   then Some (viewport.x + x, viewport.y + y)
   else None
+;;
+
+let fitted_scroll t ~width ~height =
+  fitted_scroll_in t ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height } ~reserve_status_row:true
+;;
+
+let cursor_position t ~width ~height =
+  cursor_position_in t ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height } ~reserve_status_row:true
 ;;
 
 let min_width = 20

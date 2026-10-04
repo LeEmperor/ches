@@ -37,7 +37,16 @@ type t =
   }
 [@@deriving sexp_of]
 
-val render : Ui_state.t -> width:int -> height:int -> t
+(** Render one document allocation against a screen-sized backdrop. The allocation
+    defaults to the full screen and is clipped to screen bounds before layout.
+    Status reservation defaults to true, preserving the full-screen presentation. *)
+val render
+  :  ?allocation:Geometry.Rect.t
+  -> ?reserve_status_row:bool
+  -> Ui_state.t
+  -> width:int
+  -> height:int
+  -> t
 
 (** The screen as text, one line per row, each ending in [|] to show the width, then
     the cursor. For tests. *)

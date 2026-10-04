@@ -137,3 +137,17 @@ val geometry : t -> width:int -> height:int -> Geometry.t
     number of text rows differs from the last applied input's, that is, after a
     resize; otherwise a view scrolled past the end stays put (see {!Scroll.fit}). *)
 val fitted_scroll : t -> width:int -> height:int -> Scroll.t
+
+(** Pane-relative counterparts of the full-screen queries above. All three use the
+    same allocation and explicit status policy; scroll positions remain document
+    coordinates and cursor positions are terminal coordinates. These queries do not
+    change the model or editor. *)
+val geometry_in : t -> allocation:Geometry.Rect.t -> reserve_status_row:bool -> Geometry.t
+
+val fitted_scroll_in : t -> allocation:Geometry.Rect.t -> reserve_status_row:bool -> Scroll.t
+
+val cursor_position_in
+  :  t
+  -> allocation:Geometry.Rect.t
+  -> reserve_status_row:bool
+  -> (int * int) option
