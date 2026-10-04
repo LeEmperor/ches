@@ -42,11 +42,11 @@ let of_glyphs ?highlight glyphs ~left ~cols ~(text : Style.t) ~(special : Style.
         let style =
           match Option.bind highlight ~f:(fun f -> f glyph) with
           | None -> style
-          | Some `Match -> (match kind with Escape -> Search_special_match | Plain | Tab -> Search_match)
-          | Some `Current -> (match kind with Escape -> Search_special_match_current | Plain | Tab -> Search_match_current)
-          | Some `Selection -> (match kind with Escape -> Selection_special | Plain | Tab -> Selection)
-          | Some `Insert_cursor -> Insert_cursor
-          | Some `Insert_point -> Insert_point
+          | Some `Match -> Style.with_overlay style Search_match
+          | Some `Current -> Style.with_overlay style Search_current
+          | Some `Selection -> Style.with_overlay style Selection
+          | Some `Insert_cursor -> Style.with_overlay style Insert_cursor
+          | Some `Insert_point -> Style.with_overlay style Insert_point
         in
         if width = 0
         then

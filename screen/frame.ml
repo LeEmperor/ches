@@ -179,7 +179,7 @@ let render ui ~width ~height =
         if padding = 0
         then []
         else
-          [ Span.blank (if exists && on_cursor_line then Text_cursor_line else Text) padding ]
+          [ Span.blank (Style.document ~current_line:(exists && on_cursor_line) ()) padding ]
       in
       let gutter_spans =
         if gutter.width = 0
@@ -199,12 +199,11 @@ let render ui ~width ~height =
       in
       let text_spans =
         if not exists
-        then [ Span.blank Text viewport.width ]
+        then [ Span.blank (Style.document ()) viewport.width ]
         else (
           let text_style, special_style =
-            if on_cursor_line
-            then Style.Text_cursor_line, Style.Special_cursor_line
-            else Text, Special
+            Style.document ~current_line:on_cursor_line (),
+            Style.document ~current_line:on_cursor_line ~special:true ()
           in
           let line_start = Text_buffer.line_start text line in
           let search_highlight = search_highlighter line_start in
@@ -305,6 +304,6 @@ let to_string_styled t =
     String.concat
       ~sep:" "
       (List.map spans ~f:(fun (s : Span.t) ->
-         sprintf !"%{sexp:Style.t}[%s]" s.style s.text)))
+          sprintf "%s[%s]" (Style.to_string_hum s.style) s.text)))
   |> String.concat ~sep:"\n"
 ;;

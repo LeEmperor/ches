@@ -14,6 +14,8 @@
  (depends
   (ocaml
    (>= 5.2))
+  (tree-sitter
+   (= 0.1.0))
   core
   core_unix
   async

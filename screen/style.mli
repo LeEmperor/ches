@@ -3,24 +3,47 @@
 
 open! Core
 
+module Syntax : sig
+  (** Placeholder for phase 2's provider-independent categories. Plain retains the
+      existing foreground; phase 1 introduces no syntax colors. *)
+  type t = Plain [@@deriving sexp_of, equal]
+end
+
+module Overlay : sig
+  type t =
+    | Search_match
+    | Search_current
+    | Selection
+    | Insert_cursor
+    (** The block insert's own software cursor. *)
+    | Insert_point
+    (** A block insert's copied insertion point on another line. *)
+  [@@deriving sexp_of, equal, enumerate]
+end
+
+module Document : sig
+  type t =
+    { syntax : Syntax.t
+    ; current_line : bool
+    ; special : bool (** Control escapes and clipped-glyph markers. *)
+    ; overlay : Overlay.t option
+    }
+  [@@deriving sexp_of, equal]
+
+  val create
+    :  ?syntax:Syntax.t
+    -> ?current_line:bool
+    -> ?special:bool
+    -> ?overlay:Overlay.t
+    -> unit
+    -> t
+end
+
 type t =
   | Backdrop (** The screen outside the tile and status line. *)
-  | Text
-  | Text_cursor_line
-  | Special (** Escape forms and clip markers in the text. *)
-  | Special_cursor_line
-  | Search_match
-  | Search_match_current
-  | Search_special_match
-  | Search_special_match_current
-  | Selection
-  | Selection_special
-  | Insert_cursor
-  (** A block insert's own cursor, the insertion point the others copy. The
-      terminal cursor is hidden meanwhile, so that the theme can color this one. *)
-  | Insert_point
-  (** A block insert's insertion point on another line, drawn as a software cursor:
-      the terminal has only one cursor. *)
+  | Document of Document.t
+  (** Independent foreground, current-line background, special-display treatment,
+      and interaction overlay. Chrome styles remain separate. *)
   | Gutter
   | Gutter_cursor_line
   | Border
@@ -36,3 +59,20 @@ type t =
   | Error
   | Smear (** The foreground-only animated cursor overlay. *)
 [@@deriving sexp_of, equal]
+
+val document
+  :  ?syntax:Syntax.t
+  -> ?current_line:bool
+  -> ?special:bool
+  -> ?overlay:Overlay.t
+  -> unit
+  -> t
+
+(** Replaces only the overlay, retaining all underlying document components.
+    Raises [Invalid_argument] for chrome styles. The caller resolves interaction
+    precedence: insert cursor/point > selection > current/ordinary search. *)
+val with_overlay : t -> Overlay.t -> t
+
+(** Compact effective-appearance labels for frame dumps. Unlike [sexp_of_t], these
+    omit document components hidden by an overlay. *)
+val to_string_hum : t -> string

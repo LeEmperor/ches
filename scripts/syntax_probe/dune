@@ -1,0 +1,3 @@
+(executable
+ (name probe)
+ (libraries tree-sitter tree-sitter.ocaml))

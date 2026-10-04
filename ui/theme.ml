@@ -57,18 +57,7 @@ module Font = struct
   let default : Ches_screen.Style.t -> t list = function
     | Title | Mode _ | Dirty | Pending | Error -> [ Bold ]
     | Backdrop
-    | Text
-    | Text_cursor_line
-    | Special
-    | Special_cursor_line
-    | Search_match
-    | Search_match_current
-    | Search_special_match
-    | Search_special_match_current
-    | Selection
-    | Selection_special
-    | Insert_cursor
-    | Insert_point
+    | Document _
     | Gutter
     | Gutter_cursor_line
     | Border
@@ -85,18 +74,17 @@ let colors (style : Ches_screen.Style.t) =
   let colors fg bg = [ Attr.fg (Role.color fg); Attr.bg (Role.color bg) ] in
   match style with
   | Backdrop -> colors Foreground Backdrop
-  | Text -> colors Foreground Background
-  | Text_cursor_line -> colors Foreground Current_line
-  | Special -> colors Special Background
-  | Special_cursor_line -> colors Special Current_line
-  | Search_match -> colors Background Normal_accent
-  | Search_match_current -> colors Background Insert_accent
-  | Search_special_match -> colors Background Normal_accent
-  | Search_special_match_current -> colors Background Insert_accent
-  | Selection -> colors Background Warning
-  | Selection_special -> colors Background Warning
-  | Insert_cursor -> colors Background Block_cursor
-  | Insert_point -> colors Background Block_copy
+  | Document { syntax = Plain; current_line; special; overlay } ->
+    (match overlay with
+     | Some Search_match -> colors Background Normal_accent
+     | Some Search_current -> colors Background Insert_accent
+     | Some Selection -> colors Background Warning
+     | Some Insert_cursor -> colors Background Block_cursor
+     | Some Insert_point -> colors Background Block_copy
+     | None ->
+       colors
+         (if special then Special else Foreground)
+         (if current_line then Current_line else Background))
   | Gutter -> colors Muted Background
   | Gutter_cursor_line -> colors Foreground Current_line
   | Border -> colors Border Background
