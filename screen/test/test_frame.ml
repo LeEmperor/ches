@@ -101,9 +101,10 @@ let%test_unit "overlapping search highlights survive horizontal scrolling" =
   assert (scroll.left > 0);
   let frame = Frame.render t ~width:30 ~height:6 in
   let row = List.nth_exn frame.rows 1 in
-  assert (List.exists row ~f:(fun span -> Style.equal span.style Search_match));
+  let matched = Style.document ~current_line:true ~overlay:Search_match () in
+  assert (List.exists row ~f:(fun span -> Style.equal span.style matched));
   List.iter row ~f:(fun span ->
-    if String.contains span.text 'a' then assert (Style.equal span.style Search_match))
+    if String.contains span.text 'a' then assert (Style.equal span.style matched))
 ;;
 
 let%test_unit "multiline highlights overlap both viewport edges and retain overlap precedence" =
@@ -134,11 +135,12 @@ let%test_unit "multiline highlights overlap both viewport edges and retain overl
         Array.iter glyphs ~f:(fun glyph ->
           let offset = Text_buffer.line_start text line + glyph.pos in
           let matched = List.find candidates ~f:(fun start -> start <= offset && offset < start + String.length query) in
-          let expected = match matched with
-            | Some start when Option.value_map current ~default:false ~f:(Int.equal start) -> Style.Search_match_current
-            | Some _ -> Search_match
-            | None -> if line = Editor.cursor_line (Ches_app.Controller.editor (Ui_state.controller t))
-                      then Text_cursor_line else Text in
+           let overlay = match matched with
+             | Some start when Option.value_map current ~default:false ~f:(Int.equal start) -> Some Style.Overlay.Search_current
+             | Some _ -> Some Style.Overlay.Search_match
+             | None -> None in
+           let expected = Style.document ?overlay
+               ~current_line:(line = Editor.cursor_line (Ches_app.Controller.editor (Ui_state.controller t))) () in
           assert (Style.equal (List.nth_exn cells (geometry.text.x + glyph.col)) expected)))))
 ;;
 
@@ -759,7 +761,7 @@ let%test_unit "a TAB cut by the viewport's edge keeps its block highlight" =
     | [] -> assert false
     | (s : Span.t) :: rest -> if x < s.width then s.style else style_at rest (x - s.width)
   in
-  assert (Style.equal (style_at row gutter) Selection)
+  assert (Style.equal (style_at row gutter) (Style.document ~overlay:Selection ()))
 ;;
 
 let%expect_test "block insert draws its cursor and a copy on each other line" =
@@ -909,4 +911,23 @@ let%expect_test "left padding takes the cursor line's style" =
     Text[                    ]
     (Mode Normal)[ NORMAL ] Status[ f.txt  1:1 ]
     |}]
+;;
+
+let%test_unit "selection kinds override search; removing selection restores search" =
+  let searched = run (ui "aaa\naaa") (keys "/a<CR>0") in
+  let overlay_at t line col =
+    let geometry = Ui_state.geometry t ~width:40 ~height:8 in
+    let frame = Frame.render t ~width:40 ~height:8 in
+    match Test_span.style_at (List.nth_exn frame.rows (geometry.text.y + line)) (geometry.text.x + col) with
+    | Document document -> document.overlay
+    | _ -> assert false
+  in
+  List.iter [ "v"; "V"; "<C-v>" ] ~f:(fun enter ->
+    let selected = run searched (keys enter) in
+    assert ([%equal: Style.Overlay.t option] (overlay_at selected 0 0) (Some Selection));
+    let cleared = run selected (keys "<Esc>") in
+    assert ([%equal: Style.Overlay.t option] (overlay_at cleared 0 0) (overlay_at searched 0 0)));
+  let inserting = run searched (keys "<C-v>jI") in
+  assert ([%equal: Style.Overlay.t option] (overlay_at inserting 0 0) (Some Insert_cursor));
+  assert ([%equal: Style.Overlay.t option] (overlay_at inserting 1 0) (Some Insert_point))
 ;;

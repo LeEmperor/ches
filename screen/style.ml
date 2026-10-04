@@ -75,5 +75,5 @@ let to_string_hum = function
         | false, true -> "Text_cursor_line"
         | true, false -> "Special"
         | true, true -> "Special_cursor_line"))
-  | style -> Sexp.to_string (sexp_of_t style)
+  | style -> Sexp.to_string_hum (sexp_of_t style)
 ;;

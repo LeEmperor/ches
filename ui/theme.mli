@@ -47,7 +47,10 @@ module Font : sig
 end
 
 (** The colors of [style] from {!Role}, and its font styles from [font] (default
-    {!Font.default}). *)
+    {!Font.default}). The font callback API is unchanged; document styles now match
+    [Document { special; overlay; current_line; syntax }] rather than flat variants
+    such as [Special_cursor_line] or [Search_match_current]. Interaction overlays
+    replace foreground/background for contrast, without erasing underlying data. *)
 val attrs
   :  ?font:(Ches_screen.Style.t -> Font.t list)
   -> Ches_screen.Style.t

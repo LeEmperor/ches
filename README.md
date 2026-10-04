@@ -460,6 +460,12 @@ Font styles (bold, italic, underline) are set per part of the screen by
 `Theme.Font.default` and can be replaced in code with `Editor_view.run ~font`;
 the terminal still chooses the typeface, and a terminal without italics may
 ignore them.
+Document styles are composable records under `Ches_screen.Style.Document`:
+syntax (plain for now), current-line background, special-display treatment, and
+interaction overlay. The `~font` callback still takes `Style.t`; custom callbacks
+that previously matched flat document variants must now inspect the record, e.g.
+`Document { special = true; _ }` instead of `Special | Special_cursor_line`.
+Chrome variants such as `Title` and `Status` are unchanged.
 Everything is also readable without color: the mode, `[+]`, and messages are
 text, and escape forms are bracketed.
 
