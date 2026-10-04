@@ -1,8 +1,9 @@
 # Ches workspace, panes, and status tile
 
-Status: phases 1–2 (pane-relative document geometry and minimal workspace allocation)
-implemented and software-verified. Status-tile rendering/integration and the
-external-view protocol remain unimplemented.
+Status: phases 1–3 (pane-relative geometry, workspace allocation, and vertical status
+rendering) implemented and software-verified. Status presentation awaits human review
+after phase 4 integration. Runtime workspace integration and the external-view
+protocol remain unimplemented.
 
 ## Goal and scope
 
@@ -30,7 +31,8 @@ in another process or on another machine.
   messages, and animation state.
 - `screen/status_field.ml` defines semantic field IDs and priority/fitting metadata.
 - `screen/status.ml` produces mode, filename, dirty, message, pending-key, and
-  position fields, then renders them for a row or border title.
+  position fields, then renders them for a row, border title, or allocated vertical
+  status cell. The vertical renderer is not yet connected to runtime composition.
 - `ui/editor_view.ml` renders screen frames through Bonsai and adapts UI events.
 
 These boundaries are useful. Extend them with workspace composition rather than
@@ -478,8 +480,8 @@ fallback feel will be assessed in phase 4.
   gap remains unresolved. No manual acceptance is required for this phase.
 - Phase 2 software acceptance criteria are satisfied. The only sizing choices are
   the simple recorded internal defaults; a general split tree and layout controls
-  were deliberately not added. Before phase 3, record vertical field ordering and
-  limited-space/essential-feedback priorities. Phase 4 still needs human feedback
+  were deliberately not added. Vertical field ordering and limited-space priorities
+  were subsequently approved and recorded in phase 3. Phase 4 still needs human feedback
   on actual cell placement, presentation, and fallback feel. No commits or other
   Git-state changes were made.
 
@@ -509,6 +511,67 @@ phase 4.
 **Human testing:** Required for the presentation, deferred until it is available in
 the running application in phase 4. Renderer tests establish software correctness,
 not readability or visual comfort; carry this pending check into the handoff.
+
+#### Phase 3 presentation policy (approved 2026-10-04)
+
+- Full vertical order: mode, filename with dirty marker, position, pending keys
+  when present, message when present. Absent fields consume no rows. Filename and
+  dirty state share one row; a dirty marker still has its own row if no file exists.
+- With fewer rows, choose mode first, then errors, pending keys, dirty/file context,
+  position, and routine feedback. Display the chosen rows in the full vertical order,
+  not priority order. A clean filename has lower priority than dirty/file context
+  but still precedes position. Ignore row-specific left/right placement metadata.
+- Render content rows without an extra border/title/padding requirement; this lets
+  status use any allocated cell, including shallow stacked cells. Preserve semantic
+  styles and pad every output row to its allocated display width; unused rows are
+  blank status rows. The renderer owns no terminal cursor.
+- Shorten filenames from the left using the existing `<` marker and keep their tail.
+  Reserve room for `[+]` before fitting a filename. Other text keeps its start using
+  `>` when cut; mode trims the row badge's outer spaces and keeps its initial letters
+  on very narrow cells. Preserve the dirty style even when its marker must be cut.
+  Pending keys retain their existing text without a label taking scarce width.
+  Dirty, pending, and error truncation markers retain their semantic styles even
+  when the allocation is only one cell wide.
+- Messages keep their current error/warning/info styling and urgency metadata.
+  This phase changes presentation only, not error retention or acknowledgement.
+
+#### Phase 3 completion and handoff (2026-10-04)
+
+- Added `Status.vertical ~rect fields` and `Status.Tile.t` in `screen/status.ml`/
+  `.mli`. The result preserves the allocation origin and supplies pane-local rows
+  of exact display width/height, ready for composition at that origin in phase 4.
+  Negative dimensions normalize to zero; no surrounding backdrop, borders, or
+  terminal cursor are supplied by this renderer.
+- Implemented the approved full ordering and independent height priorities. The
+  filename/dirty row reserves dirty-marker width before shortening the path; omitted
+  fields consume no rows and unused space is padded. Existing semantic fields and
+  span clipping handle Unicode, escaped controls, and styles without adding a new
+  status-field representation. Error urgency uses existing message priority metadata.
+- Existing `Status.render` row/title behavior and field production are unchanged.
+  No runtime UI integration, layout controls, or message lifecycle changes were
+  introduced; error retention/acknowledgement remains phase 5.
+- Added eight focused expect tests in `screen/test/test_vertical_status.ml` covering
+  full/constrained presentations, conditional fields, row priorities, routine vs
+  error feedback, narrow-cell semantic styles, Unicode/combining characters, current
+  UI-generated dirty/pending/error fields and Insert mode, and empty allocations.
+  A bounded width/height sweep verifies exact cell widths, origin preservation, and
+  control escaping. Scrambled inputs demonstrate independence from input order and
+  horizontal placement/fitting metadata.
+- Passed: `opam exec --switch=5.2.0+ox -- dune runtest` (complete suite, including
+  unchanged row/title/frame expectations), `opam exec --switch=5.2.0+ox -- dune build`,
+  and `git diff --check`. No terminal smoke check was run for this unintegrated
+  renderer; phase 1's animation-related smoke synchronization gap remains unresolved.
+- **Implemented and tested from the software side; human use and feedback on the
+  feel of the feature are still needed.** Human acceptance is pending until phase 4
+  makes this presentation available in the running application. Manual checklist:
+  inspect Normal/Insert and dirty/file rows on laptop and monitor layouts; inspect
+  pending keys, routine feedback, and an error; resize/reposition the status cell and
+  judge field ordering, path truncation, readability, and visual balance. Test actual
+  colors rather than relying on textual snapshots.
+- No implementation deviations or software acceptance blockers remain for phase 3.
+  Before phase 4, agree on controls and zen/hide/restore behavior; carry forward the
+  presentation review and smoke synchronization gap. No commits or Git-state changes
+  were made.
 
 ### Phase 4 — Workspace integration and controls
 
@@ -623,8 +686,6 @@ starts; apply the same software/human acceptance distinction.
 
 ### Remaining decisions
 
-- Vertical status field ordering and limited-space/essential-feedback priorities
-  before phase 3.
 - Which layout commands ship first, and zen/restore behavior, before phase 4.
 - Whether status follows the focused pane or also retains a pinned document summary.
 - First external producer and whether its output is semantic data or cell frames.
