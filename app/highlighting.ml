@@ -9,6 +9,7 @@ type runtime =
   ; mutable language : Language.t
   ; mutable failed : bool
   ; mutable parse_count : int
+  ; mutable incremental_count : int
   }
 
 type t =
@@ -53,8 +54,10 @@ let update t editor ~reset =
         provider
     in
     let before = Provider.parse_count provider in
-    let result = Provider.highlight provider ~key ~source:(Text_buffer.to_string (Editor.text editor)) in
+    let incremental_before = Provider.incremental_count provider in
+    let result = Provider.highlight_incremental provider ~key ~source:(Text_buffer.to_string (Editor.text editor)) in
     t.runtime.parse_count <- t.runtime.parse_count + Provider.parse_count provider - before;
+    t.runtime.incremental_count <- t.runtime.incremental_count + Provider.incremental_count provider - incremental_before;
     t.runtime.failed <-
       (match result.status with
        | Plain _ -> true
@@ -73,7 +76,7 @@ let create editor =
     ; key
     ; snapshot = Snapshot.create ~key ~source:"" []
     ; status = None
-    ; runtime = { provider = None; language = Plain; failed = false; parse_count = 0 }
+    ; runtime = { provider = None; language = Plain; failed = false; parse_count = 0; incremental_count = 0 }
     ; language_override = None
     }
   in
@@ -85,6 +88,7 @@ let status t = t.status
 let parse_count t = t.runtime.parse_count
 
 module For_testing = struct
+  let incremental_count t = t.runtime.incremental_count
   let with_language t editor language =
     update { t with language_override = Some language } editor ~reset:true
   ;;

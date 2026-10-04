@@ -2,8 +2,8 @@ open! Core
 open Ches_highlight
 
 (** Synchronous, privately owned OCaml parser/query session. Never put it in editor
-    history or render state. Not safe for concurrent calls. Every invocation resets
-    the parser and parses the complete source without a prior tree. *)
+    history or render state. Not safe for concurrent calls. Native trees remain
+    private; only immutable normalized snapshots escape. *)
 type t
 
 module Failure : sig
@@ -40,15 +40,29 @@ val key : t -> document:Snapshot.Document_id.t -> revision:int -> Snapshot.Key.t
     the session; recreate it for an explicit retry. No logging or editor feedback. *)
 val highlight : t -> key:Snapshot.Key.t -> source:string -> result
 
+(** Retains the last successful source/tree privately. For the same document,
+    derives one encompassing UTF-8-safe edit, applies it to a COPY of the old tree,
+    and parses with that tree. Always queries/normalizes the complete new tree.
+    First calls/document changes parse fresh; failures discard retained state.
+    [highlight] remains the fresh-parse reference and discards retained state.
+    Reload/configuration resets should close/recreate the session. *)
+val highlight_incremental : t -> key:Snapshot.Key.t -> source:string -> result
+
 (** Drop owned parser/query references. Idempotent; closed sessions return Plain.
     The binding has no explicit parser/query/tree disposal: native release relies
-    on its GC finalizers. Per-call trees/cursors are not retained by this provider;
+    on its GC finalizers. Incremental calls retain one source/tree; cursors are local;
     no forced GC is performed in production. *)
 val close : t -> unit
 
 (** Number of actual parse attempts in this session, including binding failures.
     Reading diagnostics is observational and performs no provider work. *)
 val parse_count : t -> int
+val incremental_count : t -> int
+
+(** CPU seconds for the last successful call, including automatic GC. Preparation
+    includes diff/copy/edit; querying includes capture extraction. Observational. *)
+type timings = { preparation : float; parsing : float; querying : float; normalization : float }
+val last_timings : t -> timings option
 
 module For_testing : sig
   (** Deliberately invalid/missing/predicate queries exercise initialization fallback.

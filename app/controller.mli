@@ -83,4 +83,5 @@ val move : t -> Motion.t -> count:int option -> t
 module For_testing : sig
   val with_highlight_language : t -> Ches_highlight.Language.t -> t
   val fail_next_highlight : t -> unit
+  val highlight_incremental_count : t -> int
 end

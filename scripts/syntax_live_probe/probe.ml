@@ -1,4 +1,4 @@
-(* Explicit full-parse controller latency observation. No benchmarks or GC work
+(* Explicit controller latency observation (incremental since phase 5). No benchmarks or GC work
    run in the editor. Input latency includes text-buffer/editor work, not rendering. *)
 open Ches_core
 open Ches_input

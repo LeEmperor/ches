@@ -9,6 +9,7 @@ module Key : sig
   type t
   val create : document:Document_id.t -> revision:int -> language:Language.t -> configuration:string -> t
   val equal : t -> t -> bool
+  val same_document : t -> t -> bool
   val revision : t -> int
   val language : t -> Language.t
   val configuration : t -> string

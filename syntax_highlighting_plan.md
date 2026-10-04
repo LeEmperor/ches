@@ -3,9 +3,10 @@
 **Status (2026-10-04):** phase 0 technical feasibility verified; owner declined
 further bundled-asset provenance/license investigation (“don't care”), so that
 unresolved audit is no longer an implementation gate. This is not a finding of
-license compliance. Phases 1–4 implementation complete (owner acceptance pending);
-phases 5–6 have not started. **Paused for phase 4 owner/visual review.** Incremental
-optimization requires separate authorization; no phase 5 work has begun.
+license compliance. Phases 1–5 implementation complete (owner acceptance pending).
+Owner explicitly authorized phase 5; phase 6 has not started. Incremental parsing
+is live, with full-document query/normalization still required. **Stopped before
+phase 6; owner/real-terminal acceptance remains pending.**
 
 ## Goal and delivery boundaries
 
@@ -1101,3 +1102,147 @@ Confirm acceptance or request a bounded palette/correctness correction. Separate
 decide whether to authorize phase 5 optimization or explicitly defer it and proceed
 to phase 6 regression/documentation. Smoke cursor timing failures remain a known
 follow-up; do not mark them resolved without checking. **Stopped at the phase 4 gate.**
+
+### 2026-10-04 — Phase 5A/5B: incremental updates and measurements complete
+
+**Authorization/status:** owner requested completing phase 5, explicitly authorizing
+optimization after the phase 4 gate. Both checkpoints are implementation complete;
+this does not imply phase 4/5 visual acceptance. No phase 6, extra languages, LSP,
+incremental querying, storage/history redesign, dependency installation, downloads,
+switch changes, or mutative Git commands. Existing phase 1–4 uncommitted/untracked
+work was inspected and preserved. No applicable repository/ancestor `AGENTS.md`.
+
+**5A bridge and proof:** chose snapshot diff instead of changing the editing core.
+`highlight/edit.{ml,mli}` derive one encompassing replacement between the exact
+previous/new sources. Common prefix/suffix endpoints round outwards to UTF-8
+boundaries, including different code points sharing leading/trailing bytes.
+Offsets are half-open bytes; points are zero-based LF rows and byte columns.
+The sole replacement is relative to the previous full snapshot, not an intermediate
+edit sequence. Identical bytes return `None`. Invalid UTF-8 raises `Invalid_argument`;
+the provider rejects invalid/oversized source before calling the diff/C binding.
+Multiple block edits are conservatively encompassed, sacrificing reuse, not accuracy.
+No changes to core purity, revisions, dirty state, registers or undo history.
+
+New `highlight/test/test_edit.ml` checks all pairs of Unicode/multiline/EOF/block-like
+fixtures plus 1,000 fixed-seed randomized pairs: applying the replacement must
+reproduce the new source exactly, and endpoints must match an independent
+line-splitting point oracle. `test/test_highlighting.ml` applies the same reconstruction
+and independent point assertions to actual controller transitions, covering paste,
+block insertion/paste, undo/redo, identical/different reload and EOF edits. The 5A
+targeted tests passed before running 5B differential/performance checks.
+
+**5B ownership/integration and exact changed files/interfaces:**
+
+- `highlight/snapshot.{ml,mli}` add `Key.same_document`, comparing opaque identity
+  independently of revision. No normalization/category/query/palette changes.
+- `highlight_ocaml/provider.{ml,mli}` add `highlight_incremental`, privately retaining
+  one successful `(key, source, tree)`. Same-document updates copy the tree, apply
+  the derived edit and call `Parser.parse_string ~old`; even the prior private tree
+  is not edited directly. Initial/document-identity changes parse fresh. Every parse
+  runs the full query and normalization; no old capture reuse. Native nodes/trees
+  never enter immutable snapshots, UI/history or public results. The existing
+  `highlight` remains a fresh-parse reference and discards retained state. Close
+  and all safe-fallback results clear retained state; binding parse/query failures
+  still disable the session until recreated. No forced GC in production.
+- Provider diagnostics add `incremental_count` and `last_timings` (CPU seconds for
+  preparation/diff/copy/edit, parsing, querying/capture extraction and normalization).
+  Readout is observational. Automatic GC can contribute to stage times. Full-call
+  totals also include source validation and small unclassified overhead.
+- `app/highlighting.{ml,mli}` switch changed-document calls to incremental parsing
+  and aggregate incremental-attempt counts in the serialized shared runtime.
+  `app/controller.{ml,mli}` expose this count only through `For_testing`.
+  Reload/language/failure reset behavior remains close/recreate; rendering and
+  unchanged keys never parse. Historical presentation snapshots stay immutable.
+- New `highlight_ocaml/test/test_incremental.ml` compare status and exact normalized
+  ranges with a fresh parse on every step for both grammars: nested/multiline
+  comments, multiline/unterminated strings, malformed syntax, empty text, Unicode,
+  EOF, undo/redo-like reversals and 200 fixed-seed fragment edits per grammar.
+  Forced GC exercises ownership; retained historical ranges remain unchanged.
+  Tests also prove real reuse counts, identity reset, identical-source reuse,
+  fresh-call reset, invalid input/failure cleanup and closed fallback.
+- `test/test_highlighting.ml` additionally prove live block/paste/undo/redo calls
+  use prior trees and identical reload gets a fresh tree. Existing phase 4 fresh
+  reference comparisons and screen non-text-event parse-count tests still pass.
+- New `scripts/syntax_incremental_probe/{dune,probe.ml}` benchmark fresh/incremental
+  stages on reproducible 10/1,000/5,000-copy fixtures for both languages, 20 leading
+  space insertions per mode. Separately measure 100 cached 100x30 frames and assert
+  no parses. Initialization/first parse are excluded from stage averages; automatic
+  GC included, forced GC only between modes. `scripts/syntax_live_probe/probe.ml`
+  updates its comment to reflect incremental integration; fixture/method unchanged.
+- `highlight_ocaml/ASSETS.md` correct ownership/retention descriptions and document
+  explicit benchmark commands/remaining costs. This plan records status/handoff.
+  Pinned `tree-sitter.0.1.0`, bundled ABI 15 grammars and query configuration unchanged.
+
+**Reproducible stage results:** mean CPU milliseconds, local observations, not
+universal wall-clock/typing guarantees. Preparation includes diff/copy/edit.
+
+| Fixture bytes | Mode | Total | Preparation | Parse | Query | Normalize | Cached frame |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `.ml` 410 | fresh | 0.148 | 0.000 | 0.071 | 0.056 | 0.020 | 0.063 |
+| `.ml` 410 | incremental | 0.084 | 0.003 | 0.011 | 0.053 | 0.016 | 0.063 |
+| `.ml` 41,000 | fresh | 15.873 | 0.001 | 5.810 | 4.816 | 5.207 | 0.118 |
+| `.ml` 41,000 | incremental | 10.649 | 0.150 | 1.218 | 4.925 | 4.313 | 0.118 |
+| `.ml` 205,000 | fresh | 89.945 | 0.001 | 29.659 | 28.852 | 31.233 | 0.112 |
+| `.ml` 205,000 | incremental | 68.022 | 0.733 | 8.840 | 29.230 | 29.024 | 0.112 |
+| `.mli` 460 | fresh | 0.117 | 0.000 | 0.056 | 0.042 | 0.018 | 0.066 |
+| `.mli` 460 | incremental | 0.068 | 0.003 | 0.011 | 0.038 | 0.015 | 0.066 |
+| `.mli` 46,000 | fresh | 13.580 | 0.001 | 5.010 | 4.103 | 4.423 | 0.130 |
+| `.mli` 46,000 | incremental | 9.165 | 0.162 | 0.764 | 4.168 | 4.026 | 0.130 |
+| `.mli` 230,000 | fresh | 78.963 | 0.001 | 25.218 | 24.263 | 29.267 | 0.132 |
+| `.mli` 230,000 | incremental | 56.520 | 0.806 | 4.320 | 23.649 | 27.526 | 0.132 |
+
+Frame numbers are one separate measurement per fixture, repeated in both rows,
+not separate fresh/incremental frame runs. Parsing still traverses/rebuilds some
+whole-document structure; incremental does not imply constant time. Full query
+and normalization now dominate the large-file result. Whole-string editing,
+UTF-8 validation, prefix/suffix scans and point scans remain linear.
+
+**Phase 4 comparison:** reran the unchanged live-probe method (wall-clock controller
+latency, including editing but excluding frames):
+
+| Fixture | Phase 4 mean edit ms | Phase 5 mean edit ms | Phase 5 max edit ms |
+| --- | ---: | ---: | ---: |
+| `highlight_ocaml/provider.ml` | 1.609 | 1.487 | 2.541 |
+| `core/editor.ml` | 18.999 | 11.952 | 12.994 |
+| `core/text_buffer.mli` | 0.552 | 0.360 | 0.763 |
+| generated `.ml`, 205,000 bytes | 91.208 | 69.664 | 84.414 |
+
+Provider source grew from 5,102 to 7,545 bytes, so its row is not an identical-file
+comparison. Other fixtures/method are unchanged. Initial controller costs were
+19.411 / 30.965 / 10.990 / 111.473 ms respectively; all samples had 21 parses and
+no extra parses for 100 later motions. Large-file typing can still visibly lag.
+
+**Exact commands/outcomes:**
+
+- Read-only `git status --short`, `git diff --check`: inspected existing work;
+  whitespace check passed. No staging/commits/other Git mutations.
+- `opam exec --switch=5.2.0+ox -- dune build`: passed initial implementation and
+  final build. Installed binding API successfully compiles; no dependencies changed.
+- `opam exec --switch=5.2.0+ox -- dune runtest highlight/test test --force`: initially
+  failed because `test_result` requires point comparison; derived `compare_point`,
+  then passed the reconstruction/point and controller tests.
+- `opam exec --switch=5.2.0+ox -- dune runtest --force`: initially failed compilation
+  because OxCaml `List.split_n` returns an unboxed tuple; corrected the test pattern
+  to `#(left, right)`. Subsequent and final full suites passed. No test promotion.
+- `opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_incremental_probe/probe.exe`:
+  passed all benchmark/reuse/frame assertions; stage table above.
+- `opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_live_probe/probe.exe`:
+  passed all controller/freshness/non-text count checks; live table above.
+- `TMPDIR=/tmp/opencode scripts/smoke.sh`: **failed, exit 1, five checks**: tall,
+  counted and document-motion cursor-row checks and two wide-line cursor checks.
+  Again captures have `cursor_flag=0` and smear cells, same categories recorded in
+  phases 1/4, not independently proven pre-existing against an earlier binary.
+  Other checks passed, including saved bytes, controls/wide geometry, block
+  selection/insert colors, terminal restoration and supported `.ml` launches.
+  Captures: `/tmp/opencode/ches-smoke-screens.3zlMjL`. No animation/script fixes.
+- **Not performed:** real-terminal owner visual/flicker acceptance, extended
+  incremental native-memory/RSS stress, arbitrary-size latency guarantees or new
+  asset audit. Existing binding finalizer/external-memory-accounting risks remain;
+  retaining a source/tree and copied shared subtrees does not prove prompt disposal.
+
+**Next action:** owner acceptance and a separately requested phase 6 session. Do
+not silently classify the smoke failures as resolved. If more optimization is
+desired, propose a separate measured checkpoint for normalization and query costs;
+incremental querying needs a new correctness design for capture invalidation and
+cross-boundary effects, not merely changed syntax ranges. No such work authorized
+or implemented here. **Stopped before phase 6.**

@@ -43,9 +43,13 @@ No additional audit or source vendoring was performed in phase 3. See
 ## Ownership and limitations
 
 One provider owns its parser and compiled query; callers must serialize use.
-Every call resets the parser and freshly parses the full source. Trees and query
-cursors are per-call locals, never returned or cached. `Provider.close` drops
-parser/query references; actual native destruction relies on the binding's GC
+`Provider.highlight` resets and freshly parses the full source as a reference.
+`Provider.highlight_incremental` retains one successful source/tree privately,
+derives a UTF-8-safe encompassing replacement, copies/edits the prior tree and
+parses with it. New document identities parse fresh; controller reload/language
+changes recreate the session. All calls query and normalize the complete tree.
+No native tree/node escapes into snapshots or editor history; cursors are local.
+`Provider.close` drops source/tree/parser/query references; native destruction relies on the binding's GC
 finalizers, because it exposes no explicit delete for those objects. Production
 code does not force GC. Earlier probe measurements showed substantial retained
 RSS; a provider lifetime does not promise prompt native-memory reclamation.
@@ -67,4 +71,15 @@ The standalone probe runs 200 calls per grammar on a generated 500-copy fixture
 with one reused provider, checks deterministic normalized ranges, and prints
 whole-call timing and RSS after forced collection. It is not part of `dune runtest`
 or the editor. It does not prove arbitrary-file scalability or prompt native
-disposal; live-editor measurements and larger-file performance remain later work.
+disposal. Phase 5's separate probe compares fresh/incremental CPU costs for
+preparation (diff/copy/edit), parsing, full query/capture extraction, normalization,
+and cached frame rendering on 10/1,000/5,000-copy `.ml`/`.mli` fixtures:
+
+```sh
+opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_incremental_probe/probe.exe
+opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_live_probe/probe.exe
+```
+
+These explicit probes are not editor work. Full-source UTF-8 checks, snapshot diff,
+whole-string editing, querying and normalization remain; large-file typing can
+still lag. See the plan handoff for measured results and unchecked memory risks.

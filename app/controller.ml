@@ -112,6 +112,7 @@ let move t motion ~count =
 ;;
 
 module For_testing = struct
+  let highlight_incremental_count t = Highlighting.For_testing.incremental_count t.highlighting
   let with_highlight_language t language =
     { t with highlighting = Highlighting.For_testing.with_language t.highlighting t.editor language }
   ;;

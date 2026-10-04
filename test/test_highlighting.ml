@@ -11,8 +11,25 @@ let text source =
 ;;
 let create ?path source = Controller.create (Editor.create ?path ~cell_width:Cell_width.f (text source))
 let input t input =
+  let old_source = Text_buffer.to_string (Editor.text (Controller.editor t)) in
   let t, _, status = Controller.handle_input t input in
   assert (Controller.Status.equal status Running);
+  let new_source = Text_buffer.to_string (Editor.text (Controller.editor t)) in
+  (match Edit.between ~old_source ~new_source with
+   | None -> assert (String.equal old_source new_source)
+   | Some edit ->
+     let replacement = String.sub new_source ~pos:edit.start_byte
+         ~len:(edit.new_end_byte - edit.start_byte) in
+     [%test_result: string]
+       (String.prefix old_source edit.start_byte ^ replacement ^ String.drop_prefix old_source edit.old_end_byte)
+       ~expect:new_source;
+     let point source offset : Edit.point =
+       let lines = String.split (String.prefix source offset) ~on:'\n' in
+       { row = List.length lines - 1; column = String.length (List.last_exn lines) }
+     in
+     [%test_result: Edit.point] edit.start_point ~expect:(point old_source edit.start_byte);
+     [%test_result: Edit.point] edit.old_end_point ~expect:(point old_source edit.old_end_byte);
+     [%test_result: Edit.point] edit.new_end_point ~expect:(point new_source edit.new_end_byte));
   t
 ;;
 let run t keys = List.fold (Key_notation.keys keys) ~init:t ~f:input
@@ -95,6 +112,7 @@ let%test_unit "literal multiline paste, block edits and block paste get fresh wh
   current t;
   let t = run t "u<C-r>" in
   current t;
+  assert (Controller.For_testing.highlight_incremental_count t = count t - 1);
   Controller.close t
 ;;
 
@@ -114,6 +132,7 @@ let%test_unit "load/create/save/reload preserve bytes and cache freshness" =
     let revision = Editor.revision (Controller.editor t) in
     let t = run t ":e!<CR>" in
     assert (count t = before + 1);
+    assert (Controller.For_testing.highlight_incremental_count t = 0);
     assert (Editor.revision (Controller.editor t) = revision + 1);
     assert (not (phys_equal cached (snapshot t)));
     current t;

@@ -20,12 +20,17 @@ end
 
 type handles = { parser : Tree_sitter.Parser.t; query : Tree_sitter.Query.t }
 type state = Ready of handles | Unavailable of Failure.t
+type retained = { key : Snapshot.Key.t; source : string; tree : Tree_sitter.Tree.t }
+type timings = { preparation : float; parsing : float; querying : float; normalization : float }
 type t =
   { language : Language.t
   ; configuration : string
   ; mutable state : state
   ; mutable fail_next_parse : bool
   ; mutable parse_count : int
+  ; mutable retained : retained option
+  ; mutable incremental_count : int
+  ; mutable timings : timings option
   }
 type result = { snapshot : Snapshot.t; status : Status.t }
 
@@ -58,14 +63,17 @@ let initialize language query_source =
 
 let create ~language =
   { language; configuration; state = initialize language (Queries.source language)
-  ; fail_next_parse = false; parse_count = 0
+   ; fail_next_parse = false; parse_count = 0; retained = None
+   ; incremental_count = 0; timings = None
   }
 ;;
 let key t ~document ~revision =
   Snapshot.Key.create ~document ~revision ~language:t.language ~configuration:t.configuration
 ;;
-let close t = t.state <- Unavailable Closed
+let close t = t.state <- Unavailable Closed; t.retained <- None; t.timings <- None
 let parse_count t = t.parse_count
+let incremental_count t = t.incremental_count
+let last_timings t = t.timings
 
 let supported_length length =
   length >= 0 && Int64.(of_int length <= 0xffff_ffffL)
@@ -98,8 +106,10 @@ let capture_ranges query root =
   loop []
 ;;
 
-let highlight t ~key ~source =
+let highlight_impl ~incremental t ~key ~source =
+  t.timings <- None;
   let plain failure =
+    t.retained <- None;
     (* Empty spans need no source validation. This also safely handles invalid
        UTF-8/oversized input before it ever crosses the C boundary. *)
     { snapshot = Snapshot.create ~key ~source:"" []; status = Plain failure }
@@ -117,13 +127,42 @@ let highlight t ~key ~source =
          if t.fail_next_parse then (
            t.fail_next_parse <- false;
            failwith "injected parser failure");
-         Tree_sitter.Parser.reset parser;
-         t.parse_count <- t.parse_count + 1;
-         let tree = Tree_sitter.Parser.parse_string parser source in
+          let started = Stdlib.Sys.time () in
+          let old =
+            if not incremental then None
+            else Option.bind t.retained ~f:(fun previous ->
+              if not (Snapshot.Key.same_document previous.key key) then None
+              else (
+                (* Copy before edit: even our private prior tree remains untouched.
+                   Immutable snapshots contain no native trees. *)
+                let tree = Tree_sitter.Tree.copy previous.tree in
+                Option.iter (Edit.between ~old_source:previous.source ~new_source:source)
+                  ~f:(fun edit ->
+                    let point (p : Edit.point) : Tree_sitter.point =
+                      { row = p.row; column = p.column }
+                    in
+                    Tree_sitter.Tree.edit tree
+                      ~start_byte:edit.start_byte ~old_end_byte:edit.old_end_byte
+                      ~new_end_byte:edit.new_end_byte ~start_point:(point edit.start_point)
+                      ~old_end_point:(point edit.old_end_point)
+                      ~new_end_point:(point edit.new_end_point));
+                Some tree))
+          in
+          let prepared = Stdlib.Sys.time () in
+          if Option.is_none old then Tree_sitter.Parser.reset parser;
+          t.parse_count <- t.parse_count + 1;
+          if Option.is_some old then t.incremental_count <- t.incremental_count + 1;
+          let tree = Tree_sitter.Parser.parse_string ?old parser source in
+          let parsed = Stdlib.Sys.time () in
          let root = Tree_sitter.Tree.root_node tree in
          let syntax_errors = Tree_sitter.Node.has_error root in
-         let ranges = capture_ranges query root in
-         let snapshot = Snapshot.create ~key ~source ranges in
+          let ranges = capture_ranges query root in
+          let queried = Stdlib.Sys.time () in
+          let snapshot = Snapshot.create ~key ~source ranges in
+          let normalized = Stdlib.Sys.time () in
+          t.retained <- (if incremental then Some { key; source; tree } else None);
+          t.timings <- Some { preparation = prepared -. started; parsing = parsed -. prepared
+                           ; querying = queried -. parsed; normalization = normalized -. queried };
          { snapshot; status = Highlighted { syntax_errors } }
        with
        | Stdlib.Failure message | Invalid_argument message ->
@@ -132,10 +171,14 @@ let highlight t ~key ~source =
          plain failure)
 ;;
 
+let highlight = highlight_impl ~incremental:false
+let highlight_incremental = highlight_impl ~incremental:true
+
 module For_testing = struct
   let create_with_query ~language ~query_source =
     { language; configuration = "test-query"; state = initialize language query_source
-    ; fail_next_parse = false; parse_count = 0
+     ; fail_next_parse = false; parse_count = 0; retained = None
+     ; incremental_count = 0; timings = None
     }
   ;;
   let fail_next_parse t = t.fail_next_parse <- true

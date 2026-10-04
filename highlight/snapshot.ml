@@ -23,6 +23,7 @@ module Key = struct
     && String.equal a.configuration b.configuration
   ;;
   let revision t = t.revision
+  let same_document a b = phys_equal a.document b.document
   let language t = t.language
   let configuration t = t.configuration
 end

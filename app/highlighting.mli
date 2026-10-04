@@ -15,6 +15,7 @@ val parse_count : t -> int
 val close : t -> unit
 
 module For_testing : sig
+  val incremental_count : t -> int
   (** Simulate a changed language association without adding editing commands. *)
   val with_language : t -> Editor.t -> Language.t -> t
   val fail_next_parse : t -> unit
