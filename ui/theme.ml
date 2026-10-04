@@ -17,6 +17,14 @@ module Role = struct
     | Error
     | Block_cursor
     | Block_copy
+    | Syntax_keyword
+    | Syntax_string
+    | Syntax_number
+    | Syntax_comment
+    | Syntax_type
+    | Syntax_function
+    | Syntax_module
+    | Syntax_constant
   [@@deriving sexp_of, enumerate]
 
   let color t =
@@ -36,6 +44,14 @@ module Role = struct
       | Error -> 0xf7, 0x76, 0x8e
       | Block_cursor -> 0x7a, 0xa2, 0xf7
       | Block_copy -> 0xd0, 0xd0, 0xd0
+      | Syntax_keyword -> 0xbb, 0x9a, 0xf7
+      | Syntax_string -> 0x9e, 0xce, 0x6a
+      | Syntax_number -> 0xff, 0x9e, 0x64
+      | Syntax_comment -> 0x7a, 0x89, 0x94
+      | Syntax_type -> 0x7d, 0xcf, 0xff
+      | Syntax_function -> 0x7a, 0xa2, 0xf7
+      | Syntax_module -> 0x73, 0xda, 0xca
+      | Syntax_constant -> 0xe0, 0xaf, 0x68
     in
     Attr.Color.rgb ~r ~g ~b
   ;;
@@ -70,11 +86,23 @@ module Font = struct
   ;;
 end
 
+let syntax_role : Ches_screen.Style.Syntax.t -> Role.t = function
+  | Plain | Variable | Operator | Punctuation -> Foreground
+  | Keyword -> Syntax_keyword
+  | String -> Syntax_string
+  | Number -> Syntax_number
+  | Comment -> Syntax_comment
+  | Type | Property -> Syntax_type
+  | Function -> Syntax_function
+  | Module -> Syntax_module
+  | Constructor | Constant | Escape -> Syntax_constant
+;;
+
 let colors (style : Ches_screen.Style.t) =
   let colors fg bg = [ Attr.fg (Role.color fg); Attr.bg (Role.color bg) ] in
   match style with
   | Backdrop -> colors Foreground Backdrop
-  | Document { syntax = Plain; current_line; special; overlay } ->
+  | Document { syntax; current_line; special; overlay } ->
     (match overlay with
      | Some Search_match -> colors Background Normal_accent
      | Some Search_current -> colors Background Insert_accent
@@ -83,7 +111,7 @@ let colors (style : Ches_screen.Style.t) =
      | Some Insert_point -> colors Background Block_copy
      | None ->
        colors
-         (if special then Special else Foreground)
+         (if special then Special else syntax_role syntax)
          (if current_line then Current_line else Background))
   | Gutter -> colors Muted Background
   | Gutter_cursor_line -> colors Foreground Current_line

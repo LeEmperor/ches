@@ -1,9 +1,6 @@
 open! Core
 
-module Syntax = struct
-  (* Phase 2 will supply provider-independent categories. No syntax colors yet. *)
-  type t = Plain [@@deriving sexp_of, equal]
-end
+module Syntax = Ches_highlight.Category
 
 module Overlay = struct
   type t =
@@ -58,10 +55,16 @@ let with_overlay style overlay =
   | _ -> invalid_arg "Style.with_overlay: expected a document style"
 ;;
 
+let with_syntax style syntax =
+  match style with
+  | Document text -> Document { text with syntax }
+  | _ -> invalid_arg "Style.with_syntax: expected a document style"
+;;
+
 (* Frame dumps describe the effective appearance, preserving their compact labels.
    [sexp_of_t] still exposes every component for structural debugging/tests. *)
 let to_string_hum = function
-  | Document { syntax = Plain; current_line; special; overlay } ->
+  | Document { syntax; current_line; special; overlay } ->
     (match overlay with
      | Some Insert_cursor -> "Insert_cursor"
      | Some Insert_point -> "Insert_point"
@@ -71,8 +74,12 @@ let to_string_hum = function
        if special then "Search_special_match_current" else "Search_match_current"
      | None ->
        (match special, current_line with
-        | false, false -> "Text"
-        | false, true -> "Text_cursor_line"
+        | false, false ->
+          if Syntax.equal syntax Plain then "Text"
+          else Sexp.to_string_hum (Syntax.sexp_of_t syntax)
+        | false, true ->
+          if Syntax.equal syntax Plain then "Text_cursor_line"
+          else Sexp.to_string_hum (Syntax.sexp_of_t syntax) ^ "_cursor_line"
         | true, false -> "Special"
         | true, true -> "Special_cursor_line"))
   | style -> Sexp.to_string_hum (sexp_of_t style)

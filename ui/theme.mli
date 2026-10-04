@@ -1,7 +1,7 @@
 (** The one place colors and font styles are defined: a palette of semantic roles, the
     font styles of each {!Ches_screen.Style.t}, and the attributes they make. One dark
     theme: a near-black neutral gray ground, muted gray chrome, and color kept for the
-    mode badge, the dirty marker, feedback, and escape forms. Every label is also
+    mode badge, the dirty marker, feedback, syntax, and escape forms. Every label is also
     readable without color. *)
 
 open! Core
@@ -25,10 +25,22 @@ module Role : sig
     (** During a block insert: the cursor itself, the insertion point the others
         copy. Change it here to recolor it. *)
     | Block_copy (** During a block insert: the insertion points on the other lines. *)
+    | Syntax_keyword
+    | Syntax_string
+    | Syntax_number
+    | Syntax_comment
+    | Syntax_type
+    | Syntax_function
+    | Syntax_module
+    | Syntax_constant
   [@@deriving sexp_of, enumerate]
 
   val color : t -> Attr.Color.t
 end
+
+(** Default syntax foreground role. Specials override it, and interaction overlays
+    override both foreground and background. Padding remains Plain. *)
+val syntax_role : Ches_screen.Style.Syntax.t -> Role.t
 
 module Font : sig
   (** A variant of the terminal's font. The terminal chooses the typeface; a style

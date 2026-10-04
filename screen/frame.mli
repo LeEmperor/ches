@@ -37,7 +37,14 @@ type t =
   }
 [@@deriving sexp_of]
 
-val render : Ui_state.t -> width:int -> height:int -> t
+(** Uses the controller's cached current highlights by default, with no parsing.
+    An optional override supplies an expected current key and snapshot. The caller
+    owns identity/configuration and must supply the current key, never the key
+    copied from an obsolete result. Mismatched keys or editor revisions fall back
+    to plain text. No provider work occurs here. *)
+val render
+  :  ?highlights:(Ches_highlight.Snapshot.Key.t * Ches_highlight.Snapshot.t)
+  -> Ui_state.t -> width:int -> height:int -> t
 
 (** The screen as text, one line per row, each ending in [|] to show the width, then
     the cursor. For tests. *)

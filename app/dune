@@ -4,6 +4,6 @@
 
 (library
  (name ches_app)
- (libraries ches_core ches_input core core_unix)
+ (libraries ches_core ches_input ches_highlight ches_highlight_ocaml core core_unix)
  (preprocess
   (pps ppx_jane)))

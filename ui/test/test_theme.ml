@@ -4,6 +4,34 @@ open Ches_ui
 
 let same_attrs a b = Attr.equal (Attr.many a) (Attr.many b)
 
+let%test_unit "syntax foreground yields to specials and every interaction overlay" =
+  let open Ches_screen in
+  List.iter Style.Syntax.all ~f:(fun syntax ->
+    List.iter [ false; true ] ~f:(fun current_line ->
+      List.iter [ false; true ] ~f:(fun special ->
+        List.iter (None :: List.map Style.Overlay.all ~f:Option.some) ~f:(fun overlay ->
+          let attrs = Theme.attrs (Style.document ~syntax ~current_line ~special ?overlay ()) in
+          (match overlay, special with
+           | None, false ->
+             assert (same_attrs attrs
+               [ Attr.fg (Theme.Role.color (Theme.syntax_role syntax))
+               ; Attr.bg (Theme.Role.color (if current_line then Current_line else Background))
+               ])
+           | _ ->
+             assert (same_attrs attrs
+               (Theme.attrs (Style.document ~current_line ~special ?overlay ()))))))))
+;;
+
+let%test_unit "palette distinguishes each major syntax family without adding fonts" =
+  let open Ches_screen in
+  List.iter
+    [ Style.Syntax.Keyword; String; Number; Comment; Type; Function; Module; Constant ]
+    ~f:(fun syntax ->
+      let style = Style.document ~syntax () in
+      assert (not (same_attrs (Theme.attrs style) (Theme.attrs (Style.document ()))));
+      assert (List.is_empty (Theme.Font.default style)))
+;;
+
 let%test_unit "every composed plain document style retains the previous terminal attributes" =
   let open Ches_screen in
   List.iter [ false; true ] ~f:(fun current_line ->

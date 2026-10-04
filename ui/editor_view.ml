@@ -131,9 +131,13 @@ let run ?font controller =
   Async.Signal.handle
     [ Async.Signal.term; Async.Signal.hup ]
     ~f:(fun (_ : Signal.t) -> Async.shutdown 1);
-  Bonsai_term.start_with_exit
-    ~dispose:true
-    ~mouse:No_mouse_events
-    ~bpaste:true
-    (app ~smear_enabled:true ?font controller)
+  Async.Deferred.map
+    (Bonsai_term.start_with_exit
+       ~dispose:true
+       ~mouse:No_mouse_events
+       ~bpaste:true
+       (app ~smear_enabled:true ?font controller))
+    ~f:(fun result ->
+      Ches_app.Controller.close controller;
+      result)
 ;;

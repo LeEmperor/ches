@@ -31,9 +31,12 @@ val merge : t list -> t list
     and wide-character markers keep [special] without the interaction overlay;
     clipped TAB cells retain their overlay. Combining marks attach only after a
     fully drawn plain glyph, retaining the supplied [text] style. Blank padding
-    also uses [text], never an interaction overlay. *)
+     also uses [text], never an interaction overlay or syntax. [syntax] supplies
+     a category per glyph (including combining marks); special treatment still
+     takes foreground precedence. Clipped escape/wide markers stay plain special. *)
 val of_glyphs
-  :  ?highlight:(Cell_map.Glyph.t -> [ `Match | `Current | `Selection | `Insert_cursor | `Insert_point ] option)
+   :  ?syntax:(Cell_map.Glyph.t -> Style.Syntax.t)
+   -> ?highlight:(Cell_map.Glyph.t -> [ `Match | `Current | `Selection | `Insert_cursor | `Insert_point ] option)
   -> Cell_map.Glyph.t array
   -> left:int
   -> cols:int

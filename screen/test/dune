@@ -5,7 +5,7 @@
 
 (library
  (name ches_screen_test)
- (libraries ches_app ches_core ches_input ches_screen core expect_test_helpers_core)
+ (libraries ches_app ches_core ches_input ches_screen ches_highlight core expect_test_helpers_core)
  ; See core/dune for why this flag is needed.
  (inline_tests
   (flags

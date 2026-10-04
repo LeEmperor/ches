@@ -1,0 +1,5 @@
+(library
+ (name ches_highlight_ocaml)
+ (private_modules queries)
+ (libraries ches_highlight core tree-sitter tree-sitter.ocaml)
+ (preprocess (pps ppx_jane)))

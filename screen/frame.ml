@@ -28,11 +28,19 @@ type t =
   }
 [@@deriving sexp_of]
 
-let render ui ~width ~height =
+let render ?highlights ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
   let editor = Controller.editor (Ui_state.controller ui) in
   let text = Editor.text editor in
+  let key, snapshot =
+    Option.value highlights ~default:(Controller.highlights (Ui_state.controller ui))
+  in
+  let highlights =
+    if Ches_highlight.Snapshot.matches snapshot key
+       && Ches_highlight.Snapshot.Key.revision key = Editor.revision editor
+    then Some snapshot else None
+  in
   let line_count = Text_buffer.line_count text in
   let cursor_line = Editor.cursor_line editor in
   let geometry = Ui_state.geometry ui ~width ~height in
@@ -209,6 +217,13 @@ let render ui ~width ~height =
           let search_highlight = search_highlighter line_start in
           let line_text = Text_buffer.line_text text line in
           let line_length = String.length line_text in
+          let syntax =
+            Option.map highlights ~f:(fun snapshot ->
+              let lookup = Ches_highlight.Snapshot.lookup_from snapshot line_start in
+              fun (glyph : Cell_map.Glyph.t) ->
+                if glyph.pos >= line_length then Style.Syntax.Plain
+                else lookup (line_start + glyph.pos))
+          in
           let glyphs = Cell_map.glyphs line_text in
           let block_columns =
             match block with
@@ -229,6 +244,7 @@ let render ui ~width ~height =
           in
           let glyphs = if List.is_empty edges then glyphs else split_tabs glyphs ~edges in
            Span.of_glyphs
+              ?syntax
              glyphs
             ~left:scroll.left
             ~cols:viewport.width
