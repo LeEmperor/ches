@@ -206,3 +206,72 @@ let%test_unit "provider failure caches current empty highlights, never overwrite
     current t;
     Controller.close t)
 ;;
+
+let%test_unit "acceptance: malformed mixed-width sources preserve save bytes, undo and dirty state" =
+  with_dir (fun dir ->
+    List.iter [ "mixed.ml"; "mixed.mli"; "mixed.txt" ] ~f:(fun name ->
+      let path = dir ^/ name in
+      (* Deliberately no final LF; display escapes must never leak into saved text. *)
+      let original = "(*\té á 界 \001\194\133\226\128\174*)\nlet x = \"unterminated" in
+      let inserted = "(* outer\n (* inner *) *)\n" in
+      Out_channel.write_all path ~data:original;
+      let t = Controller.open_file ~cell_width:Cell_width.f path |> Or_error.ok_exn in
+      let initial_revision = Editor.revision (Controller.editor t) in
+      let initial_parses = count t in
+      assert (not (Editor.is_dirty (Controller.editor t)));
+      current t;
+      let t = run t "i" |> fun t -> input t (Ches_input.Keymap.Input.Paste inserted)
+              |> fun t -> run t "<Esc>" in
+      let edited = inserted ^ original in
+      [%test_result: string] (source t) ~expect:edited;
+      assert (Editor.is_dirty (Controller.editor t));
+      current t;
+      let t = run t "u" in
+      [%test_result: string] (source t) ~expect:original;
+      assert (not (Editor.is_dirty (Controller.editor t)));
+      current t;
+      let t = run t "<C-r>" in
+      [%test_result: string] (source t) ~expect:edited;
+      assert (Editor.is_dirty (Controller.editor t));
+      current t;
+      assert (Editor.revision (Controller.editor t) = initial_revision + 3);
+      let before_save = count t in
+      assert (before_save = initial_parses + if String.is_suffix name ~suffix:".txt" then 0 else 3);
+      let t = run t " w" in
+      [%test_result: string] (In_channel.read_all path) ~expect:edited;
+      assert (count t = before_save && not (Editor.is_dirty (Controller.editor t)));
+      let t = run t "u" in
+      [%test_result: string] (source t) ~expect:original;
+      assert (Editor.is_dirty (Controller.editor t));
+      let t = run t "<C-r>" in
+      assert (not (Editor.is_dirty (Controller.editor t)));
+      current t;
+      Controller.close t))
+;;
+
+let%test_unit "acceptance: provider fallback does not block a successful save or undo" =
+  with_dir (fun dir ->
+    let path = dir ^/ "fallback.ml" in
+    let original = "let x = \"é界\"\n" in
+    Out_channel.write_all path ~data:original;
+    let t = Controller.open_file ~cell_width:Cell_width.f path |> Or_error.ok_exn in
+    Controller.For_testing.fail_next_highlight t;
+    let t = run t "i <Esc>" in
+    assert (match Controller.highlight_status t with Some (Plain (Parsing _)) -> true | _ -> false);
+    let failed = snapshot t in
+    [%test_result: Snapshot.Range.t list] (Snapshot.ranges failed) ~expect:[];
+    let before = count t in
+    let t = run t " w" in
+    [%test_result: string] (In_channel.read_all path) ~expect:(" " ^ original);
+    assert (not (Editor.is_dirty (Controller.editor t)));
+    assert (count t = before && phys_equal failed (snapshot t));
+    assert (match Editor.message (Controller.editor t) with Some (Info _) -> true | _ -> false);
+    let t = run t "u" in
+    [%test_result: string] (source t) ~expect:original;
+    assert (Editor.is_dirty (Controller.editor t));
+    current t;
+    let t = run t "<C-r>" in
+    assert (not (Editor.is_dirty (Controller.editor t)));
+    current t;
+    Controller.close t)
+;;

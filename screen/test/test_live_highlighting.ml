@@ -92,3 +92,50 @@ let%test_unit "live syntax remains beneath overlays and leaves text geometry unc
   List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = 40));
   Controller.close (Ui_state.controller ui)
 ;;
+
+let%test_unit "acceptance matrix: live mixed-width text, overlays, clipping and tiny dimensions" =
+  List.iter [ "f.ml", "let f x = x\n", "let"
+            ; "f.mli", "val f : int -> int\n", "val"
+            ; "f.txt", "let f x = x\n", "let" ]
+    ~f:(fun (path, declaration, keyword) ->
+      let source = "(*\té á 界 \001\194\133\226\128\174\n (* nested *)\n*)\n"
+                   ^ declaration ^ "(* unfinished" in
+      let base = Helpers.ui ~path source in
+      let controller = Ui_state.controller base in
+      let cached = snapshot base in
+      let before = count base in
+      let supported = not (String.is_suffix path ~suffix:".txt") in
+      assert (before = if supported then 1 else 0);
+      let full = render ~width:80 ~height:12 base in
+      let display = Frame.to_string full in
+      List.iter [ "^A"; "<85>"; "<202e>"; "界"; "á" ] ~f:(fun text ->
+        assert (String.is_substring display ~substring:text));
+      List.iter [ "\001"; "\194\133"; "\226\128\174" ] ~f:(fun raw ->
+        assert (not (String.is_substring display ~substring:raw)));
+      if supported then (
+        assert (List.exists (syntax_spans full) ~f:(fun (_, d) ->
+          d.special && Category.equal d.syntax Comment));
+        assert (List.exists (syntax_spans full) ~f:(fun (_, d) -> Category.equal d.syntax Keyword)))
+      else List.iter (syntax_spans full) ~f:(fun (_, d) -> assert (Category.equal d.syntax Plain));
+      let invalid_key = Snapshot.Key.create ~document:(Snapshot.Document_id.create ())
+          ~revision:(-1) ~language:Plain ~configuration:"acceptance-plain" in
+      List.iter [ ""; "/" ^ keyword ^ "<CR>"; "/" ^ keyword ^ "<CR>vll"
+                ; "/" ^ keyword ^ "<CR>V"; "gg0<C-v>jll"
+                ; "gg0<C-v>jI"; "gg0<C-v>jA"; "gg0llllllllll"; "G$" ]
+        ~f:(fun sequence ->
+          let ui = run base (keys sequence) in
+          List.iter [ 0, 0; 1, 1; 2, 2; 3, 2; 8, 4; 40, 8; 80, 24; 160, 48 ]
+            ~f:(fun (width, height) ->
+              let colored = Frame.render ui ~width ~height in
+              let plain = Frame.render ~highlights:(invalid_key, cached) ui ~width ~height in
+              [%test_result: string] (Frame.to_string colored) ~expect:(Frame.to_string plain);
+              assert (Option.equal Frame.Cursor.equal colored.cursor plain.cursor);
+              [%test_result: (int * int) list] colored.smear ~expect:plain.smear;
+              assert (List.length colored.rows = height);
+              List.iter colored.rows ~f:(fun row -> assert (Span.total_width row = width)));
+          assert (count ui = before && phys_equal cached (snapshot ui));
+          let editor = Controller.editor (Ui_state.controller ui) in
+          [%test_result: string] (Text_buffer.to_string (Editor.text editor)) ~expect:source;
+          assert (not (Editor.is_dirty editor)));
+      Controller.close controller)
+;;

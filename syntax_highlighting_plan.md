@@ -3,10 +3,10 @@
 **Status (2026-10-04):** phase 0 technical feasibility verified; owner declined
 further bundled-asset provenance/license investigation (“don't care”), so that
 unresolved audit is no longer an implementation gate. This is not a finding of
-license compliance. Phases 1–5 implementation complete (owner acceptance pending).
-Owner explicitly authorized phase 5; phase 6 has not started. Incremental parsing
-is live, with full-document query/normalization still required. **Stopped before
-phase 6; owner/real-terminal acceptance remains pending.**
+license compliance. Phases 1–5 implementation complete. Phase 6 regression and
+documentation checkpoint complete; overall acceptance remains pending. Incremental
+parsing is live, with full-document query/normalization still required. **Paused
+for owner/real-terminal acceptance and disposition of five recorded smoke failures.**
 
 ## Goal and delivery boundaries
 
@@ -1246,3 +1246,94 @@ desired, propose a separate measured checkpoint for normalization and query cost
 incremental querying needs a new correctness design for capture invalidation and
 cross-boundary effects, not merely changed syntax ranges. No such work authorized
 or implemented here. **Stopped before phase 6.**
+
+### 2026-10-04 — Phase 6: regression/documentation complete; acceptance pending
+
+**Status:** partial overall, with automated-regression/documentation checkpoint
+complete. Owner requested phase 6 work (“chew on phase 6”) after phase 5. This
+authorizes the regression/documentation work, not an inferred phase 4 palette or
+real-terminal acceptance. The phase 4 acceptance prerequisite therefore remains
+open; no claim of full phase 6 sign-off. No production behavior, palette, parser,
+editing/history, dependency or smoke-script changes were needed. No adjacent
+optimization, LSP, extra languages, installs, switch changes, downloads, new asset
+audit, staging or commits. No applicable repository/ancestor `AGENTS.md` found.
+Pre-existing owner/phase 5 changes were preserved; repository base advanced during
+the work without any Git mutation by this agent.
+
+**Exact changed files/coverage:**
+
+- `screen/test/test_live_highlighting.ml`: add a live acceptance matrix for `.ml`,
+  `.mli` and plain `.txt`, including TABs, non-ASCII text, combining marks, wide
+  glyphs, C0/C1/bidi control escapes, nested/unterminated comments and keyword
+  colors. Assert controls are escaped rather than emitted raw, and supported
+  comment escape spans retain both special treatment and underlying category.
+  Exercise search, current matches, character/line/block selections, block-insert
+  I/A points and horizontal clipping. Compare rendered text, cursor, smear cells
+  and exact row widths to a forced plain snapshot at 0x0, 1x1, 2x2, 3x2, 8x4,
+  40x8, 80x24 and 160x48. These presentation events retain the same snapshot and
+  parse count, source bytes and clean state. Existing multiline edits above the
+  viewport, undo/redo, animation, fallback and overlay tests remain in place.
+- `test/test_highlighting.ml`: new save/undo/dirty regression on mixed-width,
+  control-containing malformed source with no final LF for `.ml`, `.mli` and `.txt`.
+  Literal multiline paste creates one undo step; undo restores original bytes and
+  clean state, redo restores edited bytes, saving writes exactly those bytes without
+  parsing, and undo/redo correctly compares with the newly saved text. Highlights
+  match a fresh provider throughout, with exact revision/parse counts.
+  An additional injected-provider-failure fixture proves current plain fallback
+  does not block a **successful** save, retains write feedback without parser retry,
+  and preserves undo/dirty behavior while highlighting recovers on text change.
+- `README.md`: supported case-sensitive suffixes; local grammatical behavior;
+  malformed/failure fallback and retry policy; snapshot freshness/cache and private
+  incremental ownership; overlay/special/clipping/combining/padding rules; palette
+  location; pinned `tree-sitter.0.1.0` dependency/toolchain/install command and
+  compiled-in assets/C-compiler requirements; links to unresolved asset provenance
+  findings; explicit benchmark commands; measured large-file/native-memory limits;
+  architecture libraries and test boundaries; smoke failures and a real-terminal
+  syntax acceptance checklist. Correct stale “plain for now”/“no syntax highlighting”
+  claims and avoid presenting search as a future feature. Existing ppx_expect
+  workaround and unrelated editing/storage documentation are preserved.
+- `syntax_highlighting_plan.md`: update current status and append this handoff;
+  prior historical handoffs are unchanged. No new production interfaces or files.
+
+**Checks and exact outcomes:**
+
+- `git status --short`, `git diff --stat`, `git diff --check`: read-only inspections;
+  whitespace check passed. No mutative Git operations.
+- `opam list --switch=5.2.0+ox --installed tree-sitter`: confirmed installed `0.1.0`.
+- `opam exec --switch=5.2.0+ox -- dune runtest screen/test test --force`: passed the
+  new matrix and byte/history regressions on first run; no expectation promotion.
+- `opam exec --switch=5.2.0+ox -- dune build` and then
+  `opam exec --switch=5.2.0+ox -- dune runtest --force`: full build/suite passed,
+  repeated successfully after the extra successful-save-under-fallback fixture.
+  No test failures or snapshot changes in this phase.
+- `TMPDIR=/tmp/opencode scripts/smoke.sh > /tmp/opencode/ches-phase6-smoke.log 2>&1`:
+  **failed, exit 1, five checks**, again tall-scroll cursor row, counted-motion
+  cursor row, document-motion cursor row and two wide-line cursor checks. All
+  failure captures have hidden cursor (`cursor_flag=0`) with smear cells. Same
+  categories as earlier handoffs, not independently proven pre-existing against
+  an older binary. Remaining smoke checks passed, including saved bytes, safe
+  controls/wide geometry, block overlays, supported `.ml` launches and terminal
+  restoration. Review captures: `/tmp/opencode/ches-smoke-screens.0QAD8x`.
+  Smoke logging was redirected only to keep chat output bounded, not to ignore
+  the exit status. No production or smoke-script changes followed this run.
+- **Not performed:** real-terminal owner palette/readability/flicker assessment,
+  clipboard behavior, extended memory stress or new benchmarks. Phase 5 measured
+  results are documented without implying they were rerun. Headless geometry,
+  theme-attribute tests and tmux captures do not prove real-terminal acceptance.
+
+No repository scratch artifacts were created or deleted. Temporary test fixtures
+are cleaned by their existing scoped helpers; smoke automatically cleans its own
+fixture directory. Diagnostic log/review captures outside the repository are
+intentionally retained for review, not mistaken for deliverable source files.
+
+**Owner acceptance/remaining work:** run the README “Checks to do by hand” on
+`highlight_ocaml/provider.ml`, `core/text_buffer.mli` and `README.md`, at normal
+and tiny dimensions. Review syntax under search/current match, all selections,
+block-insert points, cursor-line fill, TAB/control/wide/combining display, edits
+above the viewport, malformed code, paste, scroll/resize and smear. Confirm saved
+bytes/undo/dirty behavior in the chosen terminal and record readability/flicker
+issues, or explicitly accept the visual behavior. Separately decide how to address
+the five smoke cursor/smear failures; do not mark them resolved or silently waive
+them. If investigation/fixes are requested, use a bounded fresh session and an
+explicitly recorded baseline. Overall phase 6 remains pending until acceptance
+and smoke-failure disposition are recorded. No further phases started.
