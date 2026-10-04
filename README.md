@@ -109,6 +109,10 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
 | Normal | `Space v s` | Toggle the animated smear cursor (on by default) |
+| Normal | `Space v t` | Show/hide the status cell (hidden by default) |
+| Normal | `Space v p h/l/k/j` | Place status left/right/above/below and show it |
+| Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`) |
+| Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
 | Normal | `Escape` | Cancel a pending count or `Space` sequence |
 | Visual | motions, `%` | Extend the selection |
@@ -131,6 +135,24 @@ character covers the column; on a TAB the cursor aims for the TAB's last cell
 (its first cell in Insert mode, and in Visual mode at or before where the
 selection started). Leaving Insert mode steps the cursor back one character,
 as in Vim. Motions never change the text, the undo history, or `[+]`.
+
+### Workspace status
+
+Status can occupy a cell on any side of the document. It shows mode, file/dirty
+state, position, pending keys, and current feedback; it never takes keyboard focus.
+Side-by-side width starts at 28 cells, stacked height at 6 rows, and each requested
+size is remembered separately. Small windows fall back to the bottom status row;
+expanding restores the requested layout automatically. Wider windows never turn
+status on by themselves.
+
+Zen keeps the bottom row for essential feedback without changing document placement
+or saved workspace requests. Status controls used in zen update the saved layout;
+toggle zen off to see it. `Space v r` still resets only document placement.
+All settings are session-local. Workspace controls preserve a current error, but
+the broader error-retention/acknowledgement lifecycle remains a later phase.
+
+Workspace software checks pass; human review of placement, readability, controls,
+and zen/fallback feel is still pending. See [`workspace_tiles_design.md`](workspace_tiles_design.md).
 
 ### Words and lines
 
@@ -523,8 +545,8 @@ columns in editing semantics and on screen cannot disagree.
 
 ## Terminal smoke test
 
-`scripts/smoke.sh` drives the built binary in a private tmux server
-(`tmux -L ches-smoke`), on copies of fixtures in a temporary directory, and
+`scripts/smoke.sh` drives the built binary in a private per-run tmux server
+(`tmux -L ches-smoke-PID`), on copies of fixtures in a temporary directory, and
 checks the screen text, cursor position and visibility, the alternate screen,
 saved file bytes, exit statuses, and that `stty` settings and the cursor are
 restored after every exit. It goes through every binding in the [Keys](#keys)
@@ -548,6 +570,9 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
 - tabs, wide characters, and control characters
 - a fast burst of keys with a paste in it, and a paste in Normal mode
 - every `Space v` command, with clamping and restoring on resize
+- workspace status on all four sides, separate width/height requests, scrolling and
+  cursor alignment, hide/show, zen and saved-layout changes, compact fallback and
+  restoration, edit/undo/redo/save, and error visibility across layout transitions
 - line-number styles: both toggles from the default (none), a rejected count,
   `Space v r`, renumbering as the cursor moves, and a toggle while too small
 - view scrolling: `Ctrl-e`/`Ctrl-y` with counts and a pushed cursor, `Ctrl-d`/
@@ -557,7 +582,7 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
   that is not a terminal
 
 It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
-`dune runtest`. A run takes about 15 seconds:
+`dune runtest`. It waits for screen/cursor updates rather than assuming a fixed runtime:
 
 ```sh
 dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe

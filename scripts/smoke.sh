@@ -6,7 +6,7 @@
 # Usage: scripts/smoke.sh [PATH-TO-CHES]   (default: _build/default/bin/ches.exe)
 #
 # Needs tmux (tested with 3.4) and a UTF-8 locale. Run `dune build` first. It uses a
-# private tmux server (-L ches-smoke) and a temporary directory, both removed on exit,
+# private per-run tmux server (-L ches-smoke-PID) and a temporary directory, both removed on exit,
 # and leaves colored captures of review screens in a directory it prints.
 #
 # Not checkable here: cursor shape (tmux does not report it), how the palette looks,
@@ -30,7 +30,8 @@ export LC_ALL=C.UTF-8
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke.XXXXXX")
 screens=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke-screens.XXXXXX")
-tmux_cmd=(tmux -L ches-smoke -f /dev/null)
+# A unique socket prevents another checkout's smoke run from sharing this session.
+tmux_cmd=(tmux -L "ches-smoke-$$" -f /dev/null)
 session=smoke
 
 cleanup() {
@@ -83,7 +84,11 @@ expect_screen() {
 }
 
 # Whether the row the cursor is on contains TEXT.
-cursor_row_has() { local y; read -r _ y _ <<< "$(cursor)"; row "$y" | grep -qF -- "$1"; }
+cursor_row_has() {
+  local y visible
+  read -r _ y visible <<< "$(cursor)"
+  [ "$visible" = 1 ] && row "$y" | grep -qF -- "$1"
+}
 expect_cursor_row() {
   if poll cursor_row_has "$1"; then ok "cursor row shows '$1'"; else fail "cursor row never showed '$1'"; fi
 }
@@ -183,8 +188,9 @@ save_screen() {
 
 # The character in the cell under the cursor (cells are characters on ASCII rows).
 char_under_cursor() {
-  local x y
-  read -r x y _ <<< "$(cursor)"
+  local x y visible
+  read -r x y visible <<< "$(cursor)"
+  [ "$visible" = 1 ] || return 1
   local line
   line=$(row "$y")
   echo "${line:$x:1}"
@@ -384,8 +390,7 @@ for i in $(seq 1 200); do echo "line $i"; done > "$work/tall.txt"
 launch tall.txt
 keys -N 150 j
 expect_status "151:1"
-read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF "151 line 151" && ok "cursor row shows line 151" || fail "cursor row is not line 151"
+expect_cursor_row "151 line 151"
 keys -N 150 k
 expect_status "1:1"
 expect_cursor "7 1 1"
@@ -424,8 +429,7 @@ expect_status "20"
 keys j
 expect_status "21:1"
 status_line | grep -qE ' 20 ' && fail "status line still shows the count" || ok "count cleared"
-read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF "21  line 21" && ok "cursor row shows line 21" || fail "cursor row is not line 21"
+expect_cursor_row "21  line 21"
 keys 5 l
 expect_status "21:6"
 keys 5 h
@@ -540,8 +544,7 @@ expect_status "121:1"
 expect_screen "  1 line 120"
 keys 5 0 G
 expect_status "50:1"
-read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF "50  line 50" && ok "cursor row shows line 50" || fail "cursor row is not line 50"
+expect_cursor_row "50  line 50"
 keys g
 expect_status "g"
 keys Escape j
@@ -858,8 +861,8 @@ expect_layout "Width 500 (152 fit)" 0 159
 keys Space v r
 expect_layout "Layout reset" 28 131 3
 hybrid_numbers
-keys Space v z
-expect_status "Space v z is not bound"
+keys Space v x
+expect_status "Space v x is not bound"
 # After Escape, l moves the cursor instead of nudging the tile.
 keys Space v Escape l
 expect_status "1:2"
@@ -1023,14 +1026,106 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "workspace status cells and zen restoration"
+resize 80 24
+for i in $(seq 1 60); do printf 'workspace line %d\n' "$i"; done > "$work/workspace.txt"
+cp "$work/workspace.txt" "$work/workspace.expected"
+launch workspace.txt
+keys Space v t
+expect_screen "Status right 28 (shown)"
+expect_cursor "7 1 1"
+save_screen "workspace-right-80x24"
+keys Space v p h
+expect_screen "Status left 28 (shown)"
+expect_cursor "35 1 1"
+keys 4 0 j
+expect_cursor_row "41  workspace line 41"
+keys g g
+expect_cursor "35 1 1"
+save_screen "workspace-left-80x24"
+keys Space v p k
+expect_screen "Status above 6 (shown)"
+expect_cursor "7 7 1"
+save_screen "workspace-above-80x24"
+keys Space v p j
+expect_screen "Status below 6 (shown)"
+expect_cursor "7 1 1"
+keys Space v p +
+expect_screen "Status below 8 (shown)"
+keys Space v p -
+expect_screen "Status below 6 (shown)"
+keys Space v z
+expect_status "Zen (status hidden)"
+expect_cursor "7 1 1"
+keys Space v p
+expect_status "Space v p"
+keys Escape Space v p h
+expect_status "Status left 28 (saved for workspace; zen)"
+keys Space v z
+expect_screen "Workspace restored"
+expect_cursor "35 1 1"
+resize 23 12
+expect_status "NORMAL"
+expect_cursor "6 0 1"
+resize 1 1
+if poll cursor_flag_is 0; then ok "no cursor in empty document viewport"; else fail "cursor shown at 1x1"; fi
+resize 160 48
+expect_cursor "47 1 1"
+expect_screen "workspace.txt"
+save_screen "workspace-left-160x48"
+# Hide/show preserves placement and the document's preferred width.
+keys Space v t
+expect_status "Status left 28 (hidden)"
+expect_cursor "33 1 1"
+keys Space v t
+expect_screen "Status left 28 (shown)"
+expect_cursor "47 1 1"
+keys i X Escape
+expect_screen "workspace.txt [+]"
+expect_cursor_row "Xworkspace line 1"
+keys u
+expect_cursor_row "workspace line 1"
+keys C-r
+expect_cursor_row "Xworkspace line 1"
+keys Space w
+expect_screen "Wrote workspace.txt"
+sed '1s/^/X/' "$work/workspace.expected" > "$work/workspace.saved"
+expect_file "$work/workspace.txt" "$work/workspace.saved"
+keys u Space w
+expect_screen "Wrote workspace.txt"
+keys Space q
+expect_exit 0
+expect_file "$work/workspace.txt" "$work/workspace.expected"
+# A controlled save failure remains visible when moving/hiding status or using zen.
+resize 80 24
+launch ro/workspace.txt
+keys i X Escape Space w
+expect_status "Permission denied"
+keys Space v t
+expect_screen "Failed to write ro/workspac>"
+keys Space v p h
+expect_screen "Failed to write ro/workspac>"
+keys Space v z
+expect_status "Permission denied"
+save_screen "workspace-error-zen-80x24"
+keys Space v z
+expect_screen "Failed to write ro/workspac>"
+keys Space Q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
 section "scrolling a wide line"
 { for _ in $(seq 1 40); do printf '0123456789'; done; printf '\nshort\n'; } > "$work/wide.txt"
 launch wide.txt
 keys -N 250 l
 expect_status "1:251"
-read -r x _ _ <<< "$(cursor)"
-[ "$x" -ge 7 ] && [ "$x" -le 78 ] && ok "cursor inside the text" || fail "cursor outside the text: $x"
-[ "$(char_under_cursor)" = 0 ] && ok "cursor on the 251st character" || fail "wrong character under the cursor"
+cursor_inside_wide_text() {
+  local x visible
+  read -r x _ visible <<< "$(cursor)"
+  [ "$visible" = 1 ] && [ "$x" -ge 7 ] && [ "$x" -le 78 ]
+}
+if poll cursor_inside_wide_text; then ok "cursor inside the text"; else fail "cursor outside the text: $(cursor)"; fi
+if poll char_under_cursor_is 0; then ok "cursor on the 251st character"; else fail "wrong character under the cursor"; fi
 keys j
 expect_status "2:5"
 expect_cursor "11 2 1"

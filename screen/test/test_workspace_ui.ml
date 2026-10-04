@@ -25,7 +25,18 @@ let%expect_test "workspace keys place cells on all sides and remember both axis 
       let t = run ~width:80 ~height:12 t (keys input) in
       summary t;
       t) : Ui_state.t);
-  [%expect {| |}]
+  [%expect {|
+    visible false zen false size 28; document 0,0 80x12; status none; row true
+    visible true zen false size 28; document 0,0 52x12; status 52,0 28x12; row false
+    visible true zen false size 30; document 0,0 50x12; status 50,0 30x12; row false
+    visible true zen false size 30; document 30,0 50x12; status 0,0 30x12; row false
+    visible true zen false size 6; document 0,6 80x6; status 0,0 80x6; row false
+    visible true zen false size 8; document 0,8 80x4; status 0,0 80x8; row false
+    visible true zen false size 8; document 0,0 80x4; status 0,4 80x8; row false
+    visible true zen false size 30; document 0,0 50x12; status 50,0 30x12; row false
+    visible false zen false size 30; document 0,0 80x12; status none; row true
+    visible true zen false size 30; document 0,0 50x12; status 50,0 30x12; row false
+    |}]
 ;;
 
 let%expect_test "zen and resize restore requested placement without changing document preferences" =
@@ -43,7 +54,17 @@ let%expect_test "zen and resize restore requested placement without changing doc
   let t = run ~width:160 ~height:24 t (keys " vpl") in
   summary ~width:160 ~height:24 t;
   printf "document offset %d width %d\n" (Ui_state.prefs t).offset (Ui_state.prefs t).width;
-  [%expect {| |}]
+  [%expect {|
+    visible true zen false size 28; document 28,0 132x24; status 0,0 28x24; row false
+    visible true zen false size 28; document 24,0 16x24; status 0,0 24x24; row false
+    visible true zen false size 28; document 0,0 23x24; status none; row true
+    visible true zen false size 28; document 28,0 132x24; status 0,0 28x24; row false
+    visible true zen true size 28; document 0,0 160x24; status none; row true
+    visible true zen true size 8; document 0,0 160x24; status none; row true
+    visible true zen false size 8; document 0,8 160x16; status 0,0 160x8; row false
+    visible true zen false size 28; document 0,0 132x24; status 132,0 28x24; row false
+    document offset 10 width 100
+    |}]
 ;;
 
 let%expect_test "document and status compose in separate rectangles with one document cursor" =
@@ -53,7 +74,27 @@ let%expect_test "document and status compose in separate rectangles with one doc
   print_endline (Frame.to_string (Frame.render left ~width:40 ~height:4));
   let above = run ~width:40 ~height:8 left (keys " vpk") in
   print_endline (Frame.to_string (Frame.render above ~width:40 ~height:8));
-  [%expect {| |}]
+  [%expect {|
+    hello           NORMAL                  |
+    world           f.txt                   |
+                    1:1                     |
+                    Status right 28 (24 fit>|
+    cursor: 0,0 Block
+    NORMAL                  hello           |
+    f.txt                   world           |
+    1:1                                     |
+    Status left 28 (24 fit)>                |
+    cursor: 24,0 Block
+    NORMAL                                  |
+    f.txt                                   |
+    1:1                                     |
+    Status above 6 (shown)                  |
+                                            |
+                                            |
+      hello                                 |
+      world                                 |
+    cursor: 2,6 Block
+    |}]
 ;;
 
 let%expect_test "workspace transitions preserve editor state and undo/redo behavior" =
@@ -136,5 +177,36 @@ let%expect_test "paste and Insert keys never become workspace actions; prefixes 
   let t = run t (keys "2 vt") in
   assert (not (Ui_state.workspace_prefs t).status_visible);
   print_s [%sexp (Ui_state.message t : Ui_state.Message.t option)];
-  [%expect {| |}]
+  [%expect {|
+    " vt vz vph"
+    (((kind Warning) (text "Space v p x is not bound")))
+    (((kind Warning) (text "Space v t does not take a count")))
+    |}];
+  let active = run (ui "") (keys " vt") in
+  let inserted = run active (keys "i" @ paste " vt vz vph" @ keys "<Esc>") in
+  assert (Workspace.Prefs.equal (Ui_state.workspace_prefs active) (Ui_state.workspace_prefs inserted));
+  assert (not (Ui_state.zen inserted));
+  assert (String.equal text (Text_buffer.to_string (Editor.text (Ches_app.Controller.editor (Ui_state.controller inserted)))))
+;;
+
+let%expect_test "size limits keep separate requests and layout changes cancel smear" =
+  let t = Ui_state.create ~smear_enabled:true (Ui_state.controller (ui "abcdef")) in
+  let t = run ~width:80 ~height:12 t (keys "l") in
+  assert (Animation.active (Ui_state.animation t));
+  let t = run ~width:80 ~height:12 t (keys " vph") in
+  assert (not (Animation.active (Ui_state.animation t)));
+  let frame = Frame.render t ~width:80 ~height:12 in
+  assert (Option.is_some frame.cursor && List.is_empty frame.smear);
+  let repeat t n command = List.fold (List.init n ~f:(fun _ -> command)) ~init:t
+      ~f:(fun t command -> run ~width:80 ~height:12 t (keys command)) in
+  let t = repeat t 20 " vp-" in
+  assert ((Ui_state.workspace_prefs t).split.status_size = Workspace.min_status_width);
+  let t = repeat t 260 " vp+" in
+  assert ((Ui_state.workspace_prefs t).split.status_size = 500);
+  let t = run ~width:80 ~height:12 t (keys " vpk") |> fun t -> repeat t 20 " vp-" in
+  assert ((Ui_state.workspace_prefs t).split.status_size = Workspace.min_status_height);
+  let t = run ~width:80 ~height:12 t (keys " vpl") in
+  assert ((Ui_state.workspace_prefs t).split.status_size = 500);
+  print_endline "requests clamped per axis; saved width restored; layout smear cancelled";
+  [%expect {| requests clamped per axis; saved width restored; layout smear cancelled |}]
 ;;

@@ -1,9 +1,9 @@
 # Ches workspace, panes, and status tile
 
-Status: phases 1–3 (pane-relative geometry, workspace allocation, and vertical status
-rendering) implemented and software-verified. Status presentation awaits human review
-after phase 4 integration. Runtime workspace integration and the external-view
-protocol remain unimplemented.
+Status: phases 1–4 (geometry, allocation, vertical status rendering, and runtime
+workspace integration/controls) implemented and software-verified. Human review of
+status presentation and workspace interaction is pending. Phase 5 feedback lifecycle
+and the external-view protocol remain unimplemented.
 
 ## Goal and scope
 
@@ -25,14 +25,14 @@ in another process or on another machine.
   within an allocation. `compute_in` explicitly chooses status-row reservation;
   the full-screen `compute` wrapper retains the existing bottom status row.
 - `screen/workspace.ml` allocates stable document/status cells using a requested
-  two-leaf split, with compact fallback. It is headless and not yet connected to the
-  running application's UI state or frame composition.
+  two-leaf split, with compact fallback. `Ui_state` derives effective workspace
+  geometry from saved requests and zen state; `Frame` composes document/status cells.
 - `screen/ui_state.ml` owns one controller, layout preferences, scroll state,
   messages, and animation state.
 - `screen/status_field.ml` defines semantic field IDs and priority/fitting metadata.
 - `screen/status.ml` produces mode, filename, dirty, message, pending-key, and
   position fields, then renders them for a row, border title, or allocated vertical
-  status cell. The vertical renderer is not yet connected to runtime composition.
+  status cell.
 - `ui/editor_view.ml` renders screen frames through Bonsai and adapts UI events.
 
 These boundaries are useful. Extend them with workspace composition rather than
@@ -630,6 +630,59 @@ End with the software-complete/human-feedback-pending handoff described above.
 Record the owner's feedback and any follow-up changes before claiming human
 acceptance.
 
+#### Phase 4 completion and handoff (2026-10-04)
+
+- Added the approved workspace/zen commands to `input/view_command.ml`/`.mli` and
+  default bindings in `input/bindings.ml`. The nested placement prefix uses existing
+  keymap prefix handling/cancellation; workspace commands reject counts and are
+  literal text in Insert/paste. `input/keymap.mli`, README, and CLI help document
+  the controls. The prior unknown-binding test now uses `Space v x`, since `z`
+  deliberately has a zen meaning.
+- `screen/ui_state.ml`/`.mli` own saved workspace preferences, an inactive-axis size
+  request, and zen suppression. `workspace` derives effective allocation; geometry,
+  scroll fitting, view-scroll commands, cursor coordinates, and frame rendering all
+  use the allocated document rectangle. Document preferences and core state are
+  untouched by workspace commands. Resizes and zen/hide transitions preserve requested
+  layout; axis changes swap saved width/height requests. Workspace changes cancel
+  smear animation, and current errors survive those specific layout commands.
+- `screen/frame.ml`/`.mli` compose document decorations/content and vertical status
+  rows within disjoint rectangles, filling remaining space with backdrop. Only the
+  document supplies a terminal cursor. Workspace smear cells clip to its text
+  rectangle. Explicit-allocation headless rendering remains available. The existing
+  Bonsai adapter already consumes frames/cursor coordinates directly, so it required
+  no changes; no focus switching or extra input destination was introduced.
+- Added eight expect tests in `screen/test/test_workspace_ui.ml`: all four placements
+  and independent size memory; zen/resize restoration; composed frame snapshots;
+  editor identity and undo/redo preservation; error/pending feedback through layouts;
+  shared Unicode scroll/cursor geometry at normal/tiny/zero sizes; literal paste and
+  prefix/count safety; size limits and layout-animation cancellation. Existing
+  single-document geometry/status/frame expectations still pass.
+- Extended `scripts/smoke.sh` for workspace controls and laptop/monitor-sized captures,
+  scrolling/cursor alignment, compact/tiny fallback and restoration, zen updates,
+  show/hide, editing/undo/redo/save, and controlled save-error transitions. Converted
+  the earlier immediate cursor checks to visible-cursor polling, closing phase 1's
+  smear synchronization gap. Per-run tmux socket names now isolate concurrent runs
+  from different checkouts; cleanup only touches that run's server and fixtures.
+- Verification: `opam exec --switch=5.2.0+ox -- dune build` and the complete
+  `dune runtest` suite passed. `bash -n scripts/smoke.sh`, `git diff --check`, and
+  `git diff --cached --check` passed. The complete isolated smoke run passed using
+  `TMPDIR=/tmp/opencode opam exec --switch=5.2.0+ox -- scripts/smoke.sh`.
+  Log: `/tmp/opencode/tiles-phase4-smoke-isolated.log`; colored captures:
+  `/tmp/opencode/ches-smoke-screens.dD29qo`. An earlier run failed three assertions
+  that expected text beyond the status truncation point (corrected), and a retry
+  timed out after shared-server interference (resolved with per-run isolation).
+- **Implemented and tested from the software side; human use and feedback on the
+  feel of the feature are still needed.** Phases 3–4 human acceptance remains pending.
+  Try `Space v t`, place status with `Space v p h/l/k/j`, adjust with `p -/+`, and
+  edit/scroll on the laptop and monitors. Shrink/expand; toggle `Space v z` and
+  change saved placement while in zen. Judge cursor alignment, text placement,
+  controls, field ordering, truncation, colors, readability, and distraction. Automated
+  tmux checks do not establish palette quality, cursor shape, flicker, or comfort.
+- No phase 4 software blockers remain. Phase 5 still needs agreed error retention,
+  acknowledgement, and resolution semantics; this phase's transition-specific error
+  safeguard is not a complete retained-error lifecycle. Incorporate the owner's
+  phase 3/4 feedback when received. No commits were made.
+
 ### Phase 5 — Feedback behavior and milestone acceptance
 
 **Depends on:** phase 4 and recorded error lifecycle decisions. Incorporate any
@@ -707,7 +760,8 @@ starts; apply the same software/human acceptance distinction.
 
 ### Remaining decisions
 
-- Which layout commands ship first, and zen/restore behavior, before phase 4.
+- Error retention, acknowledgement, and resolution semantics before phase 5.
+- Human feedback on the integrated status presentation and workspace controls.
 - Whether status follows the focused pane or also retains a pinned document summary.
 - First external producer and whether its output is semantic data or cell frames.
 - Refresh/freshness requirements and acceptable dropped-snapshot behavior for it.

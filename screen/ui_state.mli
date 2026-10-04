@@ -2,8 +2,9 @@
     so tests drive it headlessly, exactly as the terminal frontend does.
 
     The model holds the {!Ches_app.Controller.t} (editor and keymap), the layout
-    preferences, the scroll position, a bracketed paste being collected, and the
-    status line's message slot. *)
+     preferences, the scroll position, a bracketed paste being collected, and the
+     status message slot. Workspace requests and zen suppression are UI state, not
+     editor state; the document remains the only interactive pane. *)
 
 open! Core
 open Ches_input
@@ -107,9 +108,14 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     a view command, such as [Width 110 (76 fit)] (the requested value, then the
     effective one on this screen when it differs) or [Line numbers: hybrid (no room)]
     (the requested style, noting when the screen is too small for the gutter);
-    otherwise the editor's message if the input dispatched an editor command (which
-    may clear the slot). Other inputs, such as scrolling or the first key of a
-    sequence, leave it unchanged.
+     otherwise the editor's message if the input dispatched an editor command (which
+     may clear the slot). Other inputs, such as scrolling or the first key of a
+     sequence, leave it unchanged.
+
+     Workspace visibility/position/size and zen commands keep a current error rather
+     than replacing it with layout feedback. This is a transition-specific safeguard,
+     not a new retained-error/acknowledgement lifecycle. Status commands in zen update
+     saved requests without leaving zen. Document reset leaves workspace intent alone.
 
     The scroll is then fitted to keep the cursor visible (see {!fitted_scroll}). Once an input returns
     [Exit], no later input is applied (see {!exited}). *)
@@ -140,7 +146,7 @@ val apply_all
   -> Input.t list
   -> t * Ches_app.Controller.Status.t
 
-(** The geometry of a [width] x [height] screen for this state. *)
+(** Document geometry within the effective workspace on a [width] x [height] screen. *)
 val geometry : t -> width:int -> height:int -> Geometry.t
 
 (** {!scroll} fitted to a [width] x [height] screen, so a resize keeps the cursor
@@ -150,7 +156,7 @@ val geometry : t -> width:int -> height:int -> Geometry.t
     resize; otherwise a view scrolled past the end stays put (see {!Scroll.fit}). *)
 val fitted_scroll : t -> width:int -> height:int -> Scroll.t
 
-(** Pane-relative counterparts of the full-screen queries above. All three use the
+(** Explicit-allocation counterparts of the workspace queries above. All three use the
     same allocation and explicit status policy; scroll positions remain document
     coordinates and cursor positions are terminal coordinates. These queries do not
     change the model or editor. *)

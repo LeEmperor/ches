@@ -313,9 +313,10 @@ let feed t ~width ~height (input : Keymap.Input.t) =
     | None, Some view ->
       (match t.message, view with
        | Some { kind = Error; _ }, (Toggle_status | Position_status _ | Adjust_status_size _ | Toggle_zen) -> t.message
-       | _ -> match view_feedback t ~width ~height view with
-       | Some text -> Some { Message.kind = Info; text }
-       | None -> t.message)
+       | _ ->
+         (match view_feedback t ~width ~height view with
+          | Some text -> Some { Message.kind = Info; text }
+          | None -> t.message))
     | None, None ->
       if Controller.last_input_dispatched controller
       then

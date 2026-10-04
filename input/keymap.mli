@@ -50,6 +50,10 @@
       Normal  Space v + / =          View (Adjust_width 10)
       Normal  Space v n              View Toggle_absolute_numbers
       Normal  Space v N              View Toggle_relative_numbers
+      Normal  Space v t              View Toggle_status
+      Normal  Space v p h/l/k/j      View Position_status Left/Right/Above/Below
+      Normal  Space v p - / + / =    View Adjust_status_size -2 / 2 / 2
+      Normal  Space v z              View Toggle_zen
       Normal  Space v r              View Reset
       Normal  Escape                 Cancel a pending count or sequence
       Both    Ctrl-c                 No command: cancel, and hint at Space q
