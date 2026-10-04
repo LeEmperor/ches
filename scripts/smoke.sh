@@ -6,7 +6,7 @@
 # Usage: scripts/smoke.sh [PATH-TO-CHES]   (default: _build/default/bin/ches.exe)
 #
 # Needs tmux (tested with 3.4) and a UTF-8 locale. Run `dune build` first. It uses a
-# private tmux server (-L ches-smoke) and a temporary directory, both removed on exit,
+# private per-run tmux socket and a temporary directory, both removed on exit,
 # and leaves colored captures of review screens in a directory it prints.
 #
 # Not checkable here: cursor shape (tmux does not report it), how the palette looks,
@@ -30,7 +30,7 @@ export LC_ALL=C.UTF-8
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke.XXXXXX")
 screens=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke-screens.XXXXXX")
-tmux_cmd=(tmux -L ches-smoke -f /dev/null)
+tmux_cmd=(tmux -S "$work/tmux.sock" -f /dev/null)
 session=smoke
 
 cleanup() {
@@ -82,8 +82,13 @@ expect_screen() {
   if poll screen_has "$1"; then ok "screen shows '$1'"; else fail "screen never showed '$1'"; fi
 }
 
-# Whether the row the cursor is on contains TEXT.
-cursor_row_has() { local y; read -r _ y _ <<< "$(cursor)"; row "$y" | grep -qF -- "$1"; }
+# Status can update before smear finishes. A hidden cursor's reported coordinates
+# are not its eventual text position; poll visibility and the assertion together.
+cursor_row_has() {
+  local y visible
+  read -r _ y visible <<< "$(cursor)"
+  [ "$visible" = 1 ] && row "$y" | grep -qF -- "$1"
+}
 expect_cursor_row() {
   if poll cursor_row_has "$1"; then ok "cursor row shows '$1'"; else fail "cursor row never showed '$1'"; fi
 }
@@ -101,6 +106,12 @@ expect_status() {
 }
 
 cursor_is() { [ "$(cursor)" = "$1" ]; }
+
+cursor_in_text_row() {
+  local x y visible
+  read -r x y visible <<< "$(cursor)"
+  [ "$visible" = 1 ] && [ "$y" = "$1" ] && [ "$x" -ge "$2" ] && [ "$x" -le "$3" ]
+}
 
 expect_cursor() {
   if poll cursor_is "$1"; then
@@ -183,8 +194,9 @@ save_screen() {
 
 # The character in the cell under the cursor (cells are characters on ASCII rows).
 char_under_cursor() {
-  local x y
-  read -r x y _ <<< "$(cursor)"
+  local x y visible
+  read -r x y visible <<< "$(cursor)"
+  [ "$visible" = 1 ] || return 1
   local line
   line=$(row "$y")
   echo "${line:$x:1}"
@@ -384,8 +396,7 @@ for i in $(seq 1 200); do echo "line $i"; done > "$work/tall.txt"
 launch tall.txt
 keys -N 150 j
 expect_status "151:1"
-read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF "151 line 151" && ok "cursor row shows line 151" || fail "cursor row is not line 151"
+expect_cursor_row "151 line 151"
 keys -N 150 k
 expect_status "1:1"
 expect_cursor "7 1 1"
@@ -424,8 +435,7 @@ expect_status "20"
 keys j
 expect_status "21:1"
 status_line | grep -qE ' 20 ' && fail "status line still shows the count" || ok "count cleared"
-read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF "21  line 21" && ok "cursor row shows line 21" || fail "cursor row is not line 21"
+expect_cursor_row "21  line 21"
 keys 5 l
 expect_status "21:6"
 keys 5 h
@@ -540,8 +550,7 @@ expect_status "121:1"
 expect_screen "  1 line 120"
 keys 5 0 G
 expect_status "50:1"
-read -r _ y _ <<< "$(cursor)"
-row "$y" | grep -qF "50  line 50" && ok "cursor row shows line 50" || fail "cursor row is not line 50"
+expect_cursor_row "50  line 50"
 keys g
 expect_status "g"
 keys Escape j
@@ -1028,9 +1037,16 @@ section "scrolling a wide line"
 launch wide.txt
 keys -N 250 l
 expect_status "1:251"
-read -r x _ _ <<< "$(cursor)"
-[ "$x" -ge 7 ] && [ "$x" -le 78 ] && ok "cursor inside the text" || fail "cursor outside the text: $x"
-[ "$(char_under_cursor)" = 0 ] && ok "cursor on the 251st character" || fail "wrong character under the cursor"
+if poll cursor_in_text_row 1 7 78; then
+  ok "cursor inside the text"
+else
+  fail "cursor outside the text: $(cursor)"
+fi
+if poll char_under_cursor_is 0; then
+  ok "cursor on the 251st character"
+else
+  fail "wrong character under the cursor"
+fi
 keys j
 expect_status "2:5"
 expect_cursor "11 2 1"

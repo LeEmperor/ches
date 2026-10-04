@@ -3,10 +3,11 @@
 **Status (2026-10-04):** phase 0 technical feasibility verified; owner declined
 further bundled-asset provenance/license investigation (“don't care”), so that
 unresolved audit is no longer an implementation gate. This is not a finding of
-license compliance. Phases 1–5 implementation complete. Phase 6 regression and
-documentation checkpoint complete; overall acceptance remains pending. Incremental
-parsing is live, with full-document query/normalization still required. **Paused
-for owner/real-terminal acceptance and disposition of five recorded smoke failures.**
+license compliance. Phases 1–6 implementation complete; owner reviewed the palette
+and reported live behavior satisfactory. Incremental parsing is live, with full-
+document query/normalization still required. The five smoke timing failures are
+resolved by visible-cursor polling; three isolated runs passed all checks. Detailed
+manual terminal checks were not individually attested; no further phases started.
 
 ## Goal and delivery boundaries
 
@@ -1337,3 +1338,64 @@ the five smoke cursor/smear failures; do not mark them resolved or silently waiv
 them. If investigation/fixes are requested, use a bounded fresh session and an
 explicitly recorded baseline. Overall phase 6 remains pending until acceptance
 and smoke-failure disposition are recorded. No further phases started.
+
+### 2026-10-04 — Owner visual review and smoke timing/isolation fix
+
+**Owner review:** owner said they love the palette and “everything seems to work
+just fine.” Record this as acceptance of the palette and reported live behavior,
+not an invented item-by-item attestation of cursor shape, clipboard, every terminal
+size or extended flicker/memory checks. Palette remains adjustable in `ui/theme.ml`.
+Owner then authorized the proposed bounded smoke-test fix (“ok shoot”).
+
+**Status:** smoke failures resolved for the current binary by test synchronization;
+three consecutive isolated runs pass **all checks**. Phase 6 implementation complete
+with owner review recorded. No production editor, animation, rendering, parser,
+palette, storage or editing-semantic changes; no further phases/optimization.
+
+**Changed files:**
+
+- `scripts/smoke.sh`: replace the three immediate tall/count/document cursor-row
+  samples with the existing five-second polled `expect_cursor_row`. Its predicate
+  now requires `cursor_flag=1`, not hidden coordinates. Wide-line bounds are polled
+  with visibility plus the original x=7..78 assertion, additionally requiring text
+  row y=1. The character-under-cursor assertion is also polled; the shared character
+  helper rejects hidden cursors, strengthening its existing block-selection check
+  too. No unconditional sleeps, skipped assertions or disabled smear. Cursor
+  restoration/position/character errors still fail after the bounded timeout.
+  Each run now uses `tmux -S "$work/tmux.sock"` inside its unique temporary fixture
+  directory instead of the shared `-L ches-smoke`, so simultaneous runs cannot
+  inject keys into each other's panes or clean up each other's servers.
+- `README.md`: update smoke synchronization/socket descriptions, replace the
+  current unresolved-failure warning with measured passing results, and record
+  owner palette/live review without claiming detailed manual checks were all done.
+- `syntax_highlighting_plan.md`: update current status and append this entry;
+  historical failed runs and acceptance-pending handoffs are preserved.
+
+**Exact commands/results:**
+
+- `bash -n scripts/smoke.sh`: passed before and after socket isolation.
+- `TMPDIR=/tmp/opencode scripts/smoke.sh > /tmp/opencode/ches-smoke-cursor-poll-1.log 2>&1`:
+  first attempt **timed out at 120 seconds**, not a valid acceptance run. Log begins
+  `duplicate session: smoke` and shows commands from separate fixture directories
+  mixed into the same pane. This exposed the global smoke socket collision; no
+  deliberate process/server cleanup beyond the existing script trap was performed.
+  Per-run socket isolation addresses the collision rather than ignoring failures.
+- The same command with log suffixes **2**, **3** and **4**: each **passed, exit 0**,
+  `smoke: all checks passed`, sequentially with per-run sockets. All five original
+  failing assertions passed with smear enabled; no production changes between
+  these runs. Review captures respectively:
+  `/tmp/opencode/ches-smoke-screens.FGuoh3`,
+  `/tmp/opencode/ches-smoke-screens.GE0B3z`,
+  `/tmp/opencode/ches-smoke-screens.43uquM`.
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest --force`: full suite passed.
+- Read-only `git status --short`, `git diff -- scripts/smoke.sh`, and
+  `git diff --check`: inspected clean starting state and final changes; whitespace
+  check passed. No Git mutations, dependency installation or switch changes.
+
+**Conclusion/remaining limits:** earlier five failures sampled the terminal cursor
+before smear completed, while status was already current. Bounded polling passes
+without changing UI code; no evidence here of a cursor-restoration bug. This does
+not prove animation correctness for every terminal/load. Keep the manual checklist
+and large-file/native-memory limitations documented; future regressions should
+still fail these assertions rather than being waived. No further work started.

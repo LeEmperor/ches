@@ -400,8 +400,9 @@ opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_incremental_probe/prob
 opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_live_probe/probe.exe
 ```
 
-Implementation and automated regression checks are complete; real-terminal palette,
-overlay and flicker acceptance remains pending. See
+Implementation and automated regression checks are complete. The owner reviewed
+the palette and reported live behavior satisfactory; the detailed terminal checklist
+below remains available for further review. See
 [`syntax_highlighting_plan.md`](syntax_highlighting_plan.md) for measurements,
 check outcomes and the acceptance handoff.
 
@@ -594,8 +595,8 @@ columns in editing semantics and on screen cannot disagree.
 
 ## Terminal smoke test
 
-`scripts/smoke.sh` drives the built binary in a private tmux server
-(`tmux -L ches-smoke`), on copies of fixtures in a temporary directory, and
+`scripts/smoke.sh` drives the built binary in a private per-run tmux server
+(`tmux -S "$work/tmux.sock"`), on copies of fixtures in a temporary directory, and
 checks the screen text, cursor position and visibility, the alternate screen,
 saved file bytes, exit statuses, and that `stty` settings and the cursor are
 restored after every exit. It goes through every binding in the [Keys](#keys)
@@ -643,12 +644,12 @@ moved tile, relative and no line numbers, and a save error at 80x24 and
 160x48, plus tiny sizes) and prints
 their directory (`cat` a file to view it).
 
-The latest syntax-highlighting runs still fail five cursor assertions for tall,
-counted, document and wide-line motion: captures show a hidden terminal cursor
-with smear cells. These are recorded failures, not a passing smoke result or a
-proven pre-existing bug. Other checks pass, including saved bytes and terminal
-restoration. See the plan handoffs for exact runs; automated checks cannot replace
-the manual acceptance below.
+Cursor assertions poll for a visible cursor at the expected position within five
+seconds, rather than sampling hidden cursor coordinates during smear. This fixed
+the five timing failures recorded in the syntax-highlighting handoffs; three
+consecutive isolated runs passed all checks. Each run owns its own socket, so it
+cannot interfere with another smoke run. Automated checks still cannot replace
+the manual checks below.
 
 ### Checks to do by hand
 
