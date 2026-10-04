@@ -1,10 +1,10 @@
-(** All UI-side state, and the transition for one input. No Bonsai types appear here,
-    so tests drive it headlessly, exactly as the terminal frontend does.
+(** All UI-side state, and the transition for one input. No Bonsai types appear here, so
+    tests drive it headlessly, exactly as the terminal frontend does.
 
     The model holds the {!Ches_app.Controller.t} (editor and keymap), the layout
-     preferences, the scroll position, a bracketed paste being collected, and the
-     status message slot. Workspace requests and zen suppression are UI state, not
-     editor state; the document remains the only interactive pane. *)
+    preferences, the scroll position, a bracketed paste being collected, and the shared
+    controller feedback. Workspace requests and zen suppression are UI state, not editor
+    state; the document remains the only interactive pane. *)
 
 open! Core
 open Ches_input
@@ -42,6 +42,7 @@ val create
   -> ?smear_enabled:bool
   -> Ches_app.Controller.t
   -> t
+
 val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
 val workspace_prefs : t -> Workspace.Prefs.t
@@ -51,6 +52,7 @@ val zen : t -> bool
     visibility/placement/sizes. Width and height requests are remembered separately.
     Status remains non-focusable; all input and paste still route to the document. *)
 val workspace : t -> width:int -> height:int -> Workspace.t
+
 val scroll : t -> Scroll.t
 val message : t -> Message.t option
 val animation : t -> Animation.t
@@ -68,70 +70,61 @@ val take_clipboard : t -> t * string option
 val exited : t -> bool
 
 (** The visible cursor's terminal-cell coordinate, after applying layout and scroll.
-    During a block insert it is at the first of [Editor.block_insert_points], which
-    can be inside a TAB or past the line's end before anything is typed; the scroll
-    keeps that cell in view. {!Frame} then hides the terminal cursor and draws every
-    point as a styled cell instead; this position still drives the smear. *)
+    During a block insert it is at the first of [Editor.block_insert_points], which can be
+    inside a TAB or past the line's end before anything is typed; the scroll keeps that
+    cell in view. {!Frame} then hides the terminal cursor and draws every point as a
+    styled cell instead; this position still drives the smear. *)
 val cursor_position : t -> width:int -> height:int -> (int * int) option
 
 (** Applies one input on a [width] x [height] screen.
 
-    Keys between [Paste_start] and [Paste_end] are collected with [Key.text] and
-    delivered as one paste at the end; keys without text are dropped. Everything else
-    goes to the controller, with its effects (such as saving) performed before this
-    returns. View commands the controller returns update {!prefs} (see
-    {!apply_view}) or, for [Scroll], the scroll.
+    Keys between [Paste_start] and [Paste_end] are collected with [Key.text] and delivered
+    as one paste at the end; keys without text are dropped. Everything else goes to the
+    controller, with its effects (such as saving) performed before this returns. View
+    commands the controller returns update {!prefs} (see {!apply_view}) or, for [Scroll],
+    the scroll.
 
     {2 Scrolling}
 
-    Scroll commands work on the text viewport's rows and change nothing when it has
-    none. The first visible line stays within the document, so [Line_down]
-    ([Ctrl-e]) can scroll until the last line is at the top. When a scroll would take
-    the cursor line out of view, the cursor is moved to the nearest visible line with
-    a counted [Up]/[Down] through {!Ches_app.Controller.move}, keeping its preferred
-    column. This is the one view command that touches the editor: it moves the
-    cursor only, never text, history, or dirty state.
+    Scroll commands work on the text viewport's rows and change nothing when it has none.
+    The first visible line stays within the document, so [Line_down] ([Ctrl-e]) can scroll
+    until the last line is at the top. When a scroll would take the cursor line out of
+    view, the cursor is moved to the nearest visible line with a counted [Up]/[Down]
+    through {!Ches_app.Controller.move}, keeping its preferred column. This is the one
+    view command that touches the editor: it moves the cursor only, never text, history,
+    or dirty state.
 
     - [Line_down]/[Line_up] scroll by one line or the count.
     - [Half_page_down]/[Half_page_up] scroll and move the cursor by half the rows (at
-      least 1), or the count. Scrolling down stops once the last line is at the
-      bottom (or stays, if scrolled further already); the cursor still moves, so a
-      repeat reaches the last line. At the top, only the cursor moves.
-    - [Cursor_top]/[Cursor_middle]/[Cursor_bottom] put the cursor line at the top,
-      middle (row [(rows - 1) / 2]), or bottom, without moving the cursor; the first
-      line is not lowered below the document start.
+      least 1), or the count. Scrolling down stops once the last line is at the bottom (or
+      stays, if scrolled further already); the cursor still moves, so a repeat reaches the
+      last line. At the top, only the cursor moves.
+    - [Cursor_top]/[Cursor_middle]/[Cursor_bottom] put the cursor line at the top, middle
+      (row [(rows - 1) / 2]), or bottom, without moving the cursor; the first line is not
+      lowered below the document start.
 
     {2 Messages}
 
-    The message slot shows the feedback of the most recent input that produced any:
-    the keymap's notice if it set one; otherwise layout feedback if the input produced
-    a view command, such as [Width 110 (76 fit)] (the requested value, then the
-    effective one on this screen when it differs) or [Line numbers: hybrid (no room)]
-    (the requested style, noting when the screen is too small for the gutter);
-     otherwise the editor's message if the input dispatched an editor command (which
-     may clear the slot). Other inputs, such as scrolling or the first key of a
-     sequence, leave it unchanged.
+    Status presentations query the controller's shared feedback. A dispatched editor
+    command clears transient feedback; prefixes, ignored input, animation, and layout
+    actions do not. Layout feedback and keymap notices post new transient notifications.
+    Active save/reload problems remain until matching recovery. Idle Normal Escape
+    acknowledges the currently presented problem; cancellation and mode exits take
+    precedence. [Space v e] cycles retained details without retrying or renewing
+    attention. Acknowledged problems remain visible as a compact count until recovery.
 
-     Workspace visibility/position/size and zen commands keep a current error rather
-     than replacing it with layout feedback. This is a transition-specific safeguard,
-     not a new retained-error/acknowledgement lifecycle. Status commands in zen update
-     saved requests without leaving zen. Document reset leaves workspace intent alone.
+    Status commands in zen update saved requests without leaving zen. Document reset
+    leaves workspace intent alone.
 
-    The scroll is then fitted to keep the cursor visible (see {!fitted_scroll}). Once an input returns
-    [Exit], no later input is applied (see {!exited}). *)
-val apply
-  :  t
-  -> width:int
-  -> height:int
-  -> Input.t
-  -> t * Ches_app.Controller.Status.t
+    The scroll is then fitted to keep the cursor visible (see {!fitted_scroll}). Once an
+    input returns [Exit], no later input is applied (see {!exited}). *)
+val apply : t -> width:int -> height:int -> Input.t -> t * Ches_app.Controller.Status.t
 
 (** The requested preferences after a view command; [Scroll] leaves them unchanged.
-    [Shift] and [Adjust_width] also
-    select centered mode, so their effect is visible. The requested width is kept
-    within {!min_width}..{!max_width} and the offset within
-    [-max_offset..max_offset]; the screen may show less (see {!Geometry.compute}),
-    and the request is kept for when it grows. *)
+    [Shift] and [Adjust_width] also select centered mode, so their effect is visible. The
+    requested width is kept within {!min_width}..{!max_width} and the offset within
+    [-max_offset..max_offset]; the screen may show less (see {!Geometry.compute}), and the
+    request is kept for when it grows. *)
 val apply_view : Geometry.Prefs.t -> View_command.t -> Geometry.Prefs.t
 
 val min_width : int
@@ -149,20 +142,24 @@ val apply_all
 (** Document geometry within the effective workspace on a [width] x [height] screen. *)
 val geometry : t -> width:int -> height:int -> Geometry.t
 
-(** {!scroll} fitted to a [width] x [height] screen, so a resize keeps the cursor
-    visible before the next input arrives. The fit fills the viewport (lowering the
-    first line so it is not partly empty while earlier lines are hidden) only when the
-    number of text rows differs from the last applied input's, that is, after a
-    resize; otherwise a view scrolled past the end stays put (see {!Scroll.fit}). *)
+(** {!scroll} fitted to a [width] x [height] screen, so a resize keeps the cursor visible
+    before the next input arrives. The fit fills the viewport (lowering the first line so
+    it is not partly empty while earlier lines are hidden) only when the number of text
+    rows differs from the last applied input's, that is, after a resize; otherwise a view
+    scrolled past the end stays put (see {!Scroll.fit}). *)
 val fitted_scroll : t -> width:int -> height:int -> Scroll.t
 
 (** Explicit-allocation counterparts of the workspace queries above. All three use the
     same allocation and explicit status policy; scroll positions remain document
-    coordinates and cursor positions are terminal coordinates. These queries do not
-    change the model or editor. *)
+    coordinates and cursor positions are terminal coordinates. These queries do not change
+    the model or editor. *)
 val geometry_in : t -> allocation:Geometry.Rect.t -> reserve_status_row:bool -> Geometry.t
 
-val fitted_scroll_in : t -> allocation:Geometry.Rect.t -> reserve_status_row:bool -> Scroll.t
+val fitted_scroll_in
+  :  t
+  -> allocation:Geometry.Rect.t
+  -> reserve_status_row:bool
+  -> Scroll.t
 
 val cursor_position_in
   :  t

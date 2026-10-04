@@ -94,6 +94,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `y{motion}` / `yy` | Yank by motion / whole line(s) |
 | Normal | `p` / `P` | Paste the unnamed register after / before the cursor or line |
 | Normal | `v` / `V` / `Ctrl-v` | Start characterwise / linewise / blockwise Visual selection |
+| Normal | `Space v e` | Cycle retained problem details |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -114,7 +115,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`) |
 | Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
-| Normal | `Escape` | Cancel a pending count or `Space` sequence |
+| Normal | `Escape` | Cancel pending input; when idle, clear search highlights and acknowledge the presented problem |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
 | Visual | `d` / `c` / `y` | Delete / change / yank the selected range |
@@ -148,8 +149,17 @@ status on by themselves.
 Zen keeps the bottom row for essential feedback without changing document placement
 or saved workspace requests. Status controls used in zen update the saved layout;
 toggle zen off to see it. `Space v r` still resets only document placement.
-All settings are session-local. Workspace controls preserve a current error, but
-the broader error-retention/acknowledgement lifecycle remains a later phase.
+All settings are session-local. Save and reload failures remain visible across editing,
+layout changes, compact status, and zen until acknowledged. An idle Normal-mode
+`Escape` acknowledges the currently displayed problem and clears search highlighting.
+Leaving Insert/Visual mode or cancelling a command, count, or search takes precedence;
+press Escape again once idle to acknowledge. Acknowledgement leaves the problem active
+and does not change dirty state. Status then shows an unresolved-problem count;
+`Space v e` cycles retained details without retrying the operation. Repeated failure
+renews attention without adding another entry. Successful save and reload resolve only
+the corresponding failure for that file. Routine feedback, including refused quit,
+clears on the next completed editor command or is replaced by newer routine feedback.
+Pending prefixes, ignored keys, resize, and animation do not clear it.
 
 Workspace software checks pass; human review of placement, readability, controls,
 and zen/fallback feel is still pending. See [`workspace_tiles_design.md`](workspace_tiles_design.md).
@@ -518,6 +528,7 @@ colors, and the Bonsai_term app.
 
 ```text
 dune-project   project and package metadata (generates ches.opam)
+error/         ches_error: pure shared notification and active-problem lifecycle
 core/          ches_core: pure editing library; depends only on `core`
 input/         ches_input: terminal-independent keys and modal keymap
 app/           ches_app: file loading/saving and the controller that runs input

@@ -18,7 +18,12 @@ module Scroll = struct
 end
 
 module Status_position = struct
-  type t = Left | Right | Above | Below [@@deriving sexp_of, equal]
+  type t =
+    | Left
+    | Right
+    | Above
+    | Below
+  [@@deriving sexp_of, equal]
 end
 
 type t =
@@ -31,6 +36,7 @@ type t =
   | Toggle_status
   | Position_status of Status_position.t
   | Adjust_status_size of int
+  | Inspect_problems
   | Toggle_zen
   | Reset
   | Scroll of

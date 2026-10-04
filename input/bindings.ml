@@ -172,6 +172,7 @@ let default =
     ; view 'n' Toggle_absolute_numbers
     ; view 'N' Toggle_relative_numbers
     ; view 's' Toggle_smear
+    ; view 'e' Inspect_problems
     ; view 't' Toggle_status
     ; view 'z' Toggle_zen
     ; status 'h' (Position_status Left)

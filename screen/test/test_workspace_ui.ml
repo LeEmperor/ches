@@ -121,7 +121,10 @@ let%expect_test "workspace transitions preserve editor state and undo/redo behav
 ;;
 
 let%expect_test "errors and pending feedback survive workspace, compact, and zen transitions" =
-  let t = run ~width:160 ~height:12 (ui "hello") (keys "iX<Esc> q") in
+  let base = ui "hello" in
+  let controller = Ches_app.Controller.update_feedback (Ui_state.controller base)
+      (Ches_error.Error.Failed ({ source = "file"; kind = Save; resource = "f.txt" }, Error, "Failed to write f.txt")) in
+  let t = Ui_state.create controller in
   let error = Ui_state.message t in
   let t = run ~width:160 ~height:12 t (keys " vt") in
   assert ([%equal: Ui_state.Message.t option] error (Ui_state.message t));
@@ -133,14 +136,14 @@ let%expect_test "errors and pending feedback survive workspace, compact, and zen
     if width = 160 then (
       let text = Frame.to_string frame in
       assert (String.is_substring text ~substring:"Space");
-      assert (String.is_substring text ~substring:"Unsaved changes")));
+      assert (String.is_substring text ~substring:"Failed to write")));
   let zen = run ~width:160 ~height:12 pending (keys "<Esc> vz ") in
   assert ([%equal: Ui_state.Message.t option] error (Ui_state.message zen));
   let frame = Frame.render zen ~width:160 ~height:12 in
   let bottom = String.concat (List.map (List.last_exn frame.rows) ~f:(fun span -> span.text)) in
   assert (String.is_substring bottom ~substring:"NORMAL");
   assert (String.is_substring bottom ~substring:"Space");
-  assert (String.is_substring bottom ~substring:"Unsaved changes");
+  assert (String.is_substring bottom ~substring:"Failed to write");
   print_endline "error message preserved; mode, pending, and error visible in tile and zen";
   [%expect {| error message preserved; mode, pending, and error visible in tile and zen |}]
 ;;

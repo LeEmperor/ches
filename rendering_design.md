@@ -194,21 +194,18 @@ one-based, and the column is the code-point column (`Editor.cursor_column + 1`),
 not the display column. While a sequence is pending, its keys (e.g. `Space v`)
 appear in their own field, independent of the message slot.
 
-The message slot shows the feedback from the most recent input that produced
-any. In order of precedence:
-
-1. the keymap notice, if that feed set one;
-2. otherwise layout feedback, if the input produced a view command;
-3. otherwise, if the input dispatched any editor command, `Editor.message`.
-   This may be none, which clears the slot.
-
-An input that produces none of these leaves the slot unchanged. Examples are an
-ignored key and the first key of a sequence. There is no timer: brief feedback
-lasts until the next input that replaces it. Editor errors use the error role
-and notices use the warning role.
+Phase 5 of `workspace_tiles_design.md` replaces the disposable message slot with
+shared controller feedback. Editor commands clear transient notifications before
+posting their new feedback. Keymap notices and layout actions post structured
+transient notifications; prefixes, ignored keys, resize, and animation do not clear
+feedback. Unacknowledged save/reload problems take display precedence over routine
+notifications and persist until matching recovery or acknowledgement. Acknowledgement
+retains an unresolved count, and `Space v e` cycles retained details. Idle Normal
+Escape acknowledges the presented problem and clears search highlighting; mode exits
+and pending cancellation take precedence. All status presentations query this state.
 
 When the status line is too narrow, drop fields from lowest priority first:
-non-error message, filename (truncate from the left first, marked with `<`),
+routine message without active problems, filename (truncate from the left first, marked with `<`),
 position, dirty indicator, pending keys, error message. The mode badge is the
 last field kept.
 

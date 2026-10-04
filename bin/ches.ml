@@ -19,7 +19,7 @@ let command =
        Space v c/h/l/H/L/-/+/r: toggle centering, move, resize, reset the layout;\n\
         Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor;\n\
         Space v t toggles status; Space v p h/l/k/j places it, p -/+ sizes it;\n\
-        Space v z toggles zen (status hidden with compact feedback).")
+        Space v z toggles zen; Space v e cycles retained problems; idle Escape acknowledges.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type) in
      fun () ->
        let fail error =

@@ -34,7 +34,12 @@ let fields ui : Status_field.t list =
         ~priority:
           (match kind with
            | Error -> 1
-           | Info | Warning -> 6)
+           | Info | Warning ->
+             if List.is_empty
+                  (Ches_error.Error.problems
+                     (Controller.feedback (Ui_state.controller ui)))
+             then 6
+             else 1)
         ~fit:Cut_right
         (Span.of_text
            text
@@ -57,7 +62,11 @@ let fields ui : Status_field.t list =
     let s =
       sprintf "%d:%d" (Editor.cursor_line editor + 1) (Editor.cursor_column editor + 1)
     in
-    field Position ~priority:4 ~side:Right [ Span.create Status s ~width:(String.length s) ]
+    field
+      Position
+      ~priority:4
+      ~side:Right
+      [ Span.create Status s ~width:(String.length s) ]
   in
   List.filter_opt [ mode; filename; dirty; message; pending; position ]
 ;;
@@ -65,9 +74,9 @@ let fields ui : Status_field.t list =
 (* Fields that are shown cut must keep at least this many cells. *)
 let min_cut_width = 4
 
-(* Gives [available] cells to [fields] in priority order, each taking a separator
-   cell before it, and returns the spans of those shown. Once a field does not fit
-   (after cutting, where allowed), every field of lower priority is dropped too. *)
+(* Gives [available] cells to [fields] in priority order, each taking a separator cell
+   before it, and returns the spans of those shown. Once a field does not fit (after
+   cutting, where allowed), every field of lower priority is dropped too. *)
 let allocate (fields : Status_field.t list) ~available ~marker_style =
   List.stable_sort fields ~compare:(fun (a : Status_field.t) b ->
     Int.compare a.priority b.priority)
@@ -82,13 +91,15 @@ let allocate (fields : Status_field.t list) ~available ~marker_style =
            match fit with
            | Whole -> Stop shown
            | (Cut_left | Cut_right) when available < min_cut_width -> Stop shown
-           | Cut_left -> Stop ((id, Span.keep_right spans ~n:available ~marker_style) :: shown)
-           | Cut_right -> Stop ((id, Span.keep_left spans ~n:available ~marker_style) :: shown)))
+           | Cut_left ->
+             Stop ((id, Span.keep_right spans ~n:available ~marker_style) :: shown)
+           | Cut_right ->
+             Stop ((id, Span.keep_left spans ~n:available ~marker_style) :: shown)))
        ~finish:fst
 ;;
 
-(* The shown fields of [fields] on [side] (any side if [None]), in [fields]' order,
-   each after a separator cell in [style]. *)
+(* The shown fields of [fields] on [side] (any side if [None]), in [fields]' order, each
+   after a separator cell in [style]. *)
 let place (fields : Status_field.t list) shown ?side style =
   List.concat_map fields ~f:(fun field ->
     match List.Assoc.find shown field.id ~equal:Status_field.Id.equal with
@@ -130,7 +141,9 @@ let status_row (fields : Status_field.t list) ~width : Span.t list =
 ;;
 
 let border_title (fields : Status_field.t list) ~width : Span.t list =
-  let rule n = Span.create Border (String.concat (List.init n ~f:(fun _ -> "─"))) ~width:n in
+  let rule n =
+    Span.create Border (String.concat (List.init n ~f:(fun _ -> "─"))) ~width:n
+  in
   let to_title (span : Span.t) : Span.t =
     match span.style with
     | Status -> { span with style = Title }
@@ -148,7 +161,8 @@ let border_title (fields : Status_field.t list) ~width : Span.t list =
 let render ({ rect; layout; fields = ids } : Geometry.Area.t) fields =
   let fields =
     List.filter_map ids ~f:(fun id ->
-      List.find fields ~f:(fun (field : Status_field.t) -> Status_field.Id.equal field.id id))
+      List.find fields ~f:(fun (field : Status_field.t) ->
+        Status_field.Id.equal field.id id))
   in
   let width = Int.max 0 rect.width in
   match layout with
@@ -179,8 +193,10 @@ let vertical ~(rect : Geometry.Rect.t) (fields : Status_field.t list) : Tile.t =
   let mode =
     Option.map mode ~f:(fun field ->
       (* The horizontal badge's outside spaces are not useful in a narrow cell. *)
-      let spans = List.concat_map field.spans ~f:(fun span ->
-        Span.of_text (String.strip span.text) ~style:span.style ~special:Status_special) in
+      let spans =
+        List.concat_map field.spans ~f:(fun span ->
+          Span.of_text (String.strip span.text) ~style:span.style ~special:Status_special)
+      in
       0, Span.take spans ~n:rect.width)
   in
   let file =
@@ -192,25 +208,34 @@ let vertical ~(rect : Geometry.Rect.t) (fields : Status_field.t list) : Tile.t =
           Span.keep_left field.spans ~n:rect.width ~marker_style:Dirty)
       in
       let dirty_width = Span.total_width dirty_spans in
-      let filename_width = Int.max 0 (rect.width - dirty_width - (if dirty_width > 0 then 1 else 0)) in
+      let filename_width =
+        Int.max 0 (rect.width - dirty_width - if dirty_width > 0 then 1 else 0)
+      in
       let filename_spans =
         Option.value_map filename ~default:[] ~f:(fun field ->
           Span.keep_right field.spans ~n:filename_width ~marker_style:Status_special)
       in
       let separator =
         if Span.total_width filename_spans > 0 && dirty_width > 0
-        then [ Span.blank Status 1 ] else []
+        then [ Span.blank Status 1 ]
+        else []
       in
-      Some ((if Option.is_some dirty then 3 else 4), filename_spans @ separator @ dirty_spans)
+      Some
+        ((if Option.is_some dirty then 3 else 4), filename_spans @ separator @ dirty_spans)
   in
   let row ?marker_style priority field =
-    Option.map field ~f:(fun field -> priority, fit ?marker_style field.Status_field.spans)
+    Option.map field ~f:(fun field ->
+      priority, fit ?marker_style field.Status_field.spans)
   in
-  let message = Option.map message ~f:(fun field ->
-    let marker_style = if field.priority <= 1 then Style.Error else Status_special in
-    field.priority, fit ~marker_style field.spans)
+  let message =
+    Option.map message ~f:(fun field ->
+      let marker_style = if field.priority <= 1 then Style.Error else Status_special in
+      field.priority, fit ~marker_style field.spans)
   in
-  let candidates = List.filter_opt [ mode; file; row 5 position; row ~marker_style:Pending 2 pending; message ] in
+  let candidates =
+    List.filter_opt
+      [ mode; file; row 5 position; row ~marker_style:Pending 2 pending; message ]
+  in
   let chosen =
     List.mapi candidates ~f:(fun order (priority, spans) -> order, priority, spans)
     |> List.stable_sort ~compare:(fun (_, a, _) (_, b, _) -> Int.compare a b)
@@ -220,5 +245,7 @@ let vertical ~(rect : Geometry.Rect.t) (fields : Status_field.t list) : Tile.t =
       Span.merge (spans @ [ Span.blank Status (rect.width - Span.total_width spans) ]))
   in
   let blank = Span.merge [ Span.blank Status rect.width ] in
-  { rect; rows = chosen @ List.init (rect.height - List.length chosen) ~f:(fun _ -> blank) }
+  { rect
+  ; rows = chosen @ List.init (rect.height - List.length chosen) ~f:(fun _ -> blank)
+  }
 ;;

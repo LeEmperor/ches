@@ -1110,7 +1110,39 @@ expect_status "Permission denied"
 save_screen "workspace-error-zen-80x24"
 keys Space v z
 expect_screen "Failed to write ro/workspac>"
-keys Space Q
+# Editing and keymap notices cannot replace unacknowledged persistence attention.
+keys l i Y Escape 3 '^'
+expect_screen "Failed to write ro/workspac>"
+keys Escape
+expect_screen "1 problem: Space v e"
+expect_no_screen "Failed to write"
+save_screen "workspace-problem-acknowledged-80x24"
+keys Space v e
+expect_screen "Failed to write ro/workspac>"
+keys Space w
+expect_screen "Failed to write ro/workspac>"
+keys Escape
+expect_screen "1 problem: Space v e"
+# Matching save recovery removes the retained save problem.
+chmod 755 "$work/ro"
+keys Space w
+expect_screen "Wrote ro/workspace.txt"
+expect_no_screen "problems:"
+# A reload failure has its own identity and matching recovery.
+mv "$work/ro/workspace.txt" "$work/workspace-reload.saved"
+mkdir "$work/ro/workspace.txt"
+keys : e ! Enter
+expect_screen "Failed to reload"
+keys l Escape
+expect_screen "1 problem: Space v e"
+keys Space v e
+expect_screen "Failed to reload"
+rmdir "$work/ro/workspace.txt"
+mv "$work/workspace-reload.saved" "$work/ro/workspace.txt"
+keys : e ! Enter
+expect_screen "Reloaded ro/workspace.txt"
+expect_no_screen "problems:"
+keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
