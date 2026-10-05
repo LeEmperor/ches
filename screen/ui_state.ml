@@ -23,6 +23,7 @@ module Input = struct
     | Paste_start
     | Paste_end
     | Animation_tick of Time_ns.t
+    | Resize
   [@@deriving sexp_of]
 end
 
@@ -32,11 +33,19 @@ type t =
   ; workspace_prefs : Workspace.Prefs.t
   ; other_status_size : int (** Requested size for the inactive split axis. *)
   ; zen : bool
+  ; problems_visible : bool
+  ; problems_current_document : bool
+  ; problems_focus : bool
+  ; problem_navigation : Problem_navigation.t
+  ; problem_pending : Key.t list
+  ; problem_details : bool
+  ; problem_detail_top : int
+  ; problem_notice : string option
   ; scroll : Scroll.t
   ; rows : int option
   (** Text rows the scroll was last fitted for: when they change, the fit fills the
       viewport (see {!Scroll.fit}). *)
-  ; paste : string list option (** Text collected so far, most recent first. *)
+  ; paste : (bool * string list) option (** Start owner (problems), chunks newest first. *)
   ; animation : Animation.t
   ; animation_time : Time_ns.t option
   ; exited : bool
@@ -56,6 +65,14 @@ let create
        | Horizontal -> 6
        | Vertical -> 28)
   ; zen = false
+  ; problems_visible = false
+  ; problems_current_document = false
+  ; problems_focus = false
+  ; problem_navigation = Problem_navigation.empty
+  ; problem_pending = []
+  ; problem_details = false
+  ; problem_detail_top = 0
+  ; problem_notice = None
   ; scroll = Scroll.zero
   ; rows = None
   ; paste = None
@@ -69,6 +86,8 @@ let controller t = t.controller
 let prefs t = t.prefs
 let workspace_prefs t = t.workspace_prefs
 let zen t = t.zen
+let problems_visible t = t.problems_visible
+let problems_current_document t = t.problems_current_document
 let scroll t = t.scroll
 
 let message t =
@@ -131,8 +150,64 @@ let geometry_in t ~allocation ~reserve_status_row =
 let workspace t ~width ~height =
   let prefs = t.workspace_prefs in
   Workspace.allocate
+    ~problems_visible:(t.problems_visible && not t.zen)
     (if t.zen then { prefs with status_visible = false } else prefs)
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
+;;
+
+let problems_focused t ~width ~height =
+  t.problems_focus && Option.is_some (workspace t ~width ~height).problems
+;;
+
+let problem_entries t =
+  Problems.entries (Controller.feedback t.controller)
+    ~current_document:t.problems_current_document
+    ~path:(Editor.path (Controller.editor t.controller))
+;;
+
+let problem_rows t ~width ~height =
+  Option.value_map (workspace t ~width ~height).problems ~default:1
+    ~f:(fun pane -> Int.max 1 (pane.rect.height - 2))
+;;
+
+let problem_navigation t ~width ~height =
+  Problem_navigation.fit t.problem_navigation (problem_entries t)
+    ~rows:(problem_rows t ~width ~height)
+;;
+
+let selected_problem t ~width ~height =
+  List.nth (problem_entries t) (problem_navigation t ~width ~height).index
+;;
+
+let problem_details t = t.problem_details
+let problem_detail_top t = t.problem_detail_top
+let problem_notice t = t.problem_notice
+let problem_pending t =
+  if List.is_empty t.problem_pending then None
+  else Some (String.concat ~sep:" " (List.map t.problem_pending ~f:Key.to_string_hum))
+;;
+
+let return_to_document t =
+  { t with problems_focus = false; problem_pending = []; problem_details = false;
+    problem_notice = None;
+    animation = Animation.create ~enabled:(Animation.enabled t.animation);
+    controller = Controller.cancel_pending t.controller }
+;;
+
+let synchronize_problems t ~width ~height =
+  let navigation = problem_navigation t ~width ~height in
+  let changed = not ([%equal: Ches_error.Error.Identity.t option]
+    navigation.selected t.problem_navigation.selected) in
+  let t = { t with problem_navigation = navigation;
+    problem_details = t.problem_details && not changed;
+    problem_detail_top = if changed then 0 else t.problem_detail_top } in
+  if t.problems_focus && not (problems_focused t ~width ~height)
+  then return_to_document t else t
+;;
+
+let update_feedback t ~width ~height update =
+  synchronize_problems
+    { t with controller = Controller.update_feedback t.controller update } ~width ~height
 ;;
 
 let geometry t ~width ~height =
@@ -216,6 +291,9 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
+  | Toggle_problems
+  | Toggle_problems_filter
+  | Focus_problems
   | Scroll _
   | Toggle_smear
   | Toggle_status
@@ -245,7 +323,15 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
+  | Focus_problems -> Some (Option.value t.problem_notice
+      ~default:(if t.problems_focus then "Problems focused" else "Document focused"))
   | Inspect_problems | Scroll _ -> None
+  | Toggle_problems ->
+    Some (if not t.problems_visible then "Problems hidden"
+      else if Option.is_none (workspace t ~width ~height).problems
+      then "Problems requested (compact/zen)" else "Problems shown")
+  | Toggle_problems_filter ->
+    Some (if t.problems_current_document then "Problems: current document" else "Problems: workspace")
   | Toggle_smear ->
     Some
       (if Animation.enabled t.animation
@@ -259,7 +345,8 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
       | Horizontal, Status -> "left"
       | Horizontal, Document -> "right"
       | Vertical, Status -> "above"
-      | Vertical, Document -> "below"
+       | Vertical, Document -> "below"
+       | _, Problems -> "below"
     in
     let fitted = workspace t ~width ~height in
     let state =
@@ -341,6 +428,19 @@ let scroll_view t ~width ~height (scroll : View_command.Scroll.t) ~count =
 
 let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
+  | Focus_problems ->
+    if t.problems_focus then return_to_document t
+    else if not (Mode.equal (Editor.mode (Controller.editor t.controller)) Normal)
+    then { t with problem_notice = Some "Leave Insert/Visual mode before focusing problems" }
+    else
+      let t = { t with problems_visible = true; problem_pending = [];
+        controller = Controller.cancel_pending t.controller } in
+      if Option.is_none (workspace t ~width ~height).problems
+      then { t with problem_notice = Some "Problems cannot fit in compact/zen layout" }
+      else { t with problems_focus = true; problem_notice = None }
+  | Toggle_problems -> { t with problems_visible = not t.problems_visible }
+  | Toggle_problems_filter ->
+    { t with problems_current_document = not t.problems_current_document }
   | Inspect_problems ->
     { t with controller = Controller.update_feedback t.controller Inspect_next }
   | Scroll { scroll; count } -> scroll_view t ~width ~height scroll ~count
@@ -416,7 +516,118 @@ let feed t ~width ~height (input : Keymap.Input.t) =
   { t with controller }, status
 ;;
 
+let pane_notice t text =
+  { t with problem_notice = Some text; problem_pending = [];
+    controller = Controller.update_feedback t.controller
+      (Notify { source = "problems"; scope = Editor.path (Controller.editor t.controller);
+        severity = Info; text }) }
+;;
+
+let select_problem t ~width ~height index =
+  { t with
+    problem_navigation = Problem_navigation.select (problem_navigation t ~width ~height)
+      (problem_entries t) ~rows:(problem_rows t ~width ~height) index
+  ; problem_details = false
+  ; problem_detail_top = 0
+  ; problem_notice = None
+  ; problem_pending = []
+  }
+;;
+
+let jump_to_problem t ~width ~height =
+  match selected_problem t ~width ~height with
+  | None -> pane_notice t "No problem selected"
+  | Some problem ->
+    let editor = Controller.editor t.controller in
+    if not (Option.value_map (Editor.path editor) ~default:false
+      ~f:(String.equal problem.identity.resource))
+    then pane_notice t "Cross-file jump unavailable; current document kept"
+    else match problem.location with
+      | None -> pane_notice t "This problem has no document location"
+      | Some location ->
+        match Controller.jump t.controller ~line:location.line ~column:location.column with
+        | Error error -> pane_notice t (Error.to_string_hum error)
+        | Ok controller -> return_to_document { t with controller; problem_notice = None }
+;;
+
+let feed_problem t ~width ~height (input : Keymap.Input.t) =
+  let t = match input with
+    | Paste _ -> pane_notice t "Problems are read-only; paste ignored"
+    | Key Escape ->
+      if not (List.is_empty t.problem_pending)
+      then { t with problem_pending = []; problem_notice = None }
+      else if t.problem_details
+      then { t with problem_details = false; problem_notice = None }
+      else return_to_document t
+    | Key (Ctrl 'c') -> pane_notice t "Escape returns to the editor"
+    | Key Tab -> return_to_document t
+    | Key key when not (List.is_empty t.problem_pending)
+      && Key.equal (List.hd_exn t.problem_pending) (Key.char ' ') ->
+      let keys = t.problem_pending @ [key] in
+      (match Keymap.lookup (Controller.keymap t.controller) keys with
+       | Prefix -> { t with problem_pending = keys; problem_notice = None }
+       | Bound (View (Scroll _)) | Bound (Scroll _) ->
+         pane_notice t "Document scrolling is unavailable in problems"
+       | Bound (View view) ->
+         apply_view_command { t with problem_pending = []; problem_notice = None }
+           ~width ~height view
+       | Bound _ -> pane_notice t "Editor command unavailable; Escape returns to editor"
+       | Unbound -> pane_notice t "Unbound problems/workspace key")
+    | Key key when not (List.is_empty t.problem_pending) ->
+      if Key.equal key (Key.char 'g')
+      then (if t.problem_details
+        then { t with problem_pending = []; problem_detail_top = 0; problem_notice = None }
+        else select_problem t ~width ~height 0)
+      else pane_notice t "Cancelled problems prefix"
+    | Key Enter -> jump_to_problem t ~width ~height
+    | Key key when Key.equal key (Key.char ' ') || Key.equal key (Key.char 'g') ->
+      { t with problem_pending = [key]; problem_notice = None }
+    | Key key when Key.equal key (Key.char 'e') ->
+      (match selected_problem t ~width ~height with
+       | None -> pane_notice t "No problem selected"
+       | Some problem ->
+         { t with controller = Controller.update_feedback t.controller
+             (Inspect_identity problem.identity);
+           problem_details = not t.problem_details; problem_detail_top = 0;
+           problem_notice = None })
+    | Key key when Key.equal key (Key.char 'a') ->
+      (match selected_problem t ~width ~height with
+       | None -> pane_notice t "No problem selected"
+       | Some problem ->
+         { t with controller = Controller.update_feedback t.controller
+             (Acknowledge_identity problem.identity);
+           problem_notice = Some "Acknowledged; problem remains active" })
+    | Key key when List.mem [Key.char 'j'; Key.char 'k'; Key.char 'G'; Ctrl 'd'; Ctrl 'u']
+        key ~equal:Key.equal ->
+      let rows = problem_rows t ~width ~height in
+      let delta = match key with
+        | Ctrl 'd' -> Int.max 1 (rows / 2)
+        | Ctrl 'u' -> -(Int.max 1 (rows / 2))
+        | _ when Key.equal key (Key.char 'k') -> -1
+        | _ -> 1 in
+      if t.problem_details then (
+        let maximum = Option.value_map (selected_problem t ~width ~height) ~default:0
+          ~f:(fun p -> Int.max 0 (List.length (Problems.detail_rows p ~width) - rows)) in
+        { t with problem_detail_top =
+            (if Key.equal key (Key.char 'G') then maximum else
+              Int.clamp_exn (t.problem_detail_top + delta) ~min:0 ~max:maximum);
+          problem_notice = None })
+      else
+        let index = if Key.equal key (Key.char 'G') then List.length (problem_entries t) - 1
+          else (problem_navigation t ~width ~height).index + delta in
+        select_problem t ~width ~height index
+    | Key _ -> pane_notice t "Read-only problems: j/k e Enter a; Escape returns"
+  in
+  t, Controller.Status.Running
+;;
+
+let route t ~width ~height input =
+  if problems_focused t ~width ~height then feed_problem t ~width ~height input
+  else feed t ~width ~height input
+;;
+
 let refit t ~width ~height =
+  let t = synchronize_problems t ~width ~height in
   { t with
     scroll = fitted_scroll t ~width ~height
   ; rows = Some (geometry t ~width ~height).text.height
@@ -428,8 +639,11 @@ let rec apply t ~width ~height (input : Input.t) =
 
 and apply_running t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
-  let t = refit t ~width ~height in
+  let t = match input with
+    | Resize -> synchronize_problems t ~width ~height
+    | _ -> refit t ~width ~height in
   match input with
+  | Resize -> t, Running
   | Animation_tick now ->
     let dt =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
@@ -440,30 +654,34 @@ and apply_running t ~width ~height (input : Input.t) =
   | Key _ | Paste_start | Paste_end ->
     let before = cursor_position t ~width ~height in
     let before_workspace = t.workspace_prefs
+    and before_focus = t.problems_focus
+    and before_problems_visible = t.problems_visible
     and before_zen = t.zen in
     let t, status =
       match input, t.paste with
-      | Paste_start, None -> { t with paste = Some [] }, Controller.Status.Running
+      | Paste_start, None ->
+        { t with paste = Some (problems_focused t ~width ~height, []) }, Controller.Status.Running
       | Paste_start, Some _ -> t, Running
       | Paste_end, None -> t, Running
-      | Paste_end, Some chunks ->
-        feed
-          ~width
-          ~height
-          { t with paste = None }
-          (Paste (String.concat (List.rev chunks)))
-      | Key key, Some chunks ->
+      | Paste_end, Some (problems_owner, chunks) ->
+        let t = { t with paste = None } in
+        if problems_owner then
+          pane_notice t "Problems are read-only; paste ignored", Running
+        else feed ~width ~height t (Paste (String.concat (List.rev chunks)))
+      | Key key, Some (problems_owner, chunks) ->
         (match Key.text key with
-         | Some text -> { t with paste = Some (text :: chunks) }, Running
+          | Some text -> { t with paste = Some (problems_owner, text :: chunks) }, Running
          | None -> t, Running)
-      | Key key, None -> feed ~width ~height t (Key key)
-      | Animation_tick _, _ -> assert false
+      | Key key, None -> route ~width ~height t (Key key)
+      | (Animation_tick _ | Resize), _ -> assert false
     in
     let t = refit t ~width ~height in
     let after = cursor_position t ~width ~height in
     let was_active = Animation.active t.animation in
     let animation =
       if (not (Workspace.Prefs.equal before_workspace t.workspace_prefs))
+         || Bool.(before_problems_visible <> t.problems_visible)
+         || Bool.(before_focus <> t.problems_focus)
          || Bool.(before_zen <> t.zen)
       then Animation.create ~enabled:(Animation.enabled t.animation)
       else Animation.retarget t.animation ~from:before ~to_:after

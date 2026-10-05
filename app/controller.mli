@@ -65,3 +65,8 @@ val move : t -> Motion.t -> count:int option -> t
 
 val feedback : t -> Ches_error.Error.t
 val update_feedback : t -> Ches_error.Error.update -> t
+
+val cancel_pending : t -> t
+
+(** Validated current-document navigation only. No IO, edits, or feedback resolution. *)
+val jump : t -> line:int -> column:int -> t Or_error.t

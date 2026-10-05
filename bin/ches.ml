@@ -19,8 +19,14 @@ let command =
        Space v c/h/l/H/L/-/+/r: toggle centering, move, resize, reset the layout;\n\
         Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor;\n\
         Space v t toggles status; Space v p h/l/k/j places it, p -/+ sizes it;\n\
-        Space v z toggles zen; Space v e cycles retained problems; idle Escape acknowledges.")
-    (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type) in
+         Space v z toggles zen; Space v e cycles retained problems; idle Escape acknowledges.\n\
+         Space v b toggles the problems preview; Space v f filters workspace/current document;\n\
+         Space v o focuses problems: j/k, gg/G, Ctrl-d/u navigate, e inspects, a acknowledges,\n\
+         Enter jumps to a supported current-file location; Escape cancels/back/returns.\n\
+         --demo-problems seeds eight labelled, jumpable synthetic problems without editing PATH.")
+    (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)
+     and demo_problems = flag "--demo-problems" no_arg
+       ~doc:" Seed synthetic problems with locations for manual pane/navigation testing" in
      fun () ->
        let fail error =
          eprintf "ches: %s\n" (Error.to_string_hum error);
@@ -35,7 +41,9 @@ let command =
            Ches_app.Controller.open_file ~cell_width:Ches_screen.Cell_map.width path
          with
          | Error error -> fail error
-         | Ok controller ->
+          | Ok controller ->
+            let controller = if demo_problems
+              then Ches_app.Demo_problems.install controller else controller in
            (match%bind Ches_ui.Editor_view.run controller with
             | Ok () -> return ()
             | Error error -> fail error)))

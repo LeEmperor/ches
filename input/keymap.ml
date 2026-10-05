@@ -86,6 +86,7 @@ let create (config : Config.t) =
 
 (* The state between sequences: only the configuration carries over. *)
 let reset t = create t.config
+let lookup t keys = Bindings.find t.config.normal keys
 let cancel t notice = { (reset t) with notice = Some notice }, []
 
 let keys_to_string ?count keys =

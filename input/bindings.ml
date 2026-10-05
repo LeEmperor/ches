@@ -173,6 +173,9 @@ let default =
     ; view 'N' Toggle_relative_numbers
     ; view 's' Toggle_smear
     ; view 'e' Inspect_problems
+    ; view 'b' Toggle_problems
+    ; view 'f' Toggle_problems_filter
+    ; view 'o' Focus_problems
     ; view 't' Toggle_status
     ; view 'z' Toggle_zen
     ; status 'h' (Position_status Left)

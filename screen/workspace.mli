@@ -1,4 +1,4 @@
-(** Pure allocation for one document and one optional, non-focusable status cell.
+(** Pure allocation for one document and optional status/problems cells.
     This module owns layout, not document/controller state or status rendering.
     Measurements and allocated origins are terminal display cells. *)
 
@@ -6,10 +6,11 @@ open! Core
 
 module Pane_id : sig
   (** Stable content identities, independent of split order, position, or visibility.
-      These two identities suffice until additional panes are introduced. *)
+      Status and problems are read-only companions. *)
   type t =
     | Document
     | Status
+    | Problems
   [@@deriving sexp_of, equal]
 end
 
@@ -52,13 +53,15 @@ module Pane : sig
     }
   [@@deriving sexp_of, equal]
 
-  (** Only the document is interactive. *)
+  (** Document and problems can own keyboard input; status cannot. *)
   val focusable : t -> bool
 end
 
 type t =
   { document : Pane.t
   ; status : Pane.t option
+  ; problems : Pane.t option
+  (** Optional full-width bottom preview, up to six rows. *)
   ; reserve_status_row : bool
   (** True when status is hidden or cannot fit: use compact document-row feedback.
       The row remains within [document.rect], not a separate overlapping pane. *)
@@ -75,8 +78,11 @@ val min_status_height : int
     give the document the remainder, with no gap. Otherwise allocate the entire
     rectangle to the document and request compact feedback. Requests are never
     modified: callers retain [Prefs.t] and recompute on resize or hide/restore.
-    No amount of available space independently enables the status cell. *)
-val allocate : Prefs.t -> allocation:Geometry.Rect.t -> t
+    No amount of available space independently enables a companion cell.
+    [problems_visible] requests a bottom preview of three to six rows; it is hidden
+    if document/status minima cannot coexist. Status is allocated within the
+    remaining upper rectangle. *)
+val allocate : ?problems_visible:bool -> Prefs.t -> allocation:Geometry.Rect.t -> t
 
 (** Pane-local document geometry, applying independent document placement prefs
     and this allocation's compact-feedback policy. No editor state is changed. *)

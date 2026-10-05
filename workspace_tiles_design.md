@@ -1,16 +1,33 @@
-# Ches workspace, panes, and status tile
+# Ches tile system, workspace, and supporting views
 
 Status: phases 1–5 (geometry, allocation, vertical status rendering, runtime
 workspace integration/controls, and shared feedback lifecycle) implemented and
-software-verified. Phase 5 is **software-complete / human-feedback-pending**.
-Human review of status presentation and workspace interaction from phases 3–4
-also remains pending. Problems/history views, diagnostic sources, and the
+software-verified and human-accepted (2026-10-04). Phase 5 and the carried-over
+status presentation/workspace interaction checks from phases 3–4 are accepted.
+Phase 6's read-only problems view is software-complete / human-feedback-pending.
+Phase 7's interactive problems pane is also software-complete / human-feedback-pending.
+History views, diagnostic sources, and the
 external-view protocol remain unimplemented.
+
+**Direction update (2026-10-05):** This worktree implements a general tile system.
+Status and problems are concrete consumers/test cases, not the definition of a
+tile. Shared tile plumbing, consistent framing/padding, and read-only text
+selection/copying are not yet generalized; the new phases 7A–7C below are the next
+tile-system assignments. Phase 6/7 software completion does not imply these later
+capabilities exist or that their current presentation is human-accepted.
 
 ## Goal and scope
 
 Extend the current single-document layout into a small composable workspace while
 preserving Ches's comfortable text placement and zen editing experience.
+
+The wider scope is a **service-agnostic tile foundation** for primary work surfaces
+and supporting tools. Shared presentation and interaction should not depend on the
+error/problem system, a diagnostic producer, or any particular external service.
+Use the working problems view to exercise and migrate that foundation, not as an
+API that all future consumers must imitate. Keep the existing single-file editor;
+this scope does not itself authorize multiple buffers, a plugin framework, an LSP
+client, or a Hardcaml workbench integration.
 
 The first consumer is a **status tile**: move relevant status from a mandatory
 bottom row into a compact, independently allocated region. This provides a concrete
@@ -27,15 +44,27 @@ in another process or on another machine.
   within an allocation. `compute_in` explicitly chooses status-row reservation;
   the full-screen `compute` wrapper retains the existing bottom status row.
 - `screen/workspace.ml` allocates stable document/status cells using a requested
-  two-leaf split, with compact fallback. `Ui_state` derives effective workspace
-  geometry from saved requests and zen state; `Frame` composes document/status cells.
+  two-leaf split plus an optional full-width bottom problems allocation, with compact
+  fallback. `Ui_state` derives effective geometry from requests/zen state; `Frame`
+  composes the document, status, and problems content.
 - `screen/ui_state.ml` owns one controller, layout preferences, scroll state,
-  messages, and animation state.
+  animation, problems-specific focus/capture, selection, detail scroll, and paste
+  start-owner routing. These working phase 7 paths are migration starting points,
+  not the intended shared minor-tile API.
 - `screen/status_field.ml` defines semantic field IDs and priority/fitting metadata.
 - `screen/status.ml` produces mode, filename, dirty, message, pending-key, and
   position fields, then renders them for a row, border title, or allocated vertical
   status cell.
 - `ui/editor_view.ml` renders screen frames through Bonsai and adapts UI events.
+- `error/error.ml` owns the shared notification/problem reducer; the controller
+  translates operation outcomes into typed updates. This semantic state exists
+  independently of any tile's visibility or lifetime.
+- `screen/problems.ml` and `screen/problem_navigation.ml` present problems and track
+  item selection/scrolling. The current pane has no rounded frame/inset padding or
+  text cursor/Visual selection/yank. Detail scrolling is available only when detail
+  rows exceed the viewport; `Details 1-4/4` means there is nothing further to scroll.
+- `app/demo_problems.ml` supplies opt-in, session-local navigation fixtures. It is
+  not a general tile content model or a real diagnostic producer.
 
 These boundaries are useful. Extend them with workspace composition rather than
 putting layout or external-process concerns into core editing commands.
@@ -49,12 +78,16 @@ existing implementation:
 | --- | --- |
 | Document/buffer | Text, file identity, revisions, dirty state, edit history |
 | Document view | A view of a document: cursor, selection, scroll, display preferences |
-| Pane/tile | Allocated rectangle, content identity, visibility, focus behavior |
+| Pane/tile | Stable view identity, allocated rectangle, shared shell, visibility, focus/input behavior |
+| Tile content/adapter | A consumer's presentation data and semantic actions, independent of its shell |
+| Major/minor role | Workspace role and default policy, not a content type or capability restriction |
 | Session/source | Terminal process, conversation, or external data source independent of visibility |
-| Workspace | Layout, focused pane, document/session registries, workspace commands |
+| Workspace | Layout, focused tile, workspace commands; document/session registries when needed |
 
 A status display is pane content, not an editable text buffer. The same is true of
 a dashboard. Avoid forcing all pane contents through editor commands.
+Read-only content may still support a text cursor, movement, Visual selection, and
+copying. Restricting mutation is not a reason to restrict inspection or yank.
 
 The current editor/controller ownership may couple document and view state. Do not
 require a complete multi-view document refactor for the first status tile. Preserve
@@ -93,8 +126,13 @@ Principles:
 Have workspace allocation produce each pane's outer rectangle. Pane-local layout
 then derives content, borders, and decorations from it. Rendering, clipping,
 scrolling, cursor placement, and eventual hit testing must share this geometry.
-Existing document geometry currently assumes terminal-wide coordinates and a
-top-origin tile; account explicitly for pane origins when generalizing it.
+Document geometry is already pane-relative following phase 1; preserve nonzero
+origins when sharing shell geometry. Treat the existing edge-to-edge problems
+strip and its six-row ceiling as prototype policy, not a permanent minor-tile style.
+Future allocations must budget for frame, inset padding, titles/footers, and a useful
+content viewport; do not add chrome on top of six rows and accidentally leave no
+room to inspect content. Requested/effective geometry and compact/zen restoration
+remain separate.
 
 ## Input, focus, and lifecycle
 
@@ -108,6 +146,11 @@ top-origin tile; account explicitly for pane origins when generalizing it.
   land in different panes after a focus change.
 - Background events can update hidden panes/sessions without changing focus.
 - Hiding a pane, closing a view, and terminating its source are different actions.
+- Shared routing dispatches content-adapter actions; it does not call problem
+  acknowledgement/resolution, file IO, or source lifecycle code itself.
+- Text-oriented read-only tiles can own a terminal cursor for selection when that
+  capability is introduced. Phase 7's hidden-cursor policy is a prototype, not a
+  requirement for all supporting views. There is still only one cursor owner.
 
 For the first milestone, the status pane can be non-focusable. It observes the
 active document and workspace rather than participating in text input.
@@ -205,6 +248,11 @@ dashboard a hard-real-time display or part of a latency-critical trading loop.
 Start with a read-only external view, complete snapshots, and a local process or
 Unix-domain socket. Separate transport from the pane/source interface so a remote
 connection can be added later.
+Read-only describes producer mutation permissions, not local inspect/copy ability.
+An adapter may supply selectable text through shared tile interactions without
+turning local cursor movement or yank into commands sent to the producer. A raw
+cell/grid view must explicitly advertise text/copy metadata if that capability is
+supported; do not fabricate an editable buffer for arbitrary frames.
 
 Conceptual flow:
 
@@ -301,7 +349,12 @@ implementing. Module names below are starting points, not prescribed new APIs.
 
 Execute phases 1–5 in order. Keep the existing single document/controller;
 follow-on phases 6–10 cover problems/history views, interactive companion panes,
-and diagnostic sources according to their stated dependencies. Multi-view documents
+and diagnostic sources according to their stated dependencies. The 2026-10-05
+direction adds phases 7A–7C after the existing phase 7: extract the common foundation,
+standardize tile presentation, then add shared read-only text interaction. Keep
+phase numbers and completed-phase records intact; do not restart phases 1–7 or
+silently require their old implementations to already satisfy the new scope.
+Multi-view documents
 remain outside this milestone. Each phase should leave the application buildable and usable.
 
 ### Assignment and completion contract
@@ -690,7 +743,7 @@ acceptance.
 
 ### Phase 5 — Shared feedback state and status-tile acceptance
 
-**Status (2026-10-04): software-complete / human-feedback-pending.**
+**Status (2026-10-04): software-complete / human-accepted.**
 
 **Depends on:** phase 4. The feedback direction and initial lifecycle policy below
 are recorded from the owner discussion on 2026-10-04. Incorporate any human feedback
@@ -848,6 +901,18 @@ resulting acceptance blockers have been addressed.
   Run the human sequence above and the phases 3–4 editing/layout comfort check;
   incorporate owner feedback before marking the status-tile milestone human-accepted.
 
+#### Human acceptance (2026-10-04)
+
+- The owner confirmed routine feedback works correctly, then confirmed the controlled
+  persistent save-failure sequence (editing/layout persistence, acknowledgement,
+  retained inspection, failed retry, and matching recovery) works.
+- The owner subsequently confirmed the remaining reload failure/recovery,
+  editing/scrolling and layout/resize/zen comfort, and presentation checks are all
+  fine. This completes the deferred phases 3–4 human review as well as phase 5.
+- No human acceptance blockers or follow-up changes were reported. The status-tile
+  milestone (phases 1–5) is human-accepted. Earlier pending handoffs above describe
+  the state before this owner review; follow-on phases remain outside this acceptance.
+
 ## Follow-on phases — Problems, history, and external sources
 
 These are separate implementation assignments, not additional acceptance gates for
@@ -855,8 +920,25 @@ phase 5. Follow the dependencies below; record concrete bindings and interface
 choices at the start of each assignment. Apply the same software/human acceptance
 contract. Phase 9 can proceed after phases 5–6 independently of phases 7–8;
 external cell-frame work remains a separate track from semantic diagnostics.
+The semantic work in phases 8–10 remains distinct from the tile foundation. New
+history/external UI must use phases 7A–7C's shared contracts rather than copying
+the problems-specific capture implementation. Dependency details below distinguish
+backend work that can proceed independently from UI integration that needs migration.
 
 ### Phase 6 — Read-only problems tile
+
+**Status (2026-10-04): software-complete / human-feedback-pending.**
+
+**Implementation choices (2026-10-04):** Normal `Space v b` toggles a read-only
+bottom problems tile; `Space v f` toggles workspace/current-document filtering
+(workspace by default). `Space v e` continues cycling all retained details,
+including filtered-out and overflow entries. The tile occupies up to six rows
+across the workspace width, below the existing document/status allocation.
+Its header reports filtered and total counts; overflow reserves a final row
+with an explicit hidden-entry count. First-occurrence ordering is retained.
+Zen and undersized allocations hide the view without changing its request or
+filter. Document/status minima take precedence over the problems tile. Optional
+locations are displayed as one-based line/column, not navigation targets.
 
 **Depends on:** phase 5.
 
@@ -880,7 +962,55 @@ acknowledged entries, filtering, overflow, coexistence, and constrained allocati
 Hiding/reopening the tile loses no active state. Human use must assess placement,
 readability, density, and whether a persistent bottom problems view is comfortable.
 
+#### Implementation and verification (2026-10-04)
+
+- Added the pure `Ches_screen.Problems` renderer, consuming the same controller
+  feedback as status. Filtering and hiding do not acknowledge, resolve, or remove
+  problems. Repeated updates keep first-occurrence order. Optional display locations
+  are carried by typed `Report` updates; existing file failures remain location-free.
+- Workspace allocation reserves a full-width bottom preview of three to six rows
+  only when document/status minima fit. Existing requested status placement/sizes
+  and document preferences are preserved; zen/compact fallback restores on return.
+  The companion remains non-focusable; cursor, editing, paste, and undo stay in the
+  editor. No navigation, history, diagnostic collections, or async producer added.
+- Four expect tests cover empty/multiple sources, acknowledgement, repeated updates,
+  resolution, filters, overflow and retained-detail reachability, hide/reopen, zen,
+  coexistence and undo. Bounds checks exercise 4,050 size/position combinations,
+  including zero/tiny allocations and Unicode/control text, asserting disjoint panes,
+  exact row cell widths, sanitized text, and document-only cursor ownership.
+- Verified with `opam exec --switch=5.2.0+ox -- dune build` and `dune runtest`;
+  the extended `scripts/smoke.sh` passes. Terminal checks cover acknowledged save
+  failures in the tile, filtering, hide/reopen, zen, constrained resize/restore,
+  matching save recovery, and reload failure/recovery. Log:
+  `/tmp/opencode/tiles-phase6-smoke.log`; review captures:
+  `/tmp/ches-smoke-screens.78cKcp`.
+- **Software-complete / human-feedback-pending.** Trigger a controlled save failure,
+  show the tile with `Space v b`, acknowledge with idle Escape, toggle the filter,
+  hide/reopen, resize and enter/leave zen, then retry and recover. Repeat for reload.
+  Assess persistent bottom placement, readability/density, editing/scrolling comfort,
+  distraction and flicker. Synthetic tests cover multiple resources and overflow;
+  the single-file UI currently produces only save/reload failures. Owner feedback
+  and any resulting blockers are required before phase 6 is human-accepted.
+
 ### Phase 7 — Interactive panes and problem navigation
+
+**Status (2026-10-04): software-complete / human-feedback-pending.**
+
+**Implementation choices (2026-10-04):** Normal `Space v o` shows/focuses the
+problems tile; in the tile it returns to the document. Pane keys: `j/k`, `gg/G`,
+`Ctrl-d/u` select/scroll; `e` inspects the selected identity in status; `a`
+acknowledges only that identity; Enter jumps to a supported current-file location
+and returns to the editor. `e` toggles wrapped, scrollable details. Escape first
+cancels a pane prefix, then closes details, then returns to the document (without
+acknowledgement); Tab returns directly. `Space v` layout commands remain
+available, but editor commands cannot run from pane capture. Selection follows
+identity across updates; removal/filtering selects the item at the previous index
+(the next neighbor, or the last item). Hiding, zen, or a constrained allocation
+returns keyboard/cursor ownership to the editor. Paste is routed atomically to
+its start owner: a paste begun in the problems pane is rejected, never replayed
+as keys or redirected after resize. Display locations are one-based terminal-cell
+columns; invalid/out-of-range, missing, and cross-file locations are rejected without
+changing dirty state, text, history, or the active problem.
 
 **Depends on:** phase 6.
 
@@ -900,12 +1030,80 @@ focus restoration on hiding a pane, and editing/undo preservation. Human tests c
 navigation, jump/return, keyboard ownership, and visibility in compact/zen layouts.
 Multi-document editing is not implicitly required by this phase.
 
+#### Implementation and verification (2026-10-04)
+
+- Added pure identity-based `Ches_screen.Problem_navigation` selection/viewport state
+  and problems-pane input capture in `Ui_state`. Configured workspace view bindings
+  remain available; editor actions cannot execute during capture. Escape/prefix/detail
+  precedence, direct return, hidden/zen/compact focus restoration, and start-owner
+  atomic paste routing are explicit. The frontend emits resize reconciliation events
+  without persisting a temporary document scroll fit.
+- Focus is indicated by `Problems*`, selection by `>`, and the footer reports items
+  above/below the viewport or detail row range. Wrapped details preserve whole display
+  glyphs where space permits and sanitize controls. The pane owns no terminal cursor
+  or editor smear. Selected inspection/acknowledgement target identity, not whatever
+  unrelated failure currently has status attention. Updates retain selection/detail
+  capture; removal/filtering selects the documented neighbor and closes obsolete details.
+- Added validated same-document navigation through the controller/editor, converting
+  one-based terminal-cell locations to UTF-8 boundaries with the editor's width mapping.
+  TAB/wide glyph interiors select their glyph. Invalid positions, missing locations,
+  and unsupported cross-file/unavailable-resource jumps leave text, dirty state, undo,
+  cursor, and active problems unchanged. There is no file switching, disk reload, or
+  multi-buffer implementation. Version-based freshness checks remain phase 9 work.
+- Eight expect tests cover routing, selection during updates/resolution/filter changes,
+  scrolling/details, acknowledgement, capture cancellation, configured view bindings,
+  pending Normal input precedence, focus return, resizing, atomic paste, UTF-8/TAB jump
+  conversion, missing/out-of-range/cross-file targets, and editing/undo preservation.
+  Focused list/details bounds are checked in 15,300 allocation/position combinations.
+- Verified `dune build` and `dune runtest` in the `5.2.0+ox` switch. Extended terminal
+  smoke checks pass, including a two-problem save/reload failure sequence, focus/selection,
+  detail capture, acknowledgement, prefix cancellation, missing-location refusal,
+  editor-command/paste rejection, resize focus return, preserved undo, matching recovery,
+  and empty-list focus. The existing scroll suite also passes after a regression fix.
+  Log: `/tmp/opencode/tiles-phase7-smoke.log`; review captures:
+  `/tmp/ches-smoke-screens.LEKp6d`. Location jumps and cross-resource behavior are
+  synthetic tests only: current runtime file failures do not carry locations.
+- **Software-complete / human-feedback-pending.** Trigger save/reload failures, focus
+  with `Space v o`, select/inspect/acknowledge, try Enter on a location-free failure,
+  cancel a pending prefix, return and edit/undo, then hide/resize/use zen and recover.
+  Assess focus/selection clarity, keyboard ownership, detail readability/scrolling,
+  placement, distraction, and compact/zen behavior. Human review of phase 6's bottom
+  preview remains pending too; neither milestone is marked human-accepted by automation.
+
+#### Opt-in manual navigation fixture (2026-10-05)
+
+- Owner feedback confirms `Space v o` focus works, but ordinary launches may have
+  no problems to select, and save/reload failures cannot test location jumps.
+- Added `ches --demo-problems PATH` (or `dune exec ches -- --demo-problems PATH`).
+  It seeds eight labelled, initially acknowledged DEMO findings with column-1
+  locations spread over the opened document. Each uses an isolated `demo/NN`
+  namespace so normal file recovery cannot resolve a demo or vice versa. No text,
+  dirty state, cursor, or filesystem changes are made by seeding; normal launches
+  remain unchanged. Entries are session-local startup snapshots, not live diagnostics.
+- Manual sequence: open a multiline file with the flag, `Space v o`, `G`, Enter
+  (last line); refocus, `gg`, Enter (first line); refocus, `G`, `e`, then scroll
+  the long details with `j/k` or `Ctrl-d/u`. Short/empty files reuse jump locations.
+  Restart without the flag to remove demo entries. Human navigation acceptance
+  remains pending; this fixture makes that review possible without filesystem failures.
+- Verified build and expect tests in `5.2.0+ox`; demo tests cover valid jumps for
+  empty/short/Unicode documents, idempotent seeding, unchanged text/dirty state,
+  and isolation from real file failures. The extended terminal smoke suite passes:
+  demo selection/details, actual first/last-line cursor jumps, unchanged saved bytes,
+  and an ordinary relaunch with no demo entries. Log:
+  `/tmp/opencode/tiles-demo-problems-smoke.log`; captures:
+  `/tmp/ches-smoke-screens.fdsSUo`.
+
 ### Phase 8 — Bounded notification history
 
-**Depends on:** phase 5 and phase 7 for an interactive history view.
+**Depends on:** phase 5 for history storage; phases 7A–7C for its interactive view.
 
 **Scope:** Make previous action feedback inspectable without mixing it into the
-current problems list. Share the existing details/list interaction where practical.
+current problems list. Implement history as a second real minor-tile consumer of
+the shared shell and read-only interactions, not another problems-specialized pane.
+
+History storage/reducer work may proceed independently of the tile migration.
+For the interactive view, reuse generic list/text interaction;
+do not model historical events as active problems or borrow their resolution policy.
 
 **Work items:** Record bounded chronological notification/lifecycle history with
 source and resource context. Specify the capacity, eviction policy, repeated-event
@@ -913,11 +1111,18 @@ coalescing, and whether ordinary success/layout notices are included. Clearing
 history must not resolve active problems; resolving a problem must not erase its
 historical occurrence. Keep history in memory initially; cross-launch persistence
 and full diagnostic-snapshot logging are out of scope.
+The history adapter owns chronological entry identity and retention semantics;
+tile visibility, cursor/selection, copied text, or closing the history view cannot
+clear storage or affect active problems. Empty/evicted selections need explicit
+adapter reconciliation rather than a global problem-specific rule.
 
 **Acceptance:** Tests cover bounds, ordering, repeated failures, acknowledgement,
 resolution, and independence from active state. Human tests cover finding an earlier
 failure after its notification disappears and understanding past versus current
 problems. History must not grow with every render or animation tick.
+Also verify shared frame/padding, read-only selection/yank, and generic focus/paste
+routing with history and problems coexisting. No extra history-only shell or input
+capture implementation should be needed.
 
 ### Phase 9 — Diagnostic collections and asynchronous source lifecycle
 
@@ -926,6 +1131,11 @@ problems. History must not grow with every render or animation tick.
 **Scope:** Extend active problems with source-owned diagnostic collections, using a
 synthetic asynchronous producer before implementing a language-server client. This
 is semantic feedback data, separate from the external cell-frame protocol below.
+Do not make diagnostic collections a tile-framework abstraction. Their identities,
+severity, acknowledgement/freshness, and source cleanup belong in the feedback/source
+layer; the problems adapter projects them into ordinary tile presentation data.
+Backend development does not depend on phases 7A–7C, but any new tile-facing API
+must follow their agreed boundary, with UI integration on the migrated problems view.
 
 **Work items:**
 
@@ -962,6 +1172,11 @@ server failure distinct from source-code diagnostics. Map severity, resource,
 range, source, and version context into the shared model. Handle protocol position
 encoding explicitly when converting locations to editor positions. Make server
 restart and unsupported/missing configuration understandable.
+The language-server client reports to the diagnostic/feedback layer, never directly
+to shell, focus, or selection state. The problems adapter owns jump/acknowledgement
+actions; shared tile infrastructure has no LSP or file-location dependency. Before
+adding new UI behavior, complete the shared-shell/routing migration in phases 7A–7B;
+use phase 7C's text capabilities rather than reimplementing selection/copying.
 
 **Acceptance:** Controlled integration fixtures cover initial diagnostics, editing
 and recovery, location conversion including Unicode, source restart, and stale
@@ -973,6 +1188,9 @@ with problems hidden and in zen. Record server/version and any protocol limitati
 The original external-view track remains independent of the feedback phases above.
 Expand each into a concrete assignment before implementation; diagnostics do not
 require terminal/cell-frame transport.
+Reuse the service-agnostic tile foundation (7A–7B), and 7C where content offers
+selectable text. External content need not enter the error system to obtain a tile.
+Source failure may separately post feedback without changing ownership of its data.
 
 1. **Read-only external snapshot prototype:** Use a synthetic producer and bounded
    latest-snapshot updates. Exercise bursts, producer exit, freshness, resize, and
@@ -980,7 +1198,8 @@ require terminal/cell-frame transport.
    readability, stale-state feedback, and perceived editing responsiveness.
 2. **Concrete external integrations:** Add remote transport or richer frame
    protocols only against a concrete producer. Specify lifecycle and recovery
-   semantics before implementation. Reuse phase 7's routing if interactive content
+   semantics before implementation. Reuse the extracted shared routing, not the
+   problems-specific phase 7 prototype, if interactive content
    is needed. Require human testing for new visible or interactive behavior;
    internal-only changes can be verified through software checks.
 
@@ -1004,10 +1223,224 @@ require terminal/cell-frame transport.
 
 ### Remaining decisions
 
-- Problems-tile placement/controls, history retention capacity, and the first
-  language/server configuration for their respective follow-on phases.
-- Human feedback on the integrated status presentation and workspace controls.
+- Common shell defaults and compact degradation thresholds: inset/gap sizes,
+  revised supporting-tile height, title/footer space, and focus decoration. The
+  shared rounded/inset direction is settled; exact comfortable measurements need
+  a recorded implementation choice and human review.
+- Shared read-only text interaction bindings, selection modes, copy destination,
+  and update-during-selection policy, as specified in phases 7A–7C below.
+- History retention capacity and the first language/server configuration.
+- Remaining human feedback on problems layout/navigation and the new shared tile
+  presentation/interactions. Status phases 1–5 remain human-accepted; the new
+  direction does not retroactively erase that acceptance.
 - Whether status follows the focused pane or also retains a pinned document summary.
 - First external producer and whether its output is semantic data or cell frames.
 - Refresh/freshness requirements and acceptable dropped-snapshot behavior for it.
 - Which workspace/session/layout settings should persist across launches.
+
+## Shared tile direction — Major/minor roles and consumer-independent plumbing
+
+### Owner direction and current gaps (2026-10-05)
+
+The owner is happy with the main editor's rounded corners and comfortable inset
+placement, but the problems tile currently touches the screen edges and places
+list text against them. Supporting tiles should feel like members of the same
+workspace, not unframed strips of output. The owner also expects read-only content
+to be inspectable and copyable, much like a read-only buffer in a Neovim split.
+
+This worktree's objective is **the tile system**. The error/problem system backs
+the first examples and provides useful lifecycle tests; it is not the fundamental
+abstraction around which minor tiles should be built. Current problems-specific
+capture/selection fields in `screen/ui_state.ml` demonstrate behavior but still
+need extraction. No claim is made that phases 6–7 already provide a generic tile
+registry, consistent auxiliary chrome, or buffer-style text selection/copying.
+
+### Major and minor tiles
+
+| Role | Intended use | Shared foundation and specialization |
+| --- | --- | --- |
+| Major | Primary work surface: the current editor; potentially a future Hardcaml report/workbench | Uses common shell/focus contracts; adds rich domain-specific content and interactions |
+| Minor | Supporting view: problems, retained details, history, tool output | Uses common shell and reusable list/read-only text interactions; adds a small content adapter |
+
+These are **workspace roles/defaults**, not a mandatory OCaml inheritance tree.
+Implement shared composition first; specialize through explicit capabilities and
+policy hooks. A major report can be read-only; a minor tool can have an approved
+input field. Role alone does not imply editability, focusability, a terminal cursor,
+copy/paste behavior, source lifetime, or automatic layout priority. Status may stay
+non-focusable while sharing presentation machinery. A detailed view can remain in
+its existing tile rather than requiring another tile instance.
+
+All tiles use the same foundation where applicable. Major content may override
+presentation/interaction defaults for a concrete need, but may not bypass bounds,
+cursor ownership, atomic input routing, or view/source lifecycle guarantees. The
+editor remains the only implemented major content type for now. A
+`hardcaml-reports` major tile is an example of future specialization, not a newly
+authorized integration or an excuse to overgeneralize the first API.
+
+### Boundary and dependency contract
+
+| Layer | Owns | Must not own |
+| --- | --- | --- |
+| Workspace/tile host | Stable view IDs, requested/effective allocation, role/default policies, focused/captured destination, hide/restore, generic action dispatch | Problems, severity, acknowledgement, diagnostics, file IO, or producer collections |
+| Shared tile shell | Outer/frame/title/footer/content rectangles, rounded chrome, inset padding, focus decoration, clipping | Source semantics, problem filtering, resolution, document mutations |
+| Shared content interactions | Capability-based list/text movement, viewport, text cursor/selection, yank, pending-input handling, explicit paste policy | Problem-specific identity types, retry/jump meaning, diagnostic freshness, real document dirty/history state |
+| Content adapter | Presentation snapshots, opaque item keys and reconciliation policy, semantic actions/capabilities, canonical copy text | Duplicated shell geometry or independent workspace input capture |
+| Tool/service/source | Authoritative data, identity/lifecycle, domain operations; feedback reporting where appropriate | Ownership of layout, focus, chrome, or generic selection state |
+
+The problems adapter translates active feedback into rows/details and translates
+semantic actions back into selected acknowledgement or validated navigation. The
+feedback reducer still owns attention/resolution; the editor/controller still
+owns dirty documents and navigation validation. The shared layers must not import
+`Ches_error.Error` or require a `Problem.t` to represent content. Application assembly
+may depend on both layers to wire them together. An error-free static report/list
+fixture must be able to use the same tiles without inventing save/reload identities
+or posting notifications to become visible.
+
+View instances own view-local cursor, selection, scroll, and capture state. A
+source/session owns its data independently. Hiding, compact fallback, changing
+decoration, or closing a view cannot acknowledge/resolve problems, clear history,
+or stop a producer implicitly. Any destructive closure/source-stop action must be
+separate and explicit. Do not introduce an event bus, plugin ABI, document registry,
+or async transport just to establish this boundary.
+
+### Shared presentation and interaction direction
+
+- **Common shell:** rounded frame, consistent title and focus indication, inset
+  padding, and deliberate surrounding backdrop/gap where space allows. Use the
+  accepted editor appearance as the visual reference, not severity as the shell
+  theme. Content severity styling remains the adapter's concern.
+- **Geometry:** derive outer, frame, padded content, title/footer, and text viewport
+  from one layout result. Render, scroll, selection, cursor, and copy hit positions
+  must agree, including nonzero origins and Unicode display cells. Budget chrome
+  inside the allocation; never paint it over another tile or the document.
+- **Defaults and fallback:** normal supporting views should not pin text to the
+  screen edge. Start with a one-cell rounded border and modest inset/gap defaults;
+  record exact horizontal/vertical padding and placement before implementation.
+  On small allocations, deterministically reduce padding/decorations or hide a
+  companion before making the primary content unusable. Essential mode/pending/
+  failure feedback must survive. Restore the requested comfortable presentation on
+  expansion; do not preserve the current six-row prototype ceiling by accident.
+- **Capabilities, not document impersonation:** share list navigation and a
+  read-only text inspection surface where appropriate. Reuse safe text/cell helpers,
+  but do not give every report a file path, dirty bit, edit history, or save/reload
+  commands. Grid/chart content need not masquerade as selectable text.
+- **Read-only is not inert:** text-capable minor views should provide movement,
+  characterwise/linewise Visual selection, and yank without edits. Distinguish
+  selected list item, text cursor, and text selection; opening details may switch
+  from list navigation to the common read-only text surface.
+- **Copy/paste:** copy canonical content text, not border/padding, `>` selection
+  markers, clipping markers, or decorative status. Reuse the application's existing
+  clipboard route where possible, with explicit supported destinations. Paste only
+  reaches content with an advertised input capability; read-only views reject it
+  atomically. Starting-owner and pending-key cancellation rules remain shared.
+- **Updates:** select/reconcile list items by opaque stable keys using adapter
+  policy. Define what happens to text cursor/selection when a presentation snapshot
+  changes; a yank must not silently copy different source data than the user selected.
+  Copying, selecting, or moving never acknowledges or resolves a problem.
+
+## Next tile-system assignments — Phases 7A–7C
+
+These are new assignments after the implemented phase 7, not retroactive changes
+to its completion record. Implement in order; keep this application buildable and
+usable at each checkpoint. Use the existing software/human acceptance contract.
+The phases below are **planned, not implemented**. They should precede new
+history/external view UI rather than growing another problems-specific branch.
+
+### Phase 7A — Extract generic tile host and routing; migrate problems
+
+**Depends on:** phases 6–7's working examples; no LSP, history, or external source.
+
+**Scope:** Extract the smallest service-agnostic view identity, capability, focus/
+capture, and input-routing boundary needed by the current document/status/problems
+workspace. Keep allocation simple; a general split-tree editor or multiple buffers
+is not required. Keep one editor/controller and its established command semantics.
+
+**Work items:**
+
+- Record concrete host/adapter APIs and ownership. Generic IDs/selection keys must
+  not be `Problem.Identity`; major/minor is policy metadata, not a data payload.
+- Centralize focus transitions, workspace-navigation precedence, pending cancellation,
+  start-owner paste, cursor ownership, and hide/zen/resize reconciliation. Preserve
+  the existing lazy document-scroll resize behavior and undo/dirty state.
+- Move problems-specific filters, item reconciliation, details, acknowledgement,
+  and jump dispatch behind a problems adapter. Shared dispatch may carry opaque
+  adapter actions, but must not interpret their domain meaning.
+- Demonstrate the boundary with a non-problem static list/report fixture in tests
+  and an explicit manual test path. No real external producer is necessary; do not
+  extend `--demo-problems` into the universal tile content protocol.
+
+**Acceptance:** Document, status, problems, and unrelated fixture coexist using
+shared routing. Tests verify focus/prefix/paste/cursor ownership, updates while
+hidden/focused, return on hide/zen/resize, and editor undo/dirty preservation. Shared
+host/interaction modules have no error-system dependency. Showing/closing either
+view cannot mutate the other's authoritative data. Human review checks that the
+existing controls still feel predictable; record any deliberate binding changes.
+
+### Phase 7B — Shared rounded shell, padding, and comfortable allocation
+
+**Depends on:** phase 7A.
+
+**Scope:** Give supporting tiles the same visual family as the editor through a
+common shell/layout contract. Factor reusable document decoration where useful,
+but preserve the accepted document placement and do not rewrite core editing.
+
+**Work items:**
+
+- Record shared rounded-frame, padding, title/footer, focus, gap, preferred-size,
+  and compact-degradation defaults. Explicitly reconsider bottom problems height
+  so there is useful text space after chrome; tune for the owner's laptop/monitors.
+- Render problems list/details and the unrelated fixture through the shared shell.
+  Apply it to dedicated status where appropriate; compact status/title remains a
+  presentation mode and must retain essential priorities, not a forced framed tile.
+- Keep shell insets, clipped rows, content origin, scroll range, and terminal cursor
+  derived from the same geometry. Preserve semantic content styles without letting
+  the problems adapter implement its own frame/padding.
+
+**Acceptance:** Geometry/rendering tests cover offset allocations, coexistence,
+Unicode, frame/padding budgets, tiny/zero sizes, and restoration. Normal-sized minor
+content has intentional insets rather than edge-hugging text. Compare the document
+against its existing comfort baseline. Human review is required for rounded chrome,
+spacing, readability/density, focus clarity, and bottom/side placement; record
+remaining issues rather than declaring palette/comfort verified by screenshots.
+
+### Phase 7C — Shared read-only text cursor, selection, and copying
+
+**Depends on:** phases 7A–7B.
+
+**Scope:** Supply reusable read-only text interaction to text-capable minor content,
+including problem details and the unrelated report fixture. List-item selection
+continues to exist separately. No editable report buffer, multi-buffer registry,
+full Vim emulation, or blockwise selection is required for this assignment.
+
+**Work items:**
+
+- Record movement, characterwise/linewise Visual selection, yank, whole-item/details
+  copy, copy destination, and Escape precedence. Use familiar editor conventions
+  where possible without leaking editor mutations into auxiliary views.
+- Define canonical-copy text and text-snapshot/update reconciliation. Keep selection
+  and copy correct across wrapping, TABs, wide/combining glyphs, controls, clipping,
+  and nonzero viewport origins. Source updates must not silently retarget a selection.
+- Give the focused text view an appropriate cursor/selection indication; keep
+  exactly one terminal cursor owner. Preserve normal primary-editor behavior.
+- Route clipboard output through shared plumbing. Domain actions such as problem
+  jump/acknowledgement stay in the adapter and must not be triggered by yank.
+  Explicitly reject mutation commands and paste in read-only surfaces.
+
+**Acceptance:** Tests demonstrate navigation beyond the visible rows, selection and
+canonical yank, update-during-selection policy, clipboard effects, read-only rejection,
+and focus return in both problems and an error-independent consumer. Check a fixture
+longer than the viewport: no movement in `Details 1-4/4` is correct because all rows
+fit, not evidence of broken scrolling. Human tests select/copy into the editor or an
+external destination, inspect long details, switch panes, resize/use zen, and verify
+that copied text and keyboard ownership match expectations. Problem lifecycle and
+primary-editor undo/dirty state remain unchanged by these interactions.
+
+### Later major-tile specialization
+
+After these shared boundaries work, expand the major-tile contract only for a
+concrete consumer. The editor keeps its richer editing/undo/file behavior behind
+its content adapter; a future Hardcaml report/workbench could supply structured
+reports, charts, drill-down, or source actions while reusing the shell and applicable
+read-only interactions. Choose producer/data contracts and required overrides in a
+separate assignment. Neither minor tiles nor a read-only major report require the
+error system or editor buffer model merely to participate in the workspace.

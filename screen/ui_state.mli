@@ -4,7 +4,7 @@
     The model holds the {!Ches_app.Controller.t} (editor and keymap), the layout
     preferences, the scroll position, a bracketed paste being collected, and the shared
     controller feedback. Workspace requests and zen suppression are UI state, not editor
-    state; the document remains the only interactive pane. *)
+    state. Problems has read-only keyboard capture; status remains non-focusable. *)
 
 open! Core
 open Ches_input
@@ -30,7 +30,8 @@ module Input : sig
     | Paste_start
     | Paste_end
     | Animation_tick of Time_ns.t
-    (** A timestamped frontend animation-clock pulse; never reaches the editor. *)
+     (** A timestamped frontend animation-clock pulse; never reaches the editor. *)
+    | Resize (** Reconcile allocation/focus without interpreting editor input. *)
   [@@deriving sexp_of]
 end
 
@@ -47,10 +48,24 @@ val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
 val workspace_prefs : t -> Workspace.Prefs.t
 val zen : t -> bool
+val problems_visible : t -> bool
+val problems_current_document : t -> bool
+val problems_focused : t -> width:int -> height:int -> bool
+val problem_navigation : t -> width:int -> height:int -> Problem_navigation.t
+val selected_problem : t -> width:int -> height:int -> Ches_error.Error.Problem.t option
+val problem_details : t -> bool
+val problem_detail_top : t -> int
+val problem_notice : t -> string option
+val problem_pending : t -> string option
+
+(** Shared feedback update with selection reconciliation. No editor input or IO. *)
+val update_feedback
+  : t -> width:int -> height:int -> Ches_error.Error.update -> t
 
 (** Effective workspace allocation. Zen suppresses status without changing requested
     visibility/placement/sizes. Width and height requests are remembered separately.
-    Status remains non-focusable; all input and paste still route to the document. *)
+    Status remains non-focusable. Problems focus is effective only while its
+    allocation exists. Resize events persistently restore document focus when hidden. *)
 val workspace : t -> width:int -> height:int -> Workspace.t
 
 val scroll : t -> Scroll.t
@@ -79,10 +94,27 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
 (** Applies one input on a [width] x [height] screen.
 
     Keys between [Paste_start] and [Paste_end] are collected with [Key.text] and delivered
-    as one paste at the end; keys without text are dropped. Everything else goes to the
+    as one paste at the end; keys without text are dropped. Document input goes to the
     controller, with its effects (such as saving) performed before this returns. View
     commands the controller returns update {!prefs} (see {!apply_view}) or, for [Scroll],
     the scroll.
+
+    {2 Problems pane capture}
+
+    Normal [Space v o] shows/focuses problems, or returns to the editor. Entry and
+    return cancel pending editor input. Existing Normal prefixes/counts/search retain
+    keymap precedence; focus does not intercept an incomplete editor command.
+    In problems, [j/k], [gg/G], [Ctrl-d/u] select/scroll; [e] toggles wrapped details
+    (movement then scrolls details), [a] acknowledges the selected identity without
+    resolving it, and Enter performs a validated current-file jump and returns.
+    Escape cancels a pane prefix, then closes details, then returns without
+    acknowledgement. Tab returns directly. [Space v] uses configured view bindings;
+    editor commands and document scrolling are rejected during capture.
+    Hiding/zen/undersized allocations restore document focus and clear pane prefixes.
+    Bracketed paste retains its start owner; pane paste is rejected even after resize.
+    Selection follows identity; removal/filtering chooses the previous index's next
+    neighbor, falling back to the last item. An empty list retains pane focus until
+    explicitly returned/hidden. No terminal cursor or editor smear is drawn in capture.
 
     {2 Scrolling}
 

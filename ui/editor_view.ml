@@ -85,6 +85,11 @@ let app ?(smear_enabled = false) ?font controller ~exit ~dimensions (local_ grap
       graph
   in
   let get_current_time = Bonsai.Clock.get_current_time graph in
+  Bonsai.Edge.on_change
+    dimensions
+    ~equal:(fun (a : Dimensions.t) b -> a.width = b.width && a.height = b.height)
+    ~callback:(let%arr inject in fun _ -> inject [ Ui_state.Input.Resize ])
+    graph;
   let () =
     Bonsai.Clock.every
       ~when_to_start_next_effect:`Every_multiple_of_period_non_blocking

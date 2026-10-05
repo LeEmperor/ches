@@ -47,6 +47,9 @@ type t =
   | Position_status of Status_position.t (** Place status and request visibility. *)
   | Adjust_status_size of int (** Adjust requested status cells along its split axis. *)
   | Inspect_problems (** Cycle retained problem details, without retrying. *)
+  | Toggle_problems (** Show/hide the read-only bottom preview. *)
+  | Toggle_problems_filter (** Workspace/current-document preview filter. *)
+  | Focus_problems (** Show/focus problems, or return to the document. *)
   | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)
   | Reset (** Centered, at the default width and offset, with hybrid line numbers. *)
   | Scroll of

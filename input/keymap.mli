@@ -174,6 +174,13 @@ type t [@@deriving sexp_of]
     [n < 1]. *)
 val create : Config.t -> t
 
+(** Clear all pending input while retaining configured bindings. *)
+val reset : t -> t
+
+(** Look up configured Normal bindings without feeding editor input. Used for
+    workspace-only routing while a companion pane owns input. *)
+val lookup : t -> Key.t list -> Bindings.lookup
+
 (** [feed t ~mode input] interprets [input] in [mode] and returns the actions to
     perform, in order. *)
 val feed : t -> mode:Ches_core.Mode.t -> Input.t -> t * Action.t list

@@ -4,6 +4,7 @@ module Pane_id = struct
   type t =
     | Document
     | Status
+    | Problems
   [@@deriving sexp_of, equal]
 end
 
@@ -42,12 +43,13 @@ module Pane = struct
     }
   [@@deriving sexp_of, equal]
 
-  let focusable t = Pane_id.equal t.id Document
+  let focusable t = not (Pane_id.equal t.id Status)
 end
 
 type t =
   { document : Pane.t
   ; status : Pane.t option
+  ; problems : Pane.t option
   ; reserve_status_row : bool
   }
 [@@deriving sexp_of, equal]
@@ -57,7 +59,7 @@ let min_document_height = 1
 let min_status_width = 8
 let min_status_height = 3
 
-let allocate (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
+let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
   let allocation =
     { allocation with
       width = Int.max 0 allocation.width
@@ -77,6 +79,7 @@ let allocate (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
   then
     { document = { id = Document; rect = allocation }
     ; status = None
+    ; problems = None
     ; reserve_status_row = true
     }
   else (
@@ -100,8 +103,34 @@ let allocate (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
     in
     { document = { id = Document; rect = rect document_start document_size }
     ; status = Some { id = Status; rect = rect status_start status_size }
+    ; problems = None
     ; reserve_status_row = false
     })
+;;
+
+let allocate ?(problems_visible = false) prefs ~(allocation : Geometry.Rect.t) =
+  let allocation =
+    { allocation with width = Int.max 0 allocation.width; height = Int.max 0 allocation.height }
+  in
+  let original = allocate_pair prefs ~allocation in
+  (* Document/status minima take precedence over the preview. *)
+  let minimum =
+    match original.status, prefs.split.axis with
+    | Some _, Split.Axis.Vertical -> min_document_height + min_status_height
+    | Some _, Horizontal -> min_status_height
+    | None, _ -> 2
+  in
+  if not problems_visible || allocation.width < min_document_width
+     || allocation.height < minimum + 3
+  then original
+  else
+    let size = Int.min 6 (allocation.height - minimum) in
+    let upper = { allocation with height = allocation.height - size } in
+    let workspace = allocate_pair prefs ~allocation:upper in
+    { workspace with
+      problems = Some { Pane.id = Problems;
+        rect = { allocation with y = allocation.y + upper.height; height = size } }
+    }
 ;;
 
 let document_geometry t prefs ~line_count =

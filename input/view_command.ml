@@ -37,6 +37,9 @@ type t =
   | Position_status of Status_position.t
   | Adjust_status_size of int
   | Inspect_problems
+  | Toggle_problems
+  | Toggle_problems_filter
+  | Focus_problems
   | Toggle_zen
   | Reset
   | Scroll of

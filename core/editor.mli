@@ -191,6 +191,12 @@ val is_dirty : t -> bool
 
 (** Byte offset; see the cursor rules above. *)
 val cursor : t -> int
+
+(** Navigate without editing, only in Normal mode. [line] and [column] are one-based
+    terminal display cells, not byte/UTF-16 offsets. A column within a TAB or wide
+    glyph selects that glyph; line-end positions normalize to the Normal cursor.
+    Invalid/out-of-range positions return an error without modifying the editor. *)
+val go_to_display_position : t -> line:int -> column:int -> t Or_error.t
 val selection : t -> Selection.t option
 
 (** The rectangle of a blockwise selection, which reaches every line's end after

@@ -43,6 +43,12 @@ let last_input_dispatched t = t.dispatched
 let take_clipboard t = { t with clipboard = None }, t.clipboard
 let feedback t = t.feedback
 let update_feedback t update = { t with feedback = Feedback.apply t.feedback update }
+let cancel_pending t = { t with keymap = Keymap.reset t.keymap; dispatched = false }
+
+let jump t ~line ~column =
+  Result.map (Editor.go_to_display_position t.editor ~line ~column) ~f:(fun editor ->
+    { (cancel_pending t) with editor })
+;;
 
 let notify_editor feedback editor =
   match Editor.message editor with

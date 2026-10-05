@@ -1124,15 +1124,39 @@ expect_screen "Failed to write ro/workspac>"
 keys Escape
 expect_screen "1 problem: Space v e"
 # Matching save recovery removes the retained save problem.
+keys Space v b
+expect_screen "Problems (workspace): 1/1"
+expect_screen "error [file] ro/workspace.txt: Failed to write"
+keys Space v f
+expect_screen "Problems (document): 1/1"
+keys Space v z
+expect_no_screen "Problems ("
+keys Space v z
+expect_screen "Problems (document): 1/1"
+resize 15 4
+expect_no_screen "Problems ("
+resize 80 24
+expect_screen "Problems (document): 1/1"
+save_screen "workspace-problems-acknowledged-80x24"
+keys Space v b
+expect_no_screen "Problems ("
+keys Space v b
+expect_screen "Problems (document): 1/1"
 chmod 755 "$work/ro"
 keys Space w
 expect_screen "Wrote ro/workspace.txt"
 expect_no_screen "problems:"
+expect_screen "Problems (document): 0/0"
+expect_screen "No active problems"
+keys Space v b
 # A reload failure has its own identity and matching recovery.
 mv "$work/ro/workspace.txt" "$work/workspace-reload.saved"
 mkdir "$work/ro/workspace.txt"
 keys : e ! Enter
 expect_screen "Failed to reload"
+keys Space v b
+expect_screen "Problems (document): 1/1"
+expect_screen "error [file] ro/workspace.txt: Failed to reload"
 keys l Escape
 expect_screen "1 problem: Space v e"
 keys Space v e
@@ -1142,6 +1166,83 @@ mv "$work/workspace-reload.saved" "$work/ro/workspace.txt"
 keys : e ! Enter
 expect_screen "Reloaded ro/workspace.txt"
 expect_no_screen "problems:"
+expect_screen "Problems (document): 0/0"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "interactive problems pane"
+resize 80 24
+printf 'first\nsecond\n' > "$work/problems.txt"
+launch problems.txt
+mv "$work/problems.txt" "$work/problems.saved"
+mkdir "$work/problems.txt"
+keys i X Escape Space w : e ! Enter
+expect_screen "2 problems"
+keys Space v o
+expect_screen "Problems* (workspace): 2/2 [1/2]"
+pane_cursor_hidden() { [ "$(t display -p -t "$session" '#{cursor_flag}')" = 0 ]; }
+if poll pane_cursor_hidden; then ok "problems capture hides terminal cursor"; else fail "pane cursor visible"; fi
+keys j
+expect_screen "Problems* (workspace): 2/2 [2/2]"
+keys a
+expect_screen "Acknowledged; problem remains active"
+keys e
+expect_screen "Problems* details"
+expect_screen "Failed to reload"
+keys Escape g Escape
+expect_screen "Problems* (workspace): 2/2 [2/2]"
+keys Enter
+expect_screen "This problem has no document location"
+keys i u Space q
+expect_screen "Editor command unavailable"
+t set-buffer -b smoke ' voij'
+t paste-buffer -p -b smoke -t "$session"
+expect_screen "Problems are read-only; paste ignored"
+save_screen "workspace-problems-focused-80x24"
+resize 15 4
+expect_no_screen "Problems*"
+resize 80 24
+expect_screen "Problems (workspace): 2/2"
+expect_cursor_row "Xfirst"
+keys u
+expect_cursor_row "first"
+rmdir "$work/problems.txt"
+mv "$work/problems.saved" "$work/problems.txt"
+keys Space w : e ! Enter
+expect_screen "Problems (workspace): 0/0"
+keys Space v o
+expect_screen "No active problems"
+keys Escape Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "opt-in demo problems and real location jumps"
+for i in $(seq 1 12); do printf 'demo line %s\n' "$i"; done > "$work/problems-demo.txt"
+cp "$work/problems-demo.txt" "$work/problems-demo.expected"
+launch --demo-problems problems-demo.txt
+keys Space v o
+expect_screen "Problems* (workspace): 8/8 [1/8]"
+keys G
+expect_screen "Problems* (workspace): 8/8 [8/8]"
+keys e
+expect_screen "Problems* details"
+expect_screen "DEMO 8/8: jump to line 13, column 1"
+keys C-d Enter
+expect_cursor "7 13 1"
+keys Space v o g g Enter
+expect_cursor "7 1 1"
+expect_cursor_row "demo line 1"
+keys Space w
+expect_file "$work/problems-demo.txt" "$work/problems-demo.expected"
+expect_screen "Problems (workspace): 8/8"
+save_screen "workspace-demo-problems-jumps-80x24"
+keys Space q
+expect_exit 0
+launch problems-demo.txt
+keys Space v b
+expect_screen "No active problems"
+expect_screen "Problems (workspace): 0/0"
 keys Space q
 expect_exit 0
 

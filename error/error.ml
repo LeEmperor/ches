@@ -33,11 +33,16 @@ module Notification = struct
 end
 
 module Problem = struct
+  module Location = struct
+    type t = { line : int; column : int } [@@deriving sexp_of, equal]
+  end
+
   type t =
     { identity : Identity.t
     ; severity : Severity.t
     ; text : string
     ; attention : bool
+    ; location : Location.t option
     }
   [@@deriving sexp_of, equal]
 end
@@ -52,10 +57,13 @@ type t =
 type update =
   | Notify of Notification.t
   | Failed of Identity.t * Severity.t * string
+  | Report of Identity.t * Severity.t * string * Problem.Location.t option
   | Resolve of Identity.t
   | Command_completed
   | Acknowledge
   | Inspect_next
+  | Inspect_identity of Identity.t
+  | Acknowledge_identity of Identity.t
 [@@deriving sexp_of]
 
 let empty = { problems = []; transient = None; details = None }
@@ -71,11 +79,24 @@ let presented_problem t =
   | None -> List.find t.problems ~f:(fun p -> p.attention)
 ;;
 
-let apply t = function
+let apply t update =
+  let update =
+    match update with
+    | Failed (identity, severity, text) -> Report (identity, severity, text, None)
+    | update -> update
+  in
+  match update with
+  | Inspect_identity identity ->
+    if List.exists t.problems ~f:(fun p -> Identity.equal p.identity identity)
+    then { t with details = Some identity } else t
+  | Acknowledge_identity identity ->
+    { t with problems = List.map t.problems ~f:(fun p ->
+        if Identity.equal p.identity identity then { p with attention = false } else p) }
   | Notify transient -> { t with transient = Some transient }
   | Command_completed -> { t with transient = None; details = None }
-  | Failed (identity, severity, text) ->
-    let problem = { Problem.identity; severity; text; attention = true } in
+  | Failed _ -> assert false
+  | Report (identity, severity, text, location) ->
+    let problem = { Problem.identity; severity; text; attention = true; location } in
     let exists =
       List.exists t.problems ~f:(fun p -> Identity.equal p.identity identity)
     in

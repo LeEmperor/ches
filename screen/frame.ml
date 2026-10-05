@@ -32,7 +32,9 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
   let workspace = Ui_state.workspace ui ~width ~height in
-  let pane_relative = Option.is_some allocation || Option.is_some workspace.status in
+  let pane_relative = Option.is_some allocation || Option.is_some workspace.status
+    || Option.is_some workspace.problems in
+  let problems_pane = if Option.is_some allocation then None else workspace.problems in
   let allocation, default_reservation, status_pane =
     match allocation with
     | None -> workspace.document.rect, workspace.reserve_status_row, workspace.status
@@ -68,6 +70,17 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
     let tile = Status.vertical ~rect:pane.Workspace.Pane.rect fields in
     tile.rect, Array.of_list tile.rows)
   in
+  let problems_tile = Option.map problems_pane ~f:(fun pane ->
+    let rect = pane.Workspace.Pane.rect in
+    rect, Array.of_list (Problems.render
+      ~focused:(Ui_state.problems_focused ui ~width ~height)
+      ~navigation:(Ui_state.problem_navigation ui ~width ~height)
+      ~details:(Ui_state.problem_details ui)
+      ~detail_top:(Ui_state.problem_detail_top ui)
+      ?notice:(Ui_state.problem_notice ui) ?pending:(Ui_state.problem_pending ui)
+      (Controller.feedback (Ui_state.controller ui))
+      ~current_document:(Ui_state.problems_current_document ui)
+      ~path:(Editor.path editor) ~rect)) in
   let search =
     match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
     | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)
@@ -285,7 +298,10 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
         | Some (rect, rows) when y >= rect.y && y < rect.y + rect.height -> [ rect, rows.(y - rect.y) ]
         | Some _ | None -> []
       in
-      let segments = List.sort (document @ status) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
+      let problems = match problems_tile with
+        | Some (rect, rows) when y >= rect.y && y < rect.y + rect.height -> [ rect, rows.(y - rect.y) ]
+        | Some _ | None -> [] in
+      let segments = List.sort (document @ status @ problems) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
       let spans, right = List.fold segments ~init:([], 0) ~f:(fun (spans, right) (rect, content) ->
         spans @ [ Span.blank Backdrop (rect.x - right) ] @ content, rect.x + rect.width)
       in
@@ -293,14 +309,15 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
   in
   let animation = Ui_state.animation ui in
   let smear =
-    Animation.cells animation ~width ~height
+    (if Ui_state.problems_focused ui ~width ~height then [] else Animation.cells animation ~width ~height)
     |> List.filter ~f:(fun (x, y) ->
       not pane_relative
       || (x >= viewport.x && x < viewport.x + viewport.width
           && y >= viewport.y && y < viewport.y + viewport.height))
   in
   let cursor =
-    if Animation.active animation || not (List.is_empty insert_points)
+    if Ui_state.problems_focused ui ~width ~height then None
+    else if Animation.active animation || not (List.is_empty insert_points)
     then None
     else
        Option.map (Ui_state.cursor_position_in ui ~allocation ~reserve_status_row) ~f:(fun (x, y) ->

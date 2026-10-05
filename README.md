@@ -95,6 +95,9 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `p` / `P` | Paste the unnamed register after / before the cursor or line |
 | Normal | `v` / `V` / `Ctrl-v` | Start characterwise / linewise / blockwise Visual selection |
 | Normal | `Space v e` | Cycle retained problem details |
+| Normal | `Space v b` | Show/hide the read-only bottom problems preview |
+| Normal | `Space v f` | Switch problems preview between workspace/current document |
+| Normal | `Space v o` | Show/focus problems, or return to the document |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -161,8 +164,49 @@ the corresponding failure for that file. Routine feedback, including refused qui
 clears on the next completed editor command or is replaced by newer routine feedback.
 Pending prefixes, ignored keys, resize, and animation do not clear it.
 
-Workspace software checks pass; human review of placement, readability, controls,
-and zen/fallback feel is still pending. See [`workspace_tiles_design.md`](workspace_tiles_design.md).
+The status-workspace milestone is human-accepted. The problems view/navigation
+have passing software checks and still need human review.
+See [`workspace_tiles_design.md`](workspace_tiles_design.md).
+
+### Problems pane
+
+`Space v b` toggles a bottom preview; `Space v f` switches workspace/current-file
+filtering. `Space v o` shows and focuses the pane. It remains read-only:
+
+| Pane keys | Action |
+| --- | --- |
+| `j/k`, `gg/G`, `Ctrl-d/u` | Select/scroll problems; scroll text while inspecting details |
+| `e` | Toggle full wrapped details for the selected problem |
+| `a` | Acknowledge only the selected problem, without resolving it |
+| `Enter` | Jump to a valid current-file location and return to the editor |
+| `Escape` | Cancel a prefix, close details, then return to the editor |
+| `Tab` or `Space v o` | Return directly to the editor |
+| `Space v …` | Layout controls; editor commands and document scrolling are rejected |
+
+The `>` marker and `Problems*` title show selection/focus; the terminal cursor
+is hidden during pane capture. Hiding, zen, or resizing too small returns focus
+to the editor. Pane pastes are ignored atomically, not treated as commands.
+Missing/out-of-range locations and cross-file jumps are explained without touching the
+document. Currently save/reload failures have no locations; location navigation
+can be tried with the opt-in synthetic demo below, not a language server or multiple buffers.
+
+To try navigation on a file with several lines:
+
+```sh
+dune exec ches -- --demo-problems PATH
+```
+
+Press `Space v o`, then `G` to select the last demo finding and `Enter` to jump to
+the file's last line. Refocus with `Space v o`; try `gg` and `j/k` to navigate,
+or `G` then `e` to inspect the long final finding (`j/k` scroll details;
+Escape closes them).
+
+The flag adds eight clearly labelled **DEMO** entries, initially acknowledged so
+they do not demand failure attention. It does not change your text or write files;
+normal editing/saving still works. Entries are session-local and disappear on
+restart without the flag. Their locations are a startup snapshot, not refreshed
+after edits/reload. Short/empty files have repeated locations; use a multiline file
+to see distinct jump targets. No demo problems are added in an ordinary launch.
 
 ### Words and lines
 
