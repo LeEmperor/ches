@@ -32,6 +32,33 @@ let%test_unit "palette distinguishes each major syntax family without adding fon
       assert (List.is_empty (Theme.Font.default style)))
 ;;
 
+let%test_unit "every preset gives each syntax family its own color, apart from text" =
+  let syntax : Theme.Role.t list =
+    [ Syntax_keyword
+    ; Syntax_string
+    ; Syntax_number
+    ; Syntax_comment
+    ; Syntax_type
+    ; Syntax_function
+    ; Syntax_module
+    ; Syntax_constant
+    ]
+  in
+  List.iter Theme.Preset.all ~f:(fun preset ->
+    let fg role = Attr.fg (Theme.Role.color ~preset role) in
+    let roles : Theme.Role.t list = Foreground :: syntax in
+    List.iteri roles ~f:(fun i a ->
+      List.iteri roles ~f:(fun j b ->
+        if i < j && Attr.equal (fg a) (fg b)
+        then
+          raise_s
+            [%message
+              "colors collide"
+                (preset : Theme.Preset.t)
+                (a : Theme.Role.t)
+                (b : Theme.Role.t)])))
+;;
+
 let%test_unit "every composed plain document style retains the previous terminal attributes" =
   let open Ches_screen in
   List.iter [ false; true ] ~f:(fun current_line ->
