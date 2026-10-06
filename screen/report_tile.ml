@@ -104,27 +104,27 @@ let perform t ~rows ~width action =
     }
 ;;
 
-let render ?(focused = false) ?notice ?pending t ~(rect : Geometry.Rect.t) =
-  let width = rect.width in
+let render ?(focused = false) ?notice ?pending t ~width ~rows : Tile_shell.Content.t =
   let count = List.length t.items in
+  let rows = Int.max 0 rows in
+  let empty = if rows > 0 then [ Tile_text.row Status "Empty report" ~width ] else [] in
   if focused
   then (
-    let capacity = Tile_text.capacity rect in
-    let t = fit t ~rows:capacity in
+    let t = fit t ~rows in
     let navigation = t.selection in
     let detail_rows =
       if t.details then Option.value_map (selected t) ~default:[] ~f:(detail_rows ~width) else []
     in
     let detail_top =
-      Int.clamp_exn t.detail_top ~min:0 ~max:(Int.max 0 (List.length detail_rows - capacity))
+      Int.clamp_exn t.detail_top ~min:0 ~max:(Int.max 0 (List.length detail_rows - rows))
     in
     let body =
       if t.details
-      then List.take (List.drop detail_rows detail_top) capacity
+      then List.take (List.drop detail_rows detail_top) rows
       else if count = 0
-      then [ Tile_text.row Status "Empty report" ~width ]
+      then empty
       else
-        List.take (List.drop t.items navigation.top) capacity
+        List.take (List.drop t.items navigation.top) rows
         |> List.mapi ~f:(fun i (item : Item.t) ->
           Tile_text.item
             Status
@@ -132,7 +132,7 @@ let render ?(focused = false) ?notice ?pending t ~(rect : Geometry.Rect.t) =
             ~width
             ~selected:(navigation.top + i = navigation.index))
     in
-    let header =
+    let title =
       sprintf
         "Demo report*%s (static): [%d/%d]"
         (if t.details then " details" else "")
@@ -145,19 +145,23 @@ let render ?(focused = false) ?notice ?pending t ~(rect : Geometry.Rect.t) =
         sprintf
           "Details %d-%d/%d | j/k scroll; e/Esc back"
           (detail_top + 1)
-          (Int.min (List.length detail_rows) (detail_top + capacity))
+          (Int.min (List.length detail_rows) (detail_top + rows))
           (List.length detail_rows)
       else
         sprintf
           "%d above, %d below | j/k e Esc"
           navigation.top
-          (Int.max 0 (count - navigation.top - capacity))
+          (Int.max 0 (count - navigation.top - rows))
     in
-    Tile_text.capture ~rect ~header ~body ~footer:(Tile_text.footer ~notice ~pending ~default ~width))
+    { title; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default); body })
   else
-    Tile_text.fill
-      ~rect
-      (Tile_text.row Status (sprintf "Demo report (static): %d items | Space v D: focus" count) ~width
-       :: List.map (List.take t.items (Int.max 0 (rect.height - 1))) ~f:(fun (item : Item.t) ->
-         Tile_text.row Status item.title ~width))
+    { title = sprintf "Demo report (static): %d items" count
+    ; footer = Some (Tile_shell.Label.hint "Space v D: focus")
+    ; body =
+        (if count = 0
+         then empty
+         else
+           List.map (List.take t.items rows) ~f:(fun (item : Item.t) ->
+             Tile_text.row Status item.title ~width))
+    }
 ;;

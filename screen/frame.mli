@@ -38,7 +38,8 @@ type t =
 [@@deriving sexp_of]
 
 (** Compose the effective workspace's document, optional status tile, and minor views
-    (each rendered by its adapter) against a screen-sized backdrop. Only the cursor
+    (each in the shared {!Tile_shell}, its content from its adapter) against a
+    screen-sized backdrop. Only the cursor
     owner (the document, when focused) draws a terminal cursor or smear. Scrolling and cursor placement share its document geometry.
     Compact/zen layouts retain bottom-row feedback. An explicit [allocation] instead
     renders only the document there, clipped to screen bounds, reserving a status row

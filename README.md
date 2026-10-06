@@ -165,9 +165,10 @@ the corresponding failure for that file. Routine feedback, including refused qui
 clears on the next completed editor command or is replaced by newer routine feedback.
 Pending prefixes, ignored keys, resize, and animation do not clear it.
 
-The status-workspace milestone is human-accepted. The problems view/navigation
-and the phase 7A shared tile host have passing software checks and still need
-human review.
+The status-workspace milestone is human-accepted, as is the phase 7A shared tile
+host. The problems view/navigation and the phase 7B shared shell (rounded frames,
+padding, and spacing for status and supporting views) have passing software checks
+and still need human review.
 See [`workspace_tiles_design.md`](workspace_tiles_design.md).
 
 ### Problems pane
@@ -185,8 +186,12 @@ filtering. `Space v o` shows and focuses the pane. It remains read-only:
 | `Tab` or `Space v o` | Return directly to the editor |
 | `Space v …` | Layout controls; editor commands and document scrolling are rejected |
 
-The `>` marker and `Problems*` title show selection/focus; the terminal cursor
-is hidden during pane capture. Hiding, zen, or resizing too small returns focus
+Supporting views (problems, the demo report, and a dedicated status cell with room
+for it) share one rounded, padded frame with their title in the top border and key
+hints, notices, or a pending prefix in the bottom border; side-by-side tiles are
+separated by a one-cell gap. The bottom band takes up to ten rows, never more than a
+third of the window. The `>` marker, the `Problems*` title, and an accent-coloured
+frame show selection/focus; the terminal cursor is hidden during pane capture. Hiding, zen, or resizing too small returns focus
 to the editor. Pane pastes are ignored atomically, not treated as commands.
 Focus, Escape/Tab/prefix precedence, workspace bindings, and paste ownership come
 from the shared tile host (`tile/`), not the problems pane; any other supporting

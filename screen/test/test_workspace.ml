@@ -26,15 +26,16 @@ let%expect_test "status follows either split leaf horizontally and vertically" =
   show (request ~axis:Vertical ~size:4 ()) 80 12;
   show (request ~axis:Vertical ~first:Status ~size:4 ()) 80 12;
   [%expect {|
-    document 7,4 52x12; status 59,4 28x12; row false
-    document 35,4 52x12; status 7,4 28x12; row false
+    document 7,4 51x12; status 59,4 28x12; row false
+    document 36,4 51x12; status 7,4 28x12; row false
     document 7,4 80x8; status 7,12 80x4; row false
     document 7,8 80x8; status 7,4 80x4; row false
     |}]
 ;;
 
 let%expect_test "compact fallback boundaries and requested-size clamping" =
-  List.iter [ 24, 3; 23, 3; 24, 2 ] ~f:(fun (w, h) -> show (request ()) w h);
+  (* Side by side needs both minima plus the gap. *)
+  List.iter [ 25, 3; 24, 3; 25, 2 ] ~f:(fun (w, h) -> show (request ()) w h);
   List.iter [ 16, 4; 15, 4; 16, 3 ] ~f:(fun (w, h) ->
     show (request ~axis:Vertical ~size:7 ()) w h);
   show (request ~size:(-10) ()) 80 12;
@@ -42,14 +43,14 @@ let%expect_test "compact fallback boundaries and requested-size clamping" =
   show (request ~axis:Vertical ~size:(-10) ()) 80 12;
   show (request ~axis:Vertical ~size:500 ()) 80 12;
   [%expect {|
-    document 7,4 16x3; status 23,4 8x3; row false
-    document 7,4 23x3; status none; row true
-    document 7,4 24x2; status none; row true
+    document 7,4 16x3; status 24,4 8x3; row false
+    document 7,4 24x3; status none; row true
+    document 7,4 25x2; status none; row true
     document 7,4 16x1; status 7,5 16x3; row false
     document 7,4 15x4; status none; row true
     document 7,4 16x3; status none; row true
-    document 7,4 72x12; status 79,4 8x12; row false
-    document 7,4 16x12; status 23,4 64x12; row false
+    document 7,4 71x12; status 79,4 8x12; row false
+    document 7,4 16x12; status 24,4 63x12; row false
     document 7,4 80x9; status 7,13 80x3; row false
     document 7,4 80x1; status 7,5 80x11; row false
     |}]
@@ -63,13 +64,13 @@ let%expect_test "resize and hide restore intent; extra space does not enable sta
   show Workspace.Prefs.default 400 100;
   print_s [%sexp (prefs : Workspace.Prefs.t)];
   [%expect {|
-    document 39,4 128x24; status 7,4 32x24; row false
-    document 31,4 16x24; status 7,4 24x24; row false
+    document 40,4 127x24; status 7,4 32x24; row false
+    document 31,4 16x24; status 7,4 23x24; row false
     document 7,4 23x24; status none; row true
     document 7,4 0x24; status none; row true
-    document 39,4 128x24; status 7,4 32x24; row false
+    document 40,4 127x24; status 7,4 32x24; row false
     document 7,4 160x24; status none; row true
-    document 39,4 128x24; status 7,4 32x24; row false
+    document 40,4 127x24; status 7,4 32x24; row false
     document 7,4 400x100; status none; row true
     ((status_visible true)
      (split ((axis Horizontal) (first Status) (status_size 32))))
@@ -89,10 +90,10 @@ let%expect_test "document placement preferences remain independent and restorabl
   printf "full-width tile %s; text %s\n" (rect geometry.tile) (rect geometry.text);
   print_s [%sexp (prefs : Geometry.Prefs.t)];
   [%expect {|
-    tile 33,4 104x12; text 36,5 100x10; offset 12; status rows 0
+    tile 32,4 104x12; text 35,5 100x10; offset 12; status rows 0
     tile 7,4 16x12; text 7,4 16x12; offset 0; status rows 0
     tile 7,4 23x11; text 10,5 19x9; offset 0; status rows 1
-    tile 33,4 104x12; text 36,5 100x10; offset 12; status rows 0
+    tile 32,4 104x12; text 35,5 100x10; offset 12; status rows 0
     full-width tile 7,4 160x11; text 10,5 156x9
     ((centered true) (width 100) (offset 12) (line_numbers Off) (left_padding 2))
     |}]
@@ -150,8 +151,50 @@ let%expect_test "allocations are bounded, disjoint, exhaustive, with stable focu
                 let d = t.document.rect and s = status.rect in
                 assert (d.x + d.width <= s.x || s.x + s.width <= d.x
                         || d.y + d.height <= s.y || s.y + s.height <= d.y);
-                assert (d.width * d.height + s.width * s.height
+                (* Everything is covered except the side-by-side gap. *)
+                let gap =
+                  match axis with
+                  | Horizontal -> Workspace.gap * height
+                  | Vertical -> 0
+                in
+                assert (d.width * d.height + s.width * s.height + gap
                         = Int.max 0 width * Int.max 0 height)))))));
   print_endline "bounds, disjoint coverage, visibility, and identity checks passed";
   [%expect {| bounds, disjoint coverage, visibility, and identity checks passed |}]
+;;
+
+let%expect_test "the minor band keeps two thirds of the height and gaps side-by-side views" =
+  let views = List.map [ "a"; "b"; "c" ] ~f:Ches_tile.View_id.of_string in
+  let band ?(prefs = Workspace.Prefs.default) ?(minors = views) width height =
+    let t = Workspace.allocate ~minors prefs ~allocation:(allocation width height) in
+    printf "%3dx%-3d document %s; minors %s\n" width height (rect t.document.rect)
+      (String.concat ~sep:" " (List.map t.minors ~f:(fun p -> rect p.rect)))
+  in
+  (* Height: the preferred ten rows on a laptop or monitor, a third of a short
+     workspace, and none once the document minimum and three rows cannot fit. *)
+  List.iter [ 4; 5; 9; 16; 24; 30; 50; 80 ] ~f:(fun height ->
+    band ~minors:(List.take views 1) 80 height);
+  (* Width: equal shares around one-cell gaps; views that cannot have 16 cells are left
+     out from the end. *)
+  List.iter [ 15; 16; 32; 33; 49; 50; 80 ] ~f:(fun width -> band width 24);
+  (* Side status keeps its own gap in the upper area. *)
+  band ~prefs:(request ()) ~minors:(List.take views 2) 80 24;
+  [%expect {|
+    80x4   document 7,4 80x4; minors
+    80x5   document 7,4 80x2; minors 7,6 80x3
+    80x9   document 7,4 80x6; minors 7,10 80x3
+    80x16  document 7,4 80x11; minors 7,15 80x5
+    80x24  document 7,4 80x16; minors 7,20 80x8
+    80x30  document 7,4 80x20; minors 7,24 80x10
+    80x50  document 7,4 80x40; minors 7,44 80x10
+    80x80  document 7,4 80x70; minors 7,74 80x10
+    15x24  document 7,4 15x24; minors
+    16x24  document 7,4 16x16; minors 7,20 16x8
+    32x24  document 7,4 32x16; minors 7,20 32x8
+    33x24  document 7,4 33x16; minors 7,20 16x8 24,20 16x8
+    49x24  document 7,4 49x16; minors 7,20 24x8 32,20 24x8
+    50x24  document 7,4 50x16; minors 7,20 16x8 24,20 16x8 41,20 16x8
+    80x24  document 7,4 80x16; minors 7,20 26x8 34,20 26x8 61,20 26x8
+    80x24  document 7,4 51x16; minors 7,20 39x8 47,20 40x8
+    |}]
 ;;

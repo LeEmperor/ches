@@ -188,15 +188,20 @@ let problems_focused t ~width ~height =
   View_id.equal (focused_view t ~width ~height) Problems_tile.id
 ;;
 
-(* Content rows of a focused minor view, and its width. *)
+let minor_layout t ~width ~height id =
+  Option.map (Workspace.minor (workspace t ~width ~height) id) ~f:(fun pane ->
+    Tile_shell.layout Tile_shell.Policy.minor pane.rect)
+;;
+
+(* A minor view's content viewport: what it scrolls by and wraps to. *)
 let minor_rows t ~width ~height id =
-  Option.value_map (Workspace.minor (workspace t ~width ~height) id) ~default:1
-    ~f:(fun pane -> Int.max 1 (Tile_text.capacity pane.rect))
+  Option.value_map (minor_layout t ~width ~height id) ~default:1
+    ~f:(fun layout -> Int.max 1 layout.content.height)
 ;;
 
 let minor_width t ~width ~height id =
-  Option.value_map (Workspace.minor (workspace t ~width ~height) id) ~default:width
-    ~f:(fun pane -> pane.rect.width)
+  Option.value_map (minor_layout t ~width ~height id) ~default:width
+    ~f:(fun layout -> layout.content.width)
 ;;
 
 let path t = Editor.path (Controller.editor t.controller)

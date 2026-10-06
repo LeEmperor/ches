@@ -72,16 +72,27 @@ val min_status_width : int
 val min_status_height : int
 val min_minor_width : int
 
+(** Backdrop cells between side-by-side panes (document/status and minor views).
+    Stacked panes have none: their frames' border rows already separate them. *)
+val gap : int
+
+(** The bottom band takes {!preferred_band_height} rows, but never more than a third of
+    the workspace (or less than {!min_band_height}), nor what document/status minima
+    need. *)
+val min_band_height : int
+
+val preferred_band_height : int
+
 (** Normalize negative allocation dimensions to zero, preserving the origin. If
     requested and both pane minima fit, clamp status size along the split axis and
-    give the document the remainder, with no gap. Otherwise allocate the entire
+    give the document the remainder, less a {!gap} when side by side. Otherwise allocate the entire
     rectangle to the document and request compact feedback. Requests are never
     modified: callers retain [Prefs.t] and recompute on resize or hide/restore.
     No amount of available space independently enables a companion cell.
-    [minors] (requested visible minor views, in order) share a bottom band of three to
-    six rows, side by side with equal widths of at least {!min_minor_width}; the band is
-    left out if document/status minima cannot coexist, and views that don't fit are
-    left out from the end. Status is allocated within the remaining upper rectangle. *)
+    [minors] (requested visible minor views, in order) share a bottom band (see
+    {!preferred_band_height}), side by side with equal widths of at least
+    {!min_minor_width} separated by {!gap}; the band is left out if document/status
+    minima cannot coexist, and views that don't fit are left out from the end. Status is allocated within the remaining upper rectangle. *)
 val allocate
   :  ?minors:Ches_tile.View_id.t list
   -> Prefs.t

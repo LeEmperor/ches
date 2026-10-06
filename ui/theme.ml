@@ -61,9 +61,11 @@ module Font = struct
     | Gutter
     | Gutter_cursor_line
     | Border
+    | Border_focused
     | Title_special
     | Status
     | Status_special
+    | Hint
     | Info
     | Warning
     | Smear -> []
@@ -88,10 +90,12 @@ let colors (style : Ches_screen.Style.t) =
   | Gutter -> colors Muted Background
   | Gutter_cursor_line -> colors Foreground Current_line
   | Border -> colors Border Background
+  | Border_focused -> colors Normal_accent Background
   | Title -> colors Foreground Background
   | Title_special -> colors Special Background
   | Status -> colors Foreground Surface
   | Status_special -> colors Special Surface
+  | Hint -> colors Muted Background
   | Mode Normal -> colors Background Normal_accent
   | Mode Insert -> colors Background Insert_accent
   | Mode (Visual _) -> colors Background Warning

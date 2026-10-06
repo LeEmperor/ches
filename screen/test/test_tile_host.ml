@@ -59,10 +59,10 @@ let%expect_test "document, status, problems, and an error-free report coexist" =
        : (Workspace.Pane_id.t * Geometry.Rect.t) list)];
   [%expect
     {|
-    ((Document ((x 0) (y 0) (width 52) (height 10)))
-     (Status ((x 52) (y 0) (width 28) (height 10)))
-     ((Minor problems) ((x 0) (y 10) (width 40) (height 6)))
-     ((Minor demo-report) ((x 40) (y 10) (width 40) (height 6))))
+    ((Document ((x 0) (y 0) (width 51) (height 11)))
+     (Status ((x 52) (y 0) (width 28) (height 11)))
+     ((Minor problems) ((x 0) (y 11) (width 39) (height 5)))
+     ((Minor demo-report) ((x 40) (y 11) (width 40) (height 5))))
     |}];
   (* The report is reached and driven by the same host as problems. *)
   let before = problems t in
@@ -73,12 +73,12 @@ let%expect_test "document, status, problems, and an error-free report coexist" =
     (String.concat ~sep:"\n" (List.drop (String.split_lines (screen t)) 10));
   [%expect
     {|
-    Problems (workspace): 4/4 | Space v e: >Demo report* (static): [3/10]           |
-    warning [checker0] a:2:1: finding 0       DEMO REPORT 1/10: static row 1 (界🙂 >|
-    warning [checker1] a:2:1: finding 1       DEMO REPORT 2/10: static row 2 (界🙂 >|
-    warning [checker2] a:2:1: finding 2     > DEMO REPORT 3/10: static row 3 (界🙂 >|
-    warning [checker3] a:2:1: finding 3       DEMO REPORT 4/10: static row 4 (界🙂 >|
-                                            0 above, 6 below | j/k e Esc            |
+    ╰─────────────────────────────────────────────────╯ ╰──────────────────────────╯|
+    ╭─ Problems (workspace): 4/4 ─────────╮ ╭─ Demo report* (static): [3/10] ──────╮|
+    │ warning [checker0] a:2:1: finding 0 │ │   DEMO REPORT 1/10: static row 1 ( > │|
+    │ warning [checker1] a:2:1: finding 1 │ │   DEMO REPORT 2/10: static row 2 ( > │|
+    │ warning [checker2] a:2:1: finding 2 │ │ > DEMO REPORT 3/10: static row 3 ( > │|
+    ╰─ +1 more | Space v e: all details ──╯ ╰─ 0 above, 7 below | j/k e Esc ───────╯|
     cursor: none
     |}];
   (* Details open, scroll, and close through the shared escape precedence. *)
@@ -247,4 +247,71 @@ let%expect_test "two minor views stay bounded and disjoint in every allocation" 
           if not document_owns then assert (Option.is_none frame.cursor)))));
   print_endline "panes bounded and disjoint; only the document draws a cursor";
   [%expect {| panes bounded and disjoint; only the document draws a cursor |}]
+;;
+
+let%expect_test "status and minor views share the framed shell at a laptop size" =
+  let width = 110
+  and height = 30 in
+  let t = create () |> fun t -> run ~width ~height t " vt vb vd vDj" in
+  print_endline (screen ~width ~height t);
+  (* Only the focused view's frame is accented. *)
+  let frame = Frame.render t ~width ~height in
+  List.nth_exn frame.rows 20
+  |> List.filter_map ~f:(fun (s : Span.t) ->
+    match s.style with
+    | Border | Border_focused -> Some (Style.to_string_hum s.style)
+    | _ -> None)
+  |> String.concat ~sep:" "
+  |> print_endline;
+  [%expect
+    {|
+    ╭─ a ───────────────────────────────────────────────────────────────────────────╮ ╭─ Status ─────────────────╮|
+    │  first                                                                        │ │ NORMAL                   │|
+    │  second                                                                       │ │ a                        │|
+    │  third                                                                        │ │ 1:1                      │|
+    │                                                                               │ │ [4 problems] finding 0   │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    │                                                                               │ │                          │|
+    ╰───────────────────────────────────────────────────────────────────────────────╯ ╰──────────────────────────╯|
+    ╭─ Problems (workspace): 4/4 ────────────────────────╮ ╭─ Demo report* (static): [2/10] ─────────────────────╮|
+    │ warning [checker0] a:2:1: finding 0                │ │   DEMO REPORT 1/10: static row 1 (界🙂 é)           │|
+    │ warning [checker1] a:2:1: finding 1                │ │ > DEMO REPORT 2/10: static row 2 (界🙂 é)           │|
+    │ warning [checker2] a:2:1: finding 2                │ │   DEMO REPORT 3/10: static row 3 (界🙂 é)           │|
+    │ warning [checker3] a:2:1: finding 3                │ │   DEMO REPORT 4/10: static row 4 (界🙂 é)           │|
+    │                                                    │ │   DEMO REPORT 5/10: static row 5 (界🙂 é)           │|
+    │                                                    │ │   DEMO REPORT 6/10: static row 6 (界🙂 é)           │|
+    │                                                    │ │   DEMO REPORT 7/10: static row 7 (界🙂 é)           │|
+    │                                                    │ │   DEMO REPORT 8/10: static row 8 (界🙂 é)           │|
+    ╰─ Space v o: focus | Space v e: details ────────────╯ ╰─ 0 above, 2 below | j/k e Esc ──────────────────────╯|
+    cursor: none
+    Border Border Border_focused Border_focused
+    |}];
+  (* The adapter's viewport is the shell's content area, and returns with the
+     allocation after the terminal shrinks and grows. *)
+  let layout ~width ~height =
+    Option.map (Ui_state.minor_layout t ~width ~height Report_tile.id) ~f:(fun l ->
+      l.content)
+  in
+  let before = layout ~width ~height in
+  print_s [%sexp (before : Geometry.Rect.t option), (layout ~width:20 ~height:8 : Geometry.Rect.t option)];
+  let t = Helpers.run ~width:20 ~height:8 t [ Ui_state.Input.Resize ] in
+  let t = Helpers.run ~width ~height t [ Ui_state.Input.Resize ] in
+  assert ([%equal: Geometry.Rect.t option] before (layout ~width ~height));
+  print_endline (focused ~width ~height t);
+  [%expect {|
+    ((((x 57) (y 21) (width 51) (height 8))) ())
+    document
+    |}]
 ;;

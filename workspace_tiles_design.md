@@ -7,15 +7,17 @@ status presentation/workspace interaction checks from phases 3–4 are accepted.
 Phase 6's read-only problems view is software-complete / human-feedback-pending.
 Phase 7's interactive problems pane is also software-complete / human-feedback-pending.
 Phase 7A's shared tile host (`tile/`, `ches_tile`) with problems migrated onto it
-and an error-free demo report fixture is software-complete / human-feedback-pending
-(2026-10-05). Phases 7B–7C, history views, diagnostic sources, and the
-external-view protocol remain unimplemented.
+and an error-free demo report fixture is software-complete and human-accepted
+(2026-10-05). Phase 7B's shared rounded shell, padding, gaps, and revised band
+height are software-complete / human-feedback-pending (2026-10-05). Phase 7C,
+history views, diagnostic sources, and the external-view protocol remain
+unimplemented.
 
 **Direction update (2026-10-05):** This worktree implements a general tile system.
 Status and problems are concrete consumers/test cases, not the definition of a
-tile. Shared tile plumbing is generalized by phase 7A (below); consistent
-framing/padding and read-only text selection/copying are not yet, and phases 7B–7C
-remain the next tile-system assignments. Phase 6/7 software completion does not imply these later
+tile. Shared tile plumbing is generalized by phase 7A and shared framing/padding by
+phase 7B (below); read-only text selection/copying is not yet, and phase 7C remains
+the next tile-system assignment. Phase 6/7 software completion does not imply these later
 capabilities exist or that their current presentation is human-accepted.
 
 ## Goal and scope
@@ -47,7 +49,8 @@ in another process or on another machine.
   the full-screen `compute` wrapper retains the existing bottom status row.
 - `screen/workspace.ml` allocates stable document/status cells using a requested
   two-leaf split plus a bottom band shared side by side by the requested minor views
-  (`Pane_id.Minor of View_id.t`), with compact fallback. `Ui_state` derives effective
+  (`Pane_id.Minor of View_id.t`), with compact fallback. Side-by-side panes are
+  separated by a one-cell backdrop gap (phase 7B). `Ui_state` derives effective
   geometry from requests/zen state; `Frame` composes the document, status, and each
   minor view's adapter rendering.
 - `tile/` (`ches_tile`, phase 7A) is the service-agnostic foundation: `View_id`,
@@ -67,9 +70,11 @@ in another process or on another machine.
   independently of any tile's visibility or lifetime.
 - `screen/problems.ml` renders problems; `screen/problems_tile.ml` is the problems
   adapter (filter, identity selection, details, and acknowledge/inspect/jump
-  actions); `screen/report_tile.ml` is the static, error-free fixture; and
-  `screen/tile_text.ml` holds shared cell-exact rows/wrapping. Minor views have no
-  rounded frame/inset padding or text cursor/Visual selection/yank yet. Detail scrolling is available only when detail
+  actions); `screen/report_tile.ml` is the static, error-free fixture;
+  `screen/tile_text.ml` holds shared cell-exact rows/wrapping; and
+  `screen/tile_shell.ml` (phase 7B) is the shared shell: rounded frame, labels set
+  into the borders, padding, focus accent, and size degradation, for minor views
+  and dedicated status. Minor views have no text cursor/Visual selection/yank yet. Detail scrolling is available only when detail
   rows exceed the viewport; `Details 1-4/4` means there is nothing further to scroll.
 - `app/demo_problems.ml` supplies opt-in, session-local navigation fixtures. It is
   not a general tile content model or a real diagnostic producer.
@@ -1231,10 +1236,8 @@ Source failure may separately post feedback without changing ownership of its da
 
 ### Remaining decisions
 
-- Common shell defaults and compact degradation thresholds: inset/gap sizes,
-  revised supporting-tile height, title/footer space, and focus decoration. The
-  shared rounded/inset direction is settled; exact comfortable measurements need
-  a recorded implementation choice and human review.
+- Common shell defaults and compact degradation thresholds are recorded in phase
+  7B; their comfort on the owner's laptop/monitors still needs human review.
 - Shared read-only text interaction bindings, selection modes, copy destination,
   and update-during-selection policy, as specified in phases 7A–7C below.
 - History retention capacity and the first language/server configuration.
@@ -1351,7 +1354,7 @@ or async transport just to establish this boundary.
 These are new assignments after the implemented phase 7, not retroactive changes
 to its completion record. Implement in order; keep this application buildable and
 usable at each checkpoint. Use the existing software/human acceptance contract.
-Phase 7A is software-complete (record below); 7B–7C are **planned, not implemented**. They should precede new
+Phases 7A–7B are software-complete (records below); 7C is **planned, not implemented**. They should precede new
 history/external view UI rather than growing another problems-specific branch.
 
 ### Phase 7A — Extract generic tile host and routing; migrate problems
@@ -1515,6 +1518,102 @@ content has intentional insets rather than edge-hugging text. Compare the docume
 against its existing comfort baseline. Human review is required for rounded chrome,
 spacing, readability/density, focus clarity, and bottom/side placement; record
 remaining issues rather than declaring palette/comfort verified by screenshots.
+
+#### Phase 7B implementation choices (2026-10-05)
+
+**Status (2026-10-05): software-complete / human-feedback-pending.**
+
+- **Shell module.** `screen/tile_shell.ml` (`Tile_shell`) owns the shared shell.
+  `Tile_shell.layout policy rect` returns one `Layout.t` (outer, framed, padding,
+  title/footer rectangles, content rectangle); `Tile_shell.render layout ~focused
+  content` draws it. Adapters return `Tile_shell.Content.t` (a title string, an
+  optional footer `Label.t`, and body rows sized to the content rectangle) and no
+  longer draw headers, footers, frames, or padding. `Ui_state.minor_layout` is the
+  single source of a minor view's layout: `Frame` renders through it, and the
+  adapters' selection rows, detail scroll range, and detail wrap width are its
+  content height/width. The shell lives in `ches_screen` (it needs `Span`/`Style`)
+  and, like `Tile_text`, has no `Ches_error` use; that is by convention, not a dune
+  boundary.
+- **Frame and labels.** A one-cell rounded frame in the editor's `Border` style.
+  The title is set into the top border as `╭─ title ───╮`, the editor's filename
+  convention; the footer (key hints, a capture notice, or a pending prefix) is set
+  into the bottom border the same way. Labels are cut by display cells with `>`.
+  Putting both into the borders means framing costs the same two rows the focused
+  header/footer already used. Hints use a new muted `Hint` style; notices keep
+  `Warning` and pending keys `Pending`, so they read as chips in the border.
+- **Padding.** One blank cell inside each side border; no vertical padding (rows are
+  scarce, and the border rows already give vertical breathing room). Padding and
+  blank rows use the content background (`Status`), so semantic content styles are
+  unchanged. The editor keeps its own `left_padding` of 2; this is the knob to
+  revisit if minor content feels tight next to it.
+- **Focus.** The focused supporting view's frame uses a new `Border_focused` style
+  (the Normal accent). Titles keep their `*` marker, which also keeps focus visible in
+  monochrome captures. The editor's frame is unchanged in every focus state.
+- **Degradation.** `Policy` holds per-consumer defaults. In order: frame with
+  padding, frame without padding, then bare. Minor views (`Policy.minor`) need 12 by
+  1 content cells to frame, so every minor allocation (at least 16 by 3) is framed
+  with padding; bare minor content gets a title row and footer row as before.
+  Dedicated status (`Policy.status`) frames only when it leaves at least 8 by 5
+  content cells (the full vertical field order) and is bare otherwise, with no
+  title/footer rows, so the default six-row stacked status and other shallow or
+  narrow cells keep phase 3's unframed rows and essential priorities. Bottom-row
+  compact status and the document's border title are untouched.
+- **Gaps.** `Workspace.gap = 1`: a backdrop cell between side-by-side panes
+  (document/status in a horizontal split and adjacent minor views). Stacked panes
+  have no gap; their frames' corner rows already separate them. This revises phase
+  2's no-gap policy: a side status now leaves the document one fewer column, and
+  side-by-side status needs `16 + 1 + 8` columns before it falls back to compact.
+  Minor views fit while `n * 16 + (n - 1)` columns are available.
+- **Band height.** Replaces the phase 6 three-to-six-row prototype: the band takes
+  `Workspace.preferred_band_height` (10) rows, never more than a third of the
+  workspace (but at least `min_band_height`, 3) or what document/status minima need.
+  On a laptop or monitor (30+ rows) that is ten rows: eight content rows inside the
+  frame. At 24 rows it is eight; at 16 it is five; the band still disappears below
+  the document minimum plus three rows.
+- **Problems/report content.** Unfocused titles are `Problems (filter): n/total` and
+  `Demo report (static): n items`; their hints moved to the footer. Problems
+  overflow (`+N more | Space v e: all details`, `Warning`) is now counted in the
+  footer instead of costing a content row, revising phase 6. Focused titles and
+  footers keep their phase 7/7A text.
+
+#### Phase 7B implementation and verification (2026-10-05)
+
+- Added `Tile_shell`, the `Border_focused` and `Hint` styles (theme: Normal accent and
+  Muted on the tile background), `Workspace.gap`/band-height constants, and
+  `Ui_state.minor_layout`. Removed `Tile_text.capture`/`capacity`/`footer`; problems
+  and report render `Tile_shell.Content.t`. Status renders through the shell.
+- Tests: new `screen/test/test_tile_shell.ml` (the degradation ladder for both
+  policies at offset origins, including tiny/zero/negative sizes; label placement and
+  cell-exact cutting with wide glyphs; focus/notice/pending styles; and a 2 x 40 x 12
+  size sweep checking exact rows, sanitized text, every rectangle inside its
+  allocation, and that body text starts exactly at the content origin). New
+  workspace test for band height across 4–80 rows and gapped minor widths. New
+  integration snapshot at 110x30 (framed status, both band views, accent only on the
+  focused view) and restoration of the content viewport after shrinking/growing.
+  Existing expectations changed only by the gap, the band height (16-row tests now
+  have three content rows, so two navigation assertions moved from 4/6 to 3/7), and
+  the framed problems/report text. Document-only frame tests are unchanged: the
+  editor's placement is the same unless a side status is shown.
+- Verified `opam exec --switch=5.2.0+ox -- dune build`, `dune runtest` (all pass),
+  and `git diff --check`. `scripts/smoke.sh` passes all 658 checks. Its updates: three
+  cursor columns move by the gap with status on the left, and status-cell message cut
+  points moved because a framed 28-column status has 24 content columns. New checks
+  look for the framed report labels, a notice in the bottom border, framed status and
+  problems, and save 120x40 and 200x60 review captures (`tiles-shell-*.ansi`).
+- **Software-complete / human-feedback-pending.** Manual check:
+  1. `dune exec ches -- --demo-problems --demo-report PATH` on a multiline file, on
+     the laptop and on a monitor.
+  2. `Space v b`, `Space v d`, `Space v t`: judge the rounded frames, padding, the gap
+     between the band views, and the ten-row band against the document.
+  3. `Space v o` and `Space v D`: is the accent frame a clear enough focus cue? Try
+     `G`, `e`, and scrolling in both; check the footer hints and a paste notice.
+  4. Move status with `Space v p h/l/k/j`: side status is framed; stacked status at
+     its default six rows stays unframed. Resize narrow and short, use zen, and
+     return.
+  Assess readability and density (one-cell padding next to the editor's two),
+  whether hint text in the bottom border is legible in the muted colour, whether a
+  framed side status is preferable to the old unframed one, and whether ten band rows
+  are right on each display.
 
 ### Phase 7C — Shared read-only text cursor, selection, and copying
 

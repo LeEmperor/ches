@@ -31,6 +31,7 @@ type t =
 let render ?allocation ?reserve_status_row ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
+  let screen_width = width in
   let workspace = Ui_state.workspace ui ~width ~height in
   let pane_relative = Option.is_some allocation || Option.is_some workspace.status
     || not (List.is_empty workspace.minors) in
@@ -66,36 +67,44 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
     geometry
   in
   let fields = Status.fields ui in
+  (* Status and minor views share the tile shell; adapters fill its content area. *)
   let status_tile = Option.map status_pane ~f:(fun pane ->
-    let tile = Status.vertical ~rect:pane.Workspace.Pane.rect fields in
-    tile.rect, Array.of_list tile.rows)
+    let layout = Tile_shell.layout Tile_shell.Policy.status pane.Workspace.Pane.rect in
+    let body = (Status.vertical ~rect:layout.content fields).rows in
+    layout.outer,
+    Array.of_list (Tile_shell.render layout ~focused:false { title = "Status"; footer = None; body }))
   in
   (* Each minor pane's content comes from its adapter; only the focused view shows the
      host's capture notice and pending prefix. *)
   let focused_view = Ui_state.focused_view ui ~width ~height in
-  let minor_tiles = List.map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
-    let rect = pane.rect in
-    let focused id = Ches_tile.View_id.equal focused_view id in
-    let capture id = if focused id
-      then Ui_state.capture_notice ui, Ui_state.capture_pending ui else None, None in
-    let rows = match pane.id, Ui_state.report ui with
-      | Minor id, _ when Ches_tile.View_id.equal id Problems_tile.id ->
-        let notice, pending = capture id in
-        let tile = Ui_state.problems_tile ui in
-        Problems.render
-          ~focused:(focused id)
-          ~navigation:(Ui_state.problem_navigation ui ~width ~height)
-          ~details:(Problems_tile.details tile)
-          ~detail_top:(Problems_tile.detail_top tile)
-          ?notice ?pending
-          (Controller.feedback (Ui_state.controller ui))
-          ~current_document:(Problems_tile.current_document tile)
-          ~path:(Editor.path editor) ~rect
-      | Minor id, Some report when Ches_tile.View_id.equal id Report_tile.id ->
-        let notice, pending = capture id in
-        Report_tile.render ~focused:(focused id) ?notice ?pending report ~rect
-      | (Minor _ | Document | Status), _ -> Tile_text.fill ~rect [] in
-    rect, Array.of_list rows) in
+  let minor_tiles = List.filter_map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
+    match pane.id with
+    | Document | Status -> None
+    | Minor id ->
+      let layout =
+        Option.value_exn (Ui_state.minor_layout ui ~width ~height id) in
+      let width = layout.content.width and rows = layout.content.height in
+      let focused = Ches_tile.View_id.equal focused_view id in
+      let notice, pending =
+        if focused then Ui_state.capture_notice ui, Ui_state.capture_pending ui else None, None in
+      let content : Tile_shell.Content.t =
+        match Ui_state.report ui with
+        | _ when Ches_tile.View_id.equal id Problems_tile.id ->
+          let tile = Ui_state.problems_tile ui in
+          Problems.render
+            ~focused
+            ~navigation:(Ui_state.problem_navigation ui ~width:screen_width ~height)
+            ~details:(Problems_tile.details tile)
+            ~detail_top:(Problems_tile.detail_top tile)
+            ?notice ?pending
+            (Controller.feedback (Ui_state.controller ui))
+            ~current_document:(Problems_tile.current_document tile)
+            ~path:(Editor.path editor) ~width ~rows
+        | Some report when Ches_tile.View_id.equal id Report_tile.id ->
+          Report_tile.render ~focused ?notice ?pending report ~width ~rows
+        | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }
+      in
+      Some (layout.outer, Array.of_list (Tile_shell.render layout ~focused content))) in
   let search =
     match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
     | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)

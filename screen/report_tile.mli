@@ -43,10 +43,12 @@ val hint : string
 (** [rows] and [width] are the focused view's content viewport. *)
 val perform : t -> rows:int -> width:int -> action -> t
 
+(** Shell content for a [width] by [rows] content viewport. *)
 val render
   :  ?focused:bool
   -> ?notice:string
   -> ?pending:string
   -> t
-  -> rect:Geometry.Rect.t
-  -> Span.t list list
+  -> width:int
+  -> rows:int
+  -> Tile_shell.Content.t

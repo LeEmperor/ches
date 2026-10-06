@@ -9,9 +9,13 @@ let identity ?(source = "file") resource : Feedback.Identity.t =
   { source; resource; kind = Save }
 ;;
 
-let rows feedback ?(current_document = false) ?(path = Some "a") ?(width = 100) ?(height = 4) () =
-  Problems.render feedback ~current_document ~path
-    ~rect:{ Geometry.Rect.x = 0; y = 0; width; height }
+let rows feedback ?(current_document = false) ?(path = Some "a") ?(width = 60) ?(height = 5) () =
+  let layout =
+    Tile_shell.layout Tile_shell.Policy.minor { Geometry.Rect.x = 0; y = 0; width; height }
+  in
+  Problems.render feedback ~current_document ~path ~width:layout.content.width
+    ~rows:layout.content.height
+  |> Tile_shell.render layout ~focused:false
 ;;
 
 let show rows =
@@ -36,24 +40,31 @@ let%expect_test "empty, multiple sources, location, acknowledgement, updates and
   let f = Feedback.apply f (Resolve b) in
   show (rows f ());
   [%expect {|
-    Problems (workspace): 0/0 | Space v e: details
-    No active problems
-
-
-    Problems (workspace): 2/2 | Space v e: details
-    error [file] a: cannot save
-    warning [checker] a:3:7: finding
-
-    Problems (workspace): 2/2 | Space v e: details
-    error [file] a: retry failed
-    warning [checker] a:3:7: finding
-
-    Problems (workspace): 1/1 | Space v e: details
-    warning [checker] a:3:7: finding
-
-
-    Problems (workspace): 0/0 | Space v e: details
-    No active problems
+    ╭─ Problems (workspace): 0/0 ──────────────────────────────╮
+    │ No active problems                                       │
+    │                                                          │
+    │                                                          │
+    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╭─ Problems (workspace): 2/2 ──────────────────────────────╮
+    │ error [file] a: cannot save                              │
+    │ warning [checker] a:3:7: finding                         │
+    │                                                          │
+    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╭─ Problems (workspace): 2/2 ──────────────────────────────╮
+    │ error [file] a: retry failed                             │
+    │ warning [checker] a:3:7: finding                         │
+    │                                                          │
+    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╭─ Problems (workspace): 1/1 ──────────────────────────────╮
+    │ warning [checker] a:3:7: finding                         │
+    │                                                          │
+    │                                                          │
+    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╭─ Problems (workspace): 0/0 ──────────────────────────────╮
+    │ No active problems                                       │
+    │                                                          │
+    │                                                          │
+    ╰─ Space v o: focus | Space v e: details ──────────────────╯
     |}]
 ;;
 
@@ -75,16 +86,18 @@ let%expect_test "filtering and bounded overflow leave every detail reachable" =
       (sprintf "problem %d" (i % 8)));
     f) : Feedback.t);
   [%expect {|
-    Problems (workspace): 8/8 | Space v e: details
-    error [file] a: problem 0
-    error [file] b1: problem 1
-    +6 more | Space v e: all details
-    Problems (document): 1/8 | Space v e: details
-    error [file] a: problem 0
-
-
-    Problems (document): 0/8 | Space v e: details
-    No active problems
+    ╭─ Problems (workspace): 8/8 ──────────────────────────────╮
+    │ error [file] a: problem 0                                │
+    │ error [file] b1: problem 1                               │
+    │ error [file] b2: problem 2                               │
+    ╰─ +5 more | Space v e: all details ───────────────────────╯
+    ╭─ Problems (document): 1/8 ───────────────────────────────╮
+    │ error [file] a: problem 0                                │
+    │                                                          │
+    │                                                          │
+    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    Problems (document): 0/8
+    Space v o: focus | Space v e: details
     |}]
 ;;
 

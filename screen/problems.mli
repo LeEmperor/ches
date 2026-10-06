@@ -8,8 +8,10 @@ val entries
   -> path:string option
   -> Ches_error.Error.Problem.t list
 
-(** Read-only, cell-clipped preview with filtered/total and overflow counts; when
-    focused, the selectable list or the selected problem's details. *)
+(** Shell content for a [width] by [rows] content viewport: a read-only preview
+    titled with filtered/total counts, its overflow counted in the footer; when focused,
+    the selectable list or the selected problem's details, with key hints or the
+    capture notice/pending prefix in the footer. *)
 val render
   : ?focused:bool
   -> ?navigation:Ches_error.Error.Identity.t Ches_tile.Navigation.Selection.t
@@ -20,8 +22,9 @@ val render
   -> Ches_error.Error.t
   -> current_document:bool
   -> path:string option
-  -> rect:Geometry.Rect.t
-  -> Span.t list list
+  -> width:int
+  -> rows:int
+  -> Tile_shell.Content.t
 
 (** Sanitized full description, wrapped by display cells. *)
 val detail_rows : Ches_error.Error.Problem.t -> width:int -> Span.t list list

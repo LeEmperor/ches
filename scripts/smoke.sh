@@ -1037,11 +1037,11 @@ expect_cursor "7 1 1"
 save_screen "workspace-right-80x24"
 keys Space v p h
 expect_screen "Status left 28 (shown)"
-expect_cursor "35 1 1"
+expect_cursor "36 1 1"
 keys 4 0 j
 expect_cursor_row "41  workspace line 41"
 keys g g
-expect_cursor "35 1 1"
+expect_cursor "36 1 1"
 save_screen "workspace-left-80x24"
 keys Space v p k
 expect_screen "Status above 6 (shown)"
@@ -1063,7 +1063,7 @@ keys Escape Space v p h
 expect_status "Status left 28 (saved for workspace; zen)"
 keys Space v z
 expect_screen "Workspace restored"
-expect_cursor "35 1 1"
+expect_cursor "36 1 1"
 resize 23 12
 expect_status "NORMAL"
 expect_cursor "6 0 1"
@@ -1102,25 +1102,25 @@ launch ro/workspace.txt
 keys i X Escape Space w
 expect_status "Permission denied"
 keys Space v t
-expect_screen "Failed to write ro/workspac>"
+expect_screen "Failed to write ro/work>"
 keys Space v p h
-expect_screen "Failed to write ro/workspac>"
+expect_screen "Failed to write ro/work>"
 keys Space v z
 expect_status "Permission denied"
 save_screen "workspace-error-zen-80x24"
 keys Space v z
-expect_screen "Failed to write ro/workspac>"
+expect_screen "Failed to write ro/work>"
 # Editing and keymap notices cannot replace unacknowledged persistence attention.
 keys l i Y Escape 3 '^'
-expect_screen "Failed to write ro/workspac>"
+expect_screen "Failed to write ro/work>"
 keys Escape
 expect_screen "1 problem: Space v e"
 expect_no_screen "Failed to write"
 save_screen "workspace-problem-acknowledged-80x24"
 keys Space v e
-expect_screen "Failed to write ro/workspac>"
+expect_screen "Failed to write ro/work>"
 keys Space w
-expect_screen "Failed to write ro/workspac>"
+expect_screen "Failed to write ro/work>"
 keys Escape
 expect_screen "1 problem: Space v e"
 # Matching save recovery removes the retained save problem.
@@ -1164,7 +1164,7 @@ expect_screen "Failed to reload"
 rmdir "$work/ro/workspace.txt"
 mv "$work/workspace-reload.saved" "$work/ro/workspace.txt"
 keys : e ! Enter
-expect_screen "Reloaded ro/workspace.txt"
+expect_screen "Reloaded ro/workspace.t"
 expect_no_screen "problems:"
 expect_screen "Problems (document): 0/0"
 keys Space q
@@ -1253,6 +1253,9 @@ cp "$work/report.txt" "$work/report.expected"
 launch --demo-report report.txt
 keys Space v d
 expect_screen "Demo report (static): 10 items"
+# Phase 7B: the shared shell frames the view, with its labels set into the borders.
+expect_screen "╭─ Demo report (static): 10 items ─"
+expect_screen "╰─ Space v D: focus ─"
 keys Space v D
 expect_screen "Demo report* (static): [1/10]"
 if poll pane_cursor_hidden; then ok "report capture hides terminal cursor"; else fail "report cursor visible"; fi
@@ -1272,12 +1275,25 @@ expect_screen "Demo report* (static): [10/10]"
 t set-buffer -b smoke ' vDij'
 t paste-buffer -p -b smoke -t "$session"
 expect_screen "Demo report: read-only; paste ignored"
+expect_screen "╰─ Demo report: read-only; paste igno> ╯"
 save_screen "workspace-demo-report-80x24"
 keys Tab
 expect_screen "Demo report (static): 10 items"
 expect_no_screen "Demo report*"
 keys Space w
 expect_file "$work/report.txt" "$work/report.expected"
+# Framed status beside the document and both minor views in the band, for review at
+# laptop and monitor sizes. Problems is still shown from above.
+keys Space v t
+expect_screen "╭─ Status ─"
+expect_screen "╭─ Problems (workspace): 0/0 ─"
+resize 120 40
+expect_screen "╭─ Demo report (static): 10 items ─"
+save_screen "tiles-shell-120x40"
+resize 200 60
+expect_screen "╭─ Demo report (static): 10 items ─"
+save_screen "tiles-shell-200x60"
+resize 80 24
 keys Space q
 expect_exit 0
 launch report.txt

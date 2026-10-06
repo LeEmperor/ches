@@ -27,15 +27,15 @@ let%expect_test "workspace keys place cells on all sides and remember both axis 
       t) : Ui_state.t);
   [%expect {|
     visible false zen false size 28; document 0,0 80x12; status none; row true
-    visible true zen false size 28; document 0,0 52x12; status 52,0 28x12; row false
-    visible true zen false size 30; document 0,0 50x12; status 50,0 30x12; row false
-    visible true zen false size 30; document 30,0 50x12; status 0,0 30x12; row false
+    visible true zen false size 28; document 0,0 51x12; status 52,0 28x12; row false
+    visible true zen false size 30; document 0,0 49x12; status 50,0 30x12; row false
+    visible true zen false size 30; document 31,0 49x12; status 0,0 30x12; row false
     visible true zen false size 6; document 0,6 80x6; status 0,0 80x6; row false
     visible true zen false size 8; document 0,8 80x4; status 0,0 80x8; row false
     visible true zen false size 8; document 0,0 80x4; status 0,4 80x8; row false
-    visible true zen false size 30; document 0,0 50x12; status 50,0 30x12; row false
+    visible true zen false size 30; document 0,0 49x12; status 50,0 30x12; row false
     visible false zen false size 30; document 0,0 80x12; status none; row true
-    visible true zen false size 30; document 0,0 50x12; status 50,0 30x12; row false
+    visible true zen false size 30; document 0,0 49x12; status 50,0 30x12; row false
     |}]
 ;;
 
@@ -55,14 +55,14 @@ let%expect_test "zen and resize restore requested placement without changing doc
   summary ~width:160 ~height:24 t;
   printf "document offset %d width %d\n" (Ui_state.prefs t).offset (Ui_state.prefs t).width;
   [%expect {|
-    visible true zen false size 28; document 28,0 132x24; status 0,0 28x24; row false
-    visible true zen false size 28; document 24,0 16x24; status 0,0 24x24; row false
+    visible true zen false size 28; document 29,0 131x24; status 0,0 28x24; row false
+    visible true zen false size 28; document 24,0 16x24; status 0,0 23x24; row false
     visible true zen false size 28; document 0,0 23x24; status none; row true
-    visible true zen false size 28; document 28,0 132x24; status 0,0 28x24; row false
+    visible true zen false size 28; document 29,0 131x24; status 0,0 28x24; row false
     visible true zen true size 28; document 0,0 160x24; status none; row true
     visible true zen true size 8; document 0,0 160x24; status none; row true
     visible true zen false size 8; document 0,8 160x16; status 0,0 160x8; row false
-    visible true zen false size 28; document 0,0 132x24; status 132,0 28x24; row false
+    visible true zen false size 28; document 0,0 131x24; status 132,0 28x24; row false
     document offset 10 width 100
     |}]
 ;;
@@ -75,15 +75,15 @@ let%expect_test "document and status compose in separate rectangles with one doc
   let above = run ~width:40 ~height:8 left (keys " vpk") in
   print_endline (Frame.to_string (Frame.render above ~width:40 ~height:8));
   [%expect {|
-    hello           NORMAL                  |
-    world           f.txt                   |
-                    1:1                     |
-                    Status right 28 (24 fit>|
+    hello            NORMAL                 |
+    world            f.txt                  |
+                     1:1                    |
+                     Status right 28 (23 fi>|
     cursor: 0,0 Block
     NORMAL                  hello           |
     f.txt                   world           |
     1:1                                     |
-    Status left 28 (24 fit)>                |
+    Status left 28 (23 fit>                 |
     cursor: 24,0 Block
     NORMAL                                  |
     f.txt                                   |

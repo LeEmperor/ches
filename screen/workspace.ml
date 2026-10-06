@@ -57,6 +57,9 @@ let min_document_height = 1
 let min_status_width = 8
 let min_status_height = 3
 let min_minor_width = 16
+let gap = 1
+let min_band_height = 3
+let preferred_band_height = 10
 
 let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
   let allocation =
@@ -68,7 +71,7 @@ let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
   let fits =
     match prefs.split.axis with
     | Horizontal ->
-      allocation.width >= min_document_width + min_status_width
+      allocation.width >= min_document_width + gap + min_status_width
       && allocation.height >= Int.max min_document_height min_status_height
     | Vertical ->
       allocation.width >= Int.max min_document_width min_status_width
@@ -83,18 +86,20 @@ let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
     }
   else (
     let horizontal = Split.Axis.equal prefs.split.axis Horizontal in
-    let available, status_min, document_min =
+    (* Side-by-side tiles are separated by a backdrop gap; stacked frames already are
+       by their own border rows. *)
+    let available, status_min, document_min, gap =
       if horizontal
-      then allocation.width, min_status_width, min_document_width
-      else allocation.height, min_status_height, min_document_height
+      then allocation.width - gap, min_status_width, min_document_width, gap
+      else allocation.height, min_status_height, min_document_height, 0
     in
     let status_size =
       Int.clamp_exn prefs.split.status_size ~min:status_min ~max:(available - document_min)
     in
     let document_size = available - status_size in
     let status_first = Pane_id.equal prefs.split.first Status in
-    let document_start = if status_first then status_size else 0 in
-    let status_start = if status_first then 0 else document_size in
+    let document_start = if status_first then status_size + gap else 0 in
+    let status_start = if status_first then 0 else document_size + gap in
     let rect start size =
       if horizontal
       then { allocation with x = allocation.x + start; width = size }
@@ -119,23 +124,29 @@ let allocate ?(minors = []) prefs ~(allocation : Geometry.Rect.t) =
     | Some _, Horizontal -> min_status_height
     | None, _ -> 2
   in
-  let minors = List.take minors (allocation.width / min_minor_width) in
+  let minors = List.take minors ((allocation.width + gap) / (min_minor_width + gap)) in
   if List.is_empty minors || allocation.width < min_document_width
-     || allocation.height < minimum + 3
+     || allocation.height < minimum + min_band_height
   then original
   else (
-    let size = Int.min 6 (allocation.height - minimum) in
+    (* The band keeps the upper workspace at least two thirds of the height. *)
+    let size =
+      Int.min
+        (Int.min preferred_band_height (allocation.height - minimum))
+        (Int.max min_band_height (allocation.height / 3))
+    in
     let upper = { allocation with height = allocation.height - size } in
     let workspace = allocate_pair prefs ~allocation:upper in
     let count = List.length minors in
-    let width i = (allocation.width * (i + 1) / count) - (allocation.width * i / count) in
+    let shared = allocation.width - ((count - 1) * gap) in
+    let start i = (shared * i / count) + (i * gap) in
     let minors =
       List.mapi minors ~f:(fun i id ->
         { Pane.id = Minor id
         ; rect =
-            { Geometry.Rect.x = allocation.x + (allocation.width * i / count)
+            { Geometry.Rect.x = allocation.x + start i
             ; y = allocation.y + upper.height
-            ; width = width i
+            ; width = (shared * (i + 1) / count) - (shared * i / count)
             ; height = size
             }
         })

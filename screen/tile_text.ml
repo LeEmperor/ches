@@ -38,26 +38,7 @@ let wrap text ~width =
     List.rev (finish spans :: rows))
 ;;
 
-let capacity (rect : Geometry.Rect.t) = Int.max 0 (rect.height - 2)
-
-let footer ~notice ~pending ~default ~width =
-  match notice, pending with
-  | Some text, _ -> row Warning text ~width
-  | None, Some text -> row Pending ("Pending: " ^ text) ~width
-  | None, None -> row Status default ~width
-;;
-
 let fill ~(rect : Geometry.Rect.t) rows =
   List.init (Int.max 0 rect.height) ~f:(fun i ->
     Option.value (List.nth rows i) ~default:(row Status "" ~width:rect.width))
-;;
-
-let capture ~(rect : Geometry.Rect.t) ~header ~body ~footer =
-  let capacity = capacity rect in
-  fill
-    ~rect
-    ((row Title header ~width:rect.width
-      :: List.init capacity ~f:(fun i ->
-        Option.value (List.nth body i) ~default:(row Status "" ~width:rect.width)))
-     @ [ footer ])
 ;;

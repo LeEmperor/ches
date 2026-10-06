@@ -71,6 +71,15 @@ val cursor_owner : t -> width:int -> height:int -> Ches_tile.View_id.t option
 
 val problems_focused : t -> width:int -> height:int -> bool
 
+(** The shared shell layout of an allocated minor view. Rendering and the view's
+    content viewport (selection rows, scroll range, detail wrapping) both use it. *)
+val minor_layout
+  :  t
+  -> width:int
+  -> height:int
+  -> Ches_tile.View_id.t
+  -> Tile_shell.Layout.t option
+
 val problem_navigation
   :  t
   -> width:int

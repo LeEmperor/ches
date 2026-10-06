@@ -34,10 +34,11 @@ let%expect_test "focus, navigation, scrolling and rejection never edit or execut
   let t = create () |> fun t -> run t "iX<Esc> vo" in
   assert (focused t && is_selected t 0);
   assert (Option.is_none (Frame.render t ~width:80 ~height:16).cursor);
+  (* The framed band at this size leaves three content rows; half a page is one. *)
   let t = run t "jj<C-d>" in
-  assert (is_selected t 4);
+  assert (is_selected t 3);
   let t = run t "G" in
-  assert (is_selected t 9 && (Ui_state.problem_navigation t ~width:80 ~height:16).top = 6);
+  assert (is_selected t 9 && (Ui_state.problem_navigation t ~width:80 ~height:16).top = 7);
   let t = run t "ggk<C-u>" in
   assert (is_selected t 0);
   let before = editor t in

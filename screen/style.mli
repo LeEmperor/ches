@@ -47,10 +47,12 @@ type t =
   | Gutter
   | Gutter_cursor_line
   | Border
+  | Border_focused (** The frame of the focused supporting tile. *)
   | Title (** Text set into the top border, such as the filename. *)
   | Title_special (** Escape forms and cut markers there. *)
   | Status (** The status line's background and plain fields. *)
   | Status_special (** Escape forms in the filename and messages. *)
+  | Hint (** Secondary text set into a frame, such as key hints. *)
   | Mode of Ches_core.Mode.t (** The mode badge. *)
   | Dirty
   | Pending
