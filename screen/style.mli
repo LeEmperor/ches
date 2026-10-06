@@ -55,6 +55,7 @@ type t =
   | Info
   | Warning
   | Error
+  | Stale (** A diagnostic row that is behind the text or from a stopped checker. *)
   | Smear (** The foreground-only animated cursor overlay. *)
 [@@deriving sexp_of, equal]
 

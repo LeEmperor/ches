@@ -26,6 +26,7 @@ module Input = struct
     | Paste_end
     | Animation_tick of Time_ns.t
     | Resize
+    | Source of Ches_error.Source_event.t
   [@@deriving sexp_of]
 end
 
@@ -49,6 +50,9 @@ type t =
   ; animation : Animation.t
   ; animation_time : Time_ns.t option
   ; exited : bool
+  ; held : ((string * string) * Ches_error.Error.update * Text_buffer.t) list
+  (** Diagnostic snapshots that arrived during Insert, newest per (source, resource),
+      in arrival order, with the text at arrival; applied when Insert ends. *)
   }
 
 let document_id = View_id.of_string "document"
@@ -90,6 +94,7 @@ let create
   ; animation = Animation.create ~enabled:smear_enabled
   ; animation_time = None
   ; exited = false
+  ; held = []
   }
 ;;
 
@@ -108,7 +113,7 @@ let scroll t = t.scroll
 
 let message t =
   let feedback = Controller.feedback t.controller in
-  let count = List.length (Ches_error.Error.problems feedback) in
+  let count = Problems.count feedback in
   let presented = Ches_error.Error.presented_problem feedback in
   let notification = Ches_error.Error.notification feedback in
   match presented, notification with
@@ -213,9 +218,10 @@ let minor_width t ~width ~height id =
 ;;
 
 let path t = Editor.path (Controller.editor t.controller)
+let document t = Problems_tile.document t.problems (Controller.editor t.controller)
 
 let fitted_problems t ~width ~height =
-  Problems_tile.fit t.problems (Controller.feedback t.controller) ~path:(path t)
+  Problems_tile.fit t.problems (Controller.feedback t.controller) ~document:(document t)
     ~rows:(minor_rows t ~width ~height Problems_tile.id)
     ~width:(minor_width t ~width ~height Problems_tile.id)
 ;;
@@ -225,7 +231,7 @@ let problem_navigation t ~width ~height =
 ;;
 
 let selected_problem t ~width ~height =
-  Problems_tile.selected t.problems (Controller.feedback t.controller) ~path:(path t)
+  Problems_tile.selected t.problems (Controller.feedback t.controller) ~document:(document t)
     ~rows:(minor_rows t ~width ~height Problems_tile.id)
 ;;
 
@@ -804,6 +810,49 @@ let refit t ~width ~height =
   }
 ;;
 
+let inserting t = Mode.equal (Editor.mode (Controller.editor t.controller)) Insert
+
+(* Diagnostic lists wait while Insert lasts (Neovim's [update_in_insert = false]); a
+   checker starting or stopping is an event and applies at once. The revision is
+   stamped on arrival, so a held unversioned list is behind the edits made since. *)
+(* A list for the open document is matched against the text it arrived with. *)
+let apply_source t ~width ~height update ~text =
+  let t =
+    match (update : Ches_error.Error.update) with
+    | Diagnostics_received { source; resource; _ }
+      when [%equal: string option] (path t) (Some resource) ->
+      { t with problems = Problems_tile.applied t.problems ~source ~text }
+    | _ -> t
+  in
+  update_feedback t ~width ~height update
+;;
+
+let receive t ~width ~height (event : Ches_error.Source_event.t) =
+  let editor = Controller.editor t.controller in
+  let update =
+    Ches_error.Source_event.to_update event ~current_revision:(Editor.revision editor)
+  in
+  let text = Editor.text editor in
+  match event with
+  | Diagnostics { source; resource; _ } when inserting t ->
+    let key = source, resource in
+    { t with
+      held =
+        List.filter t.held ~f:(fun (held, _, _) ->
+          not ([%equal: string * string] held key))
+        @ [ key, update, text ]
+    }
+  | Diagnostics _ | Started _ | Stopped _ -> apply_source t ~width ~height update ~text
+;;
+
+let release_held t ~width ~height =
+  if List.is_empty t.held || inserting t
+  then t
+  else
+    List.fold t.held ~init:{ t with held = [] } ~f:(fun t (_, update, text) ->
+      apply_source t ~width ~height update ~text)
+;;
+
 let rec apply t ~width ~height (input : Input.t) =
   if t.exited then t, Controller.Status.Exit else apply_running t ~width ~height input
 
@@ -814,6 +863,7 @@ and apply_running t ~width ~height (input : Input.t) =
     | _ -> refit t ~width ~height in
   match input with
   | Resize -> t, Running
+  | Source event -> receive t ~width ~height event, Running
   | Animation_tick now ->
     let dt =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
@@ -844,8 +894,9 @@ and apply_running t ~width ~height (input : Input.t) =
          | host, `Reject (owner, text) -> pane_notice { t with host } ~source:owner text, Running)
       | Key key when Host.pasting t.host -> { t with host = Host.paste_key t.host key }, Running
       | Key key -> route ~width ~height t key
-      | Animation_tick _ | Resize -> assert false
+      | Animation_tick _ | Resize | Source _ -> assert false
     in
+    let t = release_held t ~width ~height in
     let t = refit t ~width ~height in
     let after = cursor_position t ~width ~height in
     let was_active = Animation.active t.animation in

@@ -25,7 +25,7 @@ let selected t = (Ui_state.problem_navigation t ~width:80 ~height:16).selected
 let feedback t = Controller.feedback (Ui_state.controller t)
 let editor t = Controller.editor (Ui_state.controller t)
 let update t u = Ui_state.update_feedback t ~width:80 ~height:16 u
-let is_selected t i = Option.exists (selected t) ~f:(Feedback.Identity.equal (id i))
+let is_selected t i = Option.exists (selected t) ~f:(Problems.Key.equal (Problem (id i)))
 let notice t text = Option.exists (Ui_state.capture_notice t) ~f:(fun s ->
   String.is_substring s ~substring:text)
 ;;

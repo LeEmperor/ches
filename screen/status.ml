@@ -35,9 +35,7 @@ let fields ui : Status_field.t list =
           (match kind with
            | Error -> 1
            | Info | Warning ->
-             if List.is_empty
-                  (Ches_error.Error.problems
-                     (Controller.feedback (Ui_state.controller ui)))
+             if Problems.count (Controller.feedback (Ui_state.controller ui)) = 0
              then 6
              else 1)
         ~fit:Cut_right

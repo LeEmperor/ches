@@ -41,6 +41,7 @@ let report_selected t =
 
 let problem_selected t =
   (Ui_state.problem_navigation t ~width ~height).selected
+  |> Option.bind ~f:Problems.Key.identity
   |> Option.value_map ~default:"none" ~f:(fun (i : Feedback.Identity.t) -> i.source)
 ;;
 

@@ -11,12 +11,26 @@ let spec = Ches_tile.Spec.read_only_text id ~title:"Problems"
 
 type t =
   { current_document : bool
-  ; selection : Feedback.Identity.t Selection.t
-  ; details : Text_view.t option (** The selected problem's description, while open. *)
+  ; selection : Problems.Key.t Selection.t
+  ; details : Text_view.t option (** The selected row's description, while open. *)
+  ; anchor_texts : (Text_buffer.t[@sexp.opaque]) String.Map.t
+  (** Per source, the open document's text when its list for it was applied. *)
   }
 [@@deriving sexp_of]
 
-let empty = { current_document = false; selection = Selection.empty; details = None }
+let empty =
+  { current_document = false
+  ; selection = Selection.empty
+  ; details = None
+  ; anchor_texts = String.Map.empty
+  }
+;;
+
+let applied t ~source ~text =
+  { t with anchor_texts = Map.set t.anchor_texts ~key:source ~data:text }
+;;
+
+let document t editor = Problems.Document.of_editor editor ~anchor_text:(Map.find t.anchor_texts)
 let current_document t = t.current_document
 let toggle_filter t = { t with current_document = not t.current_document }
 let selection t = t.selection
@@ -24,23 +38,23 @@ let details t = Option.is_some t.details
 let detail_top t = Option.value_map t.details ~default:0 ~f:Text_view.top
 let text_view t = t.details
 
-let entries t feedback ~path =
-  Problems.entries feedback ~current_document:t.current_document ~path
+let entries t feedback ~document =
+  Problems.entries feedback ~current_document:t.current_document ~document
 ;;
 
-let keys t feedback ~path =
-  List.map (entries t feedback ~path) ~f:(fun (p : Feedback.Problem.t) -> p.identity)
+let keys t feedback ~document =
+  List.map (entries t feedback ~document) ~f:(fun (r : Problems.Row.t) -> r.key)
 ;;
 
-let fit t feedback ~path ~rows ~width =
-  let entries = entries t feedback ~path in
+let fit t feedback ~document ~rows ~width =
+  let entries = entries t feedback ~document in
   let selection =
     Selection.fit t.selection
-      (List.map entries ~f:(fun (p : Feedback.Problem.t) -> p.identity))
-      ~equal:Feedback.Identity.equal ~rows
+      (List.map entries ~f:(fun (r : Problems.Row.t) -> r.key))
+      ~equal:Problems.Key.equal ~rows
   in
   let changed =
-    not ([%equal: Feedback.Identity.t option] selection.selected t.selection.selected)
+    not ([%equal: Problems.Key.t option] selection.selected t.selection.selected)
   in
   let details =
     match t.details, List.nth entries selection.index with
@@ -52,9 +66,9 @@ let fit t feedback ~path ~rows ~width =
   { t with selection; details }
 ;;
 
-let selected t feedback ~path ~rows =
-  List.nth (entries t feedback ~path)
-    (Selection.fit t.selection (keys t feedback ~path) ~equal:Feedback.Identity.equal ~rows)
+let selected t feedback ~document ~rows =
+  List.nth (entries t feedback ~document)
+    (Selection.fit t.selection (keys t feedback ~document) ~equal:Problems.Key.equal ~rows)
       .index
 ;;
 
@@ -108,8 +122,9 @@ let perform t controller ~rows ~width action : Outcome.t =
   let feedback = Controller.feedback controller in
   let editor = Controller.editor controller in
   let path = Editor.path editor in
-  let t = fit t feedback ~path ~rows ~width in
-  let selected = List.nth (entries t feedback ~path) t.selection.index in
+  let document = document t editor in
+  let t = fit t feedback ~document ~rows ~width in
+  let selected = List.nth (entries t feedback ~document) t.selection.index in
   let outcome ?notice ?effect ?(return = false) ?(controller = controller) tile =
     { Outcome.tile; controller; notice; effect; return }
   in
@@ -127,7 +142,7 @@ let perform t controller ~rows ~width action : Outcome.t =
     outcome
       { t with
         selection =
-          Selection.move t.selection (keys t feedback ~path) ~equal:Feedback.Identity.equal
+          Selection.move t.selection (keys t feedback ~document) ~equal:Problems.Key.equal
             ~rows motion
       ; details = None
       }
@@ -136,7 +151,10 @@ let perform t controller ~rows ~width action : Outcome.t =
     outcome t ~effect:(Text_view.copy_item (Problems.description problem))
   | Inspect, Some problem ->
     outcome
-      ~controller:(Controller.update_feedback controller (Inspect_identity problem.identity))
+      ~controller:
+        (match problem.kind with
+         | Problem p -> Controller.update_feedback controller (Inspect_identity p.identity)
+         | Finding _ -> controller)
       { t with
         details =
           (match t.details with
@@ -144,12 +162,14 @@ let perform t controller ~rows ~width action : Outcome.t =
            | None ->
              Some (Text_view.create ~cell_width:Cell_map.width (Problems.description problem)))
       }
-  | Acknowledge, Some problem ->
+  | Acknowledge, Some { kind = Finding _; _ } ->
+    outcome t ~notice:(`Show "Diagnostics are not acknowledged")
+  | Acknowledge, Some { kind = Problem problem; _ } ->
     outcome t
       ~controller:(Controller.update_feedback controller (Acknowledge_identity problem.identity))
       ~notice:(`Show "Acknowledged; problem remains active")
   | Jump, Some problem ->
-    if not (Option.value_map path ~default:false ~f:(String.equal problem.identity.resource))
+    if not (Option.value_map path ~default:false ~f:(String.equal problem.resource))
     then post "Cross-file jump unavailable; current document kept"
     else (
       match problem.location with

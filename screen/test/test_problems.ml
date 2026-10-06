@@ -13,7 +13,7 @@ let rows feedback ?(current_document = false) ?(path = Some "a") ?(width = 60) ?
   let layout =
     Tile_shell.layout Tile_shell.Policy.minor { Geometry.Rect.x = 0; y = 0; width; height }
   in
-  Problems.render feedback ~current_document ~path ~width:layout.content.width
+  Problems.render feedback ~current_document ~document:(Problems.Document.of_path path) ~width:layout.content.width
     ~rows:layout.content.height
   |> Tile_shell.render layout ~focused:false
 ;;

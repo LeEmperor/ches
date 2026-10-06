@@ -25,10 +25,14 @@ let command =
          Enter jumps to a supported current-file location; Escape cancels/back/returns.\n\
          Space v m toggles notification history; Space v M focuses it (X clears history).\n\
          --demo-problems seeds eight labelled, jumpable synthetic problems without editing PATH.\n\
-         --demo-report installs a static report: Space v d shows it, Space v D focuses it.")
+         --demo-report installs a static report: Space v d shows it, Space v D focuses it.\n\
+         --demo-diagnostics seeds static synthetic checker findings (two sources, another\n\
+         file, one stopped source) to review the problems view; edits leave them dimmed.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)
      and demo_problems = flag "--demo-problems" no_arg
        ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"
+     and demo_diagnostics = flag "--demo-diagnostics" no_arg
+       ~doc:" Seed static synthetic diagnostic findings for manual problems-view review"
      and demo_report = flag "--demo-report" no_arg
        ~doc:" Install a static, error-free report view for manual tile testing" in
      fun () ->
@@ -48,6 +52,8 @@ let command =
           | Ok controller ->
             let controller = if demo_problems
               then Ches_app.Demo_problems.install controller else controller in
+            let controller = if demo_diagnostics
+              then Ches_app.Demo_diagnostics.install controller else controller in
            let report =
              Option.some_if demo_report Ches_screen.Report_tile.demo in
            (match%bind Ches_ui.Editor_view.run ?report controller with

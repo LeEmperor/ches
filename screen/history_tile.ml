@@ -34,6 +34,7 @@ let description ({ seq; event; count } : History.Entry.t) =
       match identity.kind with
       | Save -> "save"
       | Reload -> "reload"
+      | Checker -> "checker"
     in
     sprintf "[%s %s] %s" identity.source kind identity.resource
   in

@@ -1330,6 +1330,238 @@ views. Measure input responsiveness under bursts and report the method/results.
 Human tests assess freshness indicators and whether rapidly updating lists distract.
 No general plugin/subscription framework is required.
 
+#### Phase 9 owner decisions (2026-10-06)
+
+**Status (2026-10-06): designed, not implemented.** Where these decisions differ from the
+scope and work items above, these decisions take precedence. The owner made the decisions
+marked *owner*. Items marked *proposed, accepted* were suggested during the design review
+and accepted by the owner without further discussion. Implementers may question them,
+but must not quietly change them.
+
+The model the owner uses is Neovim's `vim.diagnostic` plus Trouble.nvim: findings
+sit in a list until they are fixed. For small visible behaviours the scope doesn't
+settle, follow Neovim/Trouble defaults and note any difference from this document.
+
+**Diagnostics are standing state, not events (owner).** A save or reload failure is
+an *event*. Something happened that the owner must notice, so it takes attention and
+stays in the status line until acknowledged. A checker finding is *standing state*. It
+is true until the code changes, and the owner does not dismiss it.
+
+- Diagnostics never take attention and are never acknowledged. They change only the
+  status problem count and the problems view. The work item above that asks for
+  identity reconciliation "for selection and acknowledgement" therefore covers
+  selection only.
+- Save and reload failures keep their current attention/acknowledge behaviour.
+- **Reason:** the owner never acknowledges findings in Trouble. A half-typed line
+  makes checkers report syntax errors, so attention-taking diagnostics would demand
+  repeated Escape presses.
+
+**Replacement and identity.**
+
+- Each (source, resource) pair has one diagnostic collection. A new snapshot replaces
+  only that collection. An empty snapshot clears it. Other sources' findings on the same
+  file are untouched.
+- *Owner:* in the problems view, the selected row stays on the same finding across a
+  refresh if that finding still exists. Otherwise the selection moves to the next row,
+  or to the previous row if it was last.
+- *Proposed, accepted:* "next row" means the same index in the new list, clamped to
+  the last row. This handles several findings vanishing at once without more state.
+  An empty list selects nothing and shows the view's empty state.
+- *Owner idea, refined:* the owner proposed content-based identity (for example a
+  hash of the flagged line) rather than line numbers, so a finding that moves from
+  line 12 to 13 after an insertion above it still matches.
+  - *Proposed, accepted:* the match key is source, severity, message, and the text of
+    the flagged line. No hash is needed.
+  - Identical duplicates pair up in order.
+  - Editing the flagged line itself breaks the match, and the fallback above applies.
+  - Matching runs once per snapshot, not per keystroke, so its cost is negligible.
+  - Matching is a problems-adapter concern (selection is a view concern, and line text
+    comes from the document); it is not stored in the feedback layer.
+
+**Freshness (owner).** Both of these apply:
+
+1. **Hold during Insert.** While the document is in Insert mode, the displayed
+   diagnostic list does not change. Snapshots that arrive are applied when Insert ends.
+   This is Neovim's `update_in_insert = false` default. The newest snapshot is still
+   kept, so nothing is lost.
+2. **Dim while behind.** Findings stay visible but dimmed whenever their snapshot is
+   older than the current text, until the checker catches up. Neovim does not dim; the
+   owner added this. "Typing alone does not prove diagnostics resolved" holds: dimmed
+   findings stay listed.
+
+Details:
+
+- The existing `Editor.revision` (`core/editor.mli`, which increments on every text change
+  including undo/redo) is the document version.
+  - A snapshot tagged with a revision older than the stored one for the same
+    (source, resource) is dropped.
+  - A snapshot with the same revision replaces the stored one (*proposed, accepted*).
+  - A snapshot is "behind" when its revision is less than the current revision.
+- *Proposed, accepted:* an unversioned source's snapshot records the editor revision
+  current when it arrived. It dims from the first edit after that until the next
+  snapshot arrives.
+- *Proposed, accepted:* findings for files that are not the open document are never
+  dimmed by typing; only the open document has revisions.
+
+**Source lifecycle (owner).**
+
+- A checker crash or stop is an *event*. It reports a problem like a save failure,
+  with attention and acknowledgement, under a new identity kind for checker/source
+  failures.
+- The stopped checker's last findings are **kept, dimmed**, not cleared. This
+  deliberately differs from Neovim, which clears a client's diagnostics on exit:
+  clearing drops the count to 0 and reads as "no problems" when nothing is checking.
+- The problems view **marks a stopped source's findings** so they can be told apart
+  from merely-behind dimmed findings once the crash is acknowledged. The owner's reason:
+  after acknowledgement, dimming alone looks the same for "catching up" and "never
+  catching up".
+- *Proposed, accepted:*
+  - A successful restart resolves the crash problem, as a successful save resolves a
+    save failure.
+  - The kept findings stay dimmed until the restarted source's first snapshot replaces
+    them.
+  - A repeated crash renews attention on the existing problem (existing `Report`
+    behaviour) rather than adding a second one.
+  - The marker's exact text or glyph is chosen during implementation and needs human
+    review.
+  - Automatic restart policy belongs to phase 10, not phase 9.
+- *Proposed, accepted:* history (phase 8) records crash, restart/resolve, and
+  repeated-crash events through the existing `Report`/`Resolve` path. Diagnostic
+  snapshots are not recorded, because they change constantly and would evict the
+  200-entry history.
+
+**Bursts (delegated mechanism, proposed, accepted).**
+
+- Keep only the newest unprocessed snapshot per (source, resource). Older ones are
+  dropped before any work is done on them.
+- Process snapshots outside the keystroke transition.
+- A hidden problems view skips drawing only and never pauses or unsubscribes the source.
+- The owner judges the result through the required typing-latency measurement under
+  a synthetic burst (report the method and numbers), not through the mechanism.
+
+**Async placement (owner).**
+
+- Asynchronous checker code lives in a **new library** (for example `ches_source`) that
+  depends on Async and owns processes, transport, and later the language-server session.
+  `ches_ui` wires it into the `Ui_state` state machine.
+- `ches_core`, `ches_input`, `ches_app`, and `ches_error` stay free of Async, per their
+  `dune` contracts. Making `ches_app` asynchronous was rejected: it would break
+  `Controller.handle_input`'s guarantee that effects finish before it returns, and tests
+  would need a scheduler.
+- **Reason:**
+  - The boundary should be plain calls and data. The async library handles its own
+    timing, and the synchronous UI stays unaware of it.
+  - Phase 10's language-server client needs a home that is not the terminal frontend.
+- This works because Async is single-threaded and cooperative. Bonsai_term already runs
+  on it, so each `Ui_state` transition is an uninterruptible Async turn, and source code
+  runs between turns.
+- The implementation must respect three contact points:
+  - **Calls cross as data.** Synchronous code cannot wait on a `Deferred`. Requests to
+    the library are returned as data that the shell sends, following the existing
+    `Ui_state.take_clipboard` → `Osc52` pattern. Results are injected as `Ui_state`
+    inputs, following the existing `Animation_tick` pattern.
+  - **Turns are shared.** A long turn on either side delays the other, hence bounded
+    work and coalescing.
+  - **Time is data.** The synchronous side compares revisions and never reads clocks.
+
+**Boundary messages (owner direction, proposed shape accepted).**
+
+- The owner's direction: the checker is given the workspace (for OCaml, the dune
+  project root) and reports errors and warnings across files, Trouble-style.
+- Ches → library:
+  - *start* a source for a workspace root.
+  - *document changed*: the open document's text and revision. Only unsaved text
+    is sent; a language server reads other files from disk.
+  - *stop* on quit.
+- Library → Ches:
+  - *diagnostics*: source, resource, optional revision, and findings, each with
+    severity, message, and optional location. `Error.Severity` already has
+    `Info | Warning | Error`.
+  - *source started*.
+  - *source stopped/crashed* with a reason.
+- The phase 9 synthetic producer uses these same messages, with scripted delays,
+  bursts, out-of-order revisions, and crashes, so phase 10 can swap in a real server
+  without changing the Ches side.
+
+**Presentation.**
+
+- *Owner:* diagnostics go through the existing problems view for now. If the
+  adapter's constructions stay generic, they may later move to a dedicated
+  language-server view. The view, not the feedback layer, owns that choice; a second
+  view would be a second adapter over the same collections.
+- *Owner:* sort by file, as Trouble does. The exact grouping is decided during the
+  view work, with human review.
+
+**Implementation plan (proposed; implement and verify step by step).**
+
+1. **Pure diagnostic store in `ches_error`.** No Async and no visible change.
+   - Collections per (source, resource) with a revision basis: reported revision, or
+     unversioned with the editor revision at arrival.
+   - New `update` cases for diagnostics received, source started, and source stopped
+     (with reason). Stop reports the crash problem through `Report` with a new
+     `Identity.kind`, and start resolves it. Update the `match` on `Identity.kind` in
+     `app/controller.ml`.
+   - Queries: all collections, whether a source is stopped, and whether a collection is
+     behind a given revision.
+   - Expect tests (beside the other feedback tests in `screen/test/`): two sources on
+     one file, empty replacement, out-of-order and equal revisions, unversioned
+     arrival, stop keeping findings and raising a problem, restart resolving it, and a
+     repeated crash renewing attention.
+2. **Problems adapter and `Ui_state`.**
+   - Project collections into rows, sorted by file.
+   - Dimming and the stopped-source marker.
+   - Selection matching and fallback.
+   - Hold during Insert.
+   - Include diagnostics in the status count without attention.
+   - Needs human review.
+3. **Async source library and synthetic producer.**
+   - The new library, the `ches_ui` wiring, and newest-only coalescing.
+   - The acceptance scenarios above, including hidden views.
+   - The burst typing-latency measurement.
+4. **Docs.** Record results here and update the README keys/behaviour.
+
+#### Phase 9 step 1 implementation (2026-10-06)
+
+**Status:** step 1 implemented and software-verified; steps 2–4 not started.
+
+- `Error.Diagnostics` (in `error/error.ml[i]`), read through `Error.diagnostics`:
+  - `Collection`: source, resource, `Basis` (`Reported r` or `Arrived_at r`), findings
+    (`severity`, `message`, optional `Problem.Location`), and `session_ended`.
+  - Queries: `collections` (non-empty only, sorted by resource then source),
+    `stopped ~source`, and `Collection.behind ~revision`.
+- New `Error.update` cases:
+  - `Diagnostics_received { source; resource; revision; current_revision; findings }`.
+    The caller passes the editor revision, so `ches_error` reads no editor state
+    ("time is data").
+  - `Source_started { source; root }` and `Source_stopped { source; root; reason }`.
+- New `Identity.kind`, `Checker`. A crash problem's identity is
+  `{ source; kind = Checker; resource = workspace root }`, with text
+  `Checker stopped: <reason>`. Stop and start go through the existing `Report`/`Resolve`,
+  so attention, renewal on a repeat crash, and history behave like a save failure.
+- Choices not spelled out above:
+  - An emptied collection is kept internally, though not returned. Its revision
+    still rejects a late, older snapshot.
+  - The obsolete check compares only two reported revisions.
+  - `session_ended` is set on all of a source's collections when it stops, and on
+    any snapshot that arrives while it is stopped. The next snapshot for that
+    collection after a restart clears it.
+  - Step 2 should dim a collection when it is `behind` or `session_ended`, and mark
+    it while `stopped`.
+- Diagnostics are not in `problems`, take no attention, and add no history entries.
+  The step 2 view and status count read `Error.diagnostics`.
+- Tests: `screen/test/test_diagnostics.ml` (4 expect tests):
+  - Two sources on one file, plus another file; replacement and empty clearing;
+    no problems, notification, or history from diagnostics.
+  - Out-of-order and equal reported revisions, including a late snapshot after an
+    empty clear, and `behind`.
+  - Unversioned arrival revisions.
+  - Stop keeping findings and raising an attention problem; a late snapshot from the
+    dead session; a repeated crash renewing attention (history `×2`); restart
+    resolving the problem while findings stay `session_ended` until a fresh
+    snapshot.
+- Verified: `dune build`, `dune runtest` (all pass), and `git diff --check`. The smoke
+  script was not run, because nothing visible changed.
+
 ### Phase 10 — First language-server diagnostic integration
 
 **Depends on:** phase 9; phase 7 for location navigation.
@@ -1345,6 +1577,14 @@ server failure distinct from source-code diagnostics. Map severity, resource,
 range, source, and version context into the shared model. Handle protocol position
 encoding explicitly when converting locations to editor positions. Make server
 restart and unsupported/missing configuration understandable.
+
+Phase 9's owner decisions (2026-10-06) apply here as well:
+
+- The client lives in the asynchronous source library.
+- It uses phase 9's boundary messages.
+- A crash keeps findings dimmed and marked.
+- This phase still has to decide automatic restart policy.
+
 The language-server client reports to the diagnostic/feedback layer, never directly
 to shell, focus, or selection state. The problems adapter owns jump/acknowledgement
 actions; shared tile infrastructure has no LSP or file-location dependency. Before

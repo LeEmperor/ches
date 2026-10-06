@@ -23,33 +23,44 @@ val current_document : t -> bool
 val toggle_filter : t -> t
 
 (** The stored selection; use {!fit} first for one that matches current feedback. *)
-val selection : t -> Feedback.Identity.t Ches_tile.Navigation.Selection.t
+val selection : t -> Problems.Key.t Ches_tile.Navigation.Selection.t
 
-(** Whether the selected problem's details are open, and their first visible row. *)
+(** Whether the selected row's details are open, and their first visible row. *)
 val details : t -> bool
 
 val detail_top : t -> int
 
-(** The open details: the selected problem's description as read-only text. *)
+(** The open details: the selected row's description as read-only text. *)
 val text_view : t -> Ches_tile.Text_view.t option
 
-val entries : t -> Feedback.t -> path:string option -> Feedback.Problem.t list
+(** Record that [source]'s list for the open document was applied against [text]. *)
+val applied : t -> source:string -> text:Ches_core.Text_buffer.t -> t
+
+(** The open document as this view matches findings in it. *)
+val document : t -> Ches_core.Editor.t -> Problems.Document.t
+
+val entries : t -> Feedback.t -> document:Problems.Document.t -> Problems.Row.t list
 
 (** Reconcile selection with current feedback in a [width] by [rows] content viewport.
-    When the selected identity changes, details close. When its description changes,
+    When the selected key changes, details close. When its description changes,
     open details take the new text through {!Ches_tile.Text_view.update}, which ends
     any Visual selection rather than retargeting it. *)
-val fit : t -> Feedback.t -> path:string option -> rows:int -> width:int -> t
+val fit : t -> Feedback.t -> document:Problems.Document.t -> rows:int -> width:int -> t
 
-val selected : t -> Feedback.t -> path:string option -> rows:int -> Feedback.Problem.t option
+val selected
+  :  t
+  -> Feedback.t
+  -> document:Problems.Document.t
+  -> rows:int
+  -> Problems.Row.t option
 
 (** Close details, as when the view stops being focused. *)
 val leave : t -> t
 
 type action [@@deriving sexp_of]
 
-(** [e] inspects the selected identity and toggles its details, [a] acknowledges it,
-    and Enter jumps to its location in the current document, in the list or details.
+(** [e] toggles the selected row's details (inspecting a problem), [a] acknowledges a
+    problem (findings are never acknowledged), and Enter jumps to its location in the current document, in the list or details.
     Otherwise, in the list, shared list motions ([j/k], [gg/G], [Ctrl-d/u]) select,
     [yy]/[Y] copy the selected problem's description, and edit keys are rejected; in
     details, keys go to the read-only text ({!Ches_tile.Text_view}: movement, Visual

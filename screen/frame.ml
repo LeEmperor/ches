@@ -106,7 +106,7 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
             ?notice ?pending
             (Controller.feedback (Ui_state.controller ui))
             ~current_document:(Problems_tile.current_document tile)
-            ~path:(Editor.path editor) ~width ~rows
+            ~document:(Problems_tile.document tile editor) ~width ~rows
         | _ when Ches_tile.View_id.equal id History_tile.id ->
           History_tile.render ~focused ?notice ?pending (Ui_state.history_tile ui)
             (Ches_error.Error.history (Controller.feedback (Ui_state.controller ui)))

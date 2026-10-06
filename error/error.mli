@@ -16,6 +16,8 @@ module Identity : sig
   type kind =
     | Save
     | Reload
+    | Checker
+    (** A diagnostic source stopped or crashed; [resource] is its workspace root. *)
   [@@deriving sexp_of, equal]
 
   type t =
@@ -113,6 +115,58 @@ module History : sig
   val dropped : t -> int
 end
 
+(** Diagnostic findings kept as standing state: one collection per (source, resource),
+    replaced whole by each new snapshot. They are not problems: they never take attention,
+    are never acknowledged, and are not recorded in {!History}. A source stopping is the
+    event that becomes a problem (kind [Checker]); its findings are kept, marked as from an
+    ended session, until the restarted source replaces them. *)
+module Diagnostics : sig
+  module Finding : sig
+    type t =
+      { severity : Severity.t
+      ; message : string
+      ; location : Problem.Location.t option
+      }
+    [@@deriving sexp_of, equal]
+  end
+
+  module Basis : sig
+    (** The document revision a collection describes: the one the source reported, or,
+        for an unversioned source, the editor revision current when it arrived. *)
+    type t =
+      | Reported of int
+      | Arrived_at of int
+    [@@deriving sexp_of, equal]
+
+    val revision : t -> int
+  end
+
+  module Collection : sig
+    type t =
+      { source : string
+      ; resource : string
+      ; basis : Basis.t
+      ; findings : Finding.t list (** Never empty when returned by {!collections}. *)
+      ; session_ended : bool
+      (** Computed by a source session that has since stopped; cleared by the next
+          snapshot for this collection. *)
+      }
+    [@@deriving sexp_of, equal]
+
+    (** The collection's basis revision is older than [revision]. Only meaningful for
+        the open document, the only resource with revisions. *)
+    val behind : t -> revision:int -> bool
+  end
+
+  type t [@@deriving sexp_of]
+
+  (** Non-empty collections, sorted by resource then source. *)
+  val collections : t -> Collection.t list
+
+  (** The source has stopped and not restarted. *)
+  val stopped : t -> source:string -> bool
+end
+
 type t [@@deriving sexp_of]
 
 type update =
@@ -128,6 +182,22 @@ type update =
   | Inspect_identity of Identity.t
   | Acknowledge_identity of Identity.t
   | Clear_history (** Empty {!history}; active problems and attention are unchanged. *)
+  | Diagnostics_received of
+      { source : string
+      ; resource : string
+      ; revision : int option (** As reported by the source; [None] if unversioned. *)
+      ; current_revision : int (** The editor's revision when the snapshot is applied. *)
+      ; findings : Diagnostics.Finding.t list
+      }
+  (** Replace the (source, resource) collection; an empty list clears it. A snapshot
+      reporting a revision older than the stored reported one is dropped; an equal one
+      replaces it. *)
+  | Source_started of { source : string; root : string }
+  (** Clear the source's stopped state and resolve its [Checker] problem. Its kept
+      findings stay [session_ended] until replaced. *)
+  | Source_stopped of { source : string; root : string; reason : string }
+  (** Mark the source stopped, keep its findings as [session_ended], and report a
+      [Checker] problem (renewing attention if already active). *)
 [@@deriving sexp_of]
 
 (** Records into {!history}: a [Notify] with [history = true]; every [Report]/[Failed]
@@ -144,3 +214,4 @@ val presented_problem : t -> Problem.t option
 val notification : t -> Notification.t option
 
 val history : t -> History.t
+val diagnostics : t -> Diagnostics.t

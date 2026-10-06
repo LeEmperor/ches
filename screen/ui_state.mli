@@ -35,6 +35,11 @@ module Input : sig
     | Animation_tick of Time_ns.t
      (** A timestamped frontend animation-clock pulse; never reaches the editor. *)
     | Resize (** Reconcile allocation/focus without interpreting editor input. *)
+    | Source of Ches_error.Source_event.t
+    (** A diagnostic source's message, stamped with the editor's current revision.
+        Diagnostic lists that arrive during Insert are held (newest per source and
+        resource) until Insert ends; started/stopped apply at once. Never reaches the
+        editor. *)
   [@@deriving sexp_of]
 end
 
@@ -93,9 +98,9 @@ val problem_navigation
   :  t
   -> width:int
   -> height:int
-  -> Ches_error.Error.Identity.t Ches_tile.Navigation.Selection.t
+  -> Problems.Key.t Ches_tile.Navigation.Selection.t
 
-val selected_problem : t -> width:int -> height:int -> Ches_error.Error.Problem.t option
+val selected_problem : t -> width:int -> height:int -> Problems.Row.t option
 val problem_details : t -> bool
 val problem_detail_top : t -> int
 

@@ -12,6 +12,7 @@ module Identity = struct
   type kind =
     | Save
     | Reload
+    | Checker
   [@@deriving sexp_of, equal]
 
   type t =
@@ -115,11 +116,107 @@ module History = struct
   let dropped t = t.dropped
 end
 
+module Diagnostics = struct
+  module Finding = struct
+    type t =
+      { severity : Severity.t
+      ; message : string
+      ; location : Problem.Location.t option
+      }
+    [@@deriving sexp_of, equal]
+  end
+
+  module Basis = struct
+    type t =
+      | Reported of int
+      | Arrived_at of int
+    [@@deriving sexp_of, equal]
+
+    let revision (Reported revision | Arrived_at revision) = revision
+  end
+
+  module Collection = struct
+    type t =
+      { source : string
+      ; resource : string
+      ; basis : Basis.t
+      ; findings : Finding.t list
+      ; session_ended : bool
+      }
+    [@@deriving sexp_of, equal]
+
+    let behind t ~revision = Basis.revision t.basis < revision
+  end
+
+  (* Keyed by resource, then source, so [collections] comes out sorted by file. Empty
+     collections are kept so their revision still rejects late, older snapshots. *)
+  type t =
+    { by_resource : Collection.t String.Map.t String.Map.t
+    ; stopped : String.Set.t
+    }
+  [@@deriving sexp_of]
+
+  let empty = { by_resource = String.Map.empty; stopped = String.Set.empty }
+
+  let collections t =
+    Map.data t.by_resource
+    |> List.concat_map ~f:Map.data
+    |> List.filter ~f:(fun (c : Collection.t) -> not (List.is_empty c.findings))
+  ;;
+
+  let stopped t ~source = Set.mem t.stopped source
+
+  let receive t ~source ~resource ~revision ~current_revision ~findings =
+    let stored = Option.bind (Map.find t.by_resource resource) ~f:(fun m -> Map.find m source) in
+    let obsolete =
+      match stored, revision with
+      | Some { basis = Reported stored; _ }, Some revision -> revision < stored
+      | _ -> false
+    in
+    if obsolete
+    then t
+    else (
+      let basis =
+        match revision with
+        | Some revision -> Basis.Reported revision
+        | None -> Arrived_at current_revision
+      in
+      let collection =
+        { Collection.source
+        ; resource
+        ; basis
+        ; findings
+        ; session_ended = stopped t ~source
+        }
+      in
+      { t with
+        by_resource =
+          Map.update t.by_resource resource ~f:(fun by_source ->
+            Map.set
+              (Option.value by_source ~default:String.Map.empty)
+              ~key:source
+              ~data:collection)
+      })
+  ;;
+
+  let start t ~source = { t with stopped = Set.remove t.stopped source }
+
+  let stop t ~source =
+    { stopped = Set.add t.stopped source
+    ; by_resource =
+        Map.map t.by_resource ~f:(fun by_source ->
+          Map.change by_source source ~f:(Option.map ~f:(fun c ->
+            { c with Collection.session_ended = true })))
+    }
+  ;;
+end
+
 type t =
   { problems : Problem.t list
   ; transient : Notification.t option
   ; details : Identity.t option
   ; history : History.t
+  ; diagnostics : Diagnostics.t
   }
 [@@deriving sexp_of]
 
@@ -134,11 +231,30 @@ type update =
   | Inspect_identity of Identity.t
   | Acknowledge_identity of Identity.t
   | Clear_history
+  | Diagnostics_received of
+      { source : string
+      ; resource : string
+      ; revision : int option
+      ; current_revision : int
+      ; findings : Diagnostics.Finding.t list
+      }
+  | Source_started of { source : string; root : string }
+  | Source_stopped of { source : string; root : string; reason : string }
 [@@deriving sexp_of]
 
-let empty = { problems = []; transient = None; details = None; history = History.empty }
+let empty =
+  { problems = []
+  ; transient = None
+  ; details = None
+  ; history = History.empty
+  ; diagnostics = Diagnostics.empty
+  }
+;;
+
 let problems t = t.problems
 let history t = t.history
+let diagnostics t = t.diagnostics
+let checker_identity ~source ~root = { Identity.source; kind = Checker; resource = root }
 let find t identity = List.find t.problems ~f:(fun p -> Identity.equal p.identity identity)
 
 (* First occurrence order is stable, including updates after acknowledgement. *)
@@ -151,7 +267,7 @@ let presented_problem t =
   | None -> List.find t.problems ~f:(fun p -> p.attention)
 ;;
 
-let apply t update =
+let rec apply t update =
   let update =
     match update with
     | Failed (identity, severity, text) -> Report (identity, severity, text, None)
@@ -173,6 +289,26 @@ let apply t update =
          else t.history)
     }
   | Clear_history -> { t with history = History.clear t.history }
+  | Diagnostics_received { source; resource; revision; current_revision; findings } ->
+    { t with
+      diagnostics =
+        Diagnostics.receive
+          t.diagnostics
+          ~source
+          ~resource
+          ~revision
+          ~current_revision
+          ~findings
+    }
+  | Source_started { source; root } ->
+    apply
+      { t with diagnostics = Diagnostics.start t.diagnostics ~source }
+      (Resolve (checker_identity ~source ~root))
+  | Source_stopped { source; root; reason } ->
+    apply
+      { t with diagnostics = Diagnostics.stop t.diagnostics ~source }
+      (Report
+         (checker_identity ~source ~root, Error, sprintf "Checker stopped: %s" reason, None))
   | Command_completed -> { t with transient = None; details = None }
   | Failed _ -> assert false
   | Report (identity, severity, text, location) ->
