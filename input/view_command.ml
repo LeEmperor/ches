@@ -42,6 +42,8 @@ type t =
   | Focus_problems
   | Toggle_demo_report
   | Focus_demo_report
+  | Toggle_history
+  | Focus_history
   | Toggle_zen
   | Reset
   | Scroll of

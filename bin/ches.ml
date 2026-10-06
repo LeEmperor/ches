@@ -23,6 +23,7 @@ let command =
          Space v b toggles the problems preview; Space v f filters workspace/current document;\n\
          Space v o focuses problems: j/k, gg/G, Ctrl-d/u navigate, e inspects, a acknowledges,\n\
          Enter jumps to a supported current-file location; Escape cancels/back/returns.\n\
+         Space v m toggles notification history; Space v M focuses it (X clears history).\n\
          --demo-problems seeds eight labelled, jumpable synthetic problems without editing PATH.\n\
          --demo-report installs a static report: Space v d shows it, Space v D focuses it.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)

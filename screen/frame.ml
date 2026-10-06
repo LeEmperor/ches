@@ -99,6 +99,10 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
             (Controller.feedback (Ui_state.controller ui))
             ~current_document:(Problems_tile.current_document tile)
             ~path:(Editor.path editor) ~width ~rows
+        | _ when Ches_tile.View_id.equal id History_tile.id ->
+          History_tile.render ~focused ?notice ?pending (Ui_state.history_tile ui)
+            (Ches_error.Error.history (Controller.feedback (Ui_state.controller ui)))
+            ~width ~rows
         | Some report when Ches_tile.View_id.equal id Report_tile.id ->
           Report_tile.render ~focused ?notice ?pending report ~width ~rows
         | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }

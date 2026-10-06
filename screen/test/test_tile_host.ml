@@ -212,10 +212,10 @@ let%expect_test "paste, cursor, zen, and compact ownership are shared rules" =
   [%expect {| Demo report unavailable; launch with --demo-report |}]
 ;;
 
-let%expect_test "two minor views stay bounded and disjoint in every allocation" =
+let%expect_test "three minor views stay bounded and disjoint in every allocation" =
   List.iter [ ""; " vt"; " vt vph"; " vt vpk"; " vt vpj" ] ~f:(fun position ->
-    let t = create () |> fun t -> run t (position ^ " vb vd vDGe") in
-    List.iter [ t; run t " vo" ] ~f:(fun t ->
+    let t = create () |> fun t -> run t (position ^ " vb vd vm vDGe") in
+    List.iter [ t; run t " vo"; run t " vMev$" ] ~f:(fun t ->
       List.iter (List.range 0 90 ~stride:3) ~f:(fun width ->
         List.iter (List.range 0 18) ~f:(fun height ->
           let w = Ui_state.workspace t ~width ~height in

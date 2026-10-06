@@ -29,7 +29,8 @@ let%expect_test "identity, recovery, renewed attention, and cycling retained det
     |> fun f ->
     Feedback.apply
       f
-      (Notify { source = "workspace"; scope = None; severity = Info; text = "layout" })
+      (Notify
+         { source = "workspace"; scope = None; severity = Info; text = "layout"; history = false })
     |> fun f ->
     Feedback.apply f Command_completed |> fun f -> Feedback.apply f Acknowledge
   in

@@ -5,8 +5,9 @@
     preferences, the scroll position, the shared {!Ches_tile.Host} (focus, capture, and a
     bracketed paste's owner), and the minor views' adapter states. Workspace requests and
     zen suppression are UI state, not editor state. This module is application assembly:
-    it wires the generic host to the problems adapter ({!Problems_tile}) and the static
-    demo report ({!Report_tile}); status remains non-focusable. *)
+    it wires the generic host to the problems adapter ({!Problems_tile}), the static
+    demo report ({!Report_tile}), and the notification history ({!History_tile});
+    status remains non-focusable. *)
 
 open! Core
 open Ches_input
@@ -62,6 +63,8 @@ val problems_current_document : t -> bool
 val problems_tile : t -> Problems_tile.t
 val report : t -> Report_tile.t option
 val report_visible : t -> bool
+val history_visible : t -> bool
+val history_tile : t -> History_tile.t
 
 (** The effective focus: a minor view only while it is allocated. *)
 val focused_view : t -> width:int -> height:int -> Ches_tile.View_id.t
@@ -149,7 +152,9 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     adapter performs its content actions. The problems bindings below are the
     problems adapter's; the demo report ([Space v d] shows/hides, [Space v D]
     focuses/returns) uses the same host with [j/k], [gg/G], [Ctrl-d/u], and [e]/Enter
-    for details.
+    for details. So does the notification history ([Space v m] shows/hides,
+    [Space v M] focuses/returns), where [X] also clears the history (never active
+    problems) through [Clear_history].
 
     Normal [Space v o] shows/focuses problems, or returns to the editor. Entry and
     return cancel pending editor input. Existing Normal prefixes/counts/search retain
@@ -169,7 +174,7 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
 
     {2 Read-only text in minor views}
 
-    Open details (problems and the demo report) are read-only text
+    Open details (problems, the demo report, and history) are read-only text
     ({!Ches_tile.Text_view}): a text cursor, which is then the terminal cursor (see
     {!text_cursor}), movement, [v]/[V] Visual selection, and [y]/[yy]/[Y] copies; in a
     list, [yy]/[Y] copy the selected item's whole text. Escape ends Visual before it
@@ -203,7 +208,9 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
 
     Status presentations query the controller's shared feedback. A dispatched editor
     command clears transient feedback; prefixes, ignored input, animation, and layout
-    actions do not. Layout feedback and keymap notices post new transient notifications.
+    actions do not. Layout feedback and keymap notices post new transient notifications;
+    only keymap notices are also kept in history, as are editor messages. A view's own
+    notices (rejected paste or edit, failed jump) are not.
     Active save/reload problems remain until matching recovery. Idle Normal Escape
     acknowledges the currently presented problem; cancellation and mode exits take
     precedence. [Space v e] cycles retained details without retrying or renewing

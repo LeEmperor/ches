@@ -28,6 +28,7 @@ module Notification = struct
     ; scope : string option
     ; severity : Severity.t
     ; text : string
+    ; history : bool
     }
   [@@deriving sexp_of, equal]
 end
@@ -47,10 +48,78 @@ module Problem = struct
   [@@deriving sexp_of, equal]
 end
 
+module History = struct
+  module Event = struct
+    type t =
+      | Notified of Notification.t
+      | Reported of
+          { identity : Identity.t
+          ; severity : Severity.t
+          ; text : string
+          ; location : Problem.Location.t option
+          ; again : bool
+          }
+      | Resolved of
+          { identity : Identity.t
+          ; severity : Severity.t
+          ; text : string
+          }
+    [@@deriving sexp_of, equal]
+
+    (* Repeats coalesce whether or not the identity was already active. *)
+    let same a b =
+      let plain = function
+        | Reported r -> Reported { r with again = false }
+        | (Notified _ | Resolved _) as event -> event
+      in
+      equal (plain a) (plain b)
+    ;;
+  end
+
+  module Entry = struct
+    type t =
+      { seq : int
+      ; event : Event.t
+      ; count : int
+      }
+    [@@deriving sexp_of, equal]
+  end
+
+  type t =
+    { newest_first : Entry.t list
+    ; length : int
+    ; next : int
+    ; dropped : int
+    }
+  [@@deriving sexp_of]
+
+  let capacity = 200
+  let empty = { newest_first = []; length = 0; next = 1; dropped = 0 }
+
+  let record t event =
+    match t.newest_first with
+    | newest :: rest when Event.same newest.event event ->
+      { t with newest_first = { newest with count = newest.count + 1 } :: rest }
+    | _ ->
+      let newest_first = { Entry.seq = t.next; event; count = 1 } :: t.newest_first in
+      let excess = Int.max 0 (t.length + 1 - capacity) in
+      { newest_first = List.take newest_first (t.length + 1 - excess)
+      ; length = t.length + 1 - excess
+      ; next = t.next + 1
+      ; dropped = t.dropped + excess
+      }
+  ;;
+
+  let clear t = { empty with next = t.next }
+  let entries t = List.rev t.newest_first
+  let dropped t = t.dropped
+end
+
 type t =
   { problems : Problem.t list
   ; transient : Notification.t option
   ; details : Identity.t option
+  ; history : History.t
   }
 [@@deriving sexp_of]
 
@@ -64,10 +133,13 @@ type update =
   | Inspect_next
   | Inspect_identity of Identity.t
   | Acknowledge_identity of Identity.t
+  | Clear_history
 [@@deriving sexp_of]
 
-let empty = { problems = []; transient = None; details = None }
+let empty = { problems = []; transient = None; details = None; history = History.empty }
 let problems t = t.problems
+let history t = t.history
+let find t identity = List.find t.problems ~f:(fun p -> Identity.equal p.identity identity)
 
 (* First occurrence order is stable, including updates after acknowledgement. *)
 let presented_problem t =
@@ -92,14 +164,20 @@ let apply t update =
   | Acknowledge_identity identity ->
     { t with problems = List.map t.problems ~f:(fun p ->
         if Identity.equal p.identity identity then { p with attention = false } else p) }
-  | Notify transient -> { t with transient = Some transient }
+  | Notify transient ->
+    { t with
+      transient = Some transient
+    ; history =
+        (if transient.history
+         then History.record t.history (Notified transient)
+         else t.history)
+    }
+  | Clear_history -> { t with history = History.clear t.history }
   | Command_completed -> { t with transient = None; details = None }
   | Failed _ -> assert false
   | Report (identity, severity, text, location) ->
     let problem = { Problem.identity; severity; text; attention = true; location } in
-    let exists =
-      List.exists t.problems ~f:(fun p -> Identity.equal p.identity identity)
-    in
+    let exists = Option.is_some (find t identity) in
     let problems =
       if exists
       then
@@ -107,10 +185,20 @@ let apply t update =
           if Identity.equal p.identity identity then problem else p)
       else t.problems @ [ problem ]
     in
-    { t with problems }
+    let history =
+      History.record
+        t.history
+        (Reported { identity; severity; text; location; again = exists })
+    in
+    { t with problems; history }
   | Resolve identity ->
     { t with
-      problems =
+      history =
+        (match find t identity with
+         | None -> t.history
+         | Some p ->
+           History.record t.history (Resolved { identity; severity = p.severity; text = p.text }))
+    ; problems =
         List.filter t.problems ~f:(fun p -> not (Identity.equal p.identity identity))
     ; details = Option.filter t.details ~f:(fun key -> not (Identity.equal key identity))
     }
@@ -149,6 +237,7 @@ let notification t =
       ; scope = Some p.identity.resource
       ; severity = p.severity
       ; text = p.text
+      ; history = false
       }
   | None -> t.transient
 ;;

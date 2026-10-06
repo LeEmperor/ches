@@ -69,7 +69,8 @@ let notify_editor feedback editor =
     in
     Feedback.apply
       feedback
-      (Notify { source = "editor"; scope = Editor.path editor; severity; text })
+      (Notify
+         { source = "editor"; scope = Editor.path editor; severity; text; history = true })
 ;;
 
 let record_outcome feedback editor identity result =

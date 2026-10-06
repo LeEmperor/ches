@@ -1339,6 +1339,67 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "notification history beside problems"
+resize 80 24
+printf 'history one\n' > "$work/history.txt"
+printf 'Xhistory one\n' > "$work/history.expected"
+launch history.txt
+mv "$work/history.txt" "$work/history.saved"
+mkdir "$work/history.txt"
+keys i X Escape Space w
+expect_screen "Failed to write"
+# Acknowledgement and layout feedback are not history entries.
+keys l Escape Space v c Space v c
+keys Space v m
+expect_screen "╭─ History: 1 entry ─"
+expect_screen "error problem [file save]"
+expect_screen "╰─ Space v M: focus ─"
+keys Space v b
+expect_screen "Problems (workspace): 1/1"
+expect_screen "╮ ╭─ History: 1 entry ─"
+keys Space v M
+expect_screen "History*: [1/1]"
+if poll pane_cursor_hidden; then ok "history list hides terminal cursor"; else fail "history cursor visible"; fi
+keys e
+expect_screen "History* details: [1/1]"
+if poll cursor_flag_is 1; then ok "history details show the text cursor"; else fail "details cursor hidden: $(cursor)"; fi
+keys V y
+expect_screen "Copied 1 line"
+keys x
+expect_screen "History: read-only; edits unavailable"
+t set-buffer -b smoke ' vMij'
+t paste-buffer -p -b smoke -t "$session"
+expect_screen "History: read-only; paste ignored"
+save_screen "tiles-history-focused-80x24"
+keys Escape X
+# The notice is cut to the 39-column tile's bottom border.
+expect_screen "╰─ History cleared; active problems u> ╯"
+expect_screen "No history"
+expect_screen "Problems (workspace): 1/1"
+# Zen hides the band and returns focus; leaving zen restores both views unfocused.
+keys Space v z
+expect_no_screen "╭─ History"
+keys Space v z
+expect_screen "History: 0 entries"
+expect_no_screen "History*"
+rmdir "$work/history.txt"
+mv "$work/history.saved" "$work/history.txt"
+keys Space w
+expect_screen "Problems (workspace): 0/0"
+expect_screen "resolved [file save]"
+expect_screen "info [editor]"
+expect_screen "History: 2 entries"
+# The copied entry reached the unnamed register; undo removes the paste.
+keys p
+expect_screen "error problem [file save]"
+keys u
+expect_cursor_row "Xhistory one"
+expect_file "$work/history.txt" "$work/history.expected"
+save_screen "tiles-history-80x24"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
 section "scrolling a wide line"
 { for _ in $(seq 1 40); do printf '0123456789'; done; printf '\nshort\n'; } > "$work/wide.txt"
 launch wide.txt

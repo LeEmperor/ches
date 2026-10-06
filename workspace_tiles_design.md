@@ -4,22 +4,20 @@ Status: phases 1–5 (geometry, allocation, vertical status rendering, runtime
 workspace integration/controls, and shared feedback lifecycle) implemented and
 software-verified and human-accepted (2026-10-04). Phase 5 and the carried-over
 status presentation/workspace interaction checks from phases 3–4 are accepted.
-Phase 6's read-only problems view is software-complete / human-feedback-pending.
-Phase 7's interactive problems pane is also software-complete / human-feedback-pending.
+Phase 6's read-only problems view and phase 7's interactive problems pane are
+software-complete and human-accepted (2026-10-06), as revised by phases 7A–7C.
 Phase 7A's shared tile host (`tile/`, `ches_tile`) with problems migrated onto it
 and an error-free demo report fixture is software-complete and human-accepted
 (2026-10-05). Phase 7B's shared rounded shell, padding, gaps, and revised band
 height are software-complete and human-accepted (2026-10-06), with frames drawn on
 the backdrop. Phase 7C's shared read-only text cursor, selection, and copying is
-software-complete / human-feedback-pending (2026-10-06). History views, diagnostic
-sources, and the external-view protocol remain unimplemented.
+software-complete and human-accepted (2026-10-06). Phase 8's bounded notification
+history and its minor tile are software-complete and human-accepted (2026-10-06). Diagnostic sources and the external-view protocol remain unimplemented.
 
 **Direction update (2026-10-05):** This worktree implements a general tile system.
 Status and problems are concrete consumers/test cases, not the definition of a
 tile. Shared tile plumbing is generalized by phase 7A, shared framing/padding by
-phase 7B, and read-only text selection/copying by phase 7C (below; awaiting human
-feedback). Phase 6/7 software completion does not imply these later
-capabilities exist or that their current presentation is human-accepted.
+phase 7B, and read-only text selection/copying by phase 7C (below).
 
 ## Goal and scope
 
@@ -77,6 +75,9 @@ in another process or on another machine.
   into the borders, padding, focus accent, and size degradation, for minor views
   and dedicated status. Minor views have no text cursor/Visual selection/yank yet. Detail scrolling is available only when detail
   rows exceed the viewport; `Details 1-4/4` means there is nothing further to scroll.
+- `Ches_error.Error.History` (phase 8) is the bounded, chronological notification and
+  problem-lifecycle history, kept beside the active problems; `screen/history_tile.ml`
+  is its minor-tile adapter on the shared host, shell, and read-only text.
 - `app/demo_problems.ml` supplies opt-in, session-local navigation fixtures. It is
   not a general tile content model or a real diagnostic producer.
 
@@ -941,7 +942,7 @@ backend work that can proceed independently from UI integration that needs migra
 
 ### Phase 6 — Read-only problems tile
 
-**Status (2026-10-04): software-complete / human-feedback-pending.**
+**Status (2026-10-06): software-complete and human-accepted (see below).**
 
 **Implementation choices (2026-10-04):** Normal `Space v b` toggles a read-only
 bottom problems tile; `Space v f` toggles workspace/current-document filtering
@@ -1005,10 +1006,14 @@ readability, density, and whether a persistent bottom problems view is comfortab
   distraction and flicker. Synthetic tests cover multiple resources and overflow;
   the single-file UI currently produces only save/reload failures. Owner feedback
   and any resulting blockers are required before phase 6 is human-accepted.
+- **Human acceptance (2026-10-06).** The owner accepted phase 6 together with
+  phases 7–7C. What was accepted is the problems tile as it now stands: phase 7B
+  replaced its unframed six-row preview with the shared shell and the ten-row band,
+  and moved its overflow count into the footer.
 
 ### Phase 7 — Interactive panes and problem navigation
 
-**Status (2026-10-04): software-complete / human-feedback-pending.**
+**Status (2026-10-06): software-complete and human-accepted (see below).**
 
 **Implementation choices (2026-10-04):** Normal `Space v o` shows/focuses the
 problems tile; in the tile it returns to the document. Pane keys: `j/k`, `gg/G`,
@@ -1107,6 +1112,14 @@ Multi-document editing is not implicitly required by this phase.
   `/tmp/opencode/tiles-demo-problems-smoke.log`; captures:
   `/tmp/ches-smoke-screens.fdsSUo`.
 
+#### Human acceptance (2026-10-06)
+
+- The owner accepted phase 7 after using it through phases 7A–7C: focus with
+  `Space v o`, selection, `a` acknowledgement, Enter jumps (with `--demo-problems`),
+  Escape/Tab return, and hide/resize/zen. What was accepted is the pane as it now
+  stands: routing moved to the shared host (7A), the shell to 7B, and details to
+  7C's read-only text, whose cursor movement replaced the old details scrolling.
+
 ### Phase 8 — Bounded notification history
 
 **Depends on:** phase 5 for history storage; phases 7A–7C for its interactive view.
@@ -1137,6 +1150,152 @@ problems. History must not grow with every render or animation tick.
 Also verify shared frame/padding, read-only selection/yank, and generic focus/paste
 routing with history and problems coexisting. No extra history-only shell or input
 capture implementation should be needed.
+
+#### Phase 8 implementation choices (2026-10-06)
+
+**Status (2026-10-06): software-complete and human-accepted (see feedback below).**
+
+The owner chose the retention policy, inclusion, coalescing, and bindings below
+(each the recommended option) before implementation.
+
+- **Storage.** `Ches_error.Error.History`, a pure submodule beside the active problems
+  in `Error.t`, keeps history in memory only. `Error.apply` is the only writer, so every producer path records without
+  extra wiring. Rendering, resizing, focus, and animation never call it, so they cannot
+  add entries. `Error.history` reads it.
+- **Capacity and eviction.** `History.capacity` = 200 entries. Recording past it evicts
+  the oldest entry. `History.dropped` counts evictions since the last clear, and the title shows it.
+- **Entry identity.** Each entry has a `seq` that increases from 1 and is never
+  reused, even after clearing, plus an `event` and a `count`. Entries are immutable
+  records of what happened: acknowledgement never marks them, and resolution never
+  removes them.
+- **What is recorded.** Three events:
+  - `Notified`: a notification whose new `Notification.history` flag is true.
+    Producers set the flag structurally, never by text. Editor messages (saved,
+    search failed, refused quit, and so on) and keymap notices set it. Layout and
+    workspace feedback (`Space v …` results) and a view's own capture notices (a
+    rejected paste or edit, a failed jump, an empty selection) do not.
+  - `Reported`: every `Report`/`Failed` update, with `again` set when the identity was
+    already active.
+  - `Resolved`: a `Resolve` of an active identity, carrying its last text. A resolve
+    of an inactive identity, such as an ordinary successful save, records nothing.
+  - Acknowledgement, inspection, and command completion record nothing. The
+    notification synthesized from the presented problem has `history = false`.
+- **Coalescing.** An event identical to the newest entry's event (ignoring `again`)
+  increments that entry's `count`, shown as `×N`. The entry keeps its `seq` and
+  position. Only adjacent repeats merge, so chronology is preserved. For example, a
+  failure, an editor message, and the same failure again are three entries, and the
+  third reads `problem again`.
+- **Clearing.** `Clear_history` (`X` in the focused history view, list or details)
+  empties the history only. Active problems, attention, inspection, and transient
+  feedback are unchanged; a test pins this. The notice is
+  `History cleared; active problems unchanged`, shown but not posted.
+- **Adapter (`History_tile`).** It is a third minor view on the shared host, shell,
+  navigation, and `Text_view`. There is no history-specific shell, capture, paste,
+  or cursor code; it uses `Spec.read_only_text`.
+  - The canonical text of an entry is `#seq[ ×N] <severity> [source] scope: text`,
+    `#seq <severity> problem[ again] [source kind] resource[:line:col]: text`, or
+    `#seq resolved [source kind] resource (was: text)`. The list shows it, details
+    show it as read-only text, and `yy`/`Y`/Visual `y` copy it.
+  - Severity styles the row; resolutions use `Info`.
+  - Unfocused, the view shows the newest entries that fit, oldest first like a log's
+    tail, with `+N earlier | Space v M: focus` in the footer.
+  - Titles are `History: N entries[, M dropped]` and, focused,
+    `History*[ details]: [i/N[, M dropped]]`.
+- **Selection reconciliation (adapter policy).** Selection is keyed by `seq`. It
+  follows the newest entry until the user moves it or opens details, then stays on its
+  entry as newer ones arrive.
+  - If the selected entry is evicted, the oldest retained entry is selected (the
+  nearest surviving neighbour in time). This is not the shared previous-index rule.
+  - An empty or cleared history selects nothing.
+  - Leaving the view closes details and resumes following the newest entry.
+  - A merged repeat of the entry whose details are open goes through
+    `Text_view.update`, so the footer says `Details updated` (with `; selection
+    cleared` if Visual ended).
+- **Bindings (provisional, pending the command palette).** `Space v m` toggles the
+  history and `Space v M` shows/focuses it or returns (`View_command.Toggle_history`/
+  `Focus_history`), like Vim's `:messages` and the report's `d`/`D` pair. The view
+  keys are the report's plus `X`. History is hidden by default. In the band it comes
+  after problems and the report, so it is the first view dropped when the width
+  cannot fit all three (`3 * 16 + 2` columns).
+- **Not done.** There are no timestamps (the reducer has no clock; `#seq` orders
+  entries), no persistence across launches, and no diagnostic-snapshot logging. No
+  history filter or search. `Ui_state` still wires each minor tile by name. Phase 8
+  added a third set of visibility fields and dispatch branches (`minor_ids` now
+  drives `leave`/`synchronize`), and `View_command` gained two more per-consumer
+  commands. The 7B open question about a generic minor-view registry still stands.
+
+#### Phase 8 implementation and verification (2026-10-06)
+
+- Added `Error.History`, `Notification.history`, `Clear_history`, `Error.history`,
+  `screen/history_tile.ml`, the `Ui_state` and `Frame` wiring, the view commands, and
+  their bindings. Also updated the README, the `--help` text, and the `Ui_state`
+  docs.
+- Tests: new `screen/test/test_history.ml` (5 expect tests):
+  - Bounds, eviction, and the dropped count past 200; adjacent-only merging; history
+    not kept for unflagged chatter that is still the transient notification;
+    sequence numbers continuing after clear.
+  - Repeated failures (`×2`, then `again`); acknowledgement, inspection, and
+    completion recording nothing; clear leaving problems and attention untouched;
+    resolution keeping the earlier failure; and an inactive resolve recording
+    nothing.
+  - A real filesystem save failure through `Ui_state`, with layout commands,
+    focus/acknowledgement, resize, animation ticks, and renders adding nothing,
+    then recovery recording `resolved` plus the editor's `Wrote` message.
+  - The tile beside problems: follow-newest, a selection that stays after moving,
+    linewise copy to the clipboard, edit and paste rejection, `Details updated` on a
+    merged repeat, clear with problems unchanged, Tab return, and the document text
+    and dirty state unchanged.
+  - Eviction moving the selection to the oldest retained entry, and refocusing
+    following the newest again.
+- The 7A/7C allocation sweep now covers three minor views (problems, report, and
+  history), with history focused in details and in Visual. It checks 8,100
+  allocation/position/focus combinations for disjoint bounded panes, exact row widths,
+  and a single cursor owner.
+- Verified with `opam exec --switch=5.2.0+ox -- dune build`, `dune runtest` (all
+  pass), and `git diff --check`. `scripts/smoke.sh` passes all 706 checks. Its new
+  section covers:
+  - A real save failure, with acknowledgement and layout commands leaving
+    `History: 1 entry`.
+  - History beside problems, with focus, the hidden list cursor, and the details
+    cursor.
+  - Linewise copy, then edit and paste rejection.
+  - `X` clearing with `Problems: 1/1` intact.
+  - Zen hiding and restoring the views unfocused.
+  - Recovery adding `resolved` and `info [editor] … Wrote`.
+  - `p` of the copied entry in the editor, undo, and unchanged saved bytes.
+
+  Review captures (`tiles-history-*.ansi`): `/tmp/ches-smoke-screens.dvn38p`.
+- **Software-complete / human-feedback-pending.** Manual check:
+  1. `dune exec ches -- PATH` on a scratch file. Edit, then make saving fail. For
+     example, `mv` the file away and `mkdir` a directory at its path from another
+     shell, then `Space w` twice. Escape to acknowledge. Search for something
+     missing (`/zzz` Enter), and toggle centering a few times (`Space v c`).
+  2. `Space v m`. The history should show `#1 ×2 … problem …` and the search
+     failure, but not the layout feedback. The failure's status notification is
+     gone by now; can you find it here?
+  3. `Space v b` to show problems beside it. Is it clear that history is past events
+     and problems are current ones?
+  4. `Space v M`: `k`, `e`, select with `v`/`V`, `y`, then `p` in the editor (undo
+     after). Try `x` and a terminal paste in history. Try `Space v o` / `Space v M`
+     to move between the views.
+  5. Restore the file (remove the directory, move it back) and `Space w`. The
+     history gains `resolved` and `Wrote`; problems empties.
+  6. `Space v M`, `X`: the history clears; problems are unaffected. Resize narrow
+     (history drops first) and use zen with it focused.
+
+  Assess the entry format and density, whether 200 entries with adjacent-only `×N`
+  merging is right, whether excluding layout and tile notices loses anything you
+  wanted, follow-newest selection, the `m`/`M`/`X` bindings, and whether the lack of
+  timestamps matters.
+
+#### Phase 8 human feedback (2026-10-06)
+
+- The owner ran the manual check and reported that everything works. No blockers or
+  follow-up changes were requested. Phase 8 is human-accepted with the recorded
+  policy: 200 entries, oldest evicted, meaningful feedback only, and adjacent-only
+  merging. No timestamps or persistence. The `Space v m`/`M`/`X` bindings stay
+  provisional, pending the command palette. The 7B open question about wiring minor
+  tiles by name remains open.
 
 ### Phase 9 — Diagnostic collections and asynchronous source lifecycle
 
@@ -1241,7 +1400,8 @@ Source failure may separately post feedback without changing ownership of its da
   7B; their comfort on the owner's laptop/monitors still needs human review.
 - Shared read-only text interaction bindings, selection modes, copy destination,
   and update-during-selection policy, as specified in phases 7A–7C below.
-- History retention capacity and the first language/server configuration.
+- The first language/server configuration. (History retention was decided for
+  phase 8, below.)
 - Remaining human feedback on problems layout/navigation and the new shared tile
   presentation/interactions. Status phases 1–5 remain human-accepted; the new
   direction does not retroactively erase that acceptance.
@@ -1355,8 +1515,7 @@ or async transport just to establish this boundary.
 These are new assignments after the implemented phase 7, not retroactive changes
 to its completion record. Implement in order; keep this application buildable and
 usable at each checkpoint. Use the existing software/human acceptance contract.
-Phases 7A–7B are software-complete and human-accepted (records below); 7C is
-software-complete / human-feedback-pending. They should precede new
+Phases 7A–7C are software-complete and human-accepted (records below). They should precede new
 history/external view UI rather than growing another problems-specific branch.
 
 ### Phase 7A — Extract generic tile host and routing; migrate problems
@@ -1695,7 +1854,7 @@ primary-editor undo/dirty state remain unchanged by these interactions.
 
 #### Phase 7C implementation choices (2026-10-06)
 
-**Status (2026-10-06): software-complete / human-feedback-pending.**
+**Status (2026-10-06): software-complete and human-accepted (see feedback below).**
 
 - **Shared model.** `tile/text_view.ml` (`Ches_tile.Text_view`) is the read-only text
   surface: a snapshot of canonical text, a cursor, Visual state, a preferred column,
@@ -1807,6 +1966,23 @@ primary-editor undo/dirty state remain unchanged by these interactions.
   Assess whether `j/k` by wrapped row and `0/$` by logical line feel right, whether
   copying to both the register and the clipboard is wanted, whether the selection
   colour reads well in a tile, and whether the bindings are acceptable for now.
+
+#### Phase 7C human feedback (2026-10-06)
+
+- Copying from the report and pasting with `p` in the editor works. The selection
+  colour is readable. It is not configurable: tiles reuse the editor's selection
+  style, whose colour is fixed in `ui/theme.ml` (`Selection` → `Background` on
+  `Warning`, #e0af68), and Ches has no theme configuration yet.
+- Copying into another program (nvim in a temp file) did not work at first. tmux's
+  `set-clipboard` was `external`, which ignores OSC 52 from applications. With
+  `set -g set-clipboard on` in the owner's tmux config, copies from tiles reach the
+  system clipboard and paste into other programs. Environments using tmux need that
+  setting, as the README's clipboard notes already say for editor yanks.
+- The owner confirmed the rest of the manual check works: movement in long details
+  (including `j/k` by wrapped row and `0/$` by logical line), problems copying and
+  read-only rejection with `a` still acknowledging, resize/zen/pane switching with a
+  selection open, and the bindings as provisional choices. Copying to both the
+  register and the clipboard stays. Phase 7C is human-accepted.
 
 ### Later major-tile specialization
 

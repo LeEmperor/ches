@@ -99,6 +99,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v f` | Switch problems preview between workspace/current document |
 | Normal | `Space v o` | Show/focus problems, or return to the document |
 | Normal | `Space v d` / `Space v D` | Show/hide, or show/focus, the static demo report (`--demo-report` only) |
+| Normal | `Space v m` / `Space v M` | Show/hide, or show/focus, the notification history |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -166,9 +167,10 @@ clears on the next completed editor command or is replaced by newer routine feed
 Pending prefixes, ignored keys, resize, and animation do not clear it.
 
 The status-workspace milestone is human-accepted, as are the phase 7A shared tile
-host and the phase 7B shared shell (rounded frames, padding, and spacing for status
-and supporting views). The problems view/navigation has passing software checks and
-still needs human review.
+host, the phase 7B shared shell (rounded frames, padding, and spacing for status
+and supporting views), and phase 7C read-only text selection and copying in
+supporting views. The problems view and its navigation (phases 6 and 7) are
+human-accepted too, as is phase 8's notification history.
 See [`workspace_tiles_design.md`](workspace_tiles_design.md).
 
 ### Problems pane
@@ -237,9 +239,26 @@ last row's details scroll), and Escape/Tab/`Space v …` behave as in problems.
 posts feedback, touches problems, or edits the file. Without the flag, `Space v d`
 and `Space v D` only report that it is unavailable.
 
+### Notification history
+
+`Space v m` shows the history in the bottom band (beside problems and the report);
+`Space v M` focuses it, like `:messages` in Vim. It lists past feedback oldest first,
+numbered `#N`: editor messages and keymap notices, and each problem's failures
+(`problem`, `problem again` when it was still active) and resolutions. Layout
+feedback and a view's own notices (such as a rejected paste) are not kept. An event
+repeated back to back is counted on one entry (`×3`). The newest 200 entries are kept
+in memory; the title counts any older ones dropped. Nothing persists across launches.
+
+History is a record, not current state: problems live in the problems pane. Resolving
+a problem adds a `resolved` entry and keeps the earlier failure. Clearing the history
+leaves active problems alone. The focused list follows the newest entry until you move.
+`j/k`, `gg/G`, `Ctrl-d/u` select, `yy` copies an entry, `e`/`Enter` opens it as
+read-only text (below), and `X` clears the history. Escape, Tab, and `Space v …`
+behave as in problems.
+
 ### Read-only text in supporting views
 
-Open details (problems and the demo report) are read-only text, like a read-only
+Open details (problems, the demo report, and history) are read-only text, like a read-only
 buffer in a Neovim split, with the terminal cursor on the text cursor:
 
 | Details keys | Action |
@@ -622,7 +641,7 @@ colors, and the Bonsai_term app.
 
 ```text
 dune-project   project and package metadata (generates ches.opam)
-error/         ches_error: pure shared notification and active-problem lifecycle
+error/         ches_error: pure shared notification, active-problem lifecycle, and bounded history
 core/          ches_core: pure editing library; depends only on `core`
 input/         ches_input: terminal-independent keys and modal keymap
 app/           ches_app: file loading/saving and the controller that runs input

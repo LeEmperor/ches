@@ -40,6 +40,8 @@ type t =
   ; problems : Problems_tile.t
   ; report : Report_tile.t option (** Installed only by [--demo-report]. *)
   ; report_visible : bool
+  ; history_visible : bool
+  ; history : History_tile.t
   ; scroll : Scroll.t
   ; rows : int option
   (** Text rows the scroll was last fitted for: when they change, the fit fills the
@@ -75,11 +77,14 @@ let create
         ; Ches_tile.Spec.companion status_id ~title:"Status"
         ; Problems_tile.spec
         ; Report_tile.spec
+        ; History_tile.spec
         ]
   ; problems_visible = false
   ; problems = Problems_tile.empty
   ; report = Option.map report ~f:Report_tile.create
   ; report_visible = false
+  ; history_visible = false
+  ; history = History_tile.empty
   ; scroll = Scroll.zero
   ; rows = None
   ; animation = Animation.create ~enabled:smear_enabled
@@ -97,6 +102,8 @@ let problems_current_document t = Problems_tile.current_document t.problems
 let problems_tile t = t.problems
 let report t = t.report
 let report_visible t = t.report_visible
+let history_visible t = t.history_visible
+let history_tile t = t.history
 let scroll t = t.scroll
 
 let message t =
@@ -165,6 +172,7 @@ let workspace t ~width ~height =
       List.filter_opt
         [ Option.some_if t.problems_visible Problems_tile.id
         ; Option.some_if (t.report_visible && Option.is_some t.report) Report_tile.id
+        ; Option.some_if t.history_visible History_tile.id
         ]
   in
   Workspace.allocate
@@ -227,6 +235,8 @@ let text_view t id =
   then Problems_tile.text_view t.problems
   else if View_id.equal id Report_tile.id
   then Option.bind t.report ~f:Report_tile.text_view
+  else if View_id.equal id History_tile.id
+  then History_tile.text_view t.history
   else None
 ;;
 
@@ -264,11 +274,15 @@ let leave t id =
   then { t with problems = Problems_tile.leave t.problems }
   else if View_id.equal id Report_tile.id
   then { t with report = Option.map t.report ~f:Report_tile.leave }
+  else if View_id.equal id History_tile.id
+  then { t with history = History_tile.leave t.history }
   else t
 ;;
 
+let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id ]
+
 let return_to_document t =
-  let t = leave (leave t Problems_tile.id) Report_tile.id in
+  let t = List.fold minor_ids ~init:t ~f:leave in
   { t with
     host = Host.return t.host
   ; animation = Animation.create ~enabled:(Animation.enabled t.animation)
@@ -279,7 +293,7 @@ let return_to_document t =
 (* Fit each minor view's state to its viewport and source. When the source changes
    the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
-  let before = List.map [ Problems_tile.id; Report_tile.id ] ~f:(text_view t) in
+  let before = List.map minor_ids ~f:(text_view t) in
   let t =
     { t with
       problems = fitted_problems t ~width ~height
@@ -287,9 +301,14 @@ let synchronize t ~width ~height =
         Option.map t.report
           ~f:(Report_tile.fit ~rows:(minor_rows t ~width ~height Report_tile.id)
                 ~width:(minor_width t ~width ~height Report_tile.id))
+    ; history =
+        History_tile.fit t.history
+          (Ches_error.Error.history (Controller.feedback t.controller))
+          ~rows:(minor_rows t ~width ~height History_tile.id)
+          ~width:(minor_width t ~width ~height History_tile.id)
     }
   in
-  let after = List.map [ Problems_tile.id; Report_tile.id ] ~f:(text_view t) in
+  let after = List.map minor_ids ~f:(text_view t) in
   let t =
     List.fold2_exn before after ~init:t ~f:(fun t before after ->
       match before, after with
@@ -400,6 +419,8 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Focus_problems
   | Toggle_demo_report
   | Focus_demo_report
+  | Toggle_history
+  | Focus_history
   | Scroll _
   | Toggle_smear
   | Toggle_status
@@ -431,7 +452,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
-  | Focus_problems | Focus_demo_report ->
+  | Focus_problems | Focus_demo_report | Focus_history ->
     let focused = Host.spec t.host (focused_view t ~width ~height) in
     Some (Option.value (Host.notice t.host) ~default:(focused.title ^ " focused"))
   | Toggle_demo_report ->
@@ -442,6 +463,10 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
        | Some _ when Option.is_none (Workspace.minor (workspace t ~width ~height) Report_tile.id)
          -> "Demo report requested (compact/zen)"
        | Some _ -> "Demo report shown")
+  | Toggle_history ->
+    Some (if not t.history_visible then "History hidden"
+      else if Option.is_none (Workspace.minor (workspace t ~width ~height) History_tile.id)
+      then "History requested (compact/zen)" else "History shown")
   | Inspect_problems | Scroll _ -> None
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
@@ -580,6 +605,10 @@ let apply_view_command t ~width ~height (view : View_command.t) =
         { t with report_visible = true })
   | Toggle_demo_report ->
     if Option.is_none t.report then t else { t with report_visible = not t.report_visible }
+  | Focus_history ->
+    toggle_focus t ~width ~height History_tile.id ~show:(fun t ->
+      { t with history_visible = true })
+  | Toggle_history -> { t with history_visible = not t.history_visible }
   | Toggle_problems -> { t with problems_visible = not t.problems_visible }
   | Toggle_problems_filter -> { t with problems = Problems_tile.toggle_filter t.problems }
   | Inspect_problems ->
@@ -640,19 +669,20 @@ let feed t ~width ~height (input : Keymap.Input.t) =
   in
   let notification =
     match Keymap.notice (Controller.keymap controller), List.last views with
-    | Some text, _ -> Some (Ches_error.Error.Severity.Warning, "keymap", text)
+    | Some text, _ -> Some (Ches_error.Error.Severity.Warning, "keymap", text, true)
     | None, Some view ->
+      (* Layout feedback is transient chatter; history keeps keymap notices only. *)
       Option.map (view_feedback t ~width ~height view) ~f:(fun text ->
-        Ches_error.Error.Severity.Info, "workspace", text)
+        Ches_error.Error.Severity.Info, "workspace", text, false)
     | None, None -> None
   in
   let controller =
     match notification with
     | None -> t.controller
-    | Some (severity, source, text) ->
+    | Some (severity, source, text, history) ->
       Controller.update_feedback
         t.controller
-        (Notify { source; scope = None; severity; text })
+        (Notify { source; scope = None; severity; text; history })
   in
   { t with controller }, status
 ;;
@@ -669,6 +699,7 @@ let pane_notice t ~source text =
            ; scope = path t
            ; severity = Info
            ; text
+           ; history = false
            })
   }
 ;;
@@ -723,6 +754,29 @@ let feed_capture t ~width ~height id key =
           | Some (`Show text) -> { t with host = Host.with_notice t.host text }
         in
         if return then return_to_document t else t)
+  else if View_id.equal id History_tile.id
+  then
+    route
+      ~content:(History_tile.interpret t.history)
+      ~escape:(History_tile.escape t.history)
+      ~hint:History_tile.hint
+      ~perform:(fun t action ->
+        let { History_tile.Outcome.tile; effect; clear } =
+          History_tile.perform
+            t.history
+            (Ches_error.Error.history (Controller.feedback t.controller))
+            ~rows
+            ~width:cols
+            action
+        in
+        let t = text_effect { t with history = tile } ~source:id effect in
+        if clear
+        then
+          { t with
+            controller = Controller.update_feedback t.controller Clear_history
+          ; host = Host.with_notice t.host "History cleared; active problems unchanged"
+          }
+        else t)
   else (
     match t.report with
     | Some report when View_id.equal id Report_tile.id ->
@@ -773,6 +827,7 @@ and apply_running t ~width ~height (input : Input.t) =
     and before_focus = focused_view t ~width ~height
     and before_problems_visible = t.problems_visible
     and before_report_visible = t.report_visible
+    and before_history_visible = t.history_visible
     and before_zen = t.zen in
     let t, status =
       match input with
@@ -798,6 +853,7 @@ and apply_running t ~width ~height (input : Input.t) =
       if (not (Workspace.Prefs.equal before_workspace t.workspace_prefs))
          || Bool.(before_problems_visible <> t.problems_visible)
          || Bool.(before_report_visible <> t.report_visible)
+         || Bool.(before_history_visible <> t.history_visible)
          || not (View_id.equal before_focus (focused_view t ~width ~height))
          || Bool.(before_zen <> t.zen)
       then Animation.create ~enabled:(Animation.enabled t.animation)
