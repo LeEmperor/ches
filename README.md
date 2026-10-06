@@ -32,6 +32,7 @@ Tested environment:
 | Dune | 3.24.2 (project declares `lang dune 3.17`) |
 | `bonsai`, `bonsai_term`, `core`, `core_unix`, `async`, `ppx_jane`, `ppx_expect` | `v0.18~preview.130.106+341` |
 | `notty-community` | `0.2.4+ox2` |
+| `tree-sitter` (runtime and OCaml grammars) | `0.1.0` |
 | OS | Linux 7.0 (x86_64) |
 | tmux, bash (smoke test only) | 3.4, 5.2.21 |
 
@@ -43,7 +44,7 @@ opam update
 opam switch create 5.2.0+ox \
   --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
 eval $(opam env --switch=5.2.0+ox)
-opam install dune core core_unix async bonsai bonsai_term ppx_jane
+opam install dune core core_unix async bonsai bonsai_term ppx_jane tree-sitter.0.1.0
 ```
 
 The smoke test also needs tmux (`apt install tmux` or similar).
@@ -491,6 +492,65 @@ literally in Insert mode and is ignored in Normal mode. Arrow keys and the
 mouse are not used. SIGTERM or SIGHUP ends the editor, discarding unsaved
 changes, after restoring the terminal.
 
+## Syntax highlighting
+
+Ches highlights OCaml implementation (`.ml`) and interface (`.mli`) files locally
+with Tree-sitter. Suffix detection is case-sensitive: `.ML`, extensionless files,
+other languages, and buffers without an associated path stay plain text. No
+language server, network access, external query files, or Neovim installation is
+needed at runtime. Syntax highlighting does not change editing, `%`, saved bytes,
+registers, dirty state, or undo/redo.
+
+Keywords, strings/escapes, numbers, nested comments and structural type/function/
+module/constructor constructs receive colors. This is grammatical highlighting,
+not semantic name resolution; it does not know a symbol's meaning across files.
+Incomplete and malformed code is normal input and can still receive useful colors.
+If provider initialization or parsing fails, the current document renders as plain
+text rather than keeping stale colors. This does not block editing or saving or
+replace editor feedback; a later text change or successful reload retries it.
+
+The controller caches highlights by document identity, revision, language and query
+version. Text changes use incremental parsing with a private copied/edited prior
+tree; `:e!` resets it. Movement, search, selection, scrolling, resizing, animation
+and saving unchanged text do not parse. The full tree is still queried and all
+ranges normalized after every change. This synchronous work, whole-string editing
+and diff scans remain file-size dependent: a local 205 KB generated OCaml fixture
+took about **70 ms per edit**, down from about 91 ms before incremental parsing.
+These are measurements, not a guarantee; larger files can still lag. Native memory
+release relies on binding GC finalizers, with limited external-memory accounting.
+
+Colors live in `ui/theme.ml`: violet keywords, green strings, orange numbers,
+gray comments, cyan types/properties, blue functions, teal modules, and amber
+constructors/constants/escapes. Variables/operators/punctuation use ordinary text
+color. Special-display escapes/clip markers take precedence over syntax; interaction
+overlays on complete glyphs take precedence over both. Clipped wide/escape fragments
+keep their special treatment, and combining marks retain their base text style.
+Block-insert points override selection, which
+overrides search; syntax returns when the overlay clears. Current-line background
+is independent, and blank padding is not syntax-colored. No theme/config engine
+or extra font styles are required.
+
+The pinned **`tree-sitter.0.1.0`** opam package supplies the compiled-in runtime and
+both grammars (`tree-sitter` and `tree-sitter.ocaml` Dune libraries). Building it
+needs a C compiler, not Node, a Tree-sitter CLI or grammar regeneration. The queries
+are Ches-owned, predicate-free strings in `highlight_ocaml/queries.ml`. Packaging,
+ownership and unresolved bundled-asset provenance/license-notice findings are
+recorded in [`highlight_ocaml/ASSETS.md`](highlight_ocaml/ASSETS.md); technical
+verification is not a license-compliance finding.
+
+Regression tests run with `dune runtest`; explicit performance probes are separate:
+
+```sh
+opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_incremental_probe/probe.exe
+opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_live_probe/probe.exe
+```
+
+Implementation and automated regression checks are complete. The owner reviewed
+the palette and reported live behavior satisfactory; the detailed terminal checklist
+below remains available for further review. See
+[`syntax_highlighting_plan.md`](syntax_highlighting_plan.md) for measurements,
+check outcomes and the acceptance handoff.
+
 ## Text
 
 Ches edits UTF-8 text with LF line endings. Opening a file fails with a clear
@@ -605,6 +665,12 @@ Font styles (bold, italic, underline) are set per part of the screen by
 `Theme.Font.default` and can be replaced in code with `Editor_view.run ~font`;
 the terminal still chooses the typeface, and a terminal without italics may
 ignore them.
+Document styles are composable records under `Ches_screen.Style.Document`:
+syntax category (or plain), current-line background, special-display treatment, and
+interaction overlay. The `~font` callback still takes `Style.t`; custom callbacks
+that previously matched flat document variants must now inspect the record, e.g.
+`Document { special = true; _ }` instead of `Special | Special_cursor_line`.
+Chrome variants such as `Title` and `Status` are unchanged.
 Everything is also readable without color: the mode, `[+]`, and messages are
 text, and escape forms are bracketed.
 
@@ -628,7 +694,9 @@ One key press goes through these steps:
    and command to a new state plus a list of *effects*, such as "write this exact
    text to this path" or "exit". The controller runs the effects synchronously
    and reports each outcome back to the editor. A save marks the text it wrote as
-   saved, not whatever is current when it finishes.
+    saved, not whatever is current when it finishes. After the final text revision
+    change, `app/Highlighting` updates the immutable highlight snapshot using its
+    privately owned provider; no parsing happens in frame drawing or Bonsai rendering.
 5. View commands (`Space v`) come back to `Ui_state`, which changes its layout
    preferences. They never touch the editor.
 6. **`screen/Frame`** draws the editor, keymap, and UI state as rows of styled
@@ -644,15 +712,19 @@ dune-project   project and package metadata (generates ches.opam)
 error/         ches_error: pure shared notification, active-problem lifecycle, and bounded history
 core/          ches_core: pure editing library; depends only on `core`
 input/         ches_input: terminal-independent keys and modal keymap
-app/           ches_app: file loading/saving and the controller that runs input
+app/           ches_app: file loading/saving, input controller and highlight cache
+highlight/     ches_highlight: provider-independent byte ranges, categories,
+               snapshot keys, normalization/lookup and incremental edit descriptions
+highlight_ocaml/ ches_highlight_ocaml: privately owned Tree-sitter provider and queries
 screen/        ches_screen: Bonsai-free screen model: cell mapping, geometry,
                scrolling, UI state and transition, status fields and their
                layouts, rendered frames
 ui/            ches_ui: Bonsai_term frontend (event adapter, theme, app)
 test/          core, input, and app tests (expect tests, Quickcheck, temp-dir file tests)
-screen/test/   headless screen-model tests
+highlight/test/, highlight_ocaml/test/  range/edit and fresh/incremental provider tests
+screen/test/   headless screen-model tests, including live syntax/overlay geometry
 ui/test/       event adapter tests and Bonsai_term_test tests of the app
-scripts/       smoke.sh, the terminal smoke test
+scripts/       smoke.sh plus explicitly invoked syntax feasibility/performance probes
 bin/ches.ml    command-line entry point
 ```
 
@@ -670,7 +742,7 @@ columns in editing semantics and on screen cannot disagree.
 ## Terminal smoke test
 
 `scripts/smoke.sh` drives the built binary in a private per-run tmux server
-(`tmux -L ches-smoke-PID`), on copies of fixtures in a temporary directory, and
+(`tmux -S "$work/tmux.sock"`), on copies of fixtures in a temporary directory, and
 checks the screen text, cursor position and visibility, the alternate screen,
 saved file bytes, exit statuses, and that `stty` settings and the cursor are
 restored after every exit. It goes through every binding in the [Keys](#keys)
@@ -721,6 +793,13 @@ moved tile, relative and no line numbers, and a save error at 80x24 and
 160x48, plus tiny sizes) and prints
 their directory (`cat` a file to view it).
 
+Cursor assertions poll for a visible cursor at the expected position within five
+seconds, rather than sampling hidden cursor coordinates during smear. This fixed
+the five timing failures recorded in the syntax-highlighting handoffs; three
+consecutive isolated runs passed all checks. Each run owns its own socket, so it
+cannot interfere with another smoke run. Automated checks still cannot replace
+the manual checks below.
+
 ### Checks to do by hand
 
 The smoke script cannot check these, so check them in a real terminal:
@@ -736,6 +815,14 @@ The smoke script cannot check these, so check them in a real terminal:
 - Nothing flickers while typing fast, scrolling, or resizing.
 - Pasting from the terminal's own clipboard inserts text literally in Insert mode.
   This depends on the terminal; the script pastes through tmux.
+- Syntax acceptance: open `highlight_ocaml/provider.ml`, `core/text_buffer.mli`
+  and `README.md` to compare `.ml`, `.mli` and plain-text fallback. Check readability
+  under `/` search/current matches, character/line/block selections and block-insert
+  points, then clear overlays and confirm syntax returns. Insert a multiline comment
+  above the viewport and undo/redo it; try unfinished strings/comments and malformed
+  code. Include TABs, controls, wide/combining characters and tiny dimensions while
+  typing, pasting, scrolling, resizing and running smear. Record observed flicker
+  or palette problems rather than treating headless tests as visual sign-off.
 
 ## Storage
 
@@ -768,10 +855,12 @@ and changes made to the file by other programs are not detected.
   of the view it is not drawn.
 - No soft wrapping: long lines scroll horizontally.
 - One document at a time. The only `:` command is `:e!`; there is no general Ex
-  prompt, search, or syntax highlighting. Word motions use the
+  prompt. Search and local OCaml syntax highlighting are supported; semantic tokens,
+  other languages and language-server features are not. Word motions use the
   simple character classes above, not Unicode word properties.
 - Large files are slow to edit and undo history grows without limit; see
-  [Storage](#storage).
+  [Storage](#storage) and [Syntax highlighting](#syntax-highlighting). Incremental
+  parsing still runs a full-document query and normalization after each text change.
 - No configuration file: tab width, the `j k` escape, and key bindings are set in
   code, and layout preferences are not saved between runs.
 
@@ -786,7 +875,8 @@ These come after MVP0 and are not part of it. Roughly in order:
 3. Better Unicode (grapheme clusters) and line-ending support (CRLF).
 4. Measure real editing latency and memory, and replace the string storage with a
    rope or piece tree if the numbers justify it.
-5. Search, then language tooling once the core is stable.
+5. Further language tooling after syntax-highlight acceptance; LSP and extra
+   languages need separate authorization.
 
 ## Known toolchain quirk: ppx_expect source path
 

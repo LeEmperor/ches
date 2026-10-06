@@ -16,6 +16,7 @@ type t =
   ; keymap : Keymap.t
   ; dispatched : bool
   ; clipboard : string option (** The newest [Set_clipboard] not yet taken. *)
+  ; highlighting : Highlighting.t
   }
 
 let create ?(keymap_config = Keymap.Config.default) editor =
@@ -24,6 +25,7 @@ let create ?(keymap_config = Keymap.Config.default) editor =
   ; keymap = Keymap.create keymap_config
   ; dispatched = false
   ; clipboard = None
+  ; highlighting = Highlighting.create editor
   }
 ;;
 
@@ -39,6 +41,10 @@ let open_file ?keymap_config ~cell_width path =
 
 let editor t = t.editor
 let keymap t = t.keymap
+let highlights t = Highlighting.snapshot t.highlighting
+let highlight_status t = Highlighting.status t.highlighting
+let highlight_parse_count t = Highlighting.parse_count t.highlighting
+let close t = Highlighting.close t.highlighting
 let last_input_dispatched t = t.dispatched
 let take_clipboard t = { t with clipboard = None }, t.clipboard
 
@@ -55,7 +61,10 @@ let cancel_pending t = { t with keymap = Keymap.reset t.keymap; dispatched = fal
 
 let jump t ~line ~column =
   Result.map (Editor.go_to_display_position t.editor ~line ~column) ~f:(fun editor ->
-    { (cancel_pending t) with editor })
+    { (cancel_pending t) with
+      editor
+    ; highlighting = Highlighting.update t.highlighting editor ~reset:false
+    })
 ;;
 
 let notify_editor feedback editor =
@@ -94,12 +103,14 @@ let record_outcome feedback editor identity result =
              (Error.to_string_hum error) ))
 ;;
 
+(* The final [bool] is whether the effect reloaded the document from disk, which
+   invalidates the highlight cache. *)
 let perform editor feedback (effect : Effect.t) ~clipboard
-  : Editor.t * Feedback.t * string option * Status.t
+  : Editor.t * Feedback.t * string option * Status.t * bool
   =
   match effect with
-  | Exit -> editor, feedback, clipboard, Exit
-  | Set_clipboard text -> editor, feedback, Some text, Running
+  | Exit -> editor, feedback, clipboard, Exit, false
+  | Set_clipboard text -> editor, feedback, Some text, Running, false
   | Write_file { path; text; revision } ->
     let result = File_io.write path text in
     let editor =
@@ -112,11 +123,11 @@ let perform editor feedback (effect : Effect.t) ~clipboard
         { source = "file"; kind = Save; resource = path }
         result
     in
-    editor, feedback, clipboard, Running
+    editor, feedback, clipboard, Running, false
   | Read_file { path } ->
     let result =
       match File_io.read path with
-      | Ok (File_io.Loaded.Existing text) -> Ok text
+      | Ok (Existing text) -> Ok text
       | Ok Missing -> Or_error.error_string "File no longer exists"
       | Error error -> Error error
     in
@@ -128,12 +139,12 @@ let perform editor feedback (effect : Effect.t) ~clipboard
         { source = "file"; kind = Reload; resource = path }
         result
     in
-    editor, feedback, clipboard, Running
+    editor, feedback, clipboard, Running, Result.is_ok result
 ;;
 
 (* Dispatches the editor commands in [actions] and collects the view commands, until an
-   [Exit]. Returns the view commands in order, the newest clipboard text, and whether any
-   command ran. *)
+   [Exit]. Returns the view commands in order, the newest clipboard text, whether any
+   command ran, and whether a document reload succeeded. *)
 let rec perform_all
   editor
   feedback
@@ -141,28 +152,32 @@ let rec perform_all
   ~views
   ~clipboard
   ~dispatched
-  : Editor.t * Feedback.t * View_command.t list * string option * bool * Status.t
+  ~reloaded
+  : Editor.t * Feedback.t * View_command.t list * string option * bool * Status.t * bool
   =
   match actions with
-  | [] -> editor, feedback, List.rev views, clipboard, dispatched, Running
+  | [] -> editor, feedback, List.rev views, clipboard, dispatched, Running, reloaded
   | View view :: rest ->
-    perform_all editor feedback rest ~views:(view :: views) ~clipboard ~dispatched
+    perform_all editor feedback rest ~views:(view :: views) ~clipboard ~dispatched ~reloaded
   | Editor command :: rest ->
     let feedback = Feedback.apply feedback Command_completed in
     let editor, effects = Editor.dispatch editor command in
     let feedback = notify_editor feedback editor in
-    let editor, feedback, clipboard, status =
+    let editor, feedback, clipboard, status, reloaded =
       List.fold
         effects
-        ~init:(editor, feedback, clipboard, Status.Running)
-        ~f:(fun (editor, feedback, clipboard, status) effect ->
+        ~init:(editor, feedback, clipboard, Status.Running, reloaded)
+        ~f:(fun (editor, feedback, clipboard, status, reloaded) effect ->
           match perform editor feedback effect ~clipboard with
-          | editor, feedback, clipboard, Exit -> editor, feedback, clipboard, Exit
-          | editor, feedback, clipboard, Running -> editor, feedback, clipboard, status)
+          | editor, feedback, clipboard, Exit, loaded ->
+            editor, feedback, clipboard, Exit, reloaded || loaded
+          | editor, feedback, clipboard, Running, loaded ->
+            editor, feedback, clipboard, status, reloaded || loaded)
     in
     (match status with
-     | Exit -> editor, feedback, List.rev views, clipboard, true, Exit
-     | Running -> perform_all editor feedback rest ~views ~clipboard ~dispatched:true)
+     | Exit -> editor, feedback, List.rev views, clipboard, true, Exit, reloaded
+     | Running ->
+       perform_all editor feedback rest ~views ~clipboard ~dispatched:true ~reloaded)
 ;;
 
 let handle_input t input =
@@ -174,7 +189,7 @@ let handle_input t input =
     | Key Escape, [ Editor Clear_search_highlight ] -> true
     | _ -> false
   in
-  let editor, feedback, views, clipboard, dispatched, status =
+  let editor, feedback, views, clipboard, dispatched, status, reloaded =
     perform_all
       t.editor
       (if acknowledge then Feedback.apply t.feedback Acknowledge else t.feedback)
@@ -182,8 +197,14 @@ let handle_input t input =
       ~views:[]
       ~clipboard:t.clipboard
       ~dispatched:false
+      ~reloaded:false
   in
-  { editor; feedback; keymap; dispatched; clipboard }, views, status
+  let highlighting = Highlighting.update t.highlighting editor ~reset:reloaded in
+  let t = { editor; feedback; keymap; dispatched; clipboard; highlighting } in
+  (match status with
+   | Exit -> close t
+   | Running -> ());
+  t, views, status
 ;;
 
 let move t motion ~count =
@@ -192,7 +213,22 @@ let move t motion ~count =
     { t with
       editor
     ; feedback = notify_editor (Feedback.apply t.feedback Command_completed) editor
+    ; highlighting = Highlighting.update t.highlighting editor ~reset:false
     }
   | _, effects ->
     raise_s [%message "Controller.move: unexpected effects" (effects : Effect.t list)]
 ;;
+
+module For_testing = struct
+  let highlight_incremental_count t =
+    Highlighting.For_testing.incremental_count t.highlighting
+  ;;
+
+  let with_highlight_language t language =
+    { t with
+      highlighting = Highlighting.For_testing.with_language t.highlighting t.editor language
+    }
+  ;;
+
+  let fail_next_highlight t = Highlighting.For_testing.fail_next_parse t.highlighting
+end

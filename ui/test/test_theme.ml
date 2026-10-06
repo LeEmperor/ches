@@ -4,6 +4,85 @@ open Ches_ui
 
 let same_attrs a b = Attr.equal (Attr.many a) (Attr.many b)
 
+let%test_unit "syntax foreground yields to specials and every interaction overlay" =
+  let open Ches_screen in
+  List.iter Style.Syntax.all ~f:(fun syntax ->
+    List.iter [ false; true ] ~f:(fun current_line ->
+      List.iter [ false; true ] ~f:(fun special ->
+        List.iter (None :: List.map Style.Overlay.all ~f:Option.some) ~f:(fun overlay ->
+          let attrs = Theme.attrs (Style.document ~syntax ~current_line ~special ?overlay ()) in
+          (match overlay, special with
+           | None, false ->
+             assert (same_attrs attrs
+               [ Attr.fg (Theme.Role.color (Theme.syntax_role syntax))
+               ; Attr.bg (Theme.Role.color (if current_line then Current_line else Background))
+               ])
+           | _ ->
+             assert (same_attrs attrs
+               (Theme.attrs (Style.document ~current_line ~special ?overlay ()))))))))
+;;
+
+let%test_unit "palette distinguishes each major syntax family without adding fonts" =
+  let open Ches_screen in
+  List.iter
+    [ Style.Syntax.Keyword; String; Number; Comment; Type; Function; Module; Constant ]
+    ~f:(fun syntax ->
+      let style = Style.document ~syntax () in
+      assert (not (same_attrs (Theme.attrs style) (Theme.attrs (Style.document ()))));
+      assert (List.is_empty (Theme.Font.default style)))
+;;
+
+let%test_unit "every preset gives each syntax family its own color, apart from text" =
+  let syntax : Theme.Role.t list =
+    [ Syntax_keyword
+    ; Syntax_string
+    ; Syntax_number
+    ; Syntax_comment
+    ; Syntax_type
+    ; Syntax_function
+    ; Syntax_module
+    ; Syntax_constant
+    ]
+  in
+  List.iter Theme.Preset.all ~f:(fun preset ->
+    let fg role = Attr.fg (Theme.Role.color ~preset role) in
+    let roles : Theme.Role.t list = Foreground :: syntax in
+    List.iteri roles ~f:(fun i a ->
+      List.iteri roles ~f:(fun j b ->
+        if i < j && Attr.equal (fg a) (fg b)
+        then
+          raise_s
+            [%message
+              "colors collide"
+                (preset : Theme.Preset.t)
+                (a : Theme.Role.t)
+                (b : Theme.Role.t)])))
+;;
+
+let%test_unit "every composed plain document style retains the previous terminal attributes" =
+  let open Ches_screen in
+  List.iter [ false; true ] ~f:(fun current_line ->
+    List.iter [ false; true ] ~f:(fun special ->
+      List.iter (None :: List.map Style.Overlay.all ~f:Option.some) ~f:(fun overlay ->
+        let (fg, bg) : Theme.Role.t * Theme.Role.t =
+          match overlay with
+          | None ->
+            (if special then Special else Foreground),
+            (if current_line then Current_line else Background)
+          | Some Search_match -> Background, Normal_accent
+          | Some Search_current -> Background, Insert_accent
+          | Some Selection -> Background, Warning
+          | Some Insert_cursor -> Background, Block_cursor
+          | Some Insert_point -> Background, Block_copy
+        in
+        let style = Style.document ~current_line ~special ?overlay () in
+        assert
+          (same_attrs
+             (Theme.attrs style)
+             [ Attr.fg (Theme.Role.color fg); Attr.bg (Theme.Role.color bg) ]);
+        assert (List.is_empty (Theme.Font.default style)))))
+;;
+
 let%expect_test "the default fonts bold the title, badge, markers, and errors only" =
   List.iter
     [ Ches_screen.Style.document ()

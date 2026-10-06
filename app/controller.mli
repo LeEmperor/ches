@@ -40,6 +40,22 @@ val create : ?keymap_config:Keymap.Config.t -> Editor.t -> t
 val editor : t -> Editor.t
 val keymap : t -> Keymap.t
 
+(** Immutable current highlight key/snapshot, updated only at document transitions.
+    Unsupported paths have an empty current snapshot. No parsing on access. *)
+val highlights : t -> Ches_highlight.Snapshot.Key.t * Ches_highlight.Snapshot.t
+
+(** None for plain-text files; failures are cached silently, without altering editor
+    feedback. A changed key or successful reload retries a failed provider. *)
+val highlight_status : t -> Ches_highlight_ocaml.Provider.Status.t option
+
+(** Cumulative actual parse attempts for this document's shared runtime; diagnostic
+    only, not a snapshot/history counter. Reading it does no provider work. *)
+val highlight_parse_count : t -> int
+
+(** Idempotent release of provider references. Exit closes automatically; frontends
+    should also close on normal shutdown/error. Do not keep using a closed runtime. *)
+val close : t -> unit
+
 (** Whether the most recent {!handle_input} dispatched at least one editor command. The
     keymap produces none for, e.g., an ignored key or the first key of a sequence. A
     frontend uses this to decide whether [Editor.message] is fresh feedback for that
@@ -76,3 +92,9 @@ val cancel_pending : t -> t
 
 (** Validated current-document navigation only. No IO, edits, or feedback resolution. *)
 val jump : t -> line:int -> column:int -> t Or_error.t
+
+module For_testing : sig
+  val with_highlight_language : t -> Ches_highlight.Language.t -> t
+  val fail_next_highlight : t -> unit
+  val highlight_incremental_count : t -> int
+end

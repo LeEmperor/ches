@@ -1,0 +1,3 @@
+(executable
+ (name probe)
+ (libraries ches_app ches_core ches_highlight ches_highlight_ocaml ches_screen core unix))

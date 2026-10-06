@@ -101,14 +101,10 @@ let%test_unit "overlapping search highlights survive horizontal scrolling" =
   assert (scroll.left > 0);
   let frame = Frame.render t ~width:30 ~height:6 in
   let row = List.nth_exn frame.rows 1 in
-  let is_match (span : Span.t) =
-    match span.style with
-    | Document { overlay = Some Search_match; _ } -> true
-    | _ -> false
-  in
-  assert (List.exists row ~f:is_match);
+  let matched = Style.document ~current_line:true ~overlay:Search_match () in
+  assert (List.exists row ~f:(fun span -> Style.equal span.style matched));
   List.iter row ~f:(fun span ->
-    if String.contains span.text 'a' then assert (is_match span))
+    if String.contains span.text 'a' then assert (Style.equal span.style matched))
 ;;
 
 let%test_unit "multiline highlights overlap both viewport edges and retain overlap precedence" =
@@ -765,9 +761,7 @@ let%test_unit "a TAB cut by the viewport's edge keeps its block highlight" =
     | [] -> assert false
     | (s : Span.t) :: rest -> if x < s.width then s.style else style_at rest (x - s.width)
   in
-  assert (match style_at row gutter with
-    | Document { overlay = Some Selection; _ } -> true
-    | _ -> false)
+  assert (Style.equal (style_at row gutter) (Style.document ~overlay:Selection ()))
 ;;
 
 let%expect_test "block insert draws its cursor and a copy on each other line" =
@@ -917,4 +911,23 @@ let%expect_test "left padding takes the cursor line's style" =
     Text[                    ]
     (Mode Normal)[ NORMAL ] Status[ f.txt  1:1 ]
     |}]
+;;
+
+let%test_unit "selection kinds override search; removing selection restores search" =
+  let searched = run (ui "aaa\naaa") (keys "/a<CR>0") in
+  let overlay_at t line col =
+    let geometry = Ui_state.geometry t ~width:40 ~height:8 in
+    let frame = Frame.render t ~width:40 ~height:8 in
+    match Test_span.style_at (List.nth_exn frame.rows (geometry.text.y + line)) (geometry.text.x + col) with
+    | Document document -> document.overlay
+    | _ -> assert false
+  in
+  List.iter [ "v"; "V"; "<C-v>" ] ~f:(fun enter ->
+    let selected = run searched (keys enter) in
+    assert ([%equal: Style.Overlay.t option] (overlay_at selected 0 0) (Some Selection));
+    let cleared = run selected (keys "<Esc>") in
+    assert ([%equal: Style.Overlay.t option] (overlay_at cleared 0 0) (overlay_at searched 0 0)));
+  let inserting = run searched (keys "<C-v>jI") in
+  assert ([%equal: Style.Overlay.t option] (overlay_at inserting 0 0) (Some Insert_cursor));
+  assert ([%equal: Style.Overlay.t option] (overlay_at inserting 1 0) (Some Insert_point))
 ;;

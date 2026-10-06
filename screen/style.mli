@@ -3,11 +3,7 @@
 
 open! Core
 
-module Syntax : sig
-  (** Placeholder for phase 2's provider-independent categories. Plain retains the
-      existing foreground; phase 1 introduces no syntax colors. *)
-  type t = Plain [@@deriving sexp_of, equal]
-end
+module Syntax = Ches_highlight.Category
 
 module Overlay : sig
   type t =
@@ -74,6 +70,9 @@ val document
     Raises [Invalid_argument] for chrome styles. The caller resolves interaction
     precedence: insert cursor/point > selection > current/ordinary search. *)
 val with_overlay : t -> Overlay.t -> t
+
+(** Replaces only the syntax foreground role. Raises for chrome styles. *)
+val with_syntax : t -> Syntax.t -> t
 
 (** Compact effective-appearance labels for frame dumps. Unlike [sexp_of_t], these
     omit document components hidden by an overlay. *)

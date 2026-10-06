@@ -21,7 +21,7 @@ let merge spans =
   |> List.rev
 ;;
 
-let of_glyphs ?highlight glyphs ~left ~cols ~(text : Style.t) ~(special : Style.t) =
+let of_glyphs ?syntax ?highlight glyphs ~left ~cols ~(text : Style.t) ~(special : Style.t) =
   let right = left + cols in
   let spans, _attachable =
     Array.fold
@@ -33,12 +33,17 @@ let of_glyphs ?highlight glyphs ~left ~cols ~(text : Style.t) ~(special : Style.
            ({ pos; col; width; text = s; kind } : Cell_map.Glyph.t)
         ->
         let stop = col + width in
+        let glyph : Cell_map.Glyph.t = { pos; col; width; text = s; kind } in
+        let category = Option.map syntax ~f:(fun f -> f glyph) in
+        let with_syntax style =
+          Option.value_map category ~default:style ~f:(Style.with_syntax style)
+        in
+        let text = with_syntax text in
         let style : Style.t =
           match kind with
-          | Escape -> special
+          | Escape -> with_syntax special
           | Plain | Tab -> text
         in
-        let glyph : Cell_map.Glyph.t = { pos; col; width; text = s; kind } in
         let style =
           match Option.bind highlight ~f:(fun f -> f glyph) with
           | None -> style

@@ -6,7 +6,7 @@
 # Usage: scripts/smoke.sh [PATH-TO-CHES]   (default: _build/default/bin/ches.exe)
 #
 # Needs tmux (tested with 3.4) and a UTF-8 locale. Run `dune build` first. It uses a
-# private per-run tmux server (-L ches-smoke-PID) and a temporary directory, both removed on exit,
+# private per-run tmux socket and a temporary directory, both removed on exit,
 # and leaves colored captures of review screens in a directory it prints.
 #
 # Not checkable here: cursor shape (tmux does not report it), how the palette looks,
@@ -30,8 +30,8 @@ export LC_ALL=C.UTF-8
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke.XXXXXX")
 screens=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke-screens.XXXXXX")
-# A unique socket prevents another checkout's smoke run from sharing this session.
-tmux_cmd=(tmux -L "ches-smoke-$$" -f /dev/null)
+# A per-run socket prevents another checkout's smoke run from sharing this session.
+tmux_cmd=(tmux -S "$work/tmux.sock" -f /dev/null)
 session=smoke
 
 cleanup() {
@@ -83,7 +83,9 @@ expect_screen() {
   if poll screen_has "$1"; then ok "screen shows '$1'"; else fail "screen never showed '$1'"; fi
 }
 
-# Whether the row the cursor is on contains TEXT.
+# Whether the row the cursor is on contains TEXT. Status can update before smear
+# finishes. A hidden cursor's reported coordinates are not its eventual text position;
+# poll visibility and the assertion together.
 cursor_row_has() {
   local y visible
   read -r _ y visible <<< "$(cursor)"

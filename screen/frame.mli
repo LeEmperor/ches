@@ -44,9 +44,16 @@ type t =
     {!Ui_state.text_cursor}). Scrolling and cursor placement share its document geometry.
     Compact/zen layouts retain bottom-row feedback. An explicit [allocation] instead
     renders only the document there, clipped to screen bounds, reserving a status row
-    by default. [reserve_status_row] overrides either policy for headless callers. *)
+    by default. [reserve_status_row] overrides either policy for headless callers.
+
+    The document uses the controller's cached current highlights by default, with no
+    parsing. [highlights] overrides them with an expected current key and snapshot. The
+    caller owns identity/configuration and must supply the current key, never the key
+    copied from an obsolete result. Mismatched keys or editor revisions fall back to
+    plain text. No provider work occurs here. *)
 val render
-  :  ?allocation:Geometry.Rect.t
+  :  ?highlights:Ches_highlight.Snapshot.Key.t * Ches_highlight.Snapshot.t
+  -> ?allocation:Geometry.Rect.t
   -> ?reserve_status_row:bool
   -> Ui_state.t
   -> width:int
