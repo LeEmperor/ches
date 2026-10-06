@@ -9,7 +9,14 @@ let install controller =
   | None -> controller
   | Some resource ->
     let revision = Editor.revision editor in
-    let lines = Text_buffer.line_count (Editor.text editor) in
+    let text = Editor.text editor in
+    (* The empty line after a final newline is not worth flagging. *)
+    let lines =
+      let count = Text_buffer.line_count text in
+      if count > 1 && String.is_empty (Text_buffer.line_text text (count - 1))
+      then count - 1
+      else count
+    in
     let at line severity message : Feedback.Diagnostics.Finding.t =
       { severity
       ; message = "DEMO: " ^ message

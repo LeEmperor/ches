@@ -1332,7 +1332,8 @@ No general plugin/subscription framework is required.
 
 #### Phase 9 owner decisions (2026-10-06)
 
-**Status (2026-10-06): designed, not implemented.** Where these decisions differ from the
+**Status (2026-10-06): steps 1–2 implemented and owner-accepted; steps 3–4 not started
+(see the step 3 handoff below).** Where these decisions differ from the
 scope and work items above, these decisions take precedence. The owner made the decisions
 marked *owner*. Items marked *proposed, accepted* were suggested during the design review
 and accepted by the owner without further discussion. Implementers may question them,
@@ -1522,7 +1523,7 @@ Details:
 
 #### Phase 9 step 1 implementation (2026-10-06)
 
-**Status:** step 1 implemented and software-verified.
+**Status:** step 1 implemented, software-verified, and owner-accepted with step 2.
 
 - `Error.Diagnostics` (in `error/error.ml[i]`), read through `Error.diagnostics`:
   - `Collection`: source, resource, `Basis` (`Reported r` or `Arrived_at r`), findings
@@ -1564,10 +1565,8 @@ Details:
 
 #### Phase 9 step 2 implementation (2026-10-06)
 
-**Status:** step 2 implemented and software-verified; **human review pending**. Steps 3–4
-not started. The owner approved the plan below before implementation, including the
-proposed additions (flat rows, line-number anchors outside the open file,
-`Source_event` in `ches_error`, and `--demo-diagnostics`).
+**Status:** step 2 implemented, software-verified, and **owner-accepted (2026-10-06)**.
+Steps 3–4 not started.
 
 - **Boundary type.** `Ches_error.Source_event` holds `Diagnostics`, `Started`, and
   `Stopped`, the boundary messages above. `to_update ~current_revision` turns one into
@@ -1640,6 +1639,97 @@ proposed additions (flat rows, line-number anchors outside the open file,
   3. `Space v o`, `j`/`k`, `a`, `Enter`, `e`.
   4. Is `[N problems: Space v e]`, with findings counted and never demanding Escape,
      what you want? Should findings and problems be counted separately?
+
+#### Phase 9 step 2 human feedback (2026-10-06)
+
+- The owner ran the review checklist above and accepted everything as implemented.
+  No follow-up changes were requested. These stand:
+  - flat rows, problems first, then findings by file, severity, and position;
+  - the `[source stopped]` marker;
+  - the muted `Stale` dimming;
+  - the combined `[N problems: Space v e]` count, with only problems taking attention.
+- The owner commits; nothing here was committed by the implementer.
+
+#### Phase 9 step 3 handoff (2026-10-06)
+
+**Assignment:** step 3 of the implementation plan, the asynchronous source library,
+the synthetic producer, the `ches_ui` wiring, and the typing-latency measurement. Step 4
+(docs) follows. A different implementer will take this on. Everything they need is in
+this document and the code. The owner decisions above bind them, especially *Async
+placement*, *Bursts*, *Boundary messages*, and *Source lifecycle*. Raise any
+deviation with the owner rather than making it silently.
+
+**Already in place (steps 1–2):**
+
+- **Lib → Ches.** Messages are `Ches_error.Source_event.t` (`Diagnostics`, `Started`,
+  `Stopped`). Inject each one as `Ui_state.Input.Source event`. `Ui_state` stamps the
+  editor revision, holds lists during Insert, records the anchor text, and updates the
+  problems view. The library must not compute any of this.
+- **Feedback semantics.** `Error.Diagnostics`, in `error/error.ml[i]`, handles
+  replacement, dropping obsolete revisions, `session_ended`, and the stop/start
+  problems. Its unit tests are in `screen/test/test_diagnostics.ml`.
+- **View.** `screen/problems.ml` and `screen/problems_tile.ml` hold the view. Its tests
+  are in `screen/test/test_diagnostics_view.ml`, and the smoke script has a section
+  named "demo diagnostics in the problems view".
+- **Static review fixture.** `--demo-diagnostics` (`app/demo_diagnostics.ml`). It is
+  not a producer.
+- **Existing frontend patterns to copy** (`ui/editor_view.ml`):
+  - `inject` feeds `Ui_state.apply_all`.
+  - `Bonsai.Clock.every` injects `Animation_tick`, the model for injecting results.
+  - `Ui_state.take_clipboard` → `Osc52` after each apply is the model for outgoing
+    requests as data.
+
+**To build:**
+
+1. **New library** (e.g. `source/` → `ches_source`), depending on Async plus
+   `ches_error` (for `Source_event`/`Diagnostics.Finding`). No dependency on
+   `ches_screen`/`ches_ui`. `ches_core`, `ches_input`, `ches_app`, and `ches_error`
+   stay Async-free; keep their `dune` comments true.
+   - Interface, following the agreed boundary:
+     - Ches → library: `start root`, `document_changed ~resource ~text ~revision`, and
+       `stop`.
+     - Library → Ches: a stream/pipe of `Source_event.t`.
+   - Coalescing: keep only the newest unprocessed `Diagnostics` per (source,
+     resource); drop older ones before any work is done on them. Never drop
+     `Started`/`Stopped`, and keep them in order relative to diagnostics.
+2. **Outgoing requests as data.** `Ui_state` does not yet report document changes.
+   Add a `take_*`-style accessor (like `take_clipboard`) that returns the open
+   document's text and revision when the revision has changed since it was last
+   taken. Add a quit/stop signal as well. The frontend forwards these to the
+   library after each `apply_all`. The synchronous side never waits on a `Deferred`.
+3. **Synthetic producer** in the library, speaking the same messages:
+   - scripted delays and bursts;
+   - out-of-order revisions;
+   - versioned and unversioned modes;
+   - crash and restart.
+
+   Phase 10 must be able to replace it with a language server without changing the
+   Ches side. Decide with the owner how to start it from the CLI (e.g. a
+   `--synthetic-checker` flag). It should look different from `--demo-diagnostics`,
+   which is static.
+4. **`ches_ui` wiring.** Start the source with the workspace root, pipe its events
+   into `inject` (outside the keystroke transition), forward outgoing requests, and
+   stop it on exit. A hidden problems view only skips drawing. It never pauses or
+   unsubscribes the source.
+5. **Acceptance scenarios** (the phase 9 *Acceptance* above), driven through the
+   synthetic producer:
+   - two sources on one file;
+   - empty replacement;
+   - out-of-order versions;
+   - edits while computing;
+   - bursts;
+   - disconnect/restart;
+   - hidden views.
+
+   Keep `ches_screen` tests scheduler-free. Library tests may use Async.
+6. **Latency measurement.** Measure typing responsiveness under a synthetic burst.
+   One way is to time key → frame with and without a burst of many large snapshots.
+   Report the method and numbers here; the owner judges the result.
+7. Update this document (results, verification, human-review checklist), the
+   README, `--help`, and the smoke script. Leave committing to the owner.
+
+**Not in step 3:** a language-server client, automatic restart policy (both phase 10),
+diagnostic-snapshot history logging, and a separate language-server view.
 
 ### Phase 10 — First language-server diagnostic integration
 

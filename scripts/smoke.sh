@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Terminal smoke test: drives the built `ches` binary inside tmux and checks what
 # reaches the screen, the cursor, the files written, and the terminal state left for
-# the shell. See mvp0_plan.md, "Terminal smoke script".
+# the shell. See README.md, "Terminal smoke test".
 #
 # Usage: scripts/smoke.sh [PATH-TO-CHES]   (default: _build/default/bin/ches.exe)
 #
@@ -1398,6 +1398,37 @@ keys u
 expect_cursor_row "Xhistory one"
 expect_file "$work/history.txt" "$work/history.expected"
 save_screen "tiles-history-80x24"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "demo diagnostics in the problems view"
+resize 80 24
+printf 'let x = 1\nlet y = x +\nlet z = 3\nlet w = 4\nlet v = 5\nlet u = 6\n' > "$work/diag.ml"
+cp "$work/diag.ml" "$work/diag.expected"
+launch diag.ml --demo-diagnostics
+# Findings count, but take no attention: the acknowledged stop leaves only the count.
+expect_status "[6 problems: Space v e]"
+keys Space v b
+expect_screen "Problems (workspace): 6/6"
+expect_screen "error [demo-stopped] .: Checker stopped: DEMO: synthetic stop"
+expect_screen "error [demo-check] ./demo-other.ml:4:1"
+expect_screen "error [demo-check] diag.ml:1:1"
+expect_screen "info [demo-lint] diag.ml:2:1"
+expect_screen "warning [demo-stopped stopped] diag.ml:6:1"
+save_screen "tiles-diagnostics-80x24"
+keys Space v o
+expect_screen "Problems* (workspace): 6/6 [1/6]"
+keys j j a
+expect_screen "Diagnostics are not acknowledged"
+keys Enter
+expect_cursor_row "let x = 1"
+# An edit puts current-file findings behind the text: dimmed, still listed.
+keys x
+expect_screen "Problems (workspace): 6/6"
+save_screen "tiles-diagnostics-dimmed-80x24"
+keys u
+expect_file "$work/diag.ml" "$work/diag.expected"
 keys Space q
 expect_exit 0
 

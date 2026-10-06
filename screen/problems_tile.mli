@@ -60,7 +60,8 @@ val leave : t -> t
 type action [@@deriving sexp_of]
 
 (** [e] toggles the selected row's details (inspecting a problem), [a] acknowledges a
-    problem (findings are never acknowledged), and Enter jumps to its location in the current document, in the list or details.
+    problem (findings are never acknowledged), and Enter jumps to its location in the
+    current document, in the list or details.
     Otherwise, in the list, shared list motions ([j/k], [gg/G], [Ctrl-d/u]) select,
     [yy]/[Y] copy the selected problem's description, and edit keys are rejected; in
     details, keys go to the read-only text ({!Ches_tile.Text_view}: movement, Visual
