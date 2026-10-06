@@ -8,10 +8,11 @@ val entries
   -> path:string option
   -> Ches_error.Error.Problem.t list
 
-(** Read-only, cell-clipped preview with filtered/total and overflow counts. *)
+(** Read-only, cell-clipped preview with filtered/total and overflow counts; when
+    focused, the selectable list or the selected problem's details. *)
 val render
   : ?focused:bool
-  -> ?navigation:Problem_navigation.t
+  -> ?navigation:Ches_error.Error.Identity.t Ches_tile.Navigation.Selection.t
   -> ?details:bool
   -> ?detail_top:int
   -> ?notice:string

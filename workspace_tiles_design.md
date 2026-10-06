@@ -6,14 +6,16 @@ software-verified and human-accepted (2026-10-04). Phase 5 and the carried-over
 status presentation/workspace interaction checks from phases 3–4 are accepted.
 Phase 6's read-only problems view is software-complete / human-feedback-pending.
 Phase 7's interactive problems pane is also software-complete / human-feedback-pending.
-History views, diagnostic sources, and the
+Phase 7A's shared tile host (`tile/`, `ches_tile`) with problems migrated onto it
+and an error-free demo report fixture is software-complete / human-feedback-pending
+(2026-10-05). Phases 7B–7C, history views, diagnostic sources, and the
 external-view protocol remain unimplemented.
 
 **Direction update (2026-10-05):** This worktree implements a general tile system.
 Status and problems are concrete consumers/test cases, not the definition of a
-tile. Shared tile plumbing, consistent framing/padding, and read-only text
-selection/copying are not yet generalized; the new phases 7A–7C below are the next
-tile-system assignments. Phase 6/7 software completion does not imply these later
+tile. Shared tile plumbing is generalized by phase 7A (below); consistent
+framing/padding and read-only text selection/copying are not yet, and phases 7B–7C
+remain the next tile-system assignments. Phase 6/7 software completion does not imply these later
 capabilities exist or that their current presentation is human-accepted.
 
 ## Goal and scope
@@ -44,13 +46,17 @@ in another process or on another machine.
   within an allocation. `compute_in` explicitly chooses status-row reservation;
   the full-screen `compute` wrapper retains the existing bottom status row.
 - `screen/workspace.ml` allocates stable document/status cells using a requested
-  two-leaf split plus an optional full-width bottom problems allocation, with compact
-  fallback. `Ui_state` derives effective geometry from requests/zen state; `Frame`
-  composes the document, status, and problems content.
+  two-leaf split plus a bottom band shared side by side by the requested minor views
+  (`Pane_id.Minor of View_id.t`), with compact fallback. `Ui_state` derives effective
+  geometry from requests/zen state; `Frame` composes the document, status, and each
+  minor view's adapter rendering.
+- `tile/` (`ches_tile`, phase 7A) is the service-agnostic foundation: `View_id`,
+  `Spec` (role and capabilities), `Navigation` (shared list motions, key-based
+  selection, scroll offsets), and `Host` (focus, capture precedence, pending
+  prefix, notice, and paste owner). It depends only on `core` and `ches_input`.
 - `screen/ui_state.ml` owns one controller, layout preferences, scroll state,
-  animation, problems-specific focus/capture, selection, detail scroll, and paste
-  start-owner routing. These working phase 7 paths are migration starting points,
-  not the intended shared minor-tile API.
+  animation, one `Host.t`, and the minor views' adapter states. It is the assembly
+  point that dispatches host decisions to `Problems_tile` or `Report_tile`.
 - `screen/status_field.ml` defines semantic field IDs and priority/fitting metadata.
 - `screen/status.ml` produces mode, filename, dirty, message, pending-key, and
   position fields, then renders them for a row, border title, or allocated vertical
@@ -59,9 +65,11 @@ in another process or on another machine.
 - `error/error.ml` owns the shared notification/problem reducer; the controller
   translates operation outcomes into typed updates. This semantic state exists
   independently of any tile's visibility or lifetime.
-- `screen/problems.ml` and `screen/problem_navigation.ml` present problems and track
-  item selection/scrolling. The current pane has no rounded frame/inset padding or
-  text cursor/Visual selection/yank. Detail scrolling is available only when detail
+- `screen/problems.ml` renders problems; `screen/problems_tile.ml` is the problems
+  adapter (filter, identity selection, details, and acknowledge/inspect/jump
+  actions); `screen/report_tile.ml` is the static, error-free fixture; and
+  `screen/tile_text.ml` holds shared cell-exact rows/wrapping. Minor views have no
+  rounded frame/inset padding or text cursor/Visual selection/yank yet. Detail scrolling is available only when detail
   rows exceed the viewport; `Details 1-4/4` means there is nothing further to scroll.
 - `app/demo_problems.ml` supplies opt-in, session-local navigation fixtures. It is
   not a general tile content model or a real diagnostic producer.
@@ -1343,7 +1351,7 @@ or async transport just to establish this boundary.
 These are new assignments after the implemented phase 7, not retroactive changes
 to its completion record. Implement in order; keep this application buildable and
 usable at each checkpoint. Use the existing software/human acceptance contract.
-The phases below are **planned, not implemented**. They should precede new
+Phase 7A is software-complete (record below); 7B–7C are **planned, not implemented**. They should precede new
 history/external view UI rather than growing another problems-specific branch.
 
 ### Phase 7A — Extract generic tile host and routing; migrate problems
@@ -1375,6 +1383,111 @@ hidden/focused, return on hide/zen/resize, and editor undo/dirty preservation. S
 host/interaction modules have no error-system dependency. Showing/closing either
 view cannot mutate the other's authoritative data. Human review checks that the
 existing controls still feel predictable; record any deliberate binding changes.
+
+#### Phase 7A implementation choices (2026-10-05)
+
+**Status (2026-10-05): software-complete and human-accepted (see feedback below).**
+
+- **Shared library.** A new `tile/` library, `ches_tile`, depends only on `core` and
+  `ches_input`; dune therefore rejects any use of `ches_error`, `ches_app`, or the
+  controller from shared code. It holds:
+  - `View_id`: opaque, string-backed stable view identity. Applications name views;
+    the library enumerates none.
+  - `Spec`: per-view role (`Major`/`Minor`, metadata only), title, and capabilities
+    (`focusable`, `accepts_paste`, `owns_cursor`). Role implies no capability.
+  - `Navigation`: shared list motions (`j/k`, `gg/G`, `Ctrl-d/u`), key-based list
+    selection (`'key Selection.t`, keys supplied by the adapter), and a clamped
+    row offset for scrollable content. The default reconciliation keeps the
+    selected key; when that key disappears it picks the item now at the previous
+    index, or the last item. This is the policy phase 7 already used.
+  - `Host`: the primary (document) view ID, the focused view, the pending capture
+    prefix, the capture notice, and the paste being collected with its starting
+    owner. It routes one key and returns a decision: a workspace view command, an
+    opaque content action, return to the primary view, a notice, or nothing to do.
+    The leader (Space) always begins a workspace sequence looked up in the
+    configured keymap. Editor commands and document scrolling are rejected
+    during capture. Escape cancels a pending prefix, then takes the content's
+    escape action if it has one (closing details, say), then returns. Tab returns;
+    Ctrl-c gives a notice. Focus is effective only while the view is available
+    (allocated); `reconcile` returns to the primary view otherwise. Paste goes to
+    its starting owner and is rejected unless that view accepts paste.
+- **Workspace.** `Pane_id` becomes `Document | Status | Minor of View_id.t`.
+  `allocate ?minors` takes the requested visible minor views in a stable order and
+  shares the existing three-to-six-row bottom band between them side by side,
+  splitting its width equally. Each needs at least 16 columns; views that don't
+  fit are left out (compact) in reverse order, and their requests are kept.
+  `Workspace.t.problems` becomes `minors : Pane.t list` with a `minor` lookup.
+  `Pane.focusable` is removed: focusability belongs to the host's `Spec`.
+- **Adapters (in `ches_screen`).** `Problems_tile` holds the problems view state
+  (filter, identity selection, details, detail scroll). It interprets content keys
+  into problems actions (`e` inspect/details, `a` acknowledge, Enter jump) and
+  performs them through the controller. Only the problems adapter knows
+  `Ches_error`. `Report_tile` is the static, error-free fixture: labelled items with
+  list selection and wrapped details (`e`/Enter toggles, `j/k` scrolls details).
+  It uses the same host and shared navigation, never posts feedback, and has no
+  file, save, or reload identity.
+- **Assembly.** `Ui_state` keeps one `Host.t` plus the adapter states. It
+  dispatches host decisions by focused view ID, posts capture notices as
+  `Notify` feedback under the view's ID, and reconciles focus/selection after
+  each input and resize. Existing problems queries stay as accessors.
+- **Bindings and manual path.** All existing problems bindings are unchanged.
+  New: `Space v d` shows/hides the demo report and `Space v D` shows/focuses it or
+  returns to the document. Both only work when Ches is launched with
+  `--demo-report`; otherwise they give a notice. Generic capture notices drop the
+  word "problems": `Cancelled prefix`, `Unbound workspace key`, and
+  `<Title>: read-only; paste ignored`.
+
+#### Phase 7A implementation and verification (2026-10-05)
+
+- Added `ches_tile` as recorded above. `Problem_navigation` is gone; problems
+  selection is `Identity.t Navigation.Selection.t`, with the same neighbor policy.
+  `Ui_state.problem_notice`/`problem_pending` became `capture_notice`/
+  `capture_pending` (the host's, shown only in the focused view's footer). Existing
+  problems behavior, bindings, and footer/header text are unchanged apart from the
+  generic notices recorded above. `Workspace.Pane.focusable` was removed.
+- `Problems_tile` returns posted or shown-only notices, matching phase 7: rejected
+  jumps post feedback, acknowledgement only shows its notice. Leaving a view closes
+  its details, as returning did before. Moving directly between minor views
+  (`Space v o` / `Space v D`) closes the details of the view being left.
+- `Report_tile` and `ches --demo-report` provide the error-free consumer. The demo
+  items are static, labelled, and session-local; the last has long details.
+- Tests: four pure `ches_tile` expect tests (capture precedence and configured
+  workspace bindings, focus availability/reconciliation/cursor ownership,
+  start-owner paste, key-based selection and offsets), with a test library that
+  also cannot see `ches_error`. Four integration tests in
+  `screen/test/test_tile_host.ml`: document/status/problems/report coexistence and
+  layout, independence of each view's state and of active problems under
+  show/hide/focus/feedback updates, paste/cursor/zen/compact ownership, and
+  5,400 allocation/position combinations of two minor views. All earlier phase 6/7
+  tests pass unmodified apart from the renames.
+- Verified `opam exec --switch=5.2.0+ox -- dune build` and `dune runtest` (all
+  pass), and `scripts/smoke.sh` (651 checks pass). It has a new section that drives
+  the report through show, focus, details scroll, focus switching with problems,
+  paste rejection, return, unchanged saved bytes, and an ordinary launch where the
+  bindings are inert.
+- **Known presentation gaps (phase 7B):** side-by-side minor views have no gap or
+  frame, so adjacent headers can read as one line, and 40-column headers clip.
+  The bottom band still uses the phase 6 three-to-six-row prototype height.
+- **Software-complete / human-feedback-pending.** Manual check:
+  1. `dune exec ches -- --demo-problems --demo-report PATH` on a multiline file.
+  2. `Space v o`, `j`, `e`, Escape, `Enter` (jump), then `Space v D`: confirm the
+     problems controls feel unchanged.
+  3. In the report: `G`, `e`, `j/k` and `Ctrl-d/u` through the long details,
+     Escape, Tab.
+  4. Move between the views with `Space v o` / `Space v D`. Try a paste and an
+     editor key such as `Space w` inside the report. Resize narrow (below 32
+     columns, which drops the report) and use zen with it focused.
+  5. Edit and undo afterwards.
+  Assess whether focus ownership is predictable, whether the `Space v d`/`D`
+  bindings are acceptable, and whether side-by-side placement is tolerable until
+  phase 7B.
+
+#### Phase 7A human feedback (2026-10-05)
+
+- The owner confirmed the demo report works. Binding choices (`Space v d`/`D`) are
+  accepted as provisional: a command palette is being developed on another branch
+  and may replace or reorganize view bindings. Phase 7A is human-accepted. The
+  side-by-side spacing gap remains phase 7B work.
 
 ### Phase 7B — Shared rounded shell, padding, and comfortable allocation
 

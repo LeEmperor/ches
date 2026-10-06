@@ -12,6 +12,8 @@ open Bonsai_term
     {!Theme.Font.default}. *)
 val app
   :  ?smear_enabled:bool
+  -> ?report:Ches_screen.Report_tile.Item.t list
+       (** Installs a static report view (see {!Ches_screen.Ui_state.create}). *)
   -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> Ches_app.Controller.t
   -> exit:(unit -> unit Effect.t)
@@ -27,5 +29,6 @@ val draw : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame
     with status 1, discarding unsaved changes, after restoring the terminal. *)
 val run
   :  ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+  -> ?report:Ches_screen.Report_tile.Item.t list
   -> Ches_app.Controller.t
   -> unit Async.Deferred.Or_error.t

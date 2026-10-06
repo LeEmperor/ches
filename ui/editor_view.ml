@@ -59,10 +59,10 @@ let cursor (frame : Frame.t) : Cursor.t option =
     })
 ;;
 
-let app ?(smear_enabled = false) ?font controller ~exit ~dimensions (local_ graph) =
+let app ?(smear_enabled = false) ?report ?font controller ~exit ~dimensions (local_ graph) =
   let model, inject =
     Bonsai.state_machine_with_input
-      ~default_model:(Ui_state.create ~smear_enabled controller)
+      ~default_model:(Ui_state.create ~smear_enabled ?report controller)
       ~apply_action:(fun context input model inputs ->
         match input with
         | Inactive -> model
@@ -129,7 +129,7 @@ let app ?(smear_enabled = false) ?font controller ~exit ~dimensions (local_ grap
   ~view, ~handler
 ;;
 
-let run ?font controller =
+let run ?font ?report controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
@@ -140,5 +140,5 @@ let run ?font controller =
     ~dispose:true
     ~mouse:No_mouse_events
     ~bpaste:true
-    (app ~smear_enabled:true ?font controller)
+    (app ~smear_enabled:true ?report ?font controller)
 ;;

@@ -176,6 +176,8 @@ let default =
     ; view 'b' Toggle_problems
     ; view 'f' Toggle_problems_filter
     ; view 'o' Focus_problems
+    ; view 'd' Toggle_demo_report
+    ; view 'D' Focus_demo_report
     ; view 't' Toggle_status
     ; view 'z' Toggle_zen
     ; status 'h' (Position_status Left)

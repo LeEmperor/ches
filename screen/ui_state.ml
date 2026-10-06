@@ -2,6 +2,8 @@ open! Core
 open Ches_core
 open Ches_input
 open Ches_app
+module Host = Ches_tile.Host
+module View_id = Ches_tile.View_id
 
 module Message = struct
   type kind =
@@ -33,28 +35,28 @@ type t =
   ; workspace_prefs : Workspace.Prefs.t
   ; other_status_size : int (** Requested size for the inactive split axis. *)
   ; zen : bool
+  ; host : Host.t (** Focus, capture prefix/notice, and paste owner. *)
   ; problems_visible : bool
-  ; problems_current_document : bool
-  ; problems_focus : bool
-  ; problem_navigation : Problem_navigation.t
-  ; problem_pending : Key.t list
-  ; problem_details : bool
-  ; problem_detail_top : int
-  ; problem_notice : string option
+  ; problems : Problems_tile.t
+  ; report : Report_tile.t option (** Installed only by [--demo-report]. *)
+  ; report_visible : bool
   ; scroll : Scroll.t
   ; rows : int option
   (** Text rows the scroll was last fitted for: when they change, the fit fills the
       viewport (see {!Scroll.fit}). *)
-  ; paste : (bool * string list) option (** Start owner (problems), chunks newest first. *)
   ; animation : Animation.t
   ; animation_time : Time_ns.t option
   ; exited : bool
   }
 
+let document_id = View_id.of_string "document"
+let status_id = View_id.of_string "status"
+
 let create
   ?(prefs = Geometry.Prefs.default)
   ?(workspace_prefs = Workspace.Prefs.default)
   ?(smear_enabled = false)
+  ?report
   controller
   =
   { controller
@@ -65,17 +67,21 @@ let create
        | Horizontal -> 6
        | Vertical -> 28)
   ; zen = false
+  ; host =
+      Host.create
+        ~leader:(Key.char ' ')
+        ~primary:document_id
+        [ Ches_tile.Spec.primary document_id ~title:"Document"
+        ; Ches_tile.Spec.companion status_id ~title:"Status"
+        ; Problems_tile.spec
+        ; Report_tile.spec
+        ]
   ; problems_visible = false
-  ; problems_current_document = false
-  ; problems_focus = false
-  ; problem_navigation = Problem_navigation.empty
-  ; problem_pending = []
-  ; problem_details = false
-  ; problem_detail_top = 0
-  ; problem_notice = None
+  ; problems = Problems_tile.empty
+  ; report = Option.map report ~f:Report_tile.create
+  ; report_visible = false
   ; scroll = Scroll.zero
   ; rows = None
-  ; paste = None
   ; animation = Animation.create ~enabled:smear_enabled
   ; animation_time = None
   ; exited = false
@@ -87,7 +93,10 @@ let prefs t = t.prefs
 let workspace_prefs t = t.workspace_prefs
 let zen t = t.zen
 let problems_visible t = t.problems_visible
-let problems_current_document t = t.problems_current_document
+let problems_current_document t = Problems_tile.current_document t.problems
+let problems_tile t = t.problems
+let report t = t.report
+let report_visible t = t.report_visible
 let scroll t = t.scroll
 
 let message t =
@@ -129,7 +138,7 @@ let message t =
        Some { Message.kind; text })
 ;;
 
-let pasting t = Option.is_some t.paste
+let pasting t = Host.pasting t.host
 
 let take_clipboard t =
   let controller, text = Controller.take_clipboard t.controller in
@@ -149,64 +158,107 @@ let geometry_in t ~allocation ~reserve_status_row =
 
 let workspace t ~width ~height =
   let prefs = t.workspace_prefs in
+  let minors =
+    if t.zen
+    then []
+    else
+      List.filter_opt
+        [ Option.some_if t.problems_visible Problems_tile.id
+        ; Option.some_if (t.report_visible && Option.is_some t.report) Report_tile.id
+        ]
+  in
   Workspace.allocate
-    ~problems_visible:(t.problems_visible && not t.zen)
+    ~minors
     (if t.zen then { prefs with status_visible = false } else prefs)
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
 ;;
 
+let available t ~width ~height =
+  let workspace = workspace t ~width ~height in
+  fun id -> View_id.equal id document_id || Option.is_some (Workspace.minor workspace id)
+;;
+
+let focused_view t ~width ~height = Host.focused t.host ~available:(available t ~width ~height)
+
+let cursor_owner t ~width ~height =
+  Host.cursor_owner t.host ~available:(available t ~width ~height)
+;;
+
 let problems_focused t ~width ~height =
-  t.problems_focus && Option.is_some (workspace t ~width ~height).problems
+  View_id.equal (focused_view t ~width ~height) Problems_tile.id
 ;;
 
-let problem_entries t =
-  Problems.entries (Controller.feedback t.controller)
-    ~current_document:t.problems_current_document
-    ~path:(Editor.path (Controller.editor t.controller))
+(* Content rows of a focused minor view, and its width. *)
+let minor_rows t ~width ~height id =
+  Option.value_map (Workspace.minor (workspace t ~width ~height) id) ~default:1
+    ~f:(fun pane -> Int.max 1 (Tile_text.capacity pane.rect))
 ;;
 
-let problem_rows t ~width ~height =
-  Option.value_map (workspace t ~width ~height).problems ~default:1
-    ~f:(fun pane -> Int.max 1 (pane.rect.height - 2))
+let minor_width t ~width ~height id =
+  Option.value_map (Workspace.minor (workspace t ~width ~height) id) ~default:width
+    ~f:(fun pane -> pane.rect.width)
+;;
+
+let path t = Editor.path (Controller.editor t.controller)
+
+let fitted_problems t ~width ~height =
+  Problems_tile.fit t.problems (Controller.feedback t.controller) ~path:(path t)
+    ~rows:(minor_rows t ~width ~height Problems_tile.id)
 ;;
 
 let problem_navigation t ~width ~height =
-  Problem_navigation.fit t.problem_navigation (problem_entries t)
-    ~rows:(problem_rows t ~width ~height)
+  Problems_tile.selection (fitted_problems t ~width ~height)
 ;;
 
 let selected_problem t ~width ~height =
-  List.nth (problem_entries t) (problem_navigation t ~width ~height).index
+  Problems_tile.selected t.problems (Controller.feedback t.controller) ~path:(path t)
+    ~rows:(minor_rows t ~width ~height Problems_tile.id)
 ;;
 
-let problem_details t = t.problem_details
-let problem_detail_top t = t.problem_detail_top
-let problem_notice t = t.problem_notice
-let problem_pending t =
-  if List.is_empty t.problem_pending then None
-  else Some (String.concat ~sep:" " (List.map t.problem_pending ~f:Key.to_string_hum))
+let problem_details t = Problems_tile.details t.problems
+let problem_detail_top t = Problems_tile.detail_top t.problems
+let capture_notice t = Host.notice t.host
+
+let capture_pending t =
+  match Host.pending t.host with
+  | [] -> None
+  | keys -> Some (String.concat ~sep:" " (List.map keys ~f:Key.to_string_hum))
+;;
+
+(* Close a view's capture-local state (details) when it stops being focused. *)
+let leave t id =
+  if View_id.equal id Problems_tile.id
+  then { t with problems = Problems_tile.leave t.problems }
+  else if View_id.equal id Report_tile.id
+  then { t with report = Option.map t.report ~f:Report_tile.leave }
+  else t
 ;;
 
 let return_to_document t =
-  { t with problems_focus = false; problem_pending = []; problem_details = false;
-    problem_notice = None;
-    animation = Animation.create ~enabled:(Animation.enabled t.animation);
-    controller = Controller.cancel_pending t.controller }
+  let t = leave (leave t Problems_tile.id) Report_tile.id in
+  { t with
+    host = Host.return t.host
+  ; animation = Animation.create ~enabled:(Animation.enabled t.animation)
+  ; controller = Controller.cancel_pending t.controller
+  }
 ;;
 
-let synchronize_problems t ~width ~height =
-  let navigation = problem_navigation t ~width ~height in
-  let changed = not ([%equal: Ches_error.Error.Identity.t option]
-    navigation.selected t.problem_navigation.selected) in
-  let t = { t with problem_navigation = navigation;
-    problem_details = t.problem_details && not changed;
-    problem_detail_top = if changed then 0 else t.problem_detail_top } in
-  if t.problems_focus && not (problems_focused t ~width ~height)
-  then return_to_document t else t
+let synchronize t ~width ~height =
+  let t =
+    { t with
+      problems = fitted_problems t ~width ~height
+    ; report =
+        Option.map t.report
+          ~f:(Report_tile.fit ~rows:(minor_rows t ~width ~height Report_tile.id))
+    }
+  in
+  match Host.reconcile t.host ~available:(available t ~width ~height) with
+  | _, `Kept -> t
+  | _, `Returned _ -> return_to_document t
 ;;
 
 let update_feedback t ~width ~height update =
-  synchronize_problems
+  synchronize
     { t with controller = Controller.update_feedback t.controller update } ~width ~height
 ;;
 
@@ -294,6 +346,8 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_problems
   | Toggle_problems_filter
   | Focus_problems
+  | Toggle_demo_report
+  | Focus_demo_report
   | Scroll _
   | Toggle_smear
   | Toggle_status
@@ -312,6 +366,8 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     }
 ;;
 
+let demo_report_unavailable = "Demo report unavailable; launch with --demo-report"
+
 (* Feedback for [view], just applied: the requested value, then the effective one on this
    screen when it differs. *)
 let view_feedback t ~width ~height (view : View_command.t) : string option =
@@ -323,15 +379,24 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
-  | Focus_problems -> Some (Option.value t.problem_notice
-      ~default:(if t.problems_focus then "Problems focused" else "Document focused"))
+  | Focus_problems | Focus_demo_report ->
+    let focused = Host.spec t.host (focused_view t ~width ~height) in
+    Some (Option.value (Host.notice t.host) ~default:(focused.title ^ " focused"))
+  | Toggle_demo_report ->
+    Some
+      (match t.report with
+       | None -> demo_report_unavailable
+       | Some _ when not t.report_visible -> "Demo report hidden"
+       | Some _ when Option.is_none (Workspace.minor (workspace t ~width ~height) Report_tile.id)
+         -> "Demo report requested (compact/zen)"
+       | Some _ -> "Demo report shown")
   | Inspect_problems | Scroll _ -> None
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
-      else if Option.is_none (workspace t ~width ~height).problems
+      else if Option.is_none (Workspace.minor (workspace t ~width ~height) Problems_tile.id)
       then "Problems requested (compact/zen)" else "Problems shown")
   | Toggle_problems_filter ->
-    Some (if t.problems_current_document then "Problems: current document" else "Problems: workspace")
+    Some (if problems_current_document t then "Problems: current document" else "Problems: workspace")
   | Toggle_smear ->
     Some
       (if Animation.enabled t.animation
@@ -346,7 +411,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
       | Horizontal, Document -> "right"
       | Vertical, Status -> "above"
        | Vertical, Document -> "below"
-       | _, Problems -> "below"
+       | _, Minor _ -> "below"
     in
     let fitted = workspace t ~width ~height in
     let state =
@@ -426,21 +491,45 @@ let scroll_view t ~width ~height (scroll : View_command.Scroll.t) ~count =
     { t with controller; scroll = { t.scroll with top } })
 ;;
 
+(* Focus a minor view, showing it first, or return when it is already focused. Entry
+   cancels pending editor input; an incomplete editor command keeps precedence because
+   it never reaches here. *)
+let toggle_focus t ~width ~height id ~show =
+  let title = (Host.spec t.host id).title in
+  let current = focused_view t ~width ~height in
+  if View_id.equal current id
+  then return_to_document t
+  else if not (Mode.equal (Editor.mode (Controller.editor t.controller)) Normal)
+  then
+    { t with
+      host =
+        Host.with_notice t.host
+          (sprintf "Leave Insert/Visual mode before focusing %s" (String.lowercase title))
+    }
+  else (
+    let t = show { t with controller = Controller.cancel_pending t.controller } in
+    if not (available t ~width ~height id)
+    then { t with host = Host.with_notice t.host (title ^ " cannot fit in compact/zen layout") }
+    else (
+      let t = leave t current in
+      { t with host = Host.focus t.host id }))
+;;
+
 let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
   | Focus_problems ->
-    if t.problems_focus then return_to_document t
-    else if not (Mode.equal (Editor.mode (Controller.editor t.controller)) Normal)
-    then { t with problem_notice = Some "Leave Insert/Visual mode before focusing problems" }
+    toggle_focus t ~width ~height Problems_tile.id ~show:(fun t ->
+      { t with problems_visible = true })
+  | Focus_demo_report ->
+    if Option.is_none t.report
+    then { t with host = Host.with_notice t.host demo_report_unavailable }
     else
-      let t = { t with problems_visible = true; problem_pending = [];
-        controller = Controller.cancel_pending t.controller } in
-      if Option.is_none (workspace t ~width ~height).problems
-      then { t with problem_notice = Some "Problems cannot fit in compact/zen layout" }
-      else { t with problems_focus = true; problem_notice = None }
+      toggle_focus t ~width ~height Report_tile.id ~show:(fun t ->
+        { t with report_visible = true })
+  | Toggle_demo_report ->
+    if Option.is_none t.report then t else { t with report_visible = not t.report_visible }
   | Toggle_problems -> { t with problems_visible = not t.problems_visible }
-  | Toggle_problems_filter ->
-    { t with problems_current_document = not t.problems_current_document }
+  | Toggle_problems_filter -> { t with problems = Problems_tile.toggle_filter t.problems }
   | Inspect_problems ->
     { t with controller = Controller.update_feedback t.controller Inspect_next }
   | Scroll { scroll; count } -> scroll_view t ~width ~height scroll ~count
@@ -516,118 +605,82 @@ let feed t ~width ~height (input : Keymap.Input.t) =
   { t with controller }, status
 ;;
 
-let pane_notice t text =
-  { t with problem_notice = Some text; problem_pending = [];
-    controller = Controller.update_feedback t.controller
-      (Notify { source = "problems"; scope = Editor.path (Controller.editor t.controller);
-        severity = Info; text }) }
-;;
-
-let select_problem t ~width ~height index =
+(* A capture notice in the focused view's footer, also reported as feedback from it. *)
+let pane_notice t ~source text =
   { t with
-    problem_navigation = Problem_navigation.select (problem_navigation t ~width ~height)
-      (problem_entries t) ~rows:(problem_rows t ~width ~height) index
-  ; problem_details = false
-  ; problem_detail_top = 0
-  ; problem_notice = None
-  ; problem_pending = []
+    host = Host.with_notice t.host text
+  ; controller =
+      Controller.update_feedback
+        t.controller
+        (Notify
+           { source = View_id.to_string source
+           ; scope = path t
+           ; severity = Info
+           ; text
+           })
   }
 ;;
 
-let jump_to_problem t ~width ~height =
-  match selected_problem t ~width ~height with
-  | None -> pane_notice t "No problem selected"
-  | Some problem ->
-    let editor = Controller.editor t.controller in
-    if not (Option.value_map (Editor.path editor) ~default:false
-      ~f:(String.equal problem.identity.resource))
-    then pane_notice t "Cross-file jump unavailable; current document kept"
-    else match problem.location with
-      | None -> pane_notice t "This problem has no document location"
-      | Some location ->
-        match Controller.jump t.controller ~line:location.line ~column:location.column with
-        | Error error -> pane_notice t (Error.to_string_hum error)
-        | Ok controller -> return_to_document { t with controller; problem_notice = None }
-;;
-
-let feed_problem t ~width ~height (input : Keymap.Input.t) =
-  let t = match input with
-    | Paste _ -> pane_notice t "Problems are read-only; paste ignored"
-    | Key Escape ->
-      if not (List.is_empty t.problem_pending)
-      then { t with problem_pending = []; problem_notice = None }
-      else if t.problem_details
-      then { t with problem_details = false; problem_notice = None }
-      else return_to_document t
-    | Key (Ctrl 'c') -> pane_notice t "Escape returns to the editor"
-    | Key Tab -> return_to_document t
-    | Key key when not (List.is_empty t.problem_pending)
-      && Key.equal (List.hd_exn t.problem_pending) (Key.char ' ') ->
-      let keys = t.problem_pending @ [key] in
-      (match Keymap.lookup (Controller.keymap t.controller) keys with
-       | Prefix -> { t with problem_pending = keys; problem_notice = None }
-       | Bound (View (Scroll _)) | Bound (Scroll _) ->
-         pane_notice t "Document scrolling is unavailable in problems"
-       | Bound (View view) ->
-         apply_view_command { t with problem_pending = []; problem_notice = None }
-           ~width ~height view
-       | Bound _ -> pane_notice t "Editor command unavailable; Escape returns to editor"
-       | Unbound -> pane_notice t "Unbound problems/workspace key")
-    | Key key when not (List.is_empty t.problem_pending) ->
-      if Key.equal key (Key.char 'g')
-      then (if t.problem_details
-        then { t with problem_pending = []; problem_detail_top = 0; problem_notice = None }
-        else select_problem t ~width ~height 0)
-      else pane_notice t "Cancelled problems prefix"
-    | Key Enter -> jump_to_problem t ~width ~height
-    | Key key when Key.equal key (Key.char ' ') || Key.equal key (Key.char 'g') ->
-      { t with problem_pending = [key]; problem_notice = None }
-    | Key key when Key.equal key (Key.char 'e') ->
-      (match selected_problem t ~width ~height with
-       | None -> pane_notice t "No problem selected"
-       | Some problem ->
-         { t with controller = Controller.update_feedback t.controller
-             (Inspect_identity problem.identity);
-           problem_details = not t.problem_details; problem_detail_top = 0;
-           problem_notice = None })
-    | Key key when Key.equal key (Key.char 'a') ->
-      (match selected_problem t ~width ~height with
-       | None -> pane_notice t "No problem selected"
-       | Some problem ->
-         { t with controller = Controller.update_feedback t.controller
-             (Acknowledge_identity problem.identity);
-           problem_notice = Some "Acknowledged; problem remains active" })
-    | Key key when List.mem [Key.char 'j'; Key.char 'k'; Key.char 'G'; Ctrl 'd'; Ctrl 'u']
-        key ~equal:Key.equal ->
-      let rows = problem_rows t ~width ~height in
-      let delta = match key with
-        | Ctrl 'd' -> Int.max 1 (rows / 2)
-        | Ctrl 'u' -> -(Int.max 1 (rows / 2))
-        | _ when Key.equal key (Key.char 'k') -> -1
-        | _ -> 1 in
-      if t.problem_details then (
-        let maximum = Option.value_map (selected_problem t ~width ~height) ~default:0
-          ~f:(fun p -> Int.max 0 (List.length (Problems.detail_rows p ~width) - rows)) in
-        { t with problem_detail_top =
-            (if Key.equal key (Key.char 'G') then maximum else
-              Int.clamp_exn (t.problem_detail_top + delta) ~min:0 ~max:maximum);
-          problem_notice = None })
-      else
-        let index = if Key.equal key (Key.char 'G') then List.length (problem_entries t) - 1
-          else (problem_navigation t ~width ~height).index + delta in
-        select_problem t ~width ~height index
-    | Key _ -> pane_notice t "Read-only problems: j/k e Enter a; Escape returns"
+(* A key typed into captured view [id]: the host decides, then the view's adapter
+   performs its own actions. This is the only place adapters meet the host. *)
+let feed_capture t ~width ~height id key =
+  let lookup = Keymap.lookup (Controller.keymap t.controller) in
+  let rows = minor_rows t ~width ~height id
+  and cols = minor_width t ~width ~height id in
+  let route ~content ~escape ~hint ~perform =
+    let host, (decision : _ Host.Decision.t) =
+      Host.key t.host key ~lookup ~content ~escape ~hint
+    in
+    let t = { t with host } in
+    match decision with
+    | Handled -> t
+    | Return -> return_to_document t
+    | Notice text -> pane_notice t ~source:id text
+    | Workspace view -> apply_view_command t ~width ~height view
+    | Content action -> perform t action
   in
-  t, Controller.Status.Running
+  if View_id.equal id Problems_tile.id
+  then
+    route
+      ~content:Problems_tile.interpret
+      ~escape:(Problems_tile.escape t.problems)
+      ~hint:Problems_tile.hint
+      ~perform:(fun t action ->
+        let { Problems_tile.Outcome.tile; controller; notice; return } =
+          Problems_tile.perform t.problems t.controller ~rows ~width:cols action
+        in
+        let t = { t with problems = tile; controller } in
+        let t =
+          match notice with
+          | None -> t
+          | Some (`Post text) -> pane_notice t ~source:id text
+          | Some (`Show text) -> { t with host = Host.with_notice t.host text }
+        in
+        if return then return_to_document t else t)
+  else (
+    match t.report with
+    | Some report when View_id.equal id Report_tile.id ->
+      route
+        ~content:Report_tile.interpret
+        ~escape:(Report_tile.escape report)
+        ~hint:Report_tile.hint
+        ~perform:(fun t action ->
+          { t with
+            report =
+              Option.map t.report ~f:(fun report ->
+                Report_tile.perform report ~rows ~width:cols action)
+          })
+    | Some _ | None -> return_to_document t)
 ;;
 
-let route t ~width ~height input =
-  if problems_focused t ~width ~height then feed_problem t ~width ~height input
-  else feed t ~width ~height input
+let route t ~width ~height key =
+  match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id -> feed_capture t ~width ~height id key, Controller.Status.Running
+  | None -> feed t ~width ~height (Key key)
 ;;
 
 let refit t ~width ~height =
-  let t = synchronize_problems t ~width ~height in
+  let t = synchronize t ~width ~height in
   { t with
     scroll = fitted_scroll t ~width ~height
   ; rows = Some (geometry t ~width ~height).text.height
@@ -640,7 +693,7 @@ let rec apply t ~width ~height (input : Input.t) =
 and apply_running t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = match input with
-    | Resize -> synchronize_problems t ~width ~height
+    | Resize -> synchronize t ~width ~height
     | _ -> refit t ~width ~height in
   match input with
   | Resize -> t, Running
@@ -654,26 +707,26 @@ and apply_running t ~width ~height (input : Input.t) =
   | Key _ | Paste_start | Paste_end ->
     let before = cursor_position t ~width ~height in
     let before_workspace = t.workspace_prefs
-    and before_focus = t.problems_focus
+    and before_focus = focused_view t ~width ~height
     and before_problems_visible = t.problems_visible
+    and before_report_visible = t.report_visible
     and before_zen = t.zen in
     let t, status =
-      match input, t.paste with
-      | Paste_start, None ->
-        { t with paste = Some (problems_focused t ~width ~height, []) }, Controller.Status.Running
-      | Paste_start, Some _ -> t, Running
-      | Paste_end, None -> t, Running
-      | Paste_end, Some (problems_owner, chunks) ->
-        let t = { t with paste = None } in
-        if problems_owner then
-          pane_notice t "Problems are read-only; paste ignored", Running
-        else feed ~width ~height t (Paste (String.concat (List.rev chunks)))
-      | Key key, Some (problems_owner, chunks) ->
-        (match Key.text key with
-          | Some text -> { t with paste = Some (problems_owner, text :: chunks) }, Running
-         | None -> t, Running)
-      | Key key, None -> route ~width ~height t (Key key)
-      | (Animation_tick _ | Resize), _ -> assert false
+      match input with
+      | Paste_start ->
+        ( { t with host = Host.paste_start t.host ~available:(available t ~width ~height) }
+        , Controller.Status.Running )
+      | Paste_end ->
+        (match Host.paste_end t.host with
+         | host, `Not_pasting -> { t with host }, Running
+         | host, `Deliver (owner, text) when View_id.equal owner document_id ->
+           feed ~width ~height { t with host } (Paste text)
+         | host, `Deliver (owner, _) ->
+           pane_notice { t with host } ~source:owner "Paste is unsupported here", Running
+         | host, `Reject (owner, text) -> pane_notice { t with host } ~source:owner text, Running)
+      | Key key when Host.pasting t.host -> { t with host = Host.paste_key t.host key }, Running
+      | Key key -> route ~width ~height t key
+      | Animation_tick _ | Resize -> assert false
     in
     let t = refit t ~width ~height in
     let after = cursor_position t ~width ~height in
@@ -681,7 +734,8 @@ and apply_running t ~width ~height (input : Input.t) =
     let animation =
       if (not (Workspace.Prefs.equal before_workspace t.workspace_prefs))
          || Bool.(before_problems_visible <> t.problems_visible)
-         || Bool.(before_focus <> t.problems_focus)
+         || Bool.(before_report_visible <> t.report_visible)
+         || not (View_id.equal before_focus (focused_view t ~width ~height))
          || Bool.(before_zen <> t.zen)
       then Animation.create ~enabled:(Animation.enabled t.animation)
       else Animation.retarget t.animation ~from:before ~to_:after

@@ -98,6 +98,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v b` | Show/hide the read-only bottom problems preview |
 | Normal | `Space v f` | Switch problems preview between workspace/current document |
 | Normal | `Space v o` | Show/focus problems, or return to the document |
+| Normal | `Space v d` / `Space v D` | Show/hide, or show/focus, the static demo report (`--demo-report` only) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -165,7 +166,8 @@ clears on the next completed editor command or is replaced by newer routine feed
 Pending prefixes, ignored keys, resize, and animation do not clear it.
 
 The status-workspace milestone is human-accepted. The problems view/navigation
-have passing software checks and still need human review.
+and the phase 7A shared tile host have passing software checks and still need
+human review.
 See [`workspace_tiles_design.md`](workspace_tiles_design.md).
 
 ### Problems pane
@@ -186,6 +188,9 @@ filtering. `Space v o` shows and focuses the pane. It remains read-only:
 The `>` marker and `Problems*` title show selection/focus; the terminal cursor
 is hidden during pane capture. Hiding, zen, or resizing too small returns focus
 to the editor. Pane pastes are ignored atomically, not treated as commands.
+Focus, Escape/Tab/prefix precedence, workspace bindings, and paste ownership come
+from the shared tile host (`tile/`), not the problems pane; any other supporting
+view gets the same rules.
 Missing/out-of-range locations and cross-file jumps are explained without touching the
 document. Currently save/reload failures have no locations; location navigation
 can be tried with the opt-in synthetic demo below, not a language server or multiple buffers.
@@ -207,6 +212,21 @@ normal editing/saving still works. Entries are session-local and disappear on
 restart without the flag. Their locations are a startup snapshot, not refreshed
 after edits/reload. Short/empty files have repeated locations; use a multiline file
 to see distinct jump targets. No demo problems are added in an ordinary launch.
+
+### Demo report (tile-system fixture)
+
+```sh
+dune exec ches -- --demo-report PATH
+```
+
+This installs a static, error-free report of ten labelled **DEMO REPORT** rows. It
+exercises the shared tile host without the problems system. `Space v d` shows it in
+the bottom band (beside problems when both are shown); `Space v D` focuses it.
+`j/k`, `gg/G`, and `Ctrl-d/u` select, `e` or `Enter` toggles wrapped details (the
+last row's details scroll), and Escape/Tab/`Space v …` behave as in problems.
+`Space v o` and `Space v D` move focus between the two views. The report never
+posts feedback, touches problems, or edits the file. Without the flag, `Space v d`
+and `Space v D` only report that it is unavailable.
 
 ### Words and lines
 

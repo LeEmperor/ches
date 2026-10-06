@@ -4,7 +4,7 @@ module Pane_id = struct
   type t =
     | Document
     | Status
-    | Problems
+    | Minor of Ches_tile.View_id.t
   [@@deriving sexp_of, equal]
 end
 
@@ -42,14 +42,12 @@ module Pane = struct
     ; rect : Geometry.Rect.t
     }
   [@@deriving sexp_of, equal]
-
-  let focusable t = not (Pane_id.equal t.id Status)
 end
 
 type t =
   { document : Pane.t
   ; status : Pane.t option
-  ; problems : Pane.t option
+  ; minors : Pane.t list
   ; reserve_status_row : bool
   }
 [@@deriving sexp_of, equal]
@@ -58,6 +56,7 @@ let min_document_width = 16
 let min_document_height = 1
 let min_status_width = 8
 let min_status_height = 3
+let min_minor_width = 16
 
 let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
   let allocation =
@@ -79,7 +78,7 @@ let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
   then
     { document = { id = Document; rect = allocation }
     ; status = None
-    ; problems = None
+    ; minors = []
     ; reserve_status_row = true
     }
   else (
@@ -103,34 +102,49 @@ let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
     in
     { document = { id = Document; rect = rect document_start document_size }
     ; status = Some { id = Status; rect = rect status_start status_size }
-    ; problems = None
+    ; minors = []
     ; reserve_status_row = false
     })
 ;;
 
-let allocate ?(problems_visible = false) prefs ~(allocation : Geometry.Rect.t) =
+let allocate ?(minors = []) prefs ~(allocation : Geometry.Rect.t) =
   let allocation =
     { allocation with width = Int.max 0 allocation.width; height = Int.max 0 allocation.height }
   in
   let original = allocate_pair prefs ~allocation in
-  (* Document/status minima take precedence over the preview. *)
+  (* Document/status minima take precedence over the band. *)
   let minimum =
     match original.status, prefs.split.axis with
     | Some _, Split.Axis.Vertical -> min_document_height + min_status_height
     | Some _, Horizontal -> min_status_height
     | None, _ -> 2
   in
-  if not problems_visible || allocation.width < min_document_width
+  let minors = List.take minors (allocation.width / min_minor_width) in
+  if List.is_empty minors || allocation.width < min_document_width
      || allocation.height < minimum + 3
   then original
-  else
+  else (
     let size = Int.min 6 (allocation.height - minimum) in
     let upper = { allocation with height = allocation.height - size } in
     let workspace = allocate_pair prefs ~allocation:upper in
-    { workspace with
-      problems = Some { Pane.id = Problems;
-        rect = { allocation with y = allocation.y + upper.height; height = size } }
-    }
+    let count = List.length minors in
+    let width i = (allocation.width * (i + 1) / count) - (allocation.width * i / count) in
+    let minors =
+      List.mapi minors ~f:(fun i id ->
+        { Pane.id = Minor id
+        ; rect =
+            { Geometry.Rect.x = allocation.x + (allocation.width * i / count)
+            ; y = allocation.y + upper.height
+            ; width = width i
+            ; height = size
+            }
+        })
+    in
+    { workspace with minors })
+;;
+
+let minor t id =
+  List.find t.minors ~f:(fun pane -> Pane_id.equal pane.id (Minor id))
 ;;
 
 let document_geometry t prefs ~line_count =

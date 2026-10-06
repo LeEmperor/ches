@@ -1,0 +1,11 @@
+; ches_tile is the service-agnostic tile foundation: stable view identity, per-view
+; capabilities, focus/capture and input routing, and shared list navigation. It must
+; never depend on ches_error, ches_app, or any content source or producer: content
+; adapters (in ches_screen) translate their domain to and from its opaque actions.
+; Like ches_input it is terminal-independent.
+
+(library
+ (name ches_tile)
+ (libraries ches_input core)
+ (preprocess
+  (pps ppx_jane)))

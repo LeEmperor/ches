@@ -6,11 +6,12 @@ open! Core
 
 module Pane_id : sig
   (** Stable content identities, independent of split order, position, or visibility.
-      Status and problems are read-only companions. *)
+      Minor views (problems, reports) share the bottom band; what they can do is
+      their {!Ches_tile.Spec}, not their placement. *)
   type t =
     | Document
     | Status
-    | Problems
+    | Minor of Ches_tile.View_id.t
   [@@deriving sexp_of, equal]
 end
 
@@ -52,16 +53,13 @@ module Pane : sig
     ; rect : Geometry.Rect.t
     }
   [@@deriving sexp_of, equal]
-
-  (** Document and problems can own keyboard input; status cannot. *)
-  val focusable : t -> bool
 end
 
 type t =
   { document : Pane.t
   ; status : Pane.t option
-  ; problems : Pane.t option
-  (** Optional full-width bottom preview, up to six rows. *)
+  ; minors : Pane.t list
+  (** Requested minor views that fit, left to right in the bottom band. *)
   ; reserve_status_row : bool
   (** True when status is hidden or cannot fit: use compact document-row feedback.
       The row remains within [document.rect], not a separate overlapping pane. *)
@@ -72,6 +70,7 @@ val min_document_width : int
 val min_document_height : int
 val min_status_width : int
 val min_status_height : int
+val min_minor_width : int
 
 (** Normalize negative allocation dimensions to zero, preserving the origin. If
     requested and both pane minima fit, clamp status size along the split axis and
@@ -79,10 +78,18 @@ val min_status_height : int
     rectangle to the document and request compact feedback. Requests are never
     modified: callers retain [Prefs.t] and recompute on resize or hide/restore.
     No amount of available space independently enables a companion cell.
-    [problems_visible] requests a bottom preview of three to six rows; it is hidden
-    if document/status minima cannot coexist. Status is allocated within the
-    remaining upper rectangle. *)
-val allocate : ?problems_visible:bool -> Prefs.t -> allocation:Geometry.Rect.t -> t
+    [minors] (requested visible minor views, in order) share a bottom band of three to
+    six rows, side by side with equal widths of at least {!min_minor_width}; the band is
+    left out if document/status minima cannot coexist, and views that don't fit are
+    left out from the end. Status is allocated within the remaining upper rectangle. *)
+val allocate
+  :  ?minors:Ches_tile.View_id.t list
+  -> Prefs.t
+  -> allocation:Geometry.Rect.t
+  -> t
+
+(** The allocated pane of a minor view, if it fits. *)
+val minor : t -> Ches_tile.View_id.t -> Pane.t option
 
 (** Pane-local document geometry, applying independent document placement prefs
     and this allocation's compact-feedback policy. No editor state is changed. *)

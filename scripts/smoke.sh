@@ -1198,7 +1198,7 @@ keys i u Space q
 expect_screen "Editor command unavailable"
 t set-buffer -b smoke ' voij'
 t paste-buffer -p -b smoke -t "$session"
-expect_screen "Problems are read-only; paste ignored"
+expect_screen "Problems: read-only; paste ignored"
 save_screen "workspace-problems-focused-80x24"
 resize 15 4
 expect_no_screen "Problems*"
@@ -1243,6 +1243,47 @@ launch problems-demo.txt
 keys Space v b
 expect_screen "No active problems"
 expect_screen "Problems (workspace): 0/0"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "static demo report through the shared tile host"
+printf 'report one\nreport two\n' > "$work/report.txt"
+cp "$work/report.txt" "$work/report.expected"
+launch --demo-report report.txt
+keys Space v d
+expect_screen "Demo report (static): 10 items"
+keys Space v D
+expect_screen "Demo report* (static): [1/10]"
+if poll pane_cursor_hidden; then ok "report capture hides terminal cursor"; else fail "report cursor visible"; fi
+keys G e
+expect_screen "Demo report* details (static): [10/10]"
+expect_screen "DEMO REPORT 10/10"
+keys G
+expect_screen "Details "
+expect_no_screen "DEMO REPORT 10/10"
+keys Escape
+expect_screen "Demo report* (static): [10/10]"
+keys Space v o
+expect_screen "Problems* (workspace): 0/0 [0/0]"
+expect_screen "Demo report (static): 10 items"
+keys Space v D
+expect_screen "Demo report* (static): [10/10]"
+t set-buffer -b smoke ' vDij'
+t paste-buffer -p -b smoke -t "$session"
+expect_screen "Demo report: read-only; paste ignored"
+save_screen "workspace-demo-report-80x24"
+keys Tab
+expect_screen "Demo report (static): 10 items"
+expect_no_screen "Demo report*"
+keys Space w
+expect_file "$work/report.txt" "$work/report.expected"
+keys Space q
+expect_exit 0
+launch report.txt
+keys Space v d
+expect_screen "Demo report unavailable; launch with --demo-report"
+expect_no_screen "Demo report ("
 keys Space q
 expect_exit 0
 

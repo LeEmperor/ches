@@ -26,7 +26,7 @@ let feedback t = Controller.feedback (Ui_state.controller t)
 let editor t = Controller.editor (Ui_state.controller t)
 let update t u = Ui_state.update_feedback t ~width:80 ~height:16 u
 let is_selected t i = Option.exists (selected t) ~f:(Feedback.Identity.equal (id i))
-let notice t text = Option.exists (Ui_state.problem_notice t) ~f:(fun s ->
+let notice t text = Option.exists (Ui_state.capture_notice t) ~f:(fun s ->
   String.is_substring s ~substring:text)
 ;;
 
@@ -95,9 +95,9 @@ let%expect_test "inspection wraps full text, scrolls, and Escape obeys capture p
     String.concat (List.init 50 ~f:(fun _ -> "界🙂finding ")), None))
     |> fun t -> run t " voeg" in
   assert (focused t && Ui_state.problem_details t);
-  assert (Option.is_some (Ui_state.problem_pending t));
+  assert (Option.is_some (Ui_state.capture_pending t));
   let t = run t "<Esc>" in
-  assert (focused t && Ui_state.problem_details t && Option.is_none (Ui_state.problem_pending t));
+  assert (focused t && Ui_state.problem_details t && Option.is_none (Ui_state.capture_pending t));
   let t = run t "G" in
   assert (Ui_state.problem_detail_top t > 0);
   let t = run t "gg" in
@@ -108,11 +108,11 @@ let%expect_test "inspection wraps full text, scrolls, and Escape obeys capture p
   assert (not (focused t));
   assert (List.for_all (Feedback.problems (feedback t)) ~f:(fun p -> p.attention));
   let t = run t " vo v<Esc>" in
-  assert (focused t && Option.is_none (Ui_state.problem_pending t));
+  assert (focused t && Option.is_none (Ui_state.capture_pending t));
   let t = run t "<Esc>iZ<Esc>" in
   assert (String.is_prefix (Text_buffer.to_string (Editor.text (editor t))) ~prefix:"Zfirst");
   let t = run t " vog<Tab>" in
-  assert (not (focused t) && Option.is_none (Ui_state.problem_pending t));
+  assert (not (focused t) && Option.is_none (Ui_state.capture_pending t));
   print_endline "prefix cancelled, details closed, focus returned; no acknowledgement or leaked keys";
   [%expect {| prefix cancelled, details closed, focus returned; no acknowledgement or leaked keys |}]
 ;;
@@ -148,7 +148,7 @@ let%expect_test "safe same-file jumps, display-cell Unicode conversion, and reje
 let%expect_test "hide, zen, resize and atomic paste restore editor ownership safely" =
   let t = create () |> fun t -> run t " vo v" in
   let t = Helpers.run ~width:15 ~height:4 t [ Ui_state.Input.Resize ] in
-  assert (not (focused t) && Option.is_none (Ui_state.problem_pending t));
+  assert (not (focused t) && Option.is_none (Ui_state.capture_pending t));
   let t = Helpers.run ~width:80 ~height:16 t [ Ui_state.Input.Resize ] in
   assert (not (focused t));
   List.iter [ " vb"; " vz" ] ~f:(fun input ->

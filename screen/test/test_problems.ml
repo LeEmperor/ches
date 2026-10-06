@@ -98,17 +98,17 @@ let%expect_test "coexistence, requested visibility, zen, filtering and editor ow
       Controller.update_feedback c (Failed (p.identity, p.severity, p.text))) in
   let t = Ui_state.create controller |> fun t -> run ~width:80 ~height:16 t (keys " vt vb") in
   let w = Ui_state.workspace t ~width:80 ~height:16 in
-  assert (Option.is_some w.status && Option.is_some w.problems);
-  assert (Workspace.Pane.focusable (Option.value_exn w.problems));
+  assert (Option.is_some w.status && Option.is_some (Workspace.minor w Problems_tile.id));
+  assert Problems_tile.spec.focusable;
   let original = Controller.feedback (Ui_state.controller t) in
   let t = run ~width:80 ~height:16 t (keys " vf vb vb vz") in
   assert (Ui_state.problems_visible t && Ui_state.problems_current_document t);
-  assert (Option.is_none (Ui_state.workspace t ~width:80 ~height:16).problems);
+  assert (Option.is_none (Workspace.minor (Ui_state.workspace t ~width:80 ~height:16) Problems_tile.id));
   let t = run ~width:80 ~height:16 t (keys " vz") in
-  assert (Option.is_some (Ui_state.workspace t ~width:80 ~height:16).problems);
+  assert (Option.is_some (Workspace.minor (Ui_state.workspace t ~width:80 ~height:16) Problems_tile.id));
   assert (List.equal Feedback.Problem.equal (Feedback.problems original)
     (Feedback.problems (Controller.feedback (Ui_state.controller t))));
-  assert (Option.is_none (Ui_state.workspace t ~width:15 ~height:4).problems);
+  assert (Option.is_none (Workspace.minor (Ui_state.workspace t ~width:15 ~height:4) Problems_tile.id));
   assert (Ui_state.problems_visible t);
   let frame = Frame.render t ~width:80 ~height:16 in
   assert (String.is_substring (Frame.to_string frame) ~substring:"Problems (document): 1/8");
@@ -129,7 +129,7 @@ let%expect_test "all allocations, status positions, Unicode and control text sta
     List.iter (List.range 0 45) ~f:(fun width ->
       List.iter (List.range 0 18) ~f:(fun height ->
         let w = Ui_state.workspace t ~width ~height in
-        let panes = w.document :: List.filter_opt [ w.status; w.problems ] in
+        let panes = w.document :: Option.to_list w.status @ w.minors in
         List.iter panes ~f:(fun p ->
           let r = p.Workspace.Pane.rect in
           assert (r.x >= 0 && r.y >= 0 && r.x + r.width <= width && r.y + r.height <= height));

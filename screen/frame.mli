@@ -37,8 +37,9 @@ type t =
   }
 [@@deriving sexp_of]
 
-(** Compose the effective workspace's document and optional status tile against a
-    screen-sized backdrop. Scrolling and cursor placement share its document geometry.
+(** Compose the effective workspace's document, optional status tile, and minor views
+    (each rendered by its adapter) against a screen-sized backdrop. Only the cursor
+    owner (the document, when focused) draws a terminal cursor or smear. Scrolling and cursor placement share its document geometry.
     Compact/zen layouts retain bottom-row feedback. An explicit [allocation] instead
     renders only the document there, clipped to screen bounds, reserving a status row
     by default. [reserve_status_row] overrides either policy for headless callers. *)

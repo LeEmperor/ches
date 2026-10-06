@@ -33,8 +33,8 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
   and height = Int.max 0 height in
   let workspace = Ui_state.workspace ui ~width ~height in
   let pane_relative = Option.is_some allocation || Option.is_some workspace.status
-    || Option.is_some workspace.problems in
-  let problems_pane = if Option.is_some allocation then None else workspace.problems in
+    || not (List.is_empty workspace.minors) in
+  let minor_panes = if Option.is_some allocation then [] else workspace.minors in
   let allocation, default_reservation, status_pane =
     match allocation with
     | None -> workspace.document.rect, workspace.reserve_status_row, workspace.status
@@ -70,17 +70,32 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
     let tile = Status.vertical ~rect:pane.Workspace.Pane.rect fields in
     tile.rect, Array.of_list tile.rows)
   in
-  let problems_tile = Option.map problems_pane ~f:(fun pane ->
-    let rect = pane.Workspace.Pane.rect in
-    rect, Array.of_list (Problems.render
-      ~focused:(Ui_state.problems_focused ui ~width ~height)
-      ~navigation:(Ui_state.problem_navigation ui ~width ~height)
-      ~details:(Ui_state.problem_details ui)
-      ~detail_top:(Ui_state.problem_detail_top ui)
-      ?notice:(Ui_state.problem_notice ui) ?pending:(Ui_state.problem_pending ui)
-      (Controller.feedback (Ui_state.controller ui))
-      ~current_document:(Ui_state.problems_current_document ui)
-      ~path:(Editor.path editor) ~rect)) in
+  (* Each minor pane's content comes from its adapter; only the focused view shows the
+     host's capture notice and pending prefix. *)
+  let focused_view = Ui_state.focused_view ui ~width ~height in
+  let minor_tiles = List.map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
+    let rect = pane.rect in
+    let focused id = Ches_tile.View_id.equal focused_view id in
+    let capture id = if focused id
+      then Ui_state.capture_notice ui, Ui_state.capture_pending ui else None, None in
+    let rows = match pane.id, Ui_state.report ui with
+      | Minor id, _ when Ches_tile.View_id.equal id Problems_tile.id ->
+        let notice, pending = capture id in
+        let tile = Ui_state.problems_tile ui in
+        Problems.render
+          ~focused:(focused id)
+          ~navigation:(Ui_state.problem_navigation ui ~width ~height)
+          ~details:(Problems_tile.details tile)
+          ~detail_top:(Problems_tile.detail_top tile)
+          ?notice ?pending
+          (Controller.feedback (Ui_state.controller ui))
+          ~current_document:(Problems_tile.current_document tile)
+          ~path:(Editor.path editor) ~rect
+      | Minor id, Some report when Ches_tile.View_id.equal id Report_tile.id ->
+        let notice, pending = capture id in
+        Report_tile.render ~focused:(focused id) ?notice ?pending report ~rect
+      | (Minor _ | Document | Status), _ -> Tile_text.fill ~rect [] in
+    rect, Array.of_list rows) in
   let search =
     match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
     | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)
@@ -298,25 +313,28 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
         | Some (rect, rows) when y >= rect.y && y < rect.y + rect.height -> [ rect, rows.(y - rect.y) ]
         | Some _ | None -> []
       in
-      let problems = match problems_tile with
-        | Some (rect, rows) when y >= rect.y && y < rect.y + rect.height -> [ rect, rows.(y - rect.y) ]
-        | Some _ | None -> [] in
-      let segments = List.sort (document @ status @ problems) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
+      let minors = List.filter_map minor_tiles ~f:(fun (rect, rows) ->
+        if y >= rect.y && y < rect.y + rect.height then Some (rect, rows.(y - rect.y))
+        else None) in
+      let segments = List.sort (document @ status @ minors) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
       let spans, right = List.fold segments ~init:([], 0) ~f:(fun (spans, right) (rect, content) ->
         spans @ [ Span.blank Backdrop (rect.x - right) ] @ content, rect.x + rect.width)
       in
       Span.merge (spans @ [ Span.blank Backdrop (width - right) ]))
   in
   let animation = Ui_state.animation ui in
+  let document_cursor =
+    Option.exists (Ui_state.cursor_owner ui ~width ~height)
+      ~f:(Ches_tile.View_id.equal Ui_state.document_id) in
   let smear =
-    (if Ui_state.problems_focused ui ~width ~height then [] else Animation.cells animation ~width ~height)
+    (if not document_cursor then [] else Animation.cells animation ~width ~height)
     |> List.filter ~f:(fun (x, y) ->
       not pane_relative
       || (x >= viewport.x && x < viewport.x + viewport.width
           && y >= viewport.y && y < viewport.y + viewport.height))
   in
   let cursor =
-    if Ui_state.problems_focused ui ~width ~height then None
+    if not document_cursor then None
     else if Animation.active animation || not (List.is_empty insert_points)
     then None
     else

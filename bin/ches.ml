@@ -23,10 +23,13 @@ let command =
          Space v b toggles the problems preview; Space v f filters workspace/current document;\n\
          Space v o focuses problems: j/k, gg/G, Ctrl-d/u navigate, e inspects, a acknowledges,\n\
          Enter jumps to a supported current-file location; Escape cancels/back/returns.\n\
-         --demo-problems seeds eight labelled, jumpable synthetic problems without editing PATH.")
+         --demo-problems seeds eight labelled, jumpable synthetic problems without editing PATH.\n\
+         --demo-report installs a static report: Space v d shows it, Space v D focuses it.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)
      and demo_problems = flag "--demo-problems" no_arg
-       ~doc:" Seed synthetic problems with locations for manual pane/navigation testing" in
+       ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"
+     and demo_report = flag "--demo-report" no_arg
+       ~doc:" Install a static, error-free report view for manual tile testing" in
      fun () ->
        let fail error =
          eprintf "ches: %s\n" (Error.to_string_hum error);
@@ -44,7 +47,9 @@ let command =
           | Ok controller ->
             let controller = if demo_problems
               then Ches_app.Demo_problems.install controller else controller in
-           (match%bind Ches_ui.Editor_view.run controller with
+           let report =
+             Option.some_if demo_report Ches_screen.Report_tile.demo in
+           (match%bind Ches_ui.Editor_view.run ?report controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

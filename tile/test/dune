@@ -1,0 +1,14 @@
+; Pure tests of the shared tile foundation. Like ches_tile, they must not depend on
+; ches_error, ches_app, or ches_screen: the host is exercised without any consumer.
+
+(copy_files# ../../test/key_notation.ml)
+
+(library
+ (name ches_tile_test)
+ (libraries ches_input ches_tile core expect_test_helpers_core)
+ ; See core/dune for why this flag is needed.
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

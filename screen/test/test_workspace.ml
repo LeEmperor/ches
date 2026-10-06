@@ -136,7 +136,6 @@ let%expect_test "allocations are bounded, disjoint, exhaustive, with stable focu
               let allocation = allocation width height in
               let t = Workspace.allocate prefs ~allocation in
               assert (Workspace.Pane_id.equal t.document.id Document);
-              assert (Workspace.Pane.focusable t.document);
               inside allocation t.document.rect;
               match t.status with
               | None ->
@@ -147,7 +146,6 @@ let%expect_test "allocations are bounded, disjoint, exhaustive, with stable focu
                 assert status_visible;
                 assert (not t.reserve_status_row);
                 assert (Workspace.Pane_id.equal status.id Status);
-                assert (not (Workspace.Pane.focusable status));
                 inside allocation status.rect;
                 let d = t.document.rect and s = status.rect in
                 assert (d.x + d.width <= s.x || s.x + s.width <= d.x

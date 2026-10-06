@@ -6,6 +6,6 @@
 
 (library
  (name ches_screen)
- (libraries ches_error ches_app ches_core ches_input core notty-community)
+ (libraries ches_error ches_app ches_core ches_input ches_tile core notty-community)
  (preprocess
   (pps ppx_jane)))

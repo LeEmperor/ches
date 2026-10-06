@@ -2,9 +2,11 @@
     tests drive it headlessly, exactly as the terminal frontend does.
 
     The model holds the {!Ches_app.Controller.t} (editor and keymap), the layout
-    preferences, the scroll position, a bracketed paste being collected, and the shared
-    controller feedback. Workspace requests and zen suppression are UI state, not editor
-    state. Problems has read-only keyboard capture; status remains non-focusable. *)
+    preferences, the scroll position, the shared {!Ches_tile.Host} (focus, capture, and a
+    bracketed paste's owner), and the minor views' adapter states. Workspace requests and
+    zen suppression are UI state, not editor state. This module is application assembly:
+    it wires the generic host to the problems adapter ({!Problems_tile}) and the static
+    demo report ({!Report_tile}); status remains non-focusable. *)
 
 open! Core
 open Ches_input
@@ -41,8 +43,15 @@ val create
   :  ?prefs:Geometry.Prefs.t
   -> ?workspace_prefs:Workspace.Prefs.t
   -> ?smear_enabled:bool
+  -> ?report:Report_tile.Item.t list
+       (** Installs the static demo report ([--demo-report]); hidden initially. *)
   -> Ches_app.Controller.t
   -> t
+
+(** The primary (editor) view and the non-focusable status view. *)
+val document_id : Ches_tile.View_id.t
+
+val status_id : Ches_tile.View_id.t
 
 val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
@@ -50,13 +59,32 @@ val workspace_prefs : t -> Workspace.Prefs.t
 val zen : t -> bool
 val problems_visible : t -> bool
 val problems_current_document : t -> bool
+val problems_tile : t -> Problems_tile.t
+val report : t -> Report_tile.t option
+val report_visible : t -> bool
+
+(** The effective focus: a minor view only while it is allocated. *)
+val focused_view : t -> width:int -> height:int -> Ches_tile.View_id.t
+
+(** The view supplying the terminal cursor, if any: the document when focused. *)
+val cursor_owner : t -> width:int -> height:int -> Ches_tile.View_id.t option
+
 val problems_focused : t -> width:int -> height:int -> bool
-val problem_navigation : t -> width:int -> height:int -> Problem_navigation.t
+
+val problem_navigation
+  :  t
+  -> width:int
+  -> height:int
+  -> Ches_error.Error.Identity.t Ches_tile.Navigation.Selection.t
+
 val selected_problem : t -> width:int -> height:int -> Ches_error.Error.Problem.t option
 val problem_details : t -> bool
 val problem_detail_top : t -> int
-val problem_notice : t -> string option
-val problem_pending : t -> string option
+
+(** The focused view's capture notice and pending prefix, for its footer. *)
+val capture_notice : t -> string option
+
+val capture_pending : t -> string option
 
 (** Shared feedback update with selection reconciliation. No editor input or IO. *)
 val update_feedback
@@ -99,7 +127,13 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     commands the controller returns update {!prefs} (see {!apply_view}) or, for [Scroll],
     the scroll.
 
-    {2 Problems pane capture}
+    {2 Minor view capture}
+
+    Routing for a focused minor view is {!Ches_tile.Host.key}; the focused view's
+    adapter performs its content actions. The problems bindings below are the
+    problems adapter's; the demo report ([Space v d] shows/hides, [Space v D]
+    focuses/returns) uses the same host with [j/k], [gg/G], [Ctrl-d/u], and [e]/Enter
+    for details.
 
     Normal [Space v o] shows/focuses problems, or returns to the editor. Entry and
     return cancel pending editor input. Existing Normal prefixes/counts/search retain
@@ -111,7 +145,8 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     acknowledgement. Tab returns directly. [Space v] uses configured view bindings;
     editor commands and document scrolling are rejected during capture.
     Hiding/zen/undersized allocations restore document focus and clear pane prefixes.
-    Bracketed paste retains its start owner; pane paste is rejected even after resize.
+    Bracketed paste retains its start owner; a paste started in a read-only view is
+    rejected even after resize.
     Selection follows identity; removal/filtering chooses the previous index's next
     neighbor, falling back to the last item. An empty list retains pane focus until
     explicitly returned/hidden. No terminal cursor or editor smear is drawn in capture.
