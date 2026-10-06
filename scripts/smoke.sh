@@ -1304,6 +1304,41 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "read-only text: cursor, selection, and copying in a supporting view"
+printf 'copy target\n' > "$work/copy.txt"
+cp "$work/copy.txt" "$work/copy.expected"
+launch --demo-report copy.txt
+keys Space v D
+expect_screen "Demo report* (static): [1/10]"
+if poll pane_cursor_hidden; then ok "no terminal cursor in the list"; else fail "list cursor visible"; fi
+keys e
+expect_screen "Demo report* details (static): [1/10]"
+expect_screen "hjkl w b v V yy; e/Esc back"
+if poll cursor_flag_is 1; then ok "details show the text cursor"; else fail "details cursor hidden: $(cursor)"; fi
+# "REPORT " from the item's text: w to it, select through the blank after it.
+keys w v w h
+expect_screen "VISUAL: y copy"
+keys y
+expect_screen "Copied 7 characters"
+keys x
+expect_screen "Demo report: read-only; edits unavailable"
+keys Escape
+expect_screen "Demo report* (static): [1/10]"
+if poll pane_cursor_hidden; then ok "closing details hides the cursor"; else fail "cursor left visible"; fi
+keys Escape
+expect_no_screen "Demo report*"
+# The copy reached the unnamed register: p pastes it in the editor, and undo removes it.
+keys p
+expect_cursor_row "cREPORT opy target"
+keys u
+expect_cursor_row "copy target"
+keys Space w
+expect_file "$work/copy.txt" "$work/copy.expected"
+save_screen "tiles-text-copy-80x24"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
 section "scrolling a wide line"
 { for _ in $(seq 1 40); do printf '0123456789'; done; printf '\nshort\n'; } > "$work/wide.txt"
 launch wide.txt

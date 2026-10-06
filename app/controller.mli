@@ -63,6 +63,12 @@ val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Status.t
     effects. It leaves the keymap and {!last_input_dispatched} alone. *)
 val move : t -> Motion.t -> count:int option -> t
 
+(** Copy text from a read-only view to both destinations an editor yank reaches: the
+    editor's unnamed register (so [p] pastes it) and the system clipboard (see
+    {!take_clipboard}). No editor command runs: the document, cursor, history, dirty
+    state, keymap, and feedback are unchanged. *)
+val yank : t -> Register.t -> t
+
 val feedback : t -> Ches_error.Error.t
 val update_feedback : t -> Ches_error.Error.update -> t
 

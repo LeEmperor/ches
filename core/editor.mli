@@ -224,6 +224,11 @@ val message : t -> Message.t option
     that an empty characterwise yank or a block of empty rows leaves it; history does
     not restore it. *)
 val unnamed_register : t -> Register.t option
+
+(** Replace the unnamed register with text copied from outside the document, such as
+    a read-only view. Nothing else changes: not the text, cursor, mode, history,
+    revision, dirty state, or message. *)
+val set_unnamed_register : t -> Register.t -> t
 val search_case : t -> Search_case.t
 
 val search_state : t -> (string * bool * bool * int option) option

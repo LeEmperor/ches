@@ -26,5 +26,9 @@ val primary : View_id.t -> title:string -> t
 (** Minor, focusable, read-only: rejects paste and draws no terminal cursor. *)
 val read_only : View_id.t -> title:string -> t
 
+(** {!read_only}, but supplying the terminal cursor while focused: a view with read-only
+    text ({!Text_view}) puts it on its text cursor, and shows none without one. *)
+val read_only_text : View_id.t -> title:string -> t
+
 (** Minor and not focusable, such as status: it observes, never captures input. *)
 val companion : View_id.t -> title:string -> t

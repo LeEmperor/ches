@@ -41,6 +41,14 @@ let editor t = t.editor
 let keymap t = t.keymap
 let last_input_dispatched t = t.dispatched
 let take_clipboard t = { t with clipboard = None }, t.clipboard
+
+let yank t register =
+  { t with
+    editor = Editor.set_unnamed_register t.editor register
+  ; clipboard = Some (Register.to_string register)
+  }
+;;
+
 let feedback t = t.feedback
 let update_feedback t update = { t with feedback = Feedback.apply t.feedback update }
 let cancel_pending t = { t with keymap = Keymap.reset t.keymap; dispatched = false }

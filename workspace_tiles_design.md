@@ -10,15 +10,15 @@ Phase 7A's shared tile host (`tile/`, `ches_tile`) with problems migrated onto i
 and an error-free demo report fixture is software-complete and human-accepted
 (2026-10-05). Phase 7B's shared rounded shell, padding, gaps, and revised band
 height are software-complete and human-accepted (2026-10-06), with frames drawn on
-the backdrop. Phase 7C,
-history views, diagnostic sources, and the external-view protocol remain
-unimplemented.
+the backdrop. Phase 7C's shared read-only text cursor, selection, and copying is
+software-complete / human-feedback-pending (2026-10-06). History views, diagnostic
+sources, and the external-view protocol remain unimplemented.
 
 **Direction update (2026-10-05):** This worktree implements a general tile system.
 Status and problems are concrete consumers/test cases, not the definition of a
-tile. Shared tile plumbing is generalized by phase 7A and shared framing/padding by
-phase 7B (below); read-only text selection/copying is not yet, and phase 7C remains
-the next tile-system assignment. Phase 6/7 software completion does not imply these later
+tile. Shared tile plumbing is generalized by phase 7A, shared framing/padding by
+phase 7B, and read-only text selection/copying by phase 7C (below; awaiting human
+feedback). Phase 6/7 software completion does not imply these later
 capabilities exist or that their current presentation is human-accepted.
 
 ## Goal and scope
@@ -1355,7 +1355,8 @@ or async transport just to establish this boundary.
 These are new assignments after the implemented phase 7, not retroactive changes
 to its completion record. Implement in order; keep this application buildable and
 usable at each checkpoint. Use the existing software/human acceptance contract.
-Phases 7A–7B are software-complete (records below); 7C is **planned, not implemented**. They should precede new
+Phases 7A–7B are software-complete and human-accepted (records below); 7C is
+software-complete / human-feedback-pending. They should precede new
 history/external view UI rather than growing another problems-specific branch.
 
 ### Phase 7A — Extract generic tile host and routing; migrate problems
@@ -1522,7 +1523,7 @@ remaining issues rather than declaring palette/comfort verified by screenshots.
 
 #### Phase 7B implementation choices (2026-10-05)
 
-**Status (2026-10-05): software-complete / human-feedback-pending.**
+**Status (2026-10-06): software-complete and human-accepted (see feedback below).**
 
 - **Shell module.** `screen/tile_shell.ml` (`Tile_shell`) owns the shared shell.
   `Tile_shell.layout policy rect` returns one `Layout.t` (outer, framed, padding,
@@ -1638,6 +1639,27 @@ remaining issues rather than declaring palette/comfort verified by screenshots.
 - Tests: gap cells are backdrop, and a theme test pins frame-cell styles to the
   backdrop while tile interiors keep their ground. Smoke passes (658 checks); its
   120x40 check now looks for `╮ ╭─` between the band views.
+- Phase 7B is human-accepted. Re-verified 2026-10-06 on `ac34648`: `dune build`,
+  `dune runtest`, and `scripts/smoke.sh` (658 checks) pass.
+
+#### Phase 7B open questions (carried forward, 2026-10-06)
+
+The manual check asked about these, and acceptance did not answer them. They are
+not blockers for phase 7C; revisit them when the owner next reviews tile comfort.
+
+- **Padding density.** Minor tiles have one cell of side padding; the editor has
+  `left_padding` 2. Is one cell tight next to the editor?
+- **Hint legibility.** Can the muted `Hint` text in the bottom border be read on
+  the open look's backdrop, on both the laptop and the monitors?
+- **Band height.** Are ten rows (`Workspace.preferred_band_height`, eight content
+  rows) right on each display?
+- **Shell boundary.** `Tile_shell` stays error-free only by convention inside
+  `ches_screen`. Moving it into a library that dune keeps away from `ches_error`
+  (as `ches_tile` is) is still open. Also open: `Ui_state` still wires each minor
+  tile by name (visibility flags, `leave`, `synchronize`, `feed_capture`), and
+  `View_command` still has commands named per consumer (`Focus_problems`,
+  `Focus_demo_report`). Adding a third minor tile, or the per-view state 7C needs,
+  means editing each of these.
 
 ### Phase 7C — Shared read-only text cursor, selection, and copying
 
@@ -1670,6 +1692,121 @@ fit, not evidence of broken scrolling. Human tests select/copy into the editor o
 external destination, inspect long details, switch panes, resize/use zen, and verify
 that copied text and keyboard ownership match expectations. Problem lifecycle and
 primary-editor undo/dirty state remain unchanged by these interactions.
+
+#### Phase 7C implementation choices (2026-10-06)
+
+**Status (2026-10-06): software-complete / human-feedback-pending.**
+
+- **Shared model.** `tile/text_view.ml` (`Ches_tile.Text_view`) is the read-only text
+  surface: a snapshot of canonical text, a cursor, Visual state, a preferred column,
+  and a first visible row. It lives in `ches_tile`, which now also depends on
+  `ches_core` (for `Cell_layout` and `Register`, neither of which knows errors), so
+  dune keeps it away from `ches_error`. It lays text out with `Cell_layout.glyphs` and
+  the screen's `Cell_map.width`, so wrapping, the cursor cell, highlighting, and the
+  copied bytes agree. Rendering is in `ches_screen`: `Tile_text.text_view` (rows with
+  the selection highlighted) and `Tile_text.text_footer`. `Tile_text.wrap` is gone.
+- **Where it applies.** Open details are the text surface; lists keep their
+  separate key-based item selection. Problems details are the problem's
+  `Problems.description`; report details are `title ^ ": " ^ body`. That same string
+  is each item's canonical copy text. The status tile is untouched.
+- **Positions and rows.** Text splits into logical lines at LF. The cursor is a byte
+  offset on a glyph with cells (combining marks belong to the glyph before them) or
+  an empty line's start. Lines wrap by display cells to the content width, as
+  before; a TAB keeps its width from the unwrapped line. Controls and invalid bytes
+  are drawn as their escape forms but copied as their source bytes.
+- **Movement (no counts).** `h/l` by glyph within a logical line; `0`, `^`, `$` to
+  its start, first non-blank, and last glyph (logical line, not wrapped row, as in
+  Vim; in a one-line description `$` is its end); `w/b` to small-word starts across
+  lines (the editor's word classes; empty lines stop). `j/k` move by wrapped row with
+  a preferred display column (like Vim's `gj/gk`, because details are often one long
+  line); `gg/G` first/last row; `Ctrl-d/u` move and scroll by half the viewport. `e`
+  is not word-end: it keeps closing details (the 7A binding).
+- **Visual and yank.** `v`/`V` start characterwise/linewise Visual, switch kind, or
+  end it; `o` swaps ends. Characterwise selection includes each end's glyph and its
+  combining marks, and the line break when an end sits on an empty line. Linewise
+  selection is whole logical lines (never wrapped rows); its copy always ends with
+  LF. `y` (or `Y`) in Visual copies, ends Visual, and puts the cursor at the
+  selection start. Outside Visual, `yy`/`Y` copy the cursor's logical line. In a
+  list, `yy`/`Y` copy the selected item's whole text, linewise.
+- **Copy destination.** Both places an editor yank reaches: the editor's unnamed
+  register (new `Editor.set_unnamed_register`, which changes nothing else) and the
+  system clipboard through the existing OSC 52 route. `Controller.yank` does both
+  without dispatching an editor command, so text, cursor, history, revision, dirty
+  state, keymap, and feedback are unchanged. `p` in the editor then pastes it. The
+  footer shows `Copied N characters` / `Copied N lines` (shown, not posted).
+- **Rejection.** Edit keys (`i I a A o O x X d D c C s S r R p P u U J ~ < > .` and
+  `Ctrl-r`; `o` only outside Visual) give `<Title>: read-only; edits unavailable`,
+  posted like the paste rejection. The adapter's own keys win first, so `a` still
+  acknowledges in problems (list or details) and is rejected in the report. Paste is
+  still rejected by the host.
+- **Escape precedence.** Host prefix cancellation, then end Visual, then close
+  details, then return. Tab still returns directly; leaving a view closes its
+  details (and so its selection).
+- **Updates.** The problems adapter re-fits open details against current feedback. A
+  different selected identity closes details (unchanged). The same identity with a
+  different description goes through `Text_view.update`: Visual ends, the cursor stays
+  on the same logical line and display column where they exist (clamped otherwise),
+  and the view's footer says `Details updated; selection cleared` (or `Details
+  updated` without a selection). A later `y` cannot copy the old selection. The
+  report's items are static, so only problems exercise this in the application.
+- **Cursor ownership.** New `Spec.read_only_text` (problems and report): read-only and
+  paste-rejecting like `Spec.read_only`, but it owns the terminal cursor while focused.
+  `Ui_state.text_cursor` places it on the text cursor's cell inside the content rect;
+  a list has no text cursor, so none is shown (as before). The document draws its
+  cursor and smear only when it owns the cursor, so there is still exactly one owner.
+  Selection uses the editor's selection style (`Document` with the `Selection`
+  overlay) inside the tile.
+- **Footers and hints.** Details: `Details a-b/n | hjkl w b v V yy; e/Esc back`, or
+  `… | VISUAL: y copy, o swap; Esc cancel` (`VISUAL LINE`). Lists add `yy`:
+  `j/k e yy Esc` and `j/k e Enter a yy Esc`. Bindings are provisional, like 7A's,
+  pending the command palette.
+- **Known limits.** No counts, `e`/`E`/`W`/`B`, search, or blockwise selection in
+  details. Layout is recomputed per action (fine for details-sized text). `Ui_state`
+  gained one more per-view dispatch (`text_view`), which adds to the 7B open question
+  about wiring minor tiles by name.
+
+#### Phase 7C implementation and verification (2026-10-06)
+
+- Added `Ches_tile.Text_view`, `Spec.read_only_text`, `Tile_text.text_view`/
+  `text_footer`, `Ui_state.text_cursor`, `Controller.yank`, and
+  `Editor.set_unnamed_register`. The problems and report adapters hold a
+  `Text_view.t option` instead of a details flag and offset; their `fit` takes the
+  content width; `interpret` reads view state; `perform` returns a `Text_view.Effect`
+  (copy or notice) that `Ui_state` routes. `Problems.render` takes the open text view;
+  `Problems.detail_rows` became `Problems.description`.
+- Tests: `tile/test/test_text_view.ml` (5, error-free): movement beyond a three-row
+  viewport with the cursor kept visible; rows, cursor, and copy across wide, combining,
+  and TAB glyphs; linewise/characterwise copies, empty lines, and Visual switching;
+  edit rejection and Escape; the update policy. `screen/test/test_tile_text.ml` (3):
+  report details past the viewport with the terminal cursor following; a selection
+  across a wrap highlighted exactly and copied as source bytes to the clipboard and
+  register, a linewise copy of the whole item, editor revision/dirty unchanged, Escape
+  order, and `p`/undo in the editor; problems list/details copies, read-only
+  rejection, an update during selection, an unchanged problem lifecycle, and Tab
+  return. Two earlier invariants changed on purpose: a focused pane may now draw the
+  terminal cursor, but only its text cursor inside its content (the 0–84 x 0–17
+  sweep and the 5,400-allocation sweep check this). List footers gained `yy`.
+- Verified `opam exec --switch=5.2.0+ox -- dune build`, `dune runtest` (all pass),
+  and `git diff --check`. `scripts/smoke.sh` passes all 676 checks. Its new section
+  shows the details cursor, selects and copies `REPORT ` in the report, checks the
+  copy and read-only notices, closes details (cursor hidden), pastes the copy into
+  the editor with `p`, undoes, and saves unchanged bytes. The smoke cannot observe
+  the system clipboard (tmux is not asked to forward OSC 52).
+- **Software-complete / human-feedback-pending.** Manual check:
+  1. `dune exec ches -- --demo-problems --demo-report PATH` on a multiline file.
+  2. `Space v d`, `Space v D`, `G`, `e`: the cursor appears in the long last item's
+     details. Move with `j/k`, `w/b`, `0/$`, `Ctrl-d/u`, `gg/G`.
+  3. Select with `v` and `V` across a wrapped row, press `y`, and check the footer.
+     Return (Escape twice, or Tab), `p` in the editor, then `u`. Also paste the system
+     clipboard into another application.
+  4. `Space v o`: `yy` on a problem; `e`, select part of it, `y`. Try `x`, `p`, `i`
+     in details and in the list, and a terminal paste. `a` still acknowledges.
+  5. With a selection open, resize narrow and wide, use zen, and switch panes
+     (`Space v o` / `Space v D`); confirm keyboard and cursor ownership return
+     predictably.
+  Assess whether `j/k` by wrapped row and `0/$` by logical line feel right, whether
+  copying to both the register and the clipboard is wanted, whether the selection
+  colour reads well in a tile, and whether the bindings are acceptable for now.
 
 ### Later major-tile specialization
 

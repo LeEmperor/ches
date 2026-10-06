@@ -178,11 +178,12 @@ filtering. `Space v o` shows and focuses the pane. It remains read-only:
 
 | Pane keys | Action |
 | --- | --- |
-| `j/k`, `gg/G`, `Ctrl-d/u` | Select/scroll problems; scroll text while inspecting details |
-| `e` | Toggle full wrapped details for the selected problem |
+| `j/k`, `gg/G`, `Ctrl-d/u` | Select problems; move the text cursor while inspecting details |
+| `yy` / `Y` | Copy the selected problem's whole description |
+| `e` | Toggle full wrapped details for the selected problem, as read-only text (below) |
 | `a` | Acknowledge only the selected problem, without resolving it |
 | `Enter` | Jump to a valid current-file location and return to the editor |
-| `Escape` | Cancel a prefix, close details, then return to the editor |
+| `Escape` | Cancel a prefix, end a selection, close details, then return to the editor |
 | `Tab` or `Space v o` | Return directly to the editor |
 | `Space v …` | Layout controls; editor commands and document scrolling are rejected |
 
@@ -193,7 +194,8 @@ separated by a one-cell gap. The bottom band takes up to ten rows, never more th
 third of the window. Frames sit on the dark backdrop, so their rounded borders alone
 separate tiles. The
 `>` marker, the `Problems*` title, and an accent-coloured
-frame show selection/focus; the terminal cursor is hidden during pane capture. Hiding, zen, or resizing too small returns focus
+frame show selection/focus; the terminal cursor is hidden in a pane's list and marks
+the text cursor in its details. Hiding, zen, or resizing too small returns focus
 to the editor. Pane pastes are ignored atomically, not treated as commands.
 Focus, Escape/Tab/prefix precedence, workspace bindings, and paste ownership come
 from the shared tile host (`tile/`), not the problems pane; any other supporting
@@ -234,6 +236,27 @@ last row's details scroll), and Escape/Tab/`Space v …` behave as in problems.
 `Space v o` and `Space v D` move focus between the two views. The report never
 posts feedback, touches problems, or edits the file. Without the flag, `Space v d`
 and `Space v D` only report that it is unavailable.
+
+### Read-only text in supporting views
+
+Open details (problems and the demo report) are read-only text, like a read-only
+buffer in a Neovim split, with the terminal cursor on the text cursor:
+
+| Details keys | Action |
+| --- | --- |
+| `h/l`, `0` `^` `$`, `w/b` | Move within the text (`0`/`$` and `^` use the whole logical line, not the wrapped row) |
+| `j/k`, `gg/G`, `Ctrl-d/u` | Move by wrapped row, to the first/last row, or by half the view |
+| `v` / `V` | Characterwise / linewise Visual selection; again to end it, `o` swaps ends |
+| `y` (Visual), `yy` / `Y` | Copy the selection, or the cursor's whole line |
+| `e` | Close details (`Enter` also jumps in problems, `a` acknowledges) |
+| `Escape` | End a selection, then close details, then return |
+
+A copy goes where an editor yank goes: the unnamed register, so `p` in the editor
+pastes it, and the system clipboard. It copies the text itself, never the wrapping,
+padding, border, or markers, and shows `Copied …` in the view's footer. Copying and
+selecting never acknowledge, resolve, or jump. Edit keys (`i`, `x`, `d`, `p`, `u`,
+…) and pastes are rejected with a notice. If a problem's text changes while its
+details are open, the view takes the new text and ends any selection, saying so.
 
 ### Words and lines
 

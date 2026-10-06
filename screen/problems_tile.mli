@@ -25,13 +25,21 @@ val toggle_filter : t -> t
 (** The stored selection; use {!fit} first for one that matches current feedback. *)
 val selection : t -> Feedback.Identity.t Ches_tile.Navigation.Selection.t
 
+(** Whether the selected problem's details are open, and their first visible row. *)
 val details : t -> bool
+
 val detail_top : t -> int
+
+(** The open details: the selected problem's description as read-only text. *)
+val text_view : t -> Ches_tile.Text_view.t option
+
 val entries : t -> Feedback.t -> path:string option -> Feedback.Problem.t list
 
-(** Reconcile selection with current feedback in [rows] visible items. When the
-    selected identity changes, details close and their scroll resets. *)
-val fit : t -> Feedback.t -> path:string option -> rows:int -> t
+(** Reconcile selection with current feedback in a [width] by [rows] content viewport.
+    When the selected identity changes, details close. When its description changes,
+    open details take the new text through {!Ches_tile.Text_view.update}, which ends
+    any Visual selection rather than retargeting it. *)
+val fit : t -> Feedback.t -> path:string option -> rows:int -> width:int -> t
 
 val selected : t -> Feedback.t -> path:string option -> rows:int -> Feedback.Problem.t option
 
@@ -40,12 +48,15 @@ val leave : t -> t
 
 type action [@@deriving sexp_of]
 
-(** Shared list motions ([j/k], [gg/G], [Ctrl-d/u]) select, or scroll open details.
-    [e] inspects the selected identity and toggles details, [a] acknowledges it, and
-    Enter jumps to its location in the current document. *)
-val interpret : Ches_input.Key.t list -> action Ches_tile.Content_key.t
+(** [e] inspects the selected identity and toggles its details, [a] acknowledges it,
+    and Enter jumps to its location in the current document, in the list or details.
+    Otherwise, in the list, shared list motions ([j/k], [gg/G], [Ctrl-d/u]) select,
+    [yy]/[Y] copy the selected problem's description, and edit keys are rejected; in
+    details, keys go to the read-only text ({!Ches_tile.Text_view}: movement, Visual
+    selection, yank). Copying never inspects, acknowledges, or jumps. *)
+val interpret : t -> Ches_input.Key.t list -> action Ches_tile.Content_key.t
 
-(** Escape closes open details. *)
+(** Escape ends Visual, then closes open details. *)
 val escape : t -> action option
 
 val hint : string
@@ -56,6 +67,7 @@ module Outcome : sig
     ; controller : Ches_app.Controller.t
     ; notice : [ `Post of string | `Show of string ] option
     (** [`Post] also reports the notice as feedback; [`Show] only displays it. *)
+    ; effect : Ches_tile.Text_view.Effect.t option (** A copy or read-only notice. *)
     ; return : bool (** Return focus to the document (after a jump). *)
     }
 end

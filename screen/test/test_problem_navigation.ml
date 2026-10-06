@@ -183,9 +183,20 @@ let%expect_test "focused list/details remain bounded in every status position an
             assert (Span.total_width row = width);
             List.iter row ~f:(fun span ->
               assert (Cell_map.total_width (Cell_map.glyphs span.Span.text) = span.width)));
-          if Ui_state.problems_focused t ~width ~height then assert (Option.is_none frame.cursor)))));
-  print_endline "focused rows and details stay within bounds; pane owns no terminal cursor";
-  [%expect {| focused rows and details stay within bounds; pane owns no terminal cursor |}]
+          (* Focused, the pane owns the terminal cursor: none in the list, and in
+             details the text cursor, always inside the pane's content area. *)
+          if Ui_state.problems_focused t ~width ~height then (
+            let cursor = Option.map frame.cursor ~f:(fun c -> c.x, c.y) in
+            assert ([%equal: (int * int) option] cursor (Ui_state.text_cursor t ~width ~height));
+            assert (Option.is_none cursor || Ui_state.problem_details t);
+            Option.iter cursor ~f:(fun (x, y) ->
+              let content =
+                (Option.value_exn (Ui_state.minor_layout t ~width ~height Problems_tile.id)).content
+              in
+              assert (x >= content.x && x < content.x + content.width);
+              assert (y >= content.y && y < content.y + content.height)))))));
+  print_endline "focused rows and details stay within bounds; a pane cursor only in details";
+  [%expect {| focused rows and details stay within bounds; a pane cursor only in details |}]
 ;;
 
 let%expect_test "Normal pending input has precedence and pane workspace routing honors configuration" =

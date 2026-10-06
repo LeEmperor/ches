@@ -25,6 +25,8 @@ let read_only id ~title =
   { id; title; role = Minor; focusable = true; accepts_paste = false; owns_cursor = false }
 ;;
 
+let read_only_text id ~title = { (read_only id ~title) with owns_cursor = true }
+
 let companion id ~title =
   { id; title; role = Minor; focusable = false; accepts_paste = false; owns_cursor = false }
 ;;

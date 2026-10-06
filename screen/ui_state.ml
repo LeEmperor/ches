@@ -209,6 +209,7 @@ let path t = Editor.path (Controller.editor t.controller)
 let fitted_problems t ~width ~height =
   Problems_tile.fit t.problems (Controller.feedback t.controller) ~path:(path t)
     ~rows:(minor_rows t ~width ~height Problems_tile.id)
+    ~width:(minor_width t ~width ~height Problems_tile.id)
 ;;
 
 let problem_navigation t ~width ~height =
@@ -218,6 +219,33 @@ let problem_navigation t ~width ~height =
 let selected_problem t ~width ~height =
   Problems_tile.selected t.problems (Controller.feedback t.controller) ~path:(path t)
     ~rows:(minor_rows t ~width ~height Problems_tile.id)
+;;
+
+(* A minor view's open read-only text, if any. *)
+let text_view t id =
+  if View_id.equal id Problems_tile.id
+  then Problems_tile.text_view t.problems
+  else if View_id.equal id Report_tile.id
+  then Option.bind t.report ~f:Report_tile.text_view
+  else None
+;;
+
+let text_cursor t ~width ~height =
+  match Host.cursor_owner t.host ~available:(available t ~width ~height) with
+  | None -> None
+  | Some id when View_id.equal id document_id -> None
+  | Some id ->
+    Option.both (minor_layout t ~width ~height id) (text_view t id)
+    |> Option.bind ~f:(fun ((layout : Tile_shell.Layout.t), view) ->
+      let content = layout.content in
+      let view =
+        Ches_tile.Text_view.fit view ~width:content.width ~rows:content.height
+      in
+      let row, col = Ches_tile.Text_view.cursor_cell view ~width:content.width in
+      let y = row - Ches_tile.Text_view.top view in
+      Option.some_if
+        (col < content.width && y >= 0 && y < content.height)
+        (content.x + col, content.y + y))
 ;;
 
 let problem_details t = Problems_tile.details t.problems
@@ -248,14 +276,33 @@ let return_to_document t =
   }
 ;;
 
+(* Fit each minor view's state to its viewport and source. When the source changes
+   the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
+  let before = List.map [ Problems_tile.id; Report_tile.id ] ~f:(text_view t) in
   let t =
     { t with
       problems = fitted_problems t ~width ~height
     ; report =
         Option.map t.report
-          ~f:(Report_tile.fit ~rows:(minor_rows t ~width ~height Report_tile.id))
+          ~f:(Report_tile.fit ~rows:(minor_rows t ~width ~height Report_tile.id)
+                ~width:(minor_width t ~width ~height Report_tile.id))
     }
+  in
+  let after = List.map [ Problems_tile.id; Report_tile.id ] ~f:(text_view t) in
+  let t =
+    List.fold2_exn before after ~init:t ~f:(fun t before after ->
+      match before, after with
+      | Some before, Some after
+        when not (String.equal (Ches_tile.Text_view.text before) (Ches_tile.Text_view.text after))
+        ->
+        let text =
+          if Option.is_some (Ches_tile.Text_view.visual before)
+          then "Details updated; selection cleared"
+          else "Details updated"
+        in
+        { t with host = Host.with_notice t.host text }
+      | _ -> t)
   in
   match Host.reconcile t.host ~available:(available t ~width ~height) with
   | _, `Kept -> t
@@ -626,6 +673,20 @@ let pane_notice t ~source text =
   }
 ;;
 
+(* What a view's read-only text asks for: copies go to the register and clipboard
+   through the controller; rejections are capture notices from the view. *)
+let text_effect t ~source (effect : Ches_tile.Text_view.Effect.t option) =
+  match effect with
+  | None -> t
+  | Some (Copy register) ->
+    { t with
+      controller = Controller.yank t.controller register
+    ; host = Host.with_notice t.host (Ches_tile.Text_view.Effect.describe_copy register)
+    }
+  | Some (Notice text) ->
+    pane_notice t ~source (sprintf "%s: %s" (Host.spec t.host source).title text)
+;;
+
 (* A key typed into captured view [id]: the host decides, then the view's adapter
    performs its own actions. This is the only place adapters meet the host. *)
 let feed_capture t ~width ~height id key =
@@ -647,14 +708,14 @@ let feed_capture t ~width ~height id key =
   if View_id.equal id Problems_tile.id
   then
     route
-      ~content:Problems_tile.interpret
+      ~content:(Problems_tile.interpret t.problems)
       ~escape:(Problems_tile.escape t.problems)
       ~hint:Problems_tile.hint
       ~perform:(fun t action ->
-        let { Problems_tile.Outcome.tile; controller; notice; return } =
+        let { Problems_tile.Outcome.tile; controller; notice; effect; return } =
           Problems_tile.perform t.problems t.controller ~rows ~width:cols action
         in
-        let t = { t with problems = tile; controller } in
+        let t = text_effect { t with problems = tile; controller } ~source:id effect in
         let t =
           match notice with
           | None -> t
@@ -666,15 +727,12 @@ let feed_capture t ~width ~height id key =
     match t.report with
     | Some report when View_id.equal id Report_tile.id ->
       route
-        ~content:Report_tile.interpret
+        ~content:(Report_tile.interpret report)
         ~escape:(Report_tile.escape report)
         ~hint:Report_tile.hint
         ~perform:(fun t action ->
-          { t with
-            report =
-              Option.map t.report ~f:(fun report ->
-                Report_tile.perform report ~rows ~width:cols action)
-          })
+          let report, effect = Report_tile.perform report ~rows ~width:cols action in
+          text_effect { t with report = Some report } ~source:id effect)
     | Some _ | None -> return_to_document t)
 ;;
 

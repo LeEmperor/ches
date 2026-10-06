@@ -5,7 +5,7 @@
 
 (library
  (name ches_tile_test)
- (libraries ches_input ches_tile core expect_test_helpers_core)
+ (libraries ches_core ches_input ches_tile core expect_test_helpers_core)
  ; See core/dune for why this flag is needed.
  (inline_tests
   (flags

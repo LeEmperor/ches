@@ -94,8 +94,7 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
           Problems.render
             ~focused
             ~navigation:(Ui_state.problem_navigation ui ~width:screen_width ~height)
-            ~details:(Problems_tile.details tile)
-            ~detail_top:(Problems_tile.detail_top tile)
+            ?details:(Problems_tile.text_view tile)
             ?notice ?pending
             (Controller.feedback (Ui_state.controller ui))
             ~current_document:(Problems_tile.current_document tile)
@@ -343,7 +342,11 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
           && y >= viewport.y && y < viewport.y + viewport.height))
   in
   let cursor =
-    if not document_cursor then None
+    if not document_cursor
+    then
+      (* A focused read-only text view's cursor, the one other terminal-cursor owner. *)
+      Option.map (Ui_state.text_cursor ui ~width ~height) ~f:(fun (x, y) ->
+        { Cursor.x; y; shape = Block })
     else if Animation.active animation || not (List.is_empty insert_points)
     then None
     else

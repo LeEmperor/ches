@@ -71,6 +71,12 @@ val cursor_owner : t -> width:int -> height:int -> Ches_tile.View_id.t option
 
 val problems_focused : t -> width:int -> height:int -> bool
 
+(** The terminal cell of the text cursor of the focused minor view's open read-only
+    text ({!Ches_tile.Text_view}), when that view owns the cursor and the cell is in
+    its content. [None] while the document owns the cursor, in a list, or for views
+    without text. Exactly one view owns the terminal cursor at a time. *)
+val text_cursor : t -> width:int -> height:int -> (int * int) option
+
 (** The shared shell layout of an allocated minor view. Rendering and the view's
     content viewport (selection rows, scroll range, detail wrapping) both use it. *)
 val minor_layout
@@ -113,7 +119,8 @@ val animation : t -> Animation.t
 val pasting : t -> bool
 
 (** [Ches_app.Controller.take_clipboard] on the model's controller: what the frontend
-    should put on the system clipboard after the inputs it just applied. *)
+    should put on the system clipboard after the inputs it just applied, from an editor
+    yank or a copy in a read-only view, whichever was newest. *)
 val take_clipboard : t -> t * string option
 
 (** Whether an input has returned [Exit]. From then on, {!apply} ignores its input and
@@ -158,7 +165,20 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     rejected even after resize.
     Selection follows identity; removal/filtering chooses the previous index's next
     neighbor, falling back to the last item. An empty list retains pane focus until
-    explicitly returned/hidden. No terminal cursor or editor smear is drawn in capture.
+    explicitly returned/hidden. No editor smear is drawn in capture.
+
+    {2 Read-only text in minor views}
+
+    Open details (problems and the demo report) are read-only text
+    ({!Ches_tile.Text_view}): a text cursor, which is then the terminal cursor (see
+    {!text_cursor}), movement, [v]/[V] Visual selection, and [y]/[yy]/[Y] copies; in a
+    list, [yy]/[Y] copy the selected item's whole text. Escape ends Visual before it
+    closes details. A copy goes to the editor's unnamed register and the system
+    clipboard ({!Ches_app.Controller.yank}, then {!take_clipboard}) and shows
+    [Copied ...] in the view's footer; it runs no editor command and never inspects,
+    acknowledges, or jumps. Edit keys give [<Title>: read-only; edits unavailable].
+    When a problem's text changes while its details are open, the view takes the new
+    text and says [Details updated], adding [; selection cleared] if Visual ended.
 
     {2 Scrolling}
 

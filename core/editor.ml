@@ -111,6 +111,7 @@ let cursor t = t.cursor
 let selection t = t.selection
 let message t = t.message
 let unnamed_register t = t.unnamed_register
+let set_unnamed_register t register = { t with unnamed_register = Some register }
 let search_case t = t.search_case
 let search_state t =
   if t.search_visible

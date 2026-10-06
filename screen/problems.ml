@@ -16,8 +16,6 @@ let description (p : Feedback.Problem.t) =
   sprintf "%s [%s] %s%s: %s" severity p.identity.source p.identity.resource location p.text
 ;;
 
-let detail_rows problem ~width = Tile_text.wrap (description problem) ~width
-
 let style (p : Feedback.Problem.t) : Style.t =
   match p.severity with
   | Info -> Info
@@ -26,7 +24,7 @@ let style (p : Feedback.Problem.t) : Style.t =
 ;;
 
 let render ?(focused = false) ?(navigation = Selection.empty)
-  ?(details = false) ?(detail_top = 0) ?notice ?pending
+  ?details ?notice ?pending
   feedback ~current_document ~path ~width ~rows : Tile_shell.Content.t =
   let problems = entries feedback ~current_document ~path in
   let count = List.length problems in
@@ -39,25 +37,18 @@ let render ?(focused = false) ?(navigation = Selection.empty)
     let navigation = Selection.fit navigation
       (List.map problems ~f:(fun p -> p.Feedback.Problem.identity))
       ~equal:Feedback.Identity.equal ~rows in
-    let selected = List.nth problems navigation.index in
-    let detail_rows = if details
-      then Option.value_map selected ~default:[] ~f:(detail_rows ~width)
-      else [] in
-    let detail_top = Int.clamp_exn detail_top ~min:0
-      ~max:(Int.max 0 (List.length detail_rows - rows)) in
-    let body =
-      if details then List.take (List.drop detail_rows detail_top) rows
-      else List.take (List.drop problems navigation.top) rows
+    let body = match details with
+      | Some view -> Tile_text.text_view view ~width ~rows
+      | None ->
+        List.take (List.drop problems navigation.top) rows
         |> List.mapi ~f:(fun i p -> Tile_text.item (style p) (description p) ~width
           ~selected:(navigation.top + i = navigation.index)) in
     let title = sprintf "Problems*%s (%s): %d/%d [%d/%d]"
-      (if details then " details" else "") filter count total
+      (if Option.is_some details then " details" else "") filter count total
       (if count = 0 then 0 else navigation.index + 1) count in
-    let default = if details
-      then sprintf "Details %d-%d/%d | j/k scroll; e/Esc back"
-        (detail_top + 1) (Int.min (List.length detail_rows) (detail_top + rows))
-        (List.length detail_rows)
-      else sprintf "%d above, %d below | j/k e Enter a Esc"
+    let default = match details with
+      | Some view -> Tile_text.text_footer view ~width ~rows
+      | None -> sprintf "%d above, %d below | j/k e Enter a yy Esc"
         navigation.top (Int.max 0 (count - navigation.top - rows)) in
     { title
     ; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default)

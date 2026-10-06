@@ -36,7 +36,7 @@ let report t = Option.value_exn (Ui_state.report t)
 
 let report_selected t =
   Option.value_exn
-    (Report_tile.fit (report t) ~rows:4 |> Report_tile.selection).selected
+    (Report_tile.fit (report t) ~rows:4 ~width:40 |> Report_tile.selection).selected
 ;;
 
 let problem_selected t =
@@ -78,7 +78,7 @@ let%expect_test "document, status, problems, and an error-free report coexist" =
     │ warning [checker0] a:2:1: finding 0 │ │   DEMO REPORT 1/10: static row 1 ( > │|
     │ warning [checker1] a:2:1: finding 1 │ │   DEMO REPORT 2/10: static row 2 ( > │|
     │ warning [checker2] a:2:1: finding 2 │ │ > DEMO REPORT 3/10: static row 3 ( > │|
-    ╰─ +1 more | Space v e: all details ──╯ ╰─ 0 above, 7 below | j/k e Esc ───────╯|
+    ╰─ +1 more | Space v e: all details ──╯ ╰─ 0 above, 7 below | j/k e yy Esc ────╯|
     cursor: none
     |}];
   (* Details open, scroll, and close through the shared escape precedence. *)
@@ -244,9 +244,14 @@ let%expect_test "two minor views stay bounded and disjoint in every allocation" 
             Option.exists (Ui_state.cursor_owner t ~width ~height)
               ~f:(View_id.equal Ui_state.document_id)
           in
-          if not document_owns then assert (Option.is_none frame.cursor)))));
-  print_endline "panes bounded and disjoint; only the document draws a cursor";
-  [%expect {| panes bounded and disjoint; only the document draws a cursor |}]
+          if not document_owns
+          then
+            assert (
+              [%equal: (int * int) option]
+                (Option.map frame.cursor ~f:(fun c -> c.x, c.y))
+                (Ui_state.text_cursor t ~width ~height))))));
+  print_endline "panes bounded and disjoint; one cursor owner draws a cursor";
+  [%expect {| panes bounded and disjoint; one cursor owner draws a cursor |}]
 ;;
 
 let%expect_test "status and minor views share the framed shell at a laptop size" =
@@ -294,7 +299,7 @@ let%expect_test "status and minor views share the framed shell at a laptop size"
     │                                                    │ │   DEMO REPORT 6/10: static row 6 (界🙂 é)           │|
     │                                                    │ │   DEMO REPORT 7/10: static row 7 (界🙂 é)           │|
     │                                                    │ │   DEMO REPORT 8/10: static row 8 (界🙂 é)           │|
-    ╰─ Space v o: focus | Space v e: details ────────────╯ ╰─ 0 above, 2 below | j/k e Esc ──────────────────────╯|
+    ╰─ Space v o: focus | Space v e: details ────────────╯ ╰─ 0 above, 2 below | j/k e yy Esc ───────────────────╯|
     cursor: none
     Border Border Border_focused Border_focused
     |}];
