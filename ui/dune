@@ -1,8 +1,9 @@
 ; ches_ui is the Bonsai_term frontend: it adapts terminal events, runs the
-; ches_screen transition in one state machine, and draws ches_screen's frames.
+; ches_screen transition in one state machine, and draws ches_screen's frames. It also
+; connects a ches_source diagnostic source to that state machine.
 
 (library
  (name ches_ui)
- (libraries ches_app ches_core ches_input ches_screen core async base64 bonsai bonsai_term)
+ (libraries ches_app ches_core ches_input ches_screen ches_source core async base64 bonsai bonsai_term)
  (preprocess
   (pps ppx_jane bonsai.ppx_bonsai)))

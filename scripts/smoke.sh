@@ -1433,6 +1433,32 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "synthetic checker: edits, saves, crash and restart"
+resize 80 24
+printf 'let x = 1\nlet y = 2 (* TODO *)\n' > "$work/chk.ml"
+launch chk.ml --synthetic-checker
+keys Space v b
+# The initial text is checked after the edit delay, the on-disk text after the build's.
+expect_screen "warning [synthetic] chk.ml:2:1"
+expect_screen "warning [synthetic] ./synthetic_other.ml:3:1"
+keys o E R R O R Escape
+expect_screen "error [synthetic] chk.ml:2:1"
+expect_no_screen "build error"
+# Saving makes the build check report it too, in the same source's list.
+keys Space w
+expect_screen "build error: ERROR does not compile"
+# One crash is one problem.
+keys Space v K
+expect_screen "Checker stopped: killed by Space v K"
+expect_screen "error [synthetic stopped] chk.ml:2:1"
+expect_screen "Problems (workspace): 5/5"
+keys Escape Space v R
+expect_screen "error [synthetic] chk.ml:2:1"
+expect_no_screen "Checker stopped"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
 section "scrolling a wide line"
 { for _ in $(seq 1 40); do printf '0123456789'; done; printf '\nshort\n'; } > "$work/wide.txt"
 launch wide.txt

@@ -53,6 +53,10 @@ type t =
   ; held : ((string * string) * Ches_error.Error.update * Text_buffer.t) list
   (** Diagnostic snapshots that arrived during Insert, newest per (source, resource),
       in arrival order, with the text at arrival; applied when Insert ends. *)
+  ; source_attached : bool (** A diagnostic source runs ([--synthetic-checker]). *)
+  ; sent_revision : int option (** The document revision last taken as a request. *)
+  ; source_commands : Ches_error.Source_request.t list
+  (** Restart/kill requests not yet taken, newest first. *)
   }
 
 let document_id = View_id.of_string "document"
@@ -63,6 +67,7 @@ let create
   ?(workspace_prefs = Workspace.Prefs.default)
   ?(smear_enabled = false)
   ?report
+  ?(source_attached = false)
   controller
   =
   { controller
@@ -95,6 +100,9 @@ let create
   ; animation_time = None
   ; exited = false
   ; held = []
+  ; source_attached
+  ; sent_revision = None
+  ; source_commands = []
   }
 ;;
 
@@ -155,6 +163,37 @@ let pasting t = Host.pasting t.host
 let take_clipboard t =
   let controller, text = Controller.take_clipboard t.controller in
   { t with controller }, text
+;;
+
+let take_source_requests t =
+  if not t.source_attached
+  then t, []
+  else (
+    let editor = Controller.editor t.controller in
+    let revision = Editor.revision editor in
+    let controller, saved = Controller.take_saved t.controller in
+    let document =
+      match Editor.path editor with
+      | None -> []
+      | Some resource ->
+        let changed : Ches_error.Source_request.t list =
+          if [%equal: int option] t.sent_revision (Some revision)
+          then []
+          else
+            [ Document_changed
+                { resource; text = Text_buffer.to_string (Editor.text editor); revision }
+            ]
+        in
+        let saved : Ches_error.Source_request.t list =
+          match saved with
+          | Some { path; revision } when String.equal path resource ->
+            [ Document_saved { resource; revision } ]
+          | Some _ | None -> []
+        in
+        changed @ saved
+    in
+    ( { t with controller; sent_revision = Some revision; source_commands = [] }
+    , document @ List.rev t.source_commands ))
 ;;
 
 let exited t = t.exited
@@ -427,6 +466,8 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Focus_demo_report
   | Toggle_history
   | Focus_history
+  | Restart_source
+  | Kill_source
   | Scroll _
   | Toggle_smear
   | Toggle_status
@@ -446,6 +487,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
 ;;
 
 let demo_report_unavailable = "Demo report unavailable; launch with --demo-report"
+let no_source = "No diagnostic source; launch with --synthetic-checker"
 
 (* Feedback for [view], just applied: the requested value, then the effective one on this
    screen when it differs. *)
@@ -473,6 +515,10 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
     Some (if not t.history_visible then "History hidden"
       else if Option.is_none (Workspace.minor (workspace t ~width ~height) History_tile.id)
       then "History requested (compact/zen)" else "History shown")
+  | Restart_source ->
+    Some (if t.source_attached then "Diagnostic source restart requested" else no_source)
+  | Kill_source ->
+    Some (if t.source_attached then "Diagnostic source kill requested" else no_source)
   | Inspect_problems | Scroll _ -> None
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
@@ -615,6 +661,11 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     toggle_focus t ~width ~height History_tile.id ~show:(fun t ->
       { t with history_visible = true })
   | Toggle_history -> { t with history_visible = not t.history_visible }
+  | Restart_source when t.source_attached ->
+    { t with source_commands = Restart :: t.source_commands }
+  | Kill_source when t.source_attached ->
+    { t with source_commands = Kill :: t.source_commands }
+  | Restart_source | Kill_source -> t
   | Toggle_problems -> { t with problems_visible = not t.problems_visible }
   | Toggle_problems_filter -> { t with problems = Problems_tile.toggle_filter t.problems }
   | Inspect_problems ->
@@ -816,7 +867,9 @@ let inserting t = Mode.equal (Editor.mode (Controller.editor t.controller)) Inse
    checker starting or stopping is an event and applies at once. The revision is
    stamped on arrival, so a held unversioned list is behind the edits made since. *)
 (* A list for the open document is matched against the text it arrived with. *)
-let apply_source t ~width ~height update ~text =
+(* The views are not synchronized here: {!receive_all} does it once for a whole batch,
+   since fitting the problems view sorts every standing finding. *)
+let apply_source t update ~text =
   let t =
     match (update : Ches_error.Error.update) with
     | Diagnostics_received { source; resource; _ }
@@ -824,10 +877,10 @@ let apply_source t ~width ~height update ~text =
       { t with problems = Problems_tile.applied t.problems ~source ~text }
     | _ -> t
   in
-  update_feedback t ~width ~height update
+  { t with controller = Controller.update_feedback t.controller update }
 ;;
 
-let receive t ~width ~height (event : Ches_error.Source_event.t) =
+let receive t (event : Ches_error.Source_event.t) =
   let editor = Controller.editor t.controller in
   let update =
     Ches_error.Source_event.to_update event ~current_revision:(Editor.revision editor)
@@ -842,7 +895,11 @@ let receive t ~width ~height (event : Ches_error.Source_event.t) =
           not ([%equal: string * string] held key))
         @ [ key, update, text ]
     }
-  | Diagnostics _ | Started _ | Stopped _ -> apply_source t ~width ~height update ~text
+  | Diagnostics _ | Started _ | Stopped _ -> apply_source t update ~text
+;;
+
+let receive_all t ~width ~height events =
+  synchronize (List.fold events ~init:t ~f:receive) ~width ~height
 ;;
 
 let release_held t ~width ~height =
@@ -850,7 +907,8 @@ let release_held t ~width ~height =
   then t
   else
     List.fold t.held ~init:{ t with held = [] } ~f:(fun t (_, update, text) ->
-      apply_source t ~width ~height update ~text)
+      apply_source t update ~text)
+    |> synchronize ~width ~height
 ;;
 
 let rec apply t ~width ~height (input : Input.t) =
@@ -863,7 +921,7 @@ and apply_running t ~width ~height (input : Input.t) =
     | _ -> refit t ~width ~height in
   match input with
   | Resize -> t, Running
-  | Source event -> receive t ~width ~height event, Running
+  | Source event -> receive_all t ~width ~height [ event ], Running
   | Animation_tick now ->
     let dt =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
@@ -921,12 +979,36 @@ and apply_running t ~width ~height (input : Input.t) =
     , status )
 ;;
 
+(* Consecutive [Source] inputs, as a frontend delivers a batch of source events, are
+   one step: the same result as applying them one by one, with one synchronization. *)
 let apply_all t ~width ~height inputs =
+  let steps =
+    List.group inputs ~break:(fun (a : Input.t) (b : Input.t) ->
+      match a, b with
+      | Source _, Source _ -> false
+      | _ -> true)
+  in
   List.fold_until
-    inputs
+    steps
     ~init:t
-    ~f:(fun t input ->
-      match apply t ~width ~height input with
+    ~f:(fun t step ->
+      let result =
+        match step with
+        | Source _ :: _ when t.exited -> t, Controller.Status.Exit
+        | Source _ :: _ ->
+          let t = refit t ~width ~height in
+          ( receive_all
+              t
+              ~width
+              ~height
+              (List.filter_map step ~f:(function
+                 | Input.Source event -> Some event
+                 | _ -> None))
+          , Controller.Status.Running )
+        | [ input ] -> apply t ~width ~height input
+        | _ -> assert false
+      in
+      match result with
       | t, Running -> Continue t
       | t, Exit -> Stop (t, Controller.Status.Exit))
     ~finish:(fun t -> t, Running)

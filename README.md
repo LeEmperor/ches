@@ -102,6 +102,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v o` | Show/focus problems, or return to the document |
 | Normal | `Space v d` / `Space v D` | Show/hide, or show/focus, the static demo report (`--demo-report` only) |
 | Normal | `Space v m` / `Space v M` | Show/hide, or show/focus, the notification history |
+| Normal | `Space v R` / `Space v K` | Restart, or crash, the diagnostic source (`--synthetic-checker`; provisional keys) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -242,6 +243,33 @@ problems first, then findings by file, severity, and position. Findings for the 
 file dim after an edit until their checker catches up; nothing updates the demo, so
 they stay dimmed. Other files' findings never dim from typing. A finding's selection
 survives lines inserted above it. Lists that arrive during Insert wait until it ends.
+
+### Synthetic checker (live diagnostic source)
+
+```sh
+dune exec ches -- --synthetic-checker PATH
+```
+
+Until a language server is wired in (phase 10), this runs a fake checker through the
+same asynchronous source boundary a server will use, so freshness, crash, and restart
+behaviour can be tried by hand. It starts with the document, rooted at the nearest
+directory with a `dune-project` (else PATH's directory). Like ocamllsp it is one
+source, `synthetic`, running two checks and merging them into one list per file:
+
+- an edit check, like merlin: about 0.4 s after an edit it checks the newest text: a
+  line containing `ERROR` is an error, one containing `TODO` a warning.
+- a build check, like dune: about 0.8 s after a save (and at start) it checks the
+  saved text's `ERROR` lines (`synthetic build error`) and adds a warning in
+  `synthetic_other.ml`, a file you have not opened.
+
+The open file's list describes the revision of the newest edit check, so its findings
+dim while you type ahead of it. As with dune, a build finding stays until you save.
+
+`Space v K` crashes the checker: one `Checker stopped` problem takes attention, and
+its last findings stay listed, dimmed and marked `stopped`. `Space v R` restarts it,
+which resolves the problem; kept findings stay dimmed until the restarted checker
+replaces them. There is no automatic restart. Without the flag both keys only say
+there is no source.
 
 ### Demo report (tile-system fixture)
 

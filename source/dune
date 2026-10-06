@@ -1,0 +1,11 @@
+; ches_source runs diagnostic sources: the asynchronous side of the boundary in
+; Ches_error.Source_event / Source_request. It owns timers, processes, and (from phase
+; 10) the language-server session. It must not depend on ches_screen, ches_ui, bonsai,
+; or any terminal library; ches_ui wires it into the UI state. Unlike ches_core,
+; ches_input, ches_app, and ches_error, it may use Async.
+
+(library
+ (name ches_source)
+ (libraries ches_error core core_unix core_unix.filename_unix async)
+ (preprocess
+  (pps ppx_jane)))

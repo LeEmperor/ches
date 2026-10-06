@@ -51,6 +51,9 @@ val create
   -> ?smear_enabled:bool
   -> ?report:Report_tile.Item.t list
        (** Installs the static demo report ([--demo-report]); hidden initially. *)
+  -> ?source_attached:bool
+       (** A diagnostic source runs, so {!take_source_requests} reports to it.
+           Default [false]. *)
   -> Ches_app.Controller.t
   -> t
 
@@ -130,6 +133,13 @@ val pasting : t -> bool
     should put on the system clipboard after the inputs it just applied, from an editor
     yank or a copy in a read-only view, whichever was newest. *)
 val take_clipboard : t -> t * string option
+
+(** What the frontend should send the diagnostic source after the inputs it just
+    applied, in order: the document's text when its revision changed since the last
+    take (so the first take sends the initial text), a successful save of it, then
+    [Space v R]/[Space v K] requests in the order given. Empty unless
+    [source_attached]. The synchronous side never waits for the source. *)
+val take_source_requests : t -> t * Ches_error.Source_request.t list
 
 (** Whether an input has returned [Exit]. From then on, {!apply} ignores its input and
     returns [Exit] again, so keys that arrive before the frontend has shut down (say,
@@ -239,7 +249,9 @@ val min_width : int
 val max_width : int
 val max_offset : int
 
-(** [apply] for each input in order, stopping at [Exit]. *)
+(** [apply] for each input in order, stopping at [Exit]. Consecutive [Source] inputs
+    (a frontend's batch of source events) are applied as one step that synchronizes the
+    views once, with the same result. *)
 val apply_all
   :  t
   -> width:int

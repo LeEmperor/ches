@@ -180,6 +180,8 @@ let default =
     ; view 'D' Focus_demo_report
     ; view 'm' Toggle_history
     ; view 'M' Focus_history
+    ; view 'R' Restart_source
+    ; view 'K' Kill_source
     ; view 't' Toggle_status
     ; view 'z' Toggle_zen
     ; status 'h' (Position_status Left)

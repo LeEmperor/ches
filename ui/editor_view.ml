@@ -59,10 +59,16 @@ let cursor (frame : Frame.t) : Cursor.t option =
     })
 ;;
 
-let app ?(smear_enabled = false) ?report ?font controller ~exit ~dimensions (local_ graph) =
+let app ?(smear_enabled = false) ?report ?source ?font controller ~exit ~dimensions (local_ graph)
+  =
   let model, inject =
     Bonsai.state_machine_with_input
-      ~default_model:(Ui_state.create ~smear_enabled ?report controller)
+      ~default_model:
+        (Ui_state.create
+           ~smear_enabled
+           ?report
+           ~source_attached:(Option.is_some source)
+           controller)
       ~apply_action:(fun context input model inputs ->
         match input with
         | Inactive -> model
@@ -74,6 +80,14 @@ let app ?(smear_enabled = false) ?report ?font controller ~exit ~dimensions (loc
             Bonsai.Apply_action_context.schedule_event
               context
               (write_to_tty (Osc52.set_clipboard text)));
+          (* Requests leave as data: the source is told after this transition, which
+             never waits for it. *)
+          let model, requests = Ui_state.take_source_requests model in
+          Option.iter source ~f:(fun source ->
+            List.iter requests ~f:(fun request ->
+              Bonsai.Apply_action_context.schedule_event
+                context
+                (Effect.of_thunk (fun () -> Ches_source.Source.send source request))));
           (match status with
            | Exit when was_running ->
              Bonsai.Apply_action_context.schedule_event context (exit ())
@@ -84,6 +98,23 @@ let app ?(smear_enabled = false) ?report ?font controller ~exit ~dimensions (loc
        dimensions, write_to_tty)
       graph
   in
+  (* Source events enter like keys, as inputs of their own transition, one bounded batch
+     at a time, so keys typed during a burst are handled between batches. *)
+  Option.iter source ~f:(fun source ->
+    Bonsai.Edge.lifecycle
+      ~on_activate:
+        (let%arr inject in
+         let rec pump () =
+           let%bind.Effect events =
+             Effect.of_deferred_thunk (fun () -> Ches_source.Source.next_batch source)
+           in
+           let%bind.Effect () =
+             inject (List.map events ~f:(fun event -> Ui_state.Input.Source event))
+           in
+           pump ()
+         in
+         pump ())
+      graph);
   let get_current_time = Bonsai.Clock.get_current_time graph in
   Bonsai.Edge.on_change
     dimensions
@@ -129,7 +160,7 @@ let app ?(smear_enabled = false) ?report ?font controller ~exit ~dimensions (loc
   ~view, ~handler
 ;;
 
-let run ?font ?report controller =
+let run ?font ?report ?source controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
@@ -141,8 +172,9 @@ let run ?font ?report controller =
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-       (app ~smear_enabled:true ?report ?font controller))
+       (app ~smear_enabled:true ?report ?source ?font controller))
     ~f:(fun result ->
+      Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;
       result)
 ;;

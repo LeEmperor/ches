@@ -1,0 +1,9 @@
+; Typing latency under a synthetic diagnostic burst (phase 9). Not installed; run with
+; dune exec source/bench/latency.exe.
+
+(executable
+ (name latency)
+ (libraries ches_source ches_error ches_screen ches_app ches_core ches_input core
+  core_unix core_unix.time_ns_unix)
+ (preprocess
+  (pps ppx_jane)))

@@ -44,6 +44,8 @@ type t =
   | Focus_demo_report
   | Toggle_history
   | Focus_history
+  | Restart_source
+  | Kill_source
   | Toggle_zen
   | Reset
   | Scroll of

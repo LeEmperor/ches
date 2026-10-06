@@ -1,0 +1,15 @@
+; Tests of the diagnostic source library, and acceptance scenarios that drive the UI
+; state with its events. Unlike ches_screen's tests these may use Async: time is a
+; simulated Time_source, stepped by each test.
+
+(copy_files# ../../test/key_notation.ml)
+
+(library
+ (name ches_source_test)
+ (libraries ches_source ches_error ches_screen ches_app ches_core ches_input core async core_unix)
+ ; See core/dune for why this flag is needed.
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

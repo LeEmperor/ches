@@ -23,6 +23,15 @@ module Status : sig
   [@@deriving sexp_of, equal]
 end
 
+(** A successful write of the document. *)
+module Saved : sig
+  type t =
+    { path : string
+    ; revision : int (** The editor revision whose text was written. *)
+    }
+  [@@deriving sexp_of, equal]
+end
+
 type t
 
 (** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing exists
@@ -67,6 +76,11 @@ val last_input_dispatched : t -> bool
     controller cannot reach the terminal, so a frontend takes it after {!handle_input} and
     sets the clipboard itself; older requests were superseded. *)
 val take_clipboard : t -> t * string option
+
+(** The newest successful write since the last take, and the controller with it
+    cleared. A frontend tells diagnostic sources about saves with it; a save at an
+    unchanged revision still counts. *)
+val take_saved : t -> t * Saved.t option
 
 (** Feeds [input] through the keymap in the editor's current mode, dispatches the
     resulting editor commands, and performs their effects. The view commands are returned,

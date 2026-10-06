@@ -1332,8 +1332,9 @@ No general plugin/subscription framework is required.
 
 #### Phase 9 owner decisions (2026-10-06)
 
-**Status (2026-10-06): steps 1–2 implemented and owner-accepted; steps 3–4 not started
-(see the step 3 handoff below).** Where these decisions differ from the
+**Status (2026-10-06): phase 9 complete. Steps 1–3 are implemented and
+owner-accepted, and step 3 included its docs (step 4). See "Phase 9 step 3
+implementation" below.** Where these decisions differ from the
 scope and work items above, these decisions take precedence. The owner made the decisions
 marked *owner*. Items marked *proposed, accepted* were suggested during the design review
 and accepted by the owner without further discussion. Implementers may question them,
@@ -1652,6 +1653,9 @@ Steps 3–4 not started.
 
 #### Phase 9 step 3 handoff (2026-10-06)
 
+*Implemented in the owner's session after all; see "Phase 9 step 3 implementation"
+below for the owner's additional decisions and the results.*
+
 **Assignment:** step 3 of the implementation plan, the asynchronous source library,
 the synthetic producer, the `ches_ui` wiring, and the typing-latency measurement. Step 4
 (docs) follows. A different implementer will take this on. Everything they need is in
@@ -1731,6 +1735,165 @@ deviation with the owner rather than making it silently.
 **Not in step 3:** a language-server client, automatic restart policy (both phase 10),
 diagnostic-snapshot history logging, and a separate language-server view.
 
+#### Phase 9 step 3 implementation (2026-10-06)
+
+**Owner decisions at the step 3 checkpoint.** These add to the decisions above.
+
+- *Owner:* the synthetic checker reacts to both edits and saves, as the owner's
+  OCaml setup does (ocamllsp on edits, dune on save).
+- *Owner:* the Ches → library boundary gains **document saved** now, so phase 10 does
+  not change it. LSP has the matching `didSave`.
+- *Owner:* restart is manual (`Space v R`); automatic restart stays in phase 10. A
+  key binding crashes the synthetic checker (`Space v K`).
+- *Owner:* `--synthetic-checker` starts it with the document; there is no manual start
+  command (Neovim starts servers from filetype configuration; the flag stands in).
+- *Owner, at review:* one crash is one problem. The synthetic checker is therefore
+  **one source, like ocamllsp**, merging its edit and build checks into one list per
+  file. The boundary is unchanged. (The first build had two sources, so one kill
+  raised two `Checker` problems.) A real language server merges its own checks the
+  same way: one server is one Ches source.
+- *Proposed, accepted:*
+  - The source is named `synthetic`. The open file's list is versioned by its newest
+    edit check, and build findings keep the `synthetic build error:` prefix. The other
+    file's list is unversioned.
+  - The keys are provisional, like the other tile keys.
+  - The boundary has a general `Restart` and a testing-only `Kill`.
+  - The workspace root is the nearest `dune-project` directory.
+  - The headless latency method below.
+
+**What was built.**
+
+- **Boundary.** `Ches_error.Source_request` (`error/source_request.ml[i]`) is the
+  Ches → library direction. It carries:
+  - `Document_changed { resource; text; revision }`, also sent once for the
+    initial text;
+  - `Document_saved { resource; revision }`;
+  - `Restart`;
+  - `Kill`, which only the synthetic source supports.
+
+  *Stop* is not a request: the frontend calls `Source.stop` on exit.
+- **Outgoing requests as data.**
+  - `Controller.take_saved` reports the newest successful write. A save at an
+    unchanged revision still counts, as Neovim's `BufWritePost` does.
+  - `Ui_state.take_source_requests` returns, after each transition:
+    1. the document text, if its revision changed since the last take;
+    2. the save;
+    3. `Space v R`/`K` requests, in the order given.
+  - It returns nothing unless `Ui_state.create ~source_attached:true`. Without a
+    source, both keys say "No diagnostic source; launch with --synthetic-checker".
+- **`source/` → `ches_source`.** It depends on Async and `ches_error` only (see
+  its `dune`).
+  - `Event_queue` is pure coalescing. It keeps the newest pending snapshot per
+    (source, resource) and never drops `Started`/`Stopped`. A snapshot is never merged
+    across its own source's `Started`/`Stopped`, so one sent after a crash cannot
+    replace one sent before it.
+  - `Source.t` is what Ches holds: `send`, `stop`, `next_batch` (at most 64 events),
+    and `poll` for tests. Producers are written as a `Source.Driver`; phase 10's
+    client is the next one.
+  - `Workspace_root.find` locates the workspace root.
+- **Synthetic producer** (`Synthetic`), one source named `synthetic`.
+  - The edit check runs 400 ms after a change, on the newest text. `ERROR` lines are
+    errors and `TODO` lines warnings. There is one pending check at a time, so changes
+    made while it waits join it.
+  - The build check runs 800 ms after a save and at session start, on the saved text.
+    Its `ERROR` lines are errors, plus a warning in `synthetic_other.ml` beside the
+    file. Before any save, the first text sent counts as the saved text.
+  - When either check finishes, the open file's list is sent with both checks' newest
+    findings, versioned by the revision of the edit check it includes.
+  - `Kill` reports one `Stopped`. Timers from the old session lapse, and edits are not
+    checked while it is stopped.
+  - `Restart` reports `Started`, forgets the old session's results, and runs both
+    checks.
+  - `Synthetic.Script` plays exact event scripts (out-of-order revisions, crashes)
+    and generates bursts, for tests and the measurement.
+- **`ches_ui` wiring** (`ui/editor_view.ml`).
+  - A lifecycle `on_activate` effect loops on `next_batch` and injects each batch as
+    `Source` inputs, so the batch is its own transition and never part of a key's.
+  - Requests are scheduled as effects after each `apply_all`, like OSC 52.
+  - `run` stops the source after the terminal closes.
+  - A hidden problems view changes nothing here.
+- **One `Ui_state` change for bursts.** Consecutive `Source` inputs in `apply_all`
+  are applied as one step with a single `synchronize`. The result is the same, and
+  every view is fitted before the frame either way. Fitting the problems view
+  sorts every standing finding, and doing it per event made a 64-event batch cost
+  about 165 ms with 5,000 findings standing. Lists held during Insert are released
+  with one synchronization too.
+
+**Acceptance scenarios** (`source/test/test_acceptance.ml`). They run the real
+`Ui_state` against the synthetic producer on a simulated `Time_source`, with problems
+hidden unless noted:
+
+- the two checks merging into one list;
+- an unsaved fix clearing only the edit check's finding, and a save rebuilding;
+- two (scripted) sources on one file: an empty list clearing only its own source,
+  and an unversioned list dimming from the first edit;
+- edits while computing joining one check, then dimming once typing continues;
+- an out-of-order (older) revision rejected;
+- kill → stopped markers, one `Checker` problem, edits ignored; restart → problem
+  resolved, findings dimmed until replaced;
+- a 1,000-snapshot burst arriving as 100 snapshots in batches of 64 and 36;
+- the status count updating while problems are hidden.
+
+`source/test/test_event_queue.ml` covers coalescing and ordering, and
+`test_requests.ml` covers request order, saves at an unchanged revision, and the
+no-source case. `ches_screen` tests stay scheduler-free.
+
+**Latency** (`dune exec source/bench/latency.exe`).
+
+- *Method.* Async runs one job at a time, so a key typed during a burst waits at most
+  for the batch already running. The worst key-to-frame delay is therefore about one
+  key turn plus one batch turn. The benchmark times both headlessly, as `Editor_view`
+  runs them (`Ui_state.apply_all`, then `Frame.render`); terminal output is not
+  included.
+- *Setup.*
+  - A 2,000-line `a.ml` at 160×48, typing in Insert mode.
+  - The burst is 1,010 snapshots of 50 findings over 101 files (one of them the
+    open file), which coalesces to 101.
+  - Medians of 200 key samples, measured on 2026-10-06 on the owner's machine.
+
+| Problems view | Key turn, no findings | Batch turn (worst) | Key turn, 5,050 standing findings |
+|---|---|---|---|
+| hidden | 14.3 ms | 6.0 ms | 20.8 ms |
+| shown | 14.4 ms | 10.3 ms | 27.3 ms |
+
+- Before the batched synchronization above, a batch turn took 166 ms (hidden) and
+  180 ms (shown).
+- Worst case during a burst is now about 14 + 10 ≈ 25 ms.
+- *Open, for the owner (not changed in step 3).*
+  - A plain key turn on this 2,000-line OCaml file already costs about 14 ms, before
+    any diagnostics. The step 2 problems view adds about 6 ms per key (hidden) and
+    13 ms (shown) once 5,000 findings stand, because every transition re-fits it.
+    That fit runs twice per key, at the start and the end.
+  - Real projects usually stand far below 5,000 findings.
+
+**Verification.**
+
+- `dune build` and `dune runtest` pass.
+- `scripts/smoke.sh` passes 736 checks. That includes the new section "synthetic
+  checker: edits, saves, crash and restart" at 80×24.
+
+**Human review checklist** (`ches --synthetic-checker FILE.ml`, `Space v b`):
+
+1. Type `ERROR` or `TODO` on a line. Is the ~0.4 s before the finding appears, with
+   the old findings dimmed meanwhile, readable rather than distracting?
+2. Type continuously. Does the dimming flicker annoyingly? (Lists are held during
+   Insert and dim from the first edit.)
+3. Save. The `synthetic build error` appears about 0.8 s later. It rides in the
+   merged list, so it dims only while you type ahead of the edit check. An unsaved fix
+   keeps it listed and undimmed until you save, as with ocamllsp and dune.
+4. ~~`Space v K` raised two problems.~~ Resolved: the owner chose one source, so one
+   crash is one problem.
+5. `Space v R`. The problem resolves, and the kept findings stay dimmed until the
+   restarted checker reports.
+6. Do the provisional keys `Space v R` and `Space v K` suit you, pending the palette?
+
+#### Phase 9 step 3 human feedback (2026-10-06)
+
+The owner tried `--synthetic-checker` with the merged single source and found
+everything fine. That covers the checklist above: the delay and dimming, build
+findings in the merged list, crash and restart, and the provisional `Space v R`/`K`
+keys. Phase 9 is human-accepted.
+
 ### Phase 10 — First language-server diagnostic integration
 
 **Depends on:** phase 9; phase 7 for location navigation.
@@ -1753,6 +1916,16 @@ Phase 9's owner decisions (2026-10-06) apply here as well:
 - It uses phase 9's boundary messages.
 - A crash keeps findings dimmed and marked.
 - This phase still has to decide automatic restart policy.
+- *Owner direction (2026-10-06), to confirm at phase 10's design checkpoint:* work
+  as the owner's Neovim setup does. `~/.config/nvim/init.lua` enables `ocamllsp` for
+  OCaml file types, with root markers `dune-project`, `dune-workspace`, `*.opam`, …,
+  `.git`. Nothing there starts dune, and ocamllsp never launches dune's RPC; it
+  attaches to a `dune build --watch` the user runs. So Ches would start ocamllsp
+  itself and never run dune, and save-based, workspace-wide diagnostics would appear
+  only when the owner runs a watch.
+- Phase 9 step 3 built the seam: a client is another `Ches_source.Source.Driver`.
+  It receives `Document_changed` (`didOpen`/`didChange`), `Document_saved`
+  (`didSave`), and `Restart`, ignores `Kill`, and emits `Source_event`s.
 
 The language-server client reports to the diagnostic/feedback layer, never directly
 to shell, focus, or selection state. The problems adapter owns jump/acknowledgement
