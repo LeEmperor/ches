@@ -1,7 +1,9 @@
 # Ches command palette implementation plan
 
-Status: stages 1–2 (headless backend) software-complete; stages 3–5 not started,
-waiting on the tiling 7A checkpoint. See [Progress](#progress).
+Status: stages 1–2 (headless backend) software-complete; stages 3–5 not started.
+Tiling 7A–7C have landed; stage 3 waits on an agreed integration checkpoint and
+stage 4 on three host extensions. See [Progress](#progress) and
+[Tiling status and integration blockers](#tiling-status-and-integration-blockers-2026-10-06).
 
 Coordination update (2026-10-05): reviewed the working files in `../tiles/`,
 especially `../tiles/workspace_tiles_design.md` and its planned phases 7A–7C.
@@ -45,7 +47,7 @@ shared or collision-prone file was edited; `test/dune` is untouched.
   is a collision surface, so tests supply a copy of the default table. At
   integration, add an accessor (e.g. `Bindings.to_list`) and pass it through.
 
-### Stage 2 — palette state machine: done (2026-10-06, uncommitted)
+### Stage 2 — palette state machine: done (2026-10-06, commit `d342f31`)
 
 - `palette/palette.ml(i)`: `create catalog context ~token` (opaque `'token` names
   the invoking target); `update : 'token t -> Event.t -> 'token t` for `Insert`,
@@ -71,6 +73,104 @@ in the tiles worktree) at integration; hidden-palette query retention and
 workspace-shortcut coexistence remain open adapter policies.
 
 Checks: `dune build` and `dune runtest` pass on the OxCaml switch.
+
+## Tiling status and integration blockers (2026-10-06)
+
+Reviewed `../tiles/` (`bpurtell/tiles` at `ce3e799`, which merges `oxcaml`) and
+`../tiles/workspace_tiles_design.md`. This supersedes the "planned, not
+implemented" baseline below. The host extensions are written up for the tiles
+owner in the shared doc
+[Tile host extensions for the command palette](https://claude.ai/code/artifact/108bae1c-4291-47fe-aec0-ebc01949ae8a).
+
+| Phase | State |
+| --- | --- |
+| 7A generic host/routing | Committed (`tile/`, library `ches_tile`); human-accepted 2026-10-05 |
+| 7B shared shell, padding, gaps, 10-row band | Committed; human-accepted 2026-10-06; owner chose the open look (frames on the backdrop), toggle removed |
+| 7C read-only text cursor/selection/copy | Committed (`tile/text_view.ml`); human-accepted 2026-10-06; not a palette prerequisite |
+| 8 notification history tile | Committed; human-accepted 2026-10-06 |
+| Diagnostic sources | In progress, uncommitted (touches `app/controller.ml`, `screen/ui_state.ml`, `screen/frame.ml`; not `tile/`) |
+
+### What the host provides for the palette
+
+- `Ches_tile.View_id.t`: opaque, string-backed view identity. Use it as the
+  palette's `'token`; do not define another target ID.
+- `Ches_tile.Spec.t`: role plus `focusable`, `accepts_paste`, `owns_cursor`.
+  Constructors are `primary`, `read_only`, `read_only_text` (7C) and `companion`;
+  none fits the palette (Minor + focusable + accepts paste + owns cursor + takes
+  text), so Extension 1 adds one.
+- `Host.key` precedence for a captured view: Escape cancels a pending prefix, then
+  takes the content's `escape` action, then returns; Ctrl-c gives a notice; Tab
+  returns; other keys go to `content : Key.t list -> 'action Content_key.t`. For the
+  palette, Escape with no `escape` action is cancel (return), as intended.
+- `Host.paste_start`/`paste_key`/`paste_end` already give a paste to its start
+  owner when that view accepts paste; only delivery is missing (Extension 3).
+- `Navigation.Selection` (`fit`/`select`/`move`, with a viewport `top`). Its
+  reconciliation picks the item at the previous index when the key disappears;
+  the palette's policy picks the best match. Apply the palette's choice through
+  `Selection.select` and use the shared type for viewport `top`, keeping one
+  authoritative selection. `Navigation.interpret` binds `j`/`k`/`G`, which must
+  stay query text in the palette, so the palette maps its own keys.
+- `Tile_shell.layout` / `Ui_state.minor_layout`: the content rectangle the query
+  row and result rows render into.
+- Not used: `Text_view` (the query is editable, not read-only text).
+
+### Blockers: three host extensions for the tiles owner
+
+1. **Space cannot be query text.** In `tile/host.ml`, `Host.key` matches
+   `_, [] when Key.equal key t.leader -> prefix [ key ]` before the content
+   branch, so Space always starts a workspace sequence in a captured view. Proposal:
+   `Spec.t` gains `accepts_text` (false in existing constructors), a new
+   `Spec.text_input` constructor sets it, and `Host.key` sends the leader to content
+   when `(spec t t.focus).accepts_text`. Escape, Ctrl-c and Tab keep their precedence.
+2. **Cursor only for `Text_view`.** Since 7C a minor view can own the terminal
+   cursor, but `Ui_state.text_cursor` computes it only from `text_view t id`, and
+   `screen/frame.ml` always draws it as `Block`. Proposal: the focused view's adapter
+   supplies a cursor intent (row and column in `layout.content`, plus `Block` or
+   `Bar`); `Text_view` views keep today's computation; clipping and the single
+   `Host.cursor_owner` rule are unchanged. The palette reports row 0, the query's
+   display width after its prompt, and `Bar`.
+3. **Paste is not delivered to minor views.** In `screen/ui_state.ml`, a
+   `` `Deliver (owner, _) `` for any owner other than the document becomes the notice
+   "Paste is unsupported here". Proposal: route it to the owner's adapter, beside the
+   per-view dispatch in `feed_capture`; the palette sanitizes the text itself. If the
+   owner is unavailable when the paste ends, drop it with a notice and never
+   redirect it.
+
+All three are small changes in tiles-owned files; implement them there or as an
+agreed patch, not as palette-side workarounds.
+
+### Decisions for the tiles owner
+
+| Question | Today | Palette-side recommendation |
+| --- | --- | --- |
+| Workspace keys from a text-input view | Space is the only leader | Escape first, then Space; no second leader chord |
+| Band full | `Workspace.allocate` drops from the end of `[problems; report; history]`; each view needs 16 columns + 1 gap | Put the palette first while open, so opening never fails for width |
+| Zen | Zen allocates no minor views | Notice for the first milestone; revisit later |
+| Floating overlay | No overlay support | Not needed now; first palette docks in the bottom band; floating stays recorded as later work |
+
+Opening the palette needs no host change: `Space c c` can be a view command
+handled in `Ui_state`, like `Focus_problems`.
+
+### Branch situation
+
+| Branch | vs `oxcaml` |
+| --- | --- |
+| `bpurtell/tiles` | 13 ahead, 0 behind (`oxcaml` merged in `ce3e799`) |
+| `bpurtell/fzf-commands` | 3 ahead, 1 behind (themes) |
+
+Stage 3 edits `app/controller.ml`, where tiles' feedback/cancellation work meets
+this branch's highlighting; tiles' uncommitted diagnostic-sources work is editing
+it now. Integrate on an agreed committed tiles checkpoint, with one named owner for
+controller edits.
+
+### Next steps
+
+1. Tiles owner reviews the shared doc and settles the three extensions and four
+   decisions.
+2. Agree a committed tiles checkpoint for integration (after diagnostic sources,
+   or before it).
+3. Bring `bpurtell/fzf-commands` onto that checkpoint and start stage 3.
+4. Stage 4 once the extensions have landed.
 
 ## Goal
 
@@ -101,6 +201,9 @@ and Bonsai. The workspace/tiling worktree supplies the generic presentation host
   files there; do not implement host APIs from the older local copy.
 
 ### Tiling worktree baseline and dependencies
+
+*Original 2026-10-05 baseline, kept for history; 7A–7C have since landed — see
+[Tiling status and integration blockers](#tiling-status-and-integration-blockers-2026-10-06).*
 
 At this review, `../tiles/` has implemented workspace allocation/status controls,
 shared notification/problem feedback, and problems-specific interaction. Phases
@@ -500,7 +603,8 @@ the tiles plan's software-complete/human-feedback-pending handoff. Headless back
 work can be software-verified without waiting for UI human acceptance.
 
 Stages 1 and 2 are done, so the headless milestone is reached. The next
-assignment is **stage 3**, which starts only once the 7A APIs are recorded, an
-agreed tiling checkpoint is integrated, and one owner is named for controller/UI
-dispatch edits. Do not start it with temporary plumbing in collision-prone files.
+assignment is **stage 3**. The 7A APIs are now recorded (see Tiling status); it
+starts once an agreed tiling checkpoint merged with `oxcaml` is integrated and one
+owner is named for controller/UI dispatch edits. Stage 4 additionally needs the three
+host extensions listed there. Do not start it with temporary plumbing in collision-prone files.
 The feature is complete only after host integration.
