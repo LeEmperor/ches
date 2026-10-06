@@ -1,0 +1,10 @@
+; ches_palette is the command palette backend: the command catalog, fuzzy matching,
+; and shortcut hints. Like ches_input it must never depend on bonsai, bonsai_term,
+; async, notty, or any terminal library, nor on ches_app or ches_screen: execution
+; and presentation belong to the integration that hosts the palette.
+
+(library
+ (name ches_palette)
+ (libraries ches_core ches_input core)
+ (preprocess
+  (pps ppx_jane)))
