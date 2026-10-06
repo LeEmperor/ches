@@ -1522,7 +1522,7 @@ Details:
 
 #### Phase 9 step 1 implementation (2026-10-06)
 
-**Status:** step 1 implemented and software-verified; steps 2–4 not started.
+**Status:** step 1 implemented and software-verified.
 
 - `Error.Diagnostics` (in `error/error.ml[i]`), read through `Error.diagnostics`:
   - `Collection`: source, resource, `Basis` (`Reported r` or `Arrived_at r`), findings
@@ -1561,6 +1561,85 @@ Details:
     snapshot.
 - Verified: `dune build`, `dune runtest` (all pass), and `git diff --check`. The smoke
   script was not run, because nothing visible changed.
+
+#### Phase 9 step 2 implementation (2026-10-06)
+
+**Status:** step 2 implemented and software-verified; **human review pending**. Steps 3–4
+not started. The owner approved the plan below before implementation, including the
+proposed additions (flat rows, line-number anchors outside the open file,
+`Source_event` in `ches_error`, and `--demo-diagnostics`).
+
+- **Boundary type.** `Ches_error.Source_event` holds `Diagnostics`, `Started`, and
+  `Stopped`, the boundary messages above. `to_update ~current_revision` turns one into
+  an `Error.update`. `Ui_state.Input.Source` carries them in and stamps the editor's
+  revision. Step 3's library will send this same input.
+- **Rows (`screen/problems.ml`).** The view lists `Problems.Row.t`.
+  - Active problems come first, in first-occurrence order, then findings. Findings
+    are sorted by file, then severity (error, warning, info), then position; ties
+    keep source-name order.
+  - Rows are flat, with no file header rows, unlike Trouble.
+  - The document/workspace filter applies to both kinds.
+  - Problem rows are unchanged.
+  - A finding reads `<severity> [<source>[ stopped]] <file>:<line>:<col>: <message>`.
+- **Dimming.** The new `Style.Stale` (theme: muted on the status surface) dims a
+  finding when its collection is `session_ended`, or when it is in the open document
+  and `behind` its revision. Other files never dim from typing.
+- **Stopped marker.** While a source is stopped, its findings read
+  `[source stopped]`. Needs human review.
+- **Selection.** Keyed by `Problems.Key.t`.
+  - A problem's key is its identity.
+  - A finding's key is source, severity, message, and an anchor, plus `nth` to pair
+    duplicates. The anchor is the flagged line's text in the open document, the line
+    number in other files, or nothing.
+  - The shared `Selection.fit` fallback is already the agreed one: same position,
+    clamped to the last row; an empty list selects nothing.
+  - **Bug found during testing.** Reading the flagged line from the current text
+    changed a finding's key as you typed, before its list refreshed, so the
+    selection lost it. The adapter now reads lines from the text the source's list
+    was applied against. It keeps that text per source (`Problems_tile.applied`, a
+    cheap reference to the immutable buffer), and `Ui_state` records it when it
+    applies a list for the open document.
+- **Actions.** `e` toggles details (only problems are also inspected), copying
+  is unchanged, and `Enter` jumps within the open document. `a` on a finding shows
+  `Diagnostics are not acknowledged`.
+- **Hold during Insert.** `Ui_state` keeps lists that arrive during Insert, newest per
+  (source, resource), with the revision and text at arrival. After each key or paste,
+  once the mode is no longer Insert, it applies them in order. `Started`/`Stopped`
+  apply at once.
+- **Status count.** `Problems.count` (problems plus findings) drives
+  `[N problems: Space v e]` and the status-message priority. Only problems take
+  attention.
+- **Demo.** `--demo-diagnostics` (`app/demo_diagnostics.ml`) seeds:
+  - a versioned and an unversioned source on PATH;
+  - a finding in `<dir>/demo-other.ml`;
+  - a stopped source with its stop acknowledged.
+
+  Nothing updates the demo, so after an edit its open-file findings stay dimmed.
+  README and `--help` are updated.
+- **Tests.** New `screen/test/test_diagnostics_view.ml` (4 expect tests):
+  - Order, filter, count without attention.
+  - Dimming when behind versus other files; catching up; the stop problem and marker;
+    restart keeping rows dimmed until a new list arrives; the `Stale` style on screen.
+  - Selection following a finding moved down a line while a new one appears above
+    it; fallback when it goes; `a` refused; `Enter` jumping.
+  - Insert hold: only the newest list is kept, a stop applies during Insert, and
+    held lists apply on Escape and are dimmed as behind.
+
+  Existing problems/navigation/host tests changed only to the new key type.
+- **Verified.** `dune build`, `dune runtest` (all pass), and `git diff --check`.
+  `scripts/smoke.sh` passes all 722 checks. Its new section, "demo diagnostics in the
+  problems view", covers the count, the rows and marker, `a`, `Enter`, dimming after
+  an edit, and unchanged bytes after undo. Review captures:
+  `tiles-diagnostics-80x24.ansi` and `tiles-diagnostics-dimmed-80x24.ansi`.
+- **Human review.**
+  1. `dune exec ches -- --demo-diagnostics PATH` on a file with a few lines, then
+     `Space v b`. Is the order (problems, then by file) easy to read? Is the
+     `[demo-stopped stopped]` marker clear?
+  2. Type a character. Do PATH's findings dim noticeably while `demo-other.ml`'s
+     don't? Is the muted grey right?
+  3. `Space v o`, `j`/`k`, `a`, `Enter`, `e`.
+  4. Is `[N problems: Space v e]`, with findings counted and never demanding Escape,
+     what you want? Should findings and problems be counted separately?
 
 ### Phase 10 — First language-server diagnostic integration
 

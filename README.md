@@ -3,10 +3,11 @@
 A small modal programmer's editor in OCaml, with a UI-independent editing core
 and a [Bonsai_term](https://github.com/janestreet/bonsai_term) terminal
 frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
-for the long-term direction, [`mvp0_plan.md`](mvp0_plan.md) for the first
-milestone, and [`feature_expansion.md`](feature_expansion.md) for MVP1, in
- progress (phases 1–6 and 8 are done: counted movement, word, line, and document
-motions, Insert entry, `%`, line-number styles, and view scrolling).
+for the long-term direction and
+[`workspace_tiles_design.md`](workspace_tiles_design.md) for the current tile
+work. Finished phase plans are kept in [`docs/archive/`](docs/archive/): the MVP1
+editing plan ([`feature_expansion.md`](docs/archive/feature_expansion.md)) and the
+syntax-highlighting plan. The MVP0 plan was removed; it is in git history.
 
 **Status: MVP0 complete (2026-10-01).** `ches PATH` is a working terminal
 editor: it opens, edits, scrolls, saves, and quits, in a
@@ -224,6 +225,23 @@ normal editing/saving still works. Entries are session-local and disappear on
 restart without the flag. Their locations are a startup snapshot, not refreshed
 after edits/reload. Short/empty files have repeated locations; use a multiline file
 to see distinct jump targets. No demo problems are added in an ordinary launch.
+
+### Demo diagnostics (checker findings fixture)
+
+```sh
+dune exec ches -- --demo-diagnostics PATH
+```
+
+Until a real checker is wired in, this seeds static, labelled **DEMO** checker
+findings so the problems view can be reviewed. It adds two sources on PATH (one
+versioned, one unversioned), a finding in another file, and a stopped source whose
+acknowledged stop leaves its finding marked `[source stopped]`. Findings are standing
+state: they count in the status line (`[N problems: Space v e]`) but never take
+attention or need acknowledging (`a` on one says so). The problems view lists
+problems first, then findings by file, severity, and position. Findings for the open
+file dim after an edit until their checker catches up; nothing updates the demo, so
+they stay dimmed. Other files' findings never dim from typing. A finding's selection
+survives lines inserted above it. Lists that arrive during Insert wait until it ends.
 
 ### Demo report (tile-system fixture)
 
@@ -548,7 +566,7 @@ opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_live_probe/probe.exe
 Implementation and automated regression checks are complete. The owner reviewed
 the palette and reported live behavior satisfactory; the detailed terminal checklist
 below remains available for further review. See
-[`syntax_highlighting_plan.md`](syntax_highlighting_plan.md) for measurements,
+[`docs/archive/syntax_highlighting_plan.md`](docs/archive/syntax_highlighting_plan.md) for measurements,
 check outcomes and the acceptance handoff.
 
 ## Text
@@ -868,8 +886,10 @@ and changes made to the file by other programs are not detected.
 
 These come after MVP0 and are not part of it. Roughly in order:
 
-1. Yank/paste, changes, replacement, and the remaining MVP1 editing features
-   (see [`feature_expansion.md`](feature_expansion.md)).
+1. Editing features deferred from MVP1: text objects (`iw`, `i"`), macros,
+   named/numbered registers, regex search and substitution, scroll margins,
+   horizontal scroll commands, and saved view preferences. Safer saving and
+   detecting changes made by other programs are separate follow-up work.
 2. More `:` commands (`:w`, `:q`, `:wq`, `:q!`) on the narrow prompt used by
    `:e!`.
 3. Better Unicode (grapheme clusters) and line-ending support (CRLF).

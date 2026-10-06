@@ -4,7 +4,7 @@
 Recorded 2026-10-04 after syntax-highlighting phases 1–6 were completed. The owner
 accepted the palette and reported live behavior satisfactory; build, full tests
 and three consecutive isolated smoke runs passed. See
-[`syntax_highlighting_plan.md`](syntax_highlighting_plan.md) for historical checks.
+[`syntax_highlighting_plan.md`](docs/archive/syntax_highlighting_plan.md) for historical checks.
 
 ## Problem
 
