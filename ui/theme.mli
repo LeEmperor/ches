@@ -9,7 +9,8 @@ open Bonsai_term
 
 module Role : sig
   type t =
-    | Backdrop (** Outside the document tile: a shade darker, so the tile stands out. *)
+    | Backdrop
+    (** Outside the tiles and under their frames: a shade darker, so tiles stand out. *)
     | Background (** The document tile. *)
     | Foreground
     | Surface (** Status line. *)
@@ -46,11 +47,10 @@ module Font : sig
   val default : Ches_screen.Style.t -> t list
 end
 
-(** The colors of [style] from {!Role} under [chrome], and its font styles from [font]
-    (default {!Font.default}). *)
+(** The colors of [style] from {!Role}, and its font styles from [font] (default
+    {!Font.default}). Frame cells (borders and their titles/hints) are on the
+    backdrop. *)
 val attrs
-  :  ?chrome:Ches_screen.Style.Chrome.t
-       (** Default [Classic]. [Open] puts frame cells on the backdrop. *)
-  -> ?font:(Ches_screen.Style.t -> Font.t list)
+  :  ?font:(Ches_screen.Style.t -> Font.t list)
   -> Ches_screen.Style.t
   -> Attr.t list

@@ -1288,22 +1288,11 @@ keys Space v t
 expect_screen "╭─ Status ─"
 expect_screen "╭─ Problems (workspace): 0/0 ─"
 resize 120 40
-expect_screen "╭─ Demo report (static): 10 items ─"
+expect_screen "╮ ╭─ Demo report (static): 10 items ─"
 save_screen "tiles-shell-120x40"
 resize 200 60
 expect_screen "╭─ Demo report (static): 10 items ─"
 save_screen "tiles-shell-200x60"
-# The same screens in open chrome (Space v g), for comparison.
-keys Space v g
-expect_screen "Chrome: open"
-expect_screen "▐╭─ Status ─"
-save_screen "tiles-shell-open-200x60"
-resize 120 40
-expect_screen "╮▐╭─ Demo report (static): 10 items ─"
-save_screen "tiles-shell-open-120x40"
-keys Space v g
-expect_screen "Chrome: classic"
-expect_no_screen "▐"
 resize 80 24
 keys Space q
 expect_exit 0

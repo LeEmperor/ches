@@ -43,7 +43,6 @@ type t =
   | Toggle_demo_report
   | Focus_demo_report
   | Toggle_zen
-  | Toggle_chrome
   | Reset
   | Scroll of
       { scroll : Scroll.t

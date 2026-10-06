@@ -62,9 +62,10 @@ let%expect_test "a font function replaces the default fonts and keeps the colors
     |}]
 ;;
 
-let%expect_test "open chrome moves frame cells onto the backdrop, nothing else" =
-  let differs style =
-    not (same_attrs (Theme.attrs style) (Theme.attrs ~chrome:Open style))
+let%expect_test "frame cells sit on the backdrop; tile interiors keep their ground" =
+  let bg role = Attr.bg (Theme.Role.color role) in
+  let on role style =
+    List.exists (Theme.attrs ~font:(fun _ -> []) style) ~f:(Attr.equal (bg role))
   in
   List.iter
     [ Ches_screen.Style.Border
@@ -72,31 +73,20 @@ let%expect_test "open chrome moves frame cells onto the backdrop, nothing else" 
     ; Title
     ; Title_special
     ; Hint
-    ; Separator
-    ; Backdrop
     ; Ches_screen.Style.document ()
-    ; Status
     ; Gutter
+    ; Status
     ]
     ~f:(fun style ->
-      printf "%s %b\n" (Ches_screen.Style.to_string_hum style) (differs style));
-  print_s
-    [%sexp
-      (same_attrs
-         (Theme.attrs ~chrome:Open Border)
-         [ Attr.fg (Theme.Role.color Border); Attr.bg (Theme.Role.color Backdrop) ]
-       : bool)];
+      printf "%s backdrop=%b\n" (Ches_screen.Style.to_string_hum style) (on Backdrop style));
   [%expect {|
-    Border true
-    Border_focused true
-    Title true
-    Title_special true
-    Hint true
-    Separator false
-    Backdrop false
-    Text false
-    Status false
-    Gutter false
-    true
+    Border backdrop=true
+    Border_focused backdrop=true
+    Title backdrop=true
+    Title_special backdrop=true
+    Hint backdrop=true
+    Text backdrop=false
+    Gutter backdrop=false
+    Status backdrop=false
     |}]
 ;;

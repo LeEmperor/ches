@@ -9,7 +9,8 @@ Phase 7's interactive problems pane is also software-complete / human-feedback-p
 Phase 7A's shared tile host (`tile/`, `ches_tile`) with problems migrated onto it
 and an error-free demo report fixture is software-complete and human-accepted
 (2026-10-05). Phase 7B's shared rounded shell, padding, gaps, and revised band
-height are software-complete / human-feedback-pending (2026-10-05). Phase 7C,
+height are software-complete and human-accepted (2026-10-06), with frames drawn on
+the backdrop. Phase 7C,
 history views, diagnostic sources, and the external-view protocol remain
 unimplemented.
 
@@ -1534,7 +1535,8 @@ remaining issues rather than declaring palette/comfort verified by screenshots.
   content height/width. The shell lives in `ches_screen` (it needs `Span`/`Style`)
   and, like `Tile_text`, has no `Ches_error` use; that is by convention, not a dune
   boundary.
-- **Frame and labels.** A one-cell rounded frame in the editor's `Border` style.
+- **Frame and labels.** A one-cell rounded frame in the editor's `Border` style
+  (on the backdrop since the 2026-10-06 feedback below).
   The title is set into the top border as `╭─ title ───╮`, the editor's filename
   convention; the footer (key hints, a capture notice, or a pending prefix) is set
   into the bottom border the same way. Labels are cut by display cells with `>`.
@@ -1621,20 +1623,21 @@ remaining issues rather than declaring palette/comfort verified by screenshots.
   preferred. Open question: the one-cell gap between editor and status shows the
   near-black backdrop between two frames whose cells sit on the editor's gray, and
   the owner asked whether that separation can be given its own look.
-- For comparison, a provisional `Space v g` (`Toggle_chrome`) switches
-  `Style.Chrome` between `Classic` (unchanged, the default) and `Open`. Open moves
-  frame cells (`Border`, `Border_focused`, `Title`, `Title_special`, `Hint`) onto the
-  backdrop in the theme, so rounded corners read as round, and draws each workspace
-  gap (`Workspace.t.gaps`, which belong to no pane) as `▐` in a new `Separator` style
-  (Surface on Backdrop). It applies to the editor's frame too. `Frame.t.chrome`
-  carries the mode to the theme. Only real allocation gaps are marked: on a wide
-  screen the centred editor leaves backdrop between its frame and the gap, so the bar
-  sits beside status, not between two frames.
-- Tests: gap rectangles, separators exactly on gap cells and absent in classic, open
-  chrome in the two-view bounds sweep, and a theme test that only frame-cell styles
-  change. Smoke (663 checks) saves `tiles-shell-open-120x40`/`-200x60` beside the
-  classic captures. Awaiting the owner's choice; the losing mode and the toggle can
-  then be removed.
+- For comparison, a provisional `Space v g` toggled between the existing frames and
+  an open look that moves frame cells (`Border`, `Border_focused`, `Title`,
+  `Title_special`, `Hint`) onto the backdrop, so rounded corners read as round. A
+  first version also drew each gap (`Workspace.t.gaps`, cells belonging to no pane) as
+  `▐` in a `Separator` style; the owner found the solid bar redundant next to the
+  borders, and a half block cannot centre in its cell (it leaned toward the
+  right-hand tile), so it was removed.
+- **Decision (2026-10-06):** the owner chose the open look. Frame cells are always on
+  the backdrop (a theme change; it applies to the editor's frame too), gaps stay
+  plain backdrop, and the tiles' own borders are the separator. The toggle, its
+  binding, `Style.Chrome`, and `Frame.t.chrome` were removed; the shipped look has
+  no alternate mode. `Workspace.t.gaps` remains as allocation output.
+- Tests: gap cells are backdrop, and a theme test pins frame-cell styles to the
+  backdrop while tile interiors keep their ground. Smoke passes (658 checks); its
+  120x40 check now looks for `╮ ╭─` between the band views.
 
 ### Phase 7C — Shared read-only text cursor, selection, and copying
 

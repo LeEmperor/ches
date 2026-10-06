@@ -39,17 +39,6 @@ module Document : sig
     -> t
 end
 
-(** How tile chrome sits on the screen, for the theme. [Classic] draws frames on the
-    tile background; [Open] draws frame cells (borders and the labels in them) on the
-    backdrop, so rounded corners read as round, and marks the gaps between
-    side-by-side tiles with {!Separator}. *)
-module Chrome : sig
-  type t =
-    | Classic
-    | Open
-  [@@deriving sexp_of, equal]
-end
-
 type t =
   | Backdrop (** The screen outside the tile and status line. *)
   | Document of Document.t
@@ -64,7 +53,6 @@ type t =
   | Status (** The status line's background and plain fields. *)
   | Status_special (** Escape forms in the filename and messages. *)
   | Hint (** Secondary text set into a frame, such as key hints. *)
-  | Separator (** A gap between side-by-side tiles, in [Open] chrome. *)
   | Mode of Ches_core.Mode.t (** The mode badge. *)
   | Dirty
   | Pending

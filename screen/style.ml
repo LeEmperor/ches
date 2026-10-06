@@ -29,13 +29,6 @@ module Document = struct
   ;;
 end
 
-module Chrome = struct
-  type t =
-    | Classic
-    | Open
-  [@@deriving sexp_of, equal]
-end
-
 type t =
   | Backdrop
   | Document of Document.t
@@ -48,7 +41,6 @@ type t =
   | Status
   | Status_special
   | Hint
-  | Separator
   | Mode of Ches_core.Mode.t
   | Dirty
   | Pending

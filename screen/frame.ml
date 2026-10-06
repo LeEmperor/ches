@@ -25,7 +25,6 @@ type t =
   ; rows : Span.t list list
   ; cursor : Cursor.t option
   ; smear : (int * int) list
-  ; chrome : Style.Chrome.t
   }
 [@@deriving sexp_of]
 
@@ -37,18 +36,6 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
   let pane_relative = Option.is_some allocation || Option.is_some workspace.status
     || not (List.is_empty workspace.minors) in
   let minor_panes = if Option.is_some allocation then [] else workspace.minors in
-  let chrome = Ui_state.chrome ui in
-  (* Open chrome marks each gap between side-by-side tiles with a half-cell bar. *)
-  let gaps =
-    match chrome with
-    | Open when Option.is_none allocation ->
-      List.map workspace.gaps ~f:(fun (rect : Geometry.Rect.t) ->
-        rect,
-        Array.create ~len:rect.height
-          [ Span.create Separator (String.concat (List.init rect.width ~f:(fun _ -> "▐")))
-              ~width:rect.width ])
-    | Open | Classic -> []
-  in
   let allocation, default_reservation, status_pane =
     match allocation with
     | None -> workspace.document.rect, workspace.reserve_status_row, workspace.status
@@ -338,10 +325,7 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
       let minors = List.filter_map minor_tiles ~f:(fun (rect, rows) ->
         if y >= rect.y && y < rect.y + rect.height then Some (rect, rows.(y - rect.y))
         else None) in
-      let gaps = List.filter_map gaps ~f:(fun (rect, rows) ->
-        if y >= rect.y && y < rect.y + rect.height then Some (rect, rows.(y - rect.y))
-        else None) in
-      let segments = List.sort (document @ status @ minors @ gaps) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
+      let segments = List.sort (document @ status @ minors) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
       let spans, right = List.fold segments ~init:([], 0) ~f:(fun (spans, right) (rect, content) ->
         spans @ [ Span.blank Backdrop (rect.x - right) ] @ content, rect.x + rect.width)
       in
@@ -372,7 +356,7 @@ let render ?allocation ?reserve_status_row ui ~width ~height =
              | Insert -> Bar)
         })
   in
-  { width; height; rows; cursor; smear; chrome }
+  { width; height; rows; cursor; smear }
 ;;
 
 let to_string t =

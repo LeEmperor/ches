@@ -53,9 +53,6 @@ type t =
   | Toggle_demo_report (** Show/hide the static demo report, when installed. *)
   | Focus_demo_report (** Show/focus the demo report, or return to the document. *)
   | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)
-  | Toggle_chrome
-  (** Switch tile chrome between classic and open (frames on the backdrop, marked
-      gaps). Provisional, for comparing the two. *)
   | Reset (** Centered, at the default width and offset, with hybrid line numbers. *)
   | Scroll of
       { scroll : Scroll.t
