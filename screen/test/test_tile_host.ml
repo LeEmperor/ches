@@ -215,7 +215,7 @@ let%expect_test "paste, cursor, zen, and compact ownership are shared rules" =
 let%expect_test "two minor views stay bounded and disjoint in every allocation" =
   List.iter [ ""; " vt"; " vt vph"; " vt vpk"; " vt vpj" ] ~f:(fun position ->
     let t = create () |> fun t -> run t (position ^ " vb vd vDGe") in
-    List.iter [ t; run t " vo" ] ~f:(fun t ->
+    List.iter [ t; run t " vo"; run t " vg" ] ~f:(fun t ->
       List.iter (List.range 0 90 ~stride:3) ~f:(fun width ->
         List.iter (List.range 0 18) ~f:(fun height ->
           let w = Ui_state.workspace t ~width ~height in
@@ -313,5 +313,62 @@ let%expect_test "status and minor views share the framed shell at a laptop size"
   [%expect {|
     ((((x 57) (y 21) (width 51) (height 8))) ())
     document
+    |}]
+;;
+
+let%expect_test "open chrome marks only the gaps between side-by-side tiles" =
+  let width = 60
+  and height = 16 in
+  let t = create () |> fun t -> run ~width ~height t " vt vb vd vg" in
+  print_s [%sexp (Ui_state.chrome t : Style.Chrome.t)];
+  let gaps = (Ui_state.workspace t ~width ~height).gaps in
+  print_s [%sexp (gaps : Geometry.Rect.t list)];
+  print_endline (screen ~width ~height t);
+  let frame = Frame.render t ~width ~height in
+  print_s [%sexp (frame.chrome : Style.Chrome.t)];
+  (* Every gap cell, and nothing else, is a separator. *)
+  let separators =
+    List.concat_mapi frame.rows ~f:(fun y row ->
+      List.folding_map row ~init:0 ~f:(fun x (s : Span.t) ->
+        x + s.width, (x, s))
+      |> List.filter_map ~f:(fun (x, (s : Span.t)) ->
+        match s.style with
+        | Separator -> Some (x, y, s.width)
+        | _ -> None))
+  in
+  let gap_cells =
+    List.concat_map gaps ~f:(fun (r : Geometry.Rect.t) ->
+      List.init r.height ~f:(fun i -> r.x, r.y + i, r.width))
+  in
+  assert (
+    [%equal: (int * int * int) list]
+      (List.sort separators ~compare:[%compare: int * int * int])
+      (List.sort gap_cells ~compare:[%compare: int * int * int]));
+  (* Classic again: gaps are plain backdrop. *)
+  let t = run ~width ~height t " vg" in
+  assert (
+    List.for_all (Frame.render t ~width ~height).rows ~f:(fun row ->
+      not (List.exists row ~f:(fun (s : Span.t) -> Style.equal s.style Separator))));
+  [%expect {|
+    Open
+    (((x 31) (y 0) (width 1) (height 11)) ((x 29) (y 11) (width 1) (height 5)))
+    ╭─ a ─────────────────────────╮▐╭─ Status ─────────────────╮|
+    │  first                      │▐│ NORMAL                   │|
+    │  second                     │▐│ a                        │|
+    │  third                      │▐│ 1:1                      │|
+    │                             │▐│ [4 problems] finding 0   │|
+    │                             │▐│                          │|
+    │                             │▐│                          │|
+    │                             │▐│                          │|
+    │                             │▐│                          │|
+    │                             │▐│                          │|
+    ╰─────────────────────────────╯▐╰──────────────────────────╯|
+    ╭─ Problems (workspace): 4> ╮▐╭─ Demo report (static): 10> ╮|
+    │ warning [checker0] a:2:1> │▐│ DEMO REPORT 1/10: static > │|
+    │ warning [checker1] a:2:1> │▐│ DEMO REPORT 2/10: static > │|
+    │ warning [checker2] a:2:1> │▐│ DEMO REPORT 3/10: static > │|
+    ╰─ +1 more | Space v e: al> ╯▐╰─ Space v D: focus ─────────╯|
+    cursor: 3,1 Block
+    Open
     |}]
 ;;

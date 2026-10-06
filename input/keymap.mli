@@ -54,6 +54,7 @@
       Normal  Space v p h/l/k/j      View Position_status Left/Right/Above/Below
       Normal  Space v p - / + / =    View Adjust_status_size -2 / 2 / 2
       Normal  Space v z              View Toggle_zen
+      Normal  Space v g              View Toggle_chrome
       Normal  Space v r              View Reset
       Normal  Escape                 Cancel a pending count or sequence
       Both    Ctrl-c                 No command: cancel, and hint at Space q

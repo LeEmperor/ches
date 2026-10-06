@@ -3,8 +3,8 @@ open Bonsai_term
 open Bonsai.Let_syntax
 open Ches_screen
 
-let draw_span ?font ({ text; width; style } : Frame.Span.t) =
-  let attrs = Theme.attrs ?font style in
+let draw_span ?font ~chrome ({ text; width; style } : Frame.Span.t) =
+  let attrs = Theme.attrs ~chrome ?font style in
   let view = View.text ~attrs text in
   let drawn = View.width view in
   if drawn = width
@@ -44,7 +44,7 @@ let draw ?font (frame : Frame.t) =
   let base =
     View.vcat
       (List.map frame.rows ~f:(fun spans ->
-         View.hcat (List.map spans ~f:(draw_span ?font))))
+         View.hcat (List.map spans ~f:(draw_span ?font ~chrome:frame.chrome))))
   in
   View.zcat [ draw_smear ?font frame; base ]
 ;;

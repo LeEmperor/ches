@@ -60,6 +60,8 @@ type t =
   ; status : Pane.t option
   ; minors : Pane.t list
   (** Requested minor views that fit, left to right in the bottom band. *)
+  ; gaps : Geometry.Rect.t list
+  (** The {!gap} cells between side-by-side panes, which belong to no pane. *)
   ; reserve_status_row : bool
   (** True when status is hidden or cannot fit: use compact document-row feedback.
       The row remains within [document.rect], not a separate overlapping pane. *)

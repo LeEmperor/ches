@@ -19,7 +19,8 @@ let command =
        Space v c/h/l/H/L/-/+/r: toggle centering, move, resize, reset the layout;\n\
         Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor;\n\
         Space v t toggles status; Space v p h/l/k/j places it, p -/+ sizes it;\n\
-         Space v z toggles zen; Space v e cycles retained problems; idle Escape acknowledges.\n\
+         Space v z toggles zen; Space v g toggles tile chrome (classic/open);\n\
+         Space v e cycles retained problems; idle Escape acknowledges.\n\
          Space v b toggles the problems preview; Space v f filters workspace/current document;\n\
          Space v o focuses problems: j/k, gg/G, Ctrl-d/u navigate, e inspects, a acknowledges,\n\
          Enter jumps to a supported current-file location; Escape cancels/back/returns.\n\

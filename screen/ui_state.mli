@@ -57,6 +57,9 @@ val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
 val workspace_prefs : t -> Workspace.Prefs.t
 val zen : t -> bool
+
+(** Tile chrome, toggled by [Space v g]; [Classic] initially. *)
+val chrome : t -> Style.Chrome.t
 val problems_visible : t -> bool
 val problems_current_document : t -> bool
 val problems_tile : t -> Problems_tile.t

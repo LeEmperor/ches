@@ -66,14 +66,21 @@ module Font = struct
     | Status
     | Status_special
     | Hint
+    | Separator
     | Info
     | Warning
     | Smear -> []
   ;;
 end
 
-let colors (style : Ches_screen.Style.t) =
+let colors ~(chrome : Ches_screen.Style.Chrome.t) (style : Ches_screen.Style.t) =
   let colors fg bg = [ Attr.fg (Role.color fg); Attr.bg (Role.color bg) ] in
+  (* The ground under frame cells: the tile's, or the backdrop in open chrome. *)
+  let frame : Role.t =
+    match chrome with
+    | Classic -> Background
+    | Open -> Backdrop
+  in
   match style with
   | Backdrop -> colors Foreground Backdrop
   | Document { syntax = Plain; current_line; special; overlay } ->
@@ -89,13 +96,14 @@ let colors (style : Ches_screen.Style.t) =
          (if current_line then Current_line else Background))
   | Gutter -> colors Muted Background
   | Gutter_cursor_line -> colors Foreground Current_line
-  | Border -> colors Border Background
-  | Border_focused -> colors Normal_accent Background
-  | Title -> colors Foreground Background
-  | Title_special -> colors Special Background
+  | Border -> colors Border frame
+  | Border_focused -> colors Normal_accent frame
+  | Title -> colors Foreground frame
+  | Title_special -> colors Special frame
   | Status -> colors Foreground Surface
   | Status_special -> colors Special Surface
-  | Hint -> colors Muted Background
+  | Hint -> colors Muted frame
+  | Separator -> colors Surface Backdrop
   | Mode Normal -> colors Background Normal_accent
   | Mode Insert -> colors Background Insert_accent
   | Mode (Visual _) -> colors Background Warning
@@ -110,4 +118,6 @@ let colors (style : Ches_screen.Style.t) =
   | Smear -> [ Attr.fg (Attr.Color.rgb ~r:0xf5 ~g:0xf5 ~b:0xf5) ]
 ;;
 
-let attrs ?(font = Font.default) style = colors style @ List.map (font style) ~f:Font.attr
+let attrs ?(chrome = Ches_screen.Style.Chrome.Classic) ?(font = Font.default) style =
+  colors ~chrome style @ List.map (font style) ~f:Font.attr
+;;

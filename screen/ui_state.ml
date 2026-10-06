@@ -35,6 +35,7 @@ type t =
   ; workspace_prefs : Workspace.Prefs.t
   ; other_status_size : int (** Requested size for the inactive split axis. *)
   ; zen : bool
+  ; chrome : Style.Chrome.t
   ; host : Host.t (** Focus, capture prefix/notice, and paste owner. *)
   ; problems_visible : bool
   ; problems : Problems_tile.t
@@ -67,6 +68,7 @@ let create
        | Horizontal -> 6
        | Vertical -> 28)
   ; zen = false
+  ; chrome = Classic
   ; host =
       Host.create
         ~leader:(Key.char ' ')
@@ -92,6 +94,7 @@ let controller t = t.controller
 let prefs t = t.prefs
 let workspace_prefs t = t.workspace_prefs
 let zen t = t.zen
+let chrome t = t.chrome
 let problems_visible t = t.problems_visible
 let problems_current_document t = Problems_tile.current_document t.problems
 let problems_tile t = t.problems
@@ -358,7 +361,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_status
   | Position_status _
   | Adjust_status_size _
-  | Toggle_zen -> prefs
+  | Toggle_zen | Toggle_chrome -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -408,6 +411,11 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
        then "Smear cursor enabled"
        else "Smear cursor disabled")
   | Toggle_zen -> Some (if t.zen then "Zen (status hidden)" else "Workspace restored")
+  | Toggle_chrome ->
+    Some
+      (match t.chrome with
+       | Classic -> "Chrome: classic"
+       | Open -> "Chrome: open (frames on backdrop, marked gaps)")
   | Toggle_status | Position_status _ | Adjust_status_size _ ->
     let requested = t.workspace_prefs in
     let location =
@@ -543,6 +551,13 @@ let apply_view_command t ~width ~height (view : View_command.t) =
       animation = Animation.set_enabled t.animation (not (Animation.enabled t.animation))
     }
   | Toggle_zen -> { t with zen = not t.zen }
+  | Toggle_chrome ->
+    { t with
+      chrome =
+        (match t.chrome with
+         | Classic -> Open
+         | Open -> Classic)
+    }
   | Toggle_status ->
     { t with
       workspace_prefs =

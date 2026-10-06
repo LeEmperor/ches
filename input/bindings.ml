@@ -180,6 +180,7 @@ let default =
     ; view 'D' Focus_demo_report
     ; view 't' Toggle_status
     ; view 'z' Toggle_zen
+    ; view 'g' Toggle_chrome
     ; status 'h' (Position_status Left)
     ; status 'l' (Position_status Right)
     ; status 'k' (Position_status Above)

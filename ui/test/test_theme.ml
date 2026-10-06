@@ -61,3 +61,42 @@ let%expect_test "a font function replaces the default fonts and keeps the colors
      (title_no_longer_bold true) (default_title_bold true))
     |}]
 ;;
+
+let%expect_test "open chrome moves frame cells onto the backdrop, nothing else" =
+  let differs style =
+    not (same_attrs (Theme.attrs style) (Theme.attrs ~chrome:Open style))
+  in
+  List.iter
+    [ Ches_screen.Style.Border
+    ; Border_focused
+    ; Title
+    ; Title_special
+    ; Hint
+    ; Separator
+    ; Backdrop
+    ; Ches_screen.Style.document ()
+    ; Status
+    ; Gutter
+    ]
+    ~f:(fun style ->
+      printf "%s %b\n" (Ches_screen.Style.to_string_hum style) (differs style));
+  print_s
+    [%sexp
+      (same_attrs
+         (Theme.attrs ~chrome:Open Border)
+         [ Attr.fg (Theme.Role.color Border); Attr.bg (Theme.Role.color Backdrop) ]
+       : bool)];
+  [%expect {|
+    Border true
+    Border_focused true
+    Title true
+    Title_special true
+    Hint true
+    Separator false
+    Backdrop false
+    Text false
+    Status false
+    Gutter false
+    true
+    |}]
+;;

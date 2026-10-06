@@ -1615,6 +1615,27 @@ remaining issues rather than declaring palette/comfort verified by screenshots.
   framed side status is preferable to the old unframed one, and whether ten band rows
   are right on each display.
 
+#### Phase 7B human feedback and chrome comparison (2026-10-06)
+
+- The owner reports the shell looks great and works; the framed side status is
+  preferred. Open question: the one-cell gap between editor and status shows the
+  near-black backdrop between two frames whose cells sit on the editor's gray, and
+  the owner asked whether that separation can be given its own look.
+- For comparison, a provisional `Space v g` (`Toggle_chrome`) switches
+  `Style.Chrome` between `Classic` (unchanged, the default) and `Open`. Open moves
+  frame cells (`Border`, `Border_focused`, `Title`, `Title_special`, `Hint`) onto the
+  backdrop in the theme, so rounded corners read as round, and draws each workspace
+  gap (`Workspace.t.gaps`, which belong to no pane) as `▐` in a new `Separator` style
+  (Surface on Backdrop). It applies to the editor's frame too. `Frame.t.chrome`
+  carries the mode to the theme. Only real allocation gaps are marked: on a wide
+  screen the centred editor leaves backdrop between its frame and the gap, so the bar
+  sits beside status, not between two frames.
+- Tests: gap rectangles, separators exactly on gap cells and absent in classic, open
+  chrome in the two-view bounds sweep, and a theme test that only frame-cell styles
+  change. Smoke (663 checks) saves `tiles-shell-open-120x40`/`-200x60` beside the
+  classic captures. Awaiting the owner's choice; the losing mode and the toggle can
+  then be removed.
+
 ### Phase 7C — Shared read-only text cursor, selection, and copying
 
 **Depends on:** phases 7A–7B.

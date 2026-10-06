@@ -190,7 +190,9 @@ Supporting views (problems, the demo report, and a dedicated status cell with ro
 for it) share one rounded, padded frame with their title in the top border and key
 hints, notices, or a pending prefix in the bottom border; side-by-side tiles are
 separated by a one-cell gap. The bottom band takes up to ten rows, never more than a
-third of the window. The `>` marker, the `Problems*` title, and an accent-coloured
+third of the window. `Space v g` (provisional) switches between classic chrome and
+an open look that draws frames on the backdrop and marks gaps with a thin bar. The
+`>` marker, the `Problems*` title, and an accent-coloured
 frame show selection/focus; the terminal cursor is hidden during pane capture. Hiding, zen, or resizing too small returns focus
 to the editor. Pane pastes are ignored atomically, not treated as commands.
 Focus, Escape/Tab/prefix precedence, workspace bindings, and paste ownership come

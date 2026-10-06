@@ -34,6 +34,9 @@ type t =
       and during a block insert, whose cursor is drawn as a styled cell instead
       ([Style.Overlay.Insert_cursor]) so that the theme can color it. *)
   ; smear : (int * int) list (** Filled cells for the animated-cursor overlay. *)
+  ; chrome : Style.Chrome.t
+  (** {!Ui_state.chrome}, for the theme. In [Open] chrome each workspace gap is drawn
+      as [▐] in {!Style.Separator}; in [Classic] gaps are backdrop. *)
   }
 [@@deriving sexp_of]
 

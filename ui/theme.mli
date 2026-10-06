@@ -46,9 +46,11 @@ module Font : sig
   val default : Ches_screen.Style.t -> t list
 end
 
-(** The colors of [style] from {!Role}, and its font styles from [font] (default
-    {!Font.default}). *)
+(** The colors of [style] from {!Role} under [chrome], and its font styles from [font]
+    (default {!Font.default}). *)
 val attrs
-  :  ?font:(Ches_screen.Style.t -> Font.t list)
+  :  ?chrome:Ches_screen.Style.Chrome.t
+       (** Default [Classic]. [Open] puts frame cells on the backdrop. *)
+  -> ?font:(Ches_screen.Style.t -> Font.t list)
   -> Ches_screen.Style.t
   -> Attr.t list

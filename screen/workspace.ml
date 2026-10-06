@@ -48,6 +48,7 @@ type t =
   { document : Pane.t
   ; status : Pane.t option
   ; minors : Pane.t list
+  ; gaps : Geometry.Rect.t list
   ; reserve_status_row : bool
   }
 [@@deriving sexp_of, equal]
@@ -82,6 +83,7 @@ let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
     { document = { id = Document; rect = allocation }
     ; status = None
     ; minors = []
+    ; gaps = []
     ; reserve_status_row = true
     }
   else (
@@ -108,6 +110,10 @@ let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
     { document = { id = Document; rect = rect document_start document_size }
     ; status = Some { id = Status; rect = rect status_start status_size }
     ; minors = []
+    ; gaps =
+        (if gap = 0
+         then []
+         else [ rect (if status_first then status_size else document_size) gap ])
     ; reserve_status_row = false
     })
 ;;
@@ -151,7 +157,15 @@ let allocate ?(minors = []) prefs ~(allocation : Geometry.Rect.t) =
             }
         })
     in
-    { workspace with minors })
+    let gaps =
+      List.init (count - 1) ~f:(fun i ->
+        { Geometry.Rect.x = allocation.x + start (i + 1) - gap
+        ; y = allocation.y + upper.height
+        ; width = gap
+        ; height = size
+        })
+    in
+    { workspace with minors; gaps = workspace.gaps @ gaps })
 ;;
 
 let minor t id =
