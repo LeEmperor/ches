@@ -22,6 +22,7 @@ let text_view t = t.details
 let keys history = List.map (History.entries history) ~f:(fun (e : History.Entry.t) -> e.seq)
 
 let severity_name : Feedback.Severity.t -> string = function
+  | Hint -> "hint"
   | Info -> "info"
   | Warning -> "warning"
   | Error -> "error"
@@ -34,7 +35,6 @@ let description ({ seq; event; count } : History.Entry.t) =
       match identity.kind with
       | Save -> "save"
       | Reload -> "reload"
-      | Checker -> "checker"
     in
     sprintf "[%s %s] %s" identity.source kind identity.resource
   in
@@ -66,6 +66,7 @@ let style ({ event; _ } : History.Entry.t) : Style.t =
   match event with
   | Notified { severity; _ } | Reported { severity; _ } ->
     (match severity with
+     | Hint -> Severity_hint
      | Info -> Info
      | Warning -> Warning
      | Error -> Error)

@@ -1,0 +1,7 @@
+; A scripted language server for the client tests (see fake_lsp.ml).
+
+(executable
+ (name fake_lsp)
+ (libraries core lsp jsonrpc)
+ (preprocess
+  (pps ppx_jane)))

@@ -128,7 +128,7 @@ let message t =
   | Some _, Some notification ->
     let kind =
       match notification.severity with
-      | Info -> Message.Info
+      | Hint | Info -> Message.Info
       | Warning -> Warning
       | Error -> Error
     in
@@ -148,7 +148,7 @@ let message t =
      | Some notification ->
        let kind =
          match notification.severity with
-         | Info -> Message.Info
+         | Hint | Info -> Message.Info
          | Warning -> Warning
          | Error -> Error
        in
@@ -895,7 +895,7 @@ let receive t (event : Ches_error.Source_event.t) =
           not ([%equal: string * string] held key))
         @ [ key, update, text ]
     }
-  | Diagnostics _ | Started _ | Stopped _ -> apply_source t update ~text
+  | Diagnostics _ | Started _ | Stopped _ | Unavailable _ -> apply_source t update ~text
 ;;
 
 let receive_all t ~width ~height events =

@@ -101,7 +101,6 @@ let record_outcome feedback editor identity result =
       match identity.Feedback.Identity.kind with
       | Save -> "write"
       | Reload -> "reload"
-      | Checker -> "check"
     in
     Feedback.apply
       feedback

@@ -6,6 +6,7 @@ open! Core
 
 module Severity : sig
   type t =
+    | Hint (** The language-server protocol's lowest severity, kept distinct as Neovim does. *)
     | Info
     | Warning
     | Error
@@ -16,8 +17,6 @@ module Identity : sig
   type kind =
     | Save
     | Reload
-    | Checker
-    (** A diagnostic source stopped or crashed; [resource] is its workspace root. *)
   [@@deriving sexp_of, equal]
 
   type t =
@@ -117,8 +116,8 @@ end
 
 (** Diagnostic findings kept as standing state: one collection per (source, resource),
     replaced whole by each new snapshot. They are not problems: they never take attention,
-    are never acknowledged, and are not recorded in {!History}. A source stopping is the
-    event that becomes a problem (kind [Checker]); its findings are kept, marked as from an
+    are never acknowledged, and are not recorded in {!History}. A source stopping is a
+    one-off warning, as in Neovim, not a problem; its findings are kept, marked as from an
     ended session, until the restarted source replaces them. *)
 module Diagnostics : sig
   module Finding : sig
@@ -193,16 +192,21 @@ type update =
       reporting a revision older than the stored reported one is dropped; an equal one
       replaces it. *)
   | Source_started of { source : string; root : string }
-  (** Clear the source's stopped state and resolve its [Checker] problem. Its kept
-      findings stay [session_ended] until replaced. *)
+  (** Clear the source's stopped state. Its kept findings stay [session_ended] until
+      replaced. *)
   | Source_stopped of { source : string; root : string; reason : string }
-  (** Mark the source stopped, keep its findings as [session_ended], and report a
-      [Checker] problem (renewing attention if already active). *)
+  (** Mark the source stopped and keep its findings as [session_ended]. Notify a
+      Warning recorded in history, which, like any notification, goes at the next
+      command; no problem is reported and nothing takes attention. *)
+  | Source_unavailable of { source : string; root : string; reason : string }
+  (** The source could not be started at all, such as a server missing from PATH: only
+      record an Error in history, where Neovim would only write its log. *)
 [@@deriving sexp_of]
 
 (** Records into {!history}: a [Notify] with [history = true]; every [Report]/[Failed]
-    (with [again] when the identity was active); a [Resolve] of an active identity.
-    Nothing else records, including acknowledgement and inspection. *)
+    (with [again] when the identity was active); a [Resolve] of an active identity;
+    [Source_stopped] and [Source_unavailable]. Nothing else records, including
+    acknowledgement and inspection. *)
 
 val empty : t
 val apply : t -> update -> t

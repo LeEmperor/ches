@@ -2,6 +2,7 @@ open! Core
 
 module Severity = struct
   type t =
+    | Hint
     | Info
     | Warning
     | Error
@@ -12,7 +13,6 @@ module Identity = struct
   type kind =
     | Save
     | Reload
-    | Checker
   [@@deriving sexp_of, equal]
 
   type t =
@@ -240,6 +240,7 @@ type update =
       }
   | Source_started of { source : string; root : string }
   | Source_stopped of { source : string; root : string; reason : string }
+  | Source_unavailable of { source : string; root : string; reason : string }
 [@@deriving sexp_of]
 
 let empty =
@@ -254,7 +255,6 @@ let empty =
 let problems t = t.problems
 let history t = t.history
 let diagnostics t = t.diagnostics
-let checker_identity ~source ~root = { Identity.source; kind = Checker; resource = root }
 let find t identity = List.find t.problems ~f:(fun p -> Identity.equal p.identity identity)
 
 (* First occurrence order is stable, including updates after acknowledgement. *)
@@ -300,15 +300,31 @@ let rec apply t update =
           ~current_revision
           ~findings
     }
-  | Source_started { source; root } ->
-    apply
-      { t with diagnostics = Diagnostics.start t.diagnostics ~source }
-      (Resolve (checker_identity ~source ~root))
-  | Source_stopped { source; root; reason } ->
+  | Source_started { source; root = _ } ->
+    { t with diagnostics = Diagnostics.start t.diagnostics ~source }
+  | Source_stopped { source; root = _; reason } ->
     apply
       { t with diagnostics = Diagnostics.stop t.diagnostics ~source }
-      (Report
-         (checker_identity ~source ~root, Error, sprintf "Checker stopped: %s" reason, None))
+      (Notify
+         { source
+         ; scope = None
+         ; severity = Warning
+         ; text = sprintf "%s stopped: %s (Space v R to restart)" source reason
+         ; history = true
+         })
+  | Source_unavailable { source; root = _; reason } ->
+    { t with
+      history =
+        History.record
+          t.history
+          (Notified
+             { source
+             ; scope = None
+             ; severity = Error
+             ; text = sprintf "%s unavailable: %s" source reason
+             ; history = true
+             })
+    }
   | Command_completed -> { t with transient = None; details = None }
   | Failed _ -> assert false
   | Report (identity, severity, text, location) ->

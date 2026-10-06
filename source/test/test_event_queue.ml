@@ -14,7 +14,8 @@ let show queue =
        | Diagnostics { source; resource; revision; _ } ->
          [%message "diagnostics" source resource (revision : int option)]
        | Started { source; _ } -> [%message "started" source]
-       | Stopped { source; _ } -> [%message "stopped" source]));
+       | Stopped { source; _ } -> [%message "stopped" source]
+       | Unavailable { source; _ } -> [%message "unavailable" source]));
   print_s [%message (Event_queue.dropped queue : int) (Event_queue.length queue : int)]
 ;;
 

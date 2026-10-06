@@ -38,7 +38,7 @@ let install controller =
           { source = "demo-lint"
           ; resource
           ; revision = None
-          ; findings = [ at 2 Info "synthetic style hint (unversioned source)" ]
+          ; findings = [ at 2 Hint "synthetic style hint (unversioned source)" ]
           }
       ; Diagnostics
           { source = "demo-check"
@@ -60,8 +60,6 @@ let install controller =
       Controller.update_feedback
         controller
         (Source_event.to_update event ~current_revision:revision))
-    |> fun controller ->
-    Controller.update_feedback
-      controller
-      (Acknowledge_identity { source = "demo-stopped"; kind = Checker; resource = root })
+    (* Its one-off stop warning would otherwise greet the review; it is in history. *)
+    |> fun controller -> Controller.update_feedback controller Command_completed
 ;;

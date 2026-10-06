@@ -136,7 +136,7 @@ let%expect_test "unversioned snapshots record the revision they arrived at" =
   [%expect {| a.ml [lint] arrived at 4: second |}]
 ;;
 
-let%expect_test "stop keeps findings and reports; repeat renews; restart resolves" =
+let%expect_test "stop keeps findings and warns in history; restart clears the stop" =
   let stats f =
     let d = Feedback.diagnostics f in
     printf
@@ -157,20 +157,15 @@ let%expect_test "stop keeps findings and reports; repeat renews; restart resolve
     {|
     a.ml [lint] rev 1: long line
     a.ml [ocaml] rev 1 session-ended: type error
-    problem ((source ocaml)(kind Checker)(resource /w)): Checker stopped: exit 2 (attention)
     stopped=true history=1
     |}];
   (* A late snapshot from the dead session is still session-ended. *)
-  let f =
-    receive ~revision:2 ~source:"ocaml" ~resource:"a.ml" [ finding "late" ] f
-    |> fun f -> Feedback.apply f Acknowledge
-  in
+  let f = receive ~revision:2 ~source:"ocaml" ~resource:"a.ml" [ finding "late" ] f in
   show f;
   [%expect
     {|
     a.ml [lint] rev 1: long line
     a.ml [ocaml] rev 2 session-ended: late
-    problem ((source ocaml)(kind Checker)(resource /w)): Checker stopped: exit 2
     |}];
   let f =
     Feedback.apply f (Source_stopped { source = "ocaml"; root = "/w"; reason = "exit 2" })
@@ -181,7 +176,6 @@ let%expect_test "stop keeps findings and reports; repeat renews; restart resolve
     {|
     a.ml [lint] rev 1: long line
     a.ml [ocaml] rev 2 session-ended: late
-    problem ((source ocaml)(kind Checker)(resource /w)): Checker stopped: exit 2 (attention)
     stopped=true history=1
     |}];
   let f = Feedback.apply f (Source_started { source = "ocaml"; root = "/w" }) in
@@ -191,7 +185,7 @@ let%expect_test "stop keeps findings and reports; repeat renews; restart resolve
     {|
     a.ml [lint] rev 1: long line
     a.ml [ocaml] rev 2 session-ended: late
-    stopped=false history=2
+    stopped=false history=1
     |}];
   let f = receive ~revision:3 ~source:"ocaml" ~resource:"a.ml" [ finding "fresh" ] f in
   show f;
@@ -206,14 +200,58 @@ let%expect_test "stop keeps findings and reports; repeat renews; restart resolve
     {|
     ((seq 1)
      (event
-      (Reported (identity ((source ocaml) (kind Checker) (resource /w)))
-       (severity Error) (text "Checker stopped: exit 2") (location ())
-       (again false)))
+      (Notified
+       ((source ocaml) (scope ()) (severity Warning)
+        (text "ocaml stopped: exit 2 (Space v R to restart)") (history true))))
      (count 2))
-    ((seq 2)
-     (event
-      (Resolved (identity ((source ocaml) (kind Checker) (resource /w)))
-       (severity Error) (text "Checker stopped: exit 2")))
-     (count 1))
+    |}]
+;;
+
+let%expect_test "a stop is a one-off warning, not a problem; unavailable is history only" =
+  let notification f =
+    print_endline
+      (Option.value_map (Feedback.notification f) ~default:"(none)" ~f:(fun n ->
+         sprintf
+           "%s %s"
+           (Sexp.to_string (Feedback.Severity.sexp_of_t n.severity))
+           n.text))
+  in
+  let history f =
+    List.iter (Feedback.History.entries (Feedback.history f)) ~f:(fun e ->
+      print_s [%sexp (e.event : Feedback.History.Event.t)])
+  in
+  let f =
+    Feedback.apply
+      Feedback.empty
+      (Source_stopped { source = "ocamllsp"; root = "/w"; reason = "exit 2" })
+  in
+  notification f;
+  [%expect {| Warning ocamllsp stopped: exit 2 (Space v R to restart) |}];
+  (* The next command clears it, as any notification; nothing waits for Escape. *)
+  let f = Feedback.apply f Command_completed in
+  notification f;
+  show f;
+  [%expect
+    {|
+    (none)
+    (no diagnostics)
+    |}];
+  (* A restart that finds no server leaves the earlier stop, and its marker, in place. *)
+  let f =
+    Feedback.apply
+      (Feedback.apply f Clear_history)
+      (Source_unavailable
+         { source = "ocamllsp"; root = "/w"; reason = "ocamllsp not found on PATH" })
+  in
+  notification f;
+  history f;
+  print_s [%sexp (Feedback.Diagnostics.stopped (Feedback.diagnostics f) ~source:"ocamllsp" : bool)];
+  [%expect
+    {|
+    (none)
+    (Notified
+     ((source ocamllsp) (scope ()) (severity Error)
+      (text "ocamllsp unavailable: ocamllsp not found on PATH") (history true)))
+    true
     |}]
 ;;

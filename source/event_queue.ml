@@ -9,8 +9,8 @@ type t =
 
 let empty = { newest_first = []; dropped = 0 }
 
-(* The pending snapshot for [source, resource], if no [Started]/[Stopped] of [source]
-   came after it, removed. *)
+(* The pending snapshot for [source, resource], if no lifecycle event of [source] came
+   after it, removed. *)
 let rec remove_replaceable events ~source ~resource =
   match events with
   | [] -> None
@@ -18,15 +18,17 @@ let rec remove_replaceable events ~source ~resource =
     (match event with
      | Diagnostics d when String.equal d.source source && String.equal d.resource resource
        -> Some rest
-     | (Started { source = s; _ } | Stopped { source = s; _ }) when String.equal s source
-       -> None
-     | Diagnostics _ | Started _ | Stopped _ ->
+     | ( Started { source = s; _ }
+       | Stopped { source = s; _ }
+       | Unavailable { source = s; _ } )
+       when String.equal s source -> None
+     | Diagnostics _ | Started _ | Stopped _ | Unavailable _ ->
        Option.map (remove_replaceable rest ~source ~resource) ~f:(fun rest -> event :: rest))
 ;;
 
 let push t (event : Source_event.t) =
   match event with
-  | Started _ | Stopped _ -> { t with newest_first = event :: t.newest_first }
+  | Started _ | Stopped _ | Unavailable _ -> { t with newest_first = event :: t.newest_first }
   | Diagnostics { source; resource; _ } ->
     (match remove_replaceable t.newest_first ~source ~resource with
      | None -> { t with newest_first = event :: t.newest_first }

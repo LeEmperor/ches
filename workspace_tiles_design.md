@@ -1923,6 +1923,26 @@ Phase 9's owner decisions (2026-10-06) apply here as well:
   attaches to a `dune build --watch` the user runs. So Ches would start ocamllsp
   itself and never run dune, and save-based, workspace-wide diagnostics would appear
   only when the owner runs a watch.
+- *Confirmed at phase 10's design checkpoint (2026-10-06):* the direction above.
+  Claude-proposed additions accepted without discussion: start ocamllsp for
+  `.ml`/`.mli`/`.mll`/`.mly`; its workspace root is the nearest ancestor containing
+  any Neovim root marker (`dune-project`, `dune-workspace`, `*.opam`, `opam`,
+  `esy.json`, `package.json`, `.git`); ocamllsp starts without a flag (an opt-out
+  flag disables it) and `--synthetic-checker` stays as a test flag.
+- *Missing/unsupported server (owner, 2026-10-06: "do whatever neovim does").*
+  Neovim 0.12.2 was checked: a non-matching file type is silent, a missing command
+  is written only to `lsp.log`, and a nonzero exit gives a one-off WARN notification
+  with no restart. Ches does the same. A non-OCaml file is silent. A missing
+  `ocamllsp` gives only a notification-history entry (Claude's stand-in for
+  `lsp.log`). A server that fails at startup or crashes later gives a one-off status
+  warning that is also recorded in history. **This replaces phase 9's
+  crash-as-attention rule for all sources, synthetic included.** It was the owner's
+  explicit choice over keeping attention. Last findings are still kept dimmed and
+  marked `[source stopped]`.
+- *Restart and Hint (owner, 2026-10-06, mirroring Neovim):* there is no automatic
+  restart for any source. Restarting is manual (`Space v R`, the equivalent of
+  Neovim's `:lsp restart`). LSP Hint becomes a fourth `Hint` severity in the shared
+  model, sorted last with its own muted style, rather than being folded into Info.
 - Phase 9 step 3 built the seam: a client is another `Ches_source.Source.Driver`.
   It receives `Document_changed` (`didOpen`/`didChange`), `Document_saved`
   (`didSave`), and `Restart`, ignores `Kill`, and emits `Source_event`s.
@@ -1937,6 +1957,189 @@ use phase 7C's text capabilities rather than reimplementing selection/copying.
 and recovery, location conversion including Unicode, source restart, and stale
 results. Human tests use a real project, fix an error, follow a location, and repeat
 with problems hidden and in zen. Record server/version and any protocol limitations.
+
+#### Phase 10 plan (2026-10-06)
+
+1. Shared-model changes, with no server yet: Hint severity, crash as a one-off
+   warning, and a history-only unavailable event.
+2. The ocamllsp client in `ches_source`: a `Driver` that runs the process and
+   JSON-RPC session and converts `publishDiagnostics`. It is tested against a scripted
+   fake server.
+3. Wiring: start by file extension, find the root by root markers, auto-start with
+   a `--no-lsp` opt-out, and add a smoke test. The owner then tests it on a real
+   project.
+4. Docs and record.
+
+These details were previewed but are not yet authorized: send the whole document
+on each change (full sync); ask for the utf-8 position encoding and fall back to
+utf-16, converting positions to display cells using the line's text; read lines in
+other files from disk to compute their columns (column 1 if unreadable).
+
+#### Phase 10 step 1 implementation (2026-10-06)
+
+The owner confirmed the implementation checkpoint. Claude proposed these additions,
+which were accepted without discussion: a separate `Unavailable` event, and the
+warning wording.
+
+- `Error.Severity` gains `Hint`, first in the type but ranked last in the problems
+  view (Error, Warning, Info, Hint). Its description reads `hint`. A new style,
+  `Style.Severity_hint` (distinct from `Style.Hint`, the frame's key hints), draws
+  Hint rows and history entries in the theme's comment color: quieter than Info but
+  still in color, unlike dimmed `Stale` rows. Status messages show a Hint notification
+  as Info, though nothing produces one yet.
+- `Source_stopped` no longer reports a problem. It marks the source stopped, keeps
+  its findings `session_ended`, and posts a Warning notification recorded in history:
+  `<source> stopped: <reason> (Space v R to restart)`. The next command clears it, as
+  with any notification. `Source_started` only clears the stopped state.
+  `Identity.kind` loses `Checker`, which nothing produced any more. The status count
+  and the problems view therefore no longer include a crash row.
+- New `Source_event.Unavailable` / `Error.Source_unavailable { source; root; reason }`
+  only records an Error entry in history (`<source> unavailable: <reason>`): no
+  status message, and no change to stopped state or findings. This is the stand-in
+  for Neovim's `lsp.log`. The event queue treats it as a lifecycle event, like
+  `Started`/`Stopped`, so it is never coalesced away and is not held during Insert.
+- `--demo-diagnostics`: the unversioned demo source's style finding is now a Hint.
+  The demo clears its own stop warning (`Command_completed`) so it does not greet the
+  review; the warning stays in history.
+- Tests: Phase 9's crash expectations were updated (no crash row, warning text,
+  history now one `Notified` ×2 entry). New tests cover a one-off stop warning
+  cleared by the next command, an unavailable source recorded in history only, and
+  Hint sorting last with its own rendered style. Smoke expectations were updated
+  (counts lose the crash row, `hint [demo-lint]`, new stop text).
+  Verified: `dune runtest` passes; `scripts/smoke.sh` all 735 checks pass.
+- For human review: the Hint color, and whether a one-off stop warning is noticeable
+  enough. The warning's key hint names the provisional `Space v R` and is written into
+  `ches_error`; it moves with the palette work.
+
+#### Phase 10 step 2 implementation (2026-10-06)
+
+The owner confirmed the implementation checkpoint. All of Claude's proposed additions
+were accepted without discussion; they are listed in the plan above and below.
+
+- `Ches_source.Lsp_client` (`source/lsp_client.mli`) is a `Source.Driver`, like the
+  synthetic checker. It runs the installed `ocamllsp` as a child process and speaks
+  the protocol over its stdin/stdout. The `lsp`/`jsonrpc` libraries from the
+  ocaml-lsp repository supply only the message types and framing. `ches_source` now
+  also depends on `ches_core`, for `Cell_layout`.
+- Sessions: it sends `initialize` with utf-8 and utf-16 offered as position
+  encodings, diagnostic `versionSupport`, `didSave`, the root URI and folder, and
+  Ches's pid. On success it sends `initialized` and reports `Started`.
+  - `Document_changed` sends `didOpen` once the session is initialized, then
+    full-text `didChange` with version = revision. `Document_saved` sends `didSave`.
+  - `Restart` ends the session silently (no stop is reported) and starts a new one,
+    which reopens the newest text. `Kill` is ignored.
+  - Stopping sends `shutdown`/`exit` and kills the server after a 1 s grace.
+  - A generation counter, plus a "current session" check on every event, keeps a
+    superseded session silent.
+- Failures:
+  - A program not on PATH reports `Unavailable`.
+  - Spawn errors, exit, `initialize` errors, and protocol errors report `Stopped`.
+    The reason is the exit status plus the server's last stderr line, e.g.
+    `exited with code 3: …`. A server that exits on its own with code 0 also reports
+    `Stopped`; Neovim stays silent on code 0, but its findings must still be marked
+    stopped.
+- Conversion:
+  - Severity: absent = Error, Information = Info, Hint = Hint.
+  - Messages are collapsed to one line, and only the start of each range is used.
+  - The column is the position's `character` in the negotiated encoding (UTF-16 if
+    the server names none), converted to display cells with `Cell_layout` against
+    the line's text. For the open document that is the text of the version the list
+    reports, kept for the last 32 revisions, else the newest text. For other files,
+    the line is read from disk, only when needed; column 1 if the file is unreadable.
+- Paths: the open document is matched by resolved path and keeps Ches's own resource
+  name. Other files are named relative to the working directory, or absolute outside
+  it.
+- The server's own requests get answers: `window/workDoneProgress/create`,
+  `client/(un)registerCapability`, and `window/showMessageRequest` get null;
+  `workspace/configuration` gets one null per item; `workspace/workspaceFolders` gets
+  the root. Anything else gets MethodNotFound. Other notifications (including
+  `window/showMessage`) and the rest of stderr are dropped.
+- Tests (`source/test/test_lsp_client.ml`, against `source/test/fake_lsp/fake_lsp.exe`,
+  a scripted server, using real processes in a temp directory) cover:
+  - conversion units: surrogate pairs, mid-code-point positions, tabs, past the end;
+  - initial diagnostics, then an edit that clears them;
+  - identical columns under utf-8, utf-16, and an unstated encoding;
+  - all severities, a missing severity, and a multi-line message;
+  - another file's column read from disk;
+  - answers to the server's requests;
+  - crash, then restart reopening text edited while stopped, then restart of a live
+    session;
+  - a missing program (bare name and path), an exit at start, and an `initialize`
+    refusal.
+
+  Verified: `dune runtest` passes, and the client tests passed 5 runs in a row
+  (~3.5 s).
+- Divergence from the checkpoint: the optional real-server check is a probe
+  executable, `dune exec source/bench/lsp_probe.exe [-- -build]`, rather than an
+  expect test, because its output depends on the installed server.
+- Probe results against ocamllsp 1.19.0+ox2 (it prints `NO_VERSION_UTIL` for
+  `--version`):
+  - **It publishes diagnostics without a version.** Ches therefore treats ocamllsp
+    as an unversioned source: findings for the open file dim from the first edit
+    after a list arrives until the next list (phase 9's rule), rather than by
+    revision comparison.
+  - Without a build, merlin has no project configuration, and the only diagnostic is
+    `No config found for file a.ml. Try calling 'dune build'.` at 1:1. This follows
+    from the owner's choice that Ches never runs dune.
+  - After `dune build`, a type error arrives at the right display column, 1:37, on a
+    line with `é` and a two-cell emoji. Fixing it clears the list, restart works, and
+    no ocamllsp process is left after stop.
+- Nothing launches the client yet: CLI start, `.ml`/`.mli`/`.mll`/`.mly`, root markers,
+  `--no-lsp`, and passing the frontend's `Cell_map.width` are step 3. Also left to
+  step 3: Ches exits right after `Source.stop`, so the shutdown may be cut short. The
+  server still exits on stdin EOF or its parent-pid check, but step 3 should confirm
+  it.
+
+#### Phase 10 step 3 implementation (2026-10-06)
+
+The owner confirmed the implementation checkpoint, including a correction Claude made
+after reading Neovim 0.12's `vim.fs.root`. A flat `root_markers` list is searched in
+priority order: each marker across all ancestors before the next marker, so the
+nearest `dune-project` wins over a nearer `package.json`. `*.opam` is matched as a
+literal name, since globs are unsupported. This supersedes the earlier "nearest
+ancestor containing any marker" wording. Claude's proposed additions were accepted
+without discussion: `--synthetic-checker` replaces ocamllsp (there is one source
+slot), and smoke puts the fake server on PATH as `ocamllsp`.
+
+- `bin/ches.ml`:
+  - A PATH that `Lsp_client.Config.ocamllsp.applies_to` (`.ml`/`.mli`/`.mll`/`.mly`)
+    starts the client with `Cell_map.width` and `Config.root`.
+  - `--no-lsp` turns it off, and `--synthetic-checker` takes precedence. The help text
+    explains this.
+- `Workspace_root.find_first ~markers` implements Neovim's rule; `find` is its
+  `dune-project` case, used by the synthetic checker. `Config` gained `applies_to`,
+  `root_markers`, and `root`.
+- Clean quit: when Ches stops the client, `end_session` registers the shutdown wait
+  (at most `shutdown_grace`, then a kill) with `Shutdown.don't_finish_before`, so
+  Async's exit waits for the server. Smoke confirms no server outlives Ches.
+- Found by smoke and fixed by Claude (a step 1 detail): the stop and unavailable
+  notifications no longer carry the workspace root as their scope. In history rows
+  the absolute root pushed the message out of the tile. The message already names
+  the server.
+- Smoke (`scripts/smoke.sh`): `launch` honours `$launch_env`. Existing `.ml`
+  launches pass `--no-lsp`. Two new sections run with the fake server on PATH:
+  - findings with the right column, cleared by an edit and restored by undo, a jump
+    to the location, a crash warning and `[ocamllsp stopped]` rows, restart, the
+    history entry, and no server left after quit;
+  - nothing for a `.txt` file or with `--no-lsp`, and a history-only `ocamllsp
+    unavailable` with an empty PATH.
+
+  A unit test covers the root rule's priority. Verified: `dune runtest` passes;
+  smoke: all 767 checks pass.
+- Phase 10 acceptance still needs the owner's human test with the real ocamllsp on a
+  real project, with a `dune build --watch` running: fix an error, follow a location,
+  and repeat with problems hidden and in zen. Also judge the Hint color and whether
+  the one-off stop warning is noticeable enough.
+
+#### Phase 10 human feedback (2026-10-06)
+
+The owner tested with the real ocamllsp: "everything works fine with the real
+ocamllsp". **Phase 10 is complete and owner-accepted.** The server was ocamllsp
+1.19.0+ox2 in switch `5.2.0+ox`. Recorded protocol limitations:
+
+- Diagnostics are unversioned, so open-file dimming uses phase 9's unversioned rule.
+- Merlin needs a dune build's configuration, and Ches never runs dune.
+- `window/showMessage` is dropped.
 
 ## Other later milestones — Externally computed views
 

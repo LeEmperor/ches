@@ -3,7 +3,19 @@
 
 (executable
  (name latency)
+ (modules latency)
  (libraries ches_source ches_error ches_screen ches_app ches_core ches_input core
   core_unix core_unix.time_ns_unix)
+ (preprocess
+  (pps ppx_jane)))
+
+; The language-server client against the installed ocamllsp (phase 10). Not a test:
+; its output depends on the server. Run with dune exec source/bench/lsp_probe.exe.
+
+(executable
+ (name lsp_probe)
+ (modules lsp_probe)
+ (libraries ches_source ches_error ches_screen core core_unix core_unix.command_unix
+  core_unix.filename_unix async)
  (preprocess
   (pps ppx_jane)))

@@ -145,10 +145,9 @@ let%expect_test "findings dim while behind, other files never; stopped sources a
   print_endline (message t);
   [%expect
     {|
-       error [ocaml] /w: Checker stopped: exit 2
     >~ error [ocaml stopped] a.ml:2:1: syntax
      ~ error [ocaml stopped] b.ml:1:1: other
-    [3 problems] Checker stopped: exit 2
+    [2 problems: Space v e] ocaml stopped: exit 2 (Space v R to restart)
     |}];
   let t = source t (Started { source = "ocaml"; root = "/w" }) in
   rows t;
@@ -247,16 +246,42 @@ let%expect_test "lists that arrive during Insert wait until it ends; stops do no
   let t = source t (Stopped { source = "dune"; root = "/w"; reason = "gone" }) in
   rows t;
   [%expect
-    {|
-       error [dune] /w: Checker stopped: gone
-    >~ error [ocaml] a.ml:1:1: old
-    |}];
+    {| >~ error [ocaml] a.ml:1:1: old |}];
   let t = run t "<Esc>" in
   rows t;
   [%expect
     {|
-       error [dune] /w: Checker stopped: gone
     >~ error [ocaml] a.ml:1:1: newest
      ~ error [lint] a.ml:2:1: unversioned
     |}]
+;;
+
+let%expect_test "hints sort last, after info, and have their own style" =
+  let t =
+    create ()
+    |> fun t ->
+    source
+      t
+      (diagnostics
+         ~revision:0
+         [ finding ~severity:Hint 1 "hint"
+         ; finding ~severity:Info 3 "info"
+         ; finding ~severity:Warning 2 "warning"
+         ])
+  in
+  rows t;
+  print_endline (message t);
+  [%expect
+    {|
+    >  warning [ocaml] a.ml:2:1: warning
+       info [ocaml] a.ml:3:1: info
+       hint [ocaml] a.ml:1:1: hint
+    [3 problems: Space v e]
+    |}];
+  let t = run t " vb" in
+  let screen = Frame.to_string_styled (Frame.render t ~width ~height) in
+  print_endline
+    (List.filter (String.split_lines screen) ~f:(String.is_substring ~substring:"a.ml:1:1")
+     |> String.concat ~sep:"\n");
+  [%expect {| Border[│] Status[ ] Severity_hint[hint [ocaml] a.ml:1:1: hint] Status[                                                  ] Border[│] |}]
 ;;

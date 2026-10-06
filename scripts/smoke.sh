@@ -145,9 +145,11 @@ hybrid_numbers() {
 }
 
 # Starts ches with hybrid line numbers, which the checks here are written against.
+# $launch_env, when set, prefixes the command (env PATH=... for the language server).
+launch_env=""
 launch() {
   shell "clear; stty -g > $work/stty.before"
-  t send-keys -t "$session" -l "$ches $*"
+  t send-keys -t "$session" -l "${launch_env:+$launch_env }$ches $*"
   t send-keys -t "$session" Enter
   if poll alternate_is 1 && poll status_has "NORMAL"; then
     ok "launched ches $*"
@@ -1406,26 +1408,25 @@ section "demo diagnostics in the problems view"
 resize 80 24
 printf 'let x = 1\nlet y = x +\nlet z = 3\nlet w = 4\nlet v = 5\nlet u = 6\n' > "$work/diag.ml"
 cp "$work/diag.ml" "$work/diag.expected"
-launch diag.ml --demo-diagnostics
+launch diag.ml --demo-diagnostics --no-lsp
 # Findings count, but take no attention: the acknowledged stop leaves only the count.
-expect_status "[6 problems: Space v e]"
+expect_status "[5 problems: Space v e]"
 keys Space v b
-expect_screen "Problems (workspace): 6/6"
-expect_screen "error [demo-stopped] .: Checker stopped: DEMO: synthetic stop"
+expect_screen "Problems (workspace): 5/5"
 expect_screen "error [demo-check] ./demo-other.ml:4:1"
 expect_screen "error [demo-check] diag.ml:1:1"
-expect_screen "info [demo-lint] diag.ml:2:1"
+expect_screen "hint [demo-lint] diag.ml:2:1"
 expect_screen "warning [demo-stopped stopped] diag.ml:6:1"
 save_screen "tiles-diagnostics-80x24"
 keys Space v o
-expect_screen "Problems* (workspace): 6/6 [1/6]"
-keys j j a
+expect_screen "Problems* (workspace): 5/5 [1/5]"
+keys j a
 expect_screen "Diagnostics are not acknowledged"
 keys Enter
 expect_cursor_row "let x = 1"
 # An edit puts current-file findings behind the text: dimmed, still listed.
 keys x
-expect_screen "Problems (workspace): 6/6"
+expect_screen "Problems (workspace): 5/5"
 save_screen "tiles-diagnostics-dimmed-80x24"
 keys u
 expect_file "$work/diag.ml" "$work/diag.expected"
@@ -1449,12 +1450,92 @@ keys Space w
 expect_screen "build error: ERROR does not compile"
 # One crash is one problem.
 keys Space v K
-expect_screen "Checker stopped: killed by Space v K"
+expect_screen "synthetic stopped: killed by Space v K"
 expect_screen "error [synthetic stopped] chk.ml:2:1"
-expect_screen "Problems (workspace): 5/5"
+expect_screen "Problems (workspace): 4/4"
 keys Escape Space v R
 expect_screen "error [synthetic] chk.ml:2:1"
-expect_no_screen "Checker stopped"
+expect_no_screen "(Space v R to restart)"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+# A scripted server stands in for ocamllsp on PATH (see
+# source/test/fake_lsp/fake_lsp.ml): ERROR/WARN lines are findings, CRASH exits 3.
+fake_lsp=$root/_build/default/source/test/fake_lsp/fake_lsp.exe
+mkdir -p "$work/fakebin" "$work/emptybin"
+ln -s "$fake_lsp" "$work/fakebin/ocamllsp"
+
+# Whether a fake server launched by ches is still running.
+fake_lsp_running() {
+  local pid
+  for pid in $(pgrep -x ocamllsp); do
+    [ "$(readlink "/proc/$pid/exe")" = "$fake_lsp" ] && return 0
+  done
+  return 1
+}
+fake_lsp_gone() { ! fake_lsp_running; }
+
+section "language server for an OCaml file: findings, edits, crash, restart, quit"
+resize 80 24
+mkdir -p "$work/lspproj/sub"
+printf '(lang dune 3.0)\n' > "$work/lspproj/dune-project"
+printf 'let a = 1\nlet b = ERROR\n' > "$work/lspproj/sub/a.ml"
+launch_env="env PATH=$work/fakebin:$PATH"
+launch lspproj/sub/a.ml
+launch_env=""
+keys Space v b
+expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+expect_screen "[1 problem: Space v e]"
+# Fixing the line clears the list; undo brings the finding back.
+keys j d d
+expect_screen "Problems (workspace): 0/0"
+keys u
+expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+keys Space v o Enter
+expect_cursor_row "let b = ERROR"
+# A crash is a one-off warning; the findings stay, marked stopped.
+keys Escape o C R A S H Escape
+expect_screen "ocamllsp stopped: exited with code 3"
+expect_screen "[ocamllsp stopped] lspproj/sub/a.ml:2:9"
+keys u
+expect_no_screen "ocamllsp stopped:"
+keys Space v R
+expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+expect_no_screen "[ocamllsp stopped]"
+# Problems hidden, history gets the full width; the stop stays recorded there.
+keys Space v b Space v m
+expect_screen "warning [ocamllsp]: ocamllsp stopped: exited with code 3"
+keys Space q
+expect_exit 0
+if poll fake_lsp_gone; then
+  ok "no language server left running"
+else
+  fail "a language server outlived ches"
+fi
+
+section "no language server: other files, none on PATH, --no-lsp"
+resize 80 24
+printf 'ERROR\n' > "$work/lspproj/notes.txt"
+launch_env="env PATH=$work/fakebin:$PATH"
+launch lspproj/notes.txt
+sleep 1
+expect_no_screen "problem"
+keys Space q
+expect_exit 0
+launch lspproj/sub/a.ml --no-lsp
+sleep 1
+expect_no_screen "problem"
+keys Space q
+expect_exit 0
+# Missing from PATH: only a history entry, as Neovim only logs it.
+launch_env="env PATH=$work/emptybin"
+launch lspproj/sub/a.ml
+launch_env=""
+sleep 1
+expect_no_screen "unavailable"
+keys Space v m
+expect_screen "ocamllsp unavailable: ocamllsp not found on PATH"
 keys Space q
 expect_exit 0
 
@@ -1548,7 +1629,7 @@ let () =
 EOF
 for size in 80x24 160x48; do
   resize "${size%x*}" "${size#*x}"
-  launch sample.ml
+  launch sample.ml --no-lsp
   keys j
   expect_status "2:1"
   save_screen "normal-$size"
@@ -1580,7 +1661,7 @@ if [ "$(id -u)" != 0 ]; then
   chmod 444 "$work/review-ro/sample.ml"
   for size in 80x24 160x48; do
     resize "${size%x*}" "${size#*x}"
-    launch review-ro/sample.ml
+    launch review-ro/sample.ml --no-lsp
     keys x Space w
     expect_status "Permission denied"
     save_screen "error-$size"
@@ -1589,7 +1670,7 @@ if [ "$(id -u)" != 0 ]; then
   done
 fi
 resize 80 24
-launch sample.ml
+launch sample.ml --no-lsp
 keys j
 expect_status "2:1"
 for size in 40x10 20x6 10x3 1x1; do

@@ -44,6 +44,7 @@ type t =
   | Info
   | Warning
   | Error
+  | Severity_hint
   | Stale
   | Smear
 [@@deriving sexp_of, equal]

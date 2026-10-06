@@ -6,9 +6,10 @@
 
 (library
  (name ches_source_test)
- (libraries ches_source ches_error ches_screen ches_app ches_core ches_input core async core_unix)
+ (libraries ches_source ches_error lsp ches_screen ches_app ches_core ches_input core async core_unix)
  ; See core/dune for why this flag is needed.
  (inline_tests
+  (deps fake_lsp/fake_lsp.exe)
   (flags
    (:standard -source-tree-root .)))
  (preprocess

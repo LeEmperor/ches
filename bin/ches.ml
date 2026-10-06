@@ -31,7 +31,12 @@ let command =
          --synthetic-checker runs a synthetic checker, one source like ocamllsp: about\n\
          0.4s after an edit, lines containing ERROR/TODO are errors/warnings; about 0.8s\n\
          after a save, ERROR lines again plus a finding in another file, merged into the\n\
-         same lists. Space v K crashes it; Space v R restarts it.")
+         same lists. Space v K crashes it; Space v R restarts it. It replaces ocamllsp.\n\
+         For a .ml, .mli, .mll, or .mly PATH, ches runs ocamllsp from PATH as Neovim\n\
+         does, rooted at the nearest dune-project (else dune-workspace, *.opam, opam,\n\
+         esy.json, package.json, .git, else PATH's directory); its diagnostics go to the\n\
+         problems view. It never runs dune: errors needing a build need your own\n\
+         `dune build --watch`. Space v R restarts it; --no-lsp turns it off.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)
      and demo_problems = flag "--demo-problems" no_arg
        ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"
@@ -39,6 +44,8 @@ let command =
        ~doc:" Seed static synthetic diagnostic findings for manual problems-view review"
      and synthetic_checker = flag "--synthetic-checker" no_arg
        ~doc:" Run a synthetic diagnostic checker (ERROR/TODO lines) for manual review"
+     and no_lsp = flag "--no-lsp" no_arg
+       ~doc:" Do not run a language server (ocamllsp) for OCaml files"
      and demo_report = flag "--demo-report" no_arg
        ~doc:" Install a static, error-free report view for manual tile testing" in
      fun () ->
@@ -62,10 +69,24 @@ let command =
               then Ches_app.Demo_diagnostics.install controller else controller in
            let report =
              Option.some_if demo_report Ches_screen.Report_tile.demo in
+           (* One source: the synthetic checker, a test flag, replaces the server. *)
            let source =
-             Option.some_if synthetic_checker ()
-             |> Option.map ~f:(fun () ->
-               Ches_source.Synthetic.start ~root:(Ches_source.Workspace_root.find path) ())
+             let lsp = Ches_source.Lsp_client.Config.ocamllsp in
+             if synthetic_checker
+             then
+               Some
+                 (Ches_source.Synthetic.start
+                    ~root:(Ches_source.Workspace_root.find path)
+                    ())
+             else if (not no_lsp) && lsp.applies_to path
+             then
+               Some
+                 (Ches_source.Lsp_client.start
+                    ~config:lsp
+                    ~cell_width:Ches_screen.Cell_map.width
+                    ~root:(Ches_source.Lsp_client.Config.root lsp path)
+                    ())
+             else None
            in
            (match%bind Ches_ui.Editor_view.run ?report ?source controller with
             | Ok () -> return ()

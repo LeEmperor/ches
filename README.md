@@ -102,7 +102,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v o` | Show/focus problems, or return to the document |
 | Normal | `Space v d` / `Space v D` | Show/hide, or show/focus, the static demo report (`--demo-report` only) |
 | Normal | `Space v m` / `Space v M` | Show/hide, or show/focus, the notification history |
-| Normal | `Space v R` / `Space v K` | Restart, or crash, the diagnostic source (`--synthetic-checker`; provisional keys) |
+| Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -235,14 +235,40 @@ dune exec ches -- --demo-diagnostics PATH
 
 Until a real checker is wired in, this seeds static, labelled **DEMO** checker
 findings so the problems view can be reviewed. It adds two sources on PATH (one
-versioned, one unversioned), a finding in another file, and a stopped source whose
-acknowledged stop leaves its finding marked `[source stopped]`. Findings are standing
+versioned, one unversioned, which reports a `hint`), a finding in another file, and a
+stopped source whose finding stays marked `[source stopped]` (its stop warning is in
+history). Findings are standing
 state: they count in the status line (`[N problems: Space v e]`) but never take
 attention or need acknowledging (`a` on one says so). The problems view lists
 problems first, then findings by file, severity, and position. Findings for the open
 file dim after an edit until their checker catches up; nothing updates the demo, so
 they stay dimmed. Other files' findings never dim from typing. A finding's selection
 survives lines inserted above it. Lists that arrive during Insert wait until it ends.
+
+### Language server (ocamllsp)
+
+```sh
+dune exec ches -- PATH.ml          # or .mli, .mll, .mly; --no-lsp turns it off
+```
+
+Like the owner's Neovim setup, ches starts `ocamllsp` from PATH for OCaml files. Its
+root is found the way Neovim's `root_markers` do: the nearest `dune-project`; failing
+any, the nearest `dune-workspace`; then `*.opam` (a literal name, as in Neovim),
+`opam`, `esy.json`, `package.json`, `.git`; else the file's directory. Diagnostics go
+to the problems view and status count; Hints are their own, quieter severity.
+
+ches never runs dune. Merlin needs a build's configuration, so in a project that has
+never been built the only finding is `No config found … Try calling 'dune build'`, and
+errors from other files appear only while you run `dune build --watch` yourself.
+ocamllsp 1.19 sends its lists unversioned, so open-file findings dim from your first
+edit after a list arrives until the next one.
+
+As in Neovim: no server on PATH is only a history entry (`Space v m`); a server that
+exits or crashes is a one-off warning (`ocamllsp stopped: … (Space v R to restart)`),
+kept in history, its findings kept dimmed and marked `stopped`; nothing restarts on
+its own. On quit ches asks the server to shut down and waits up to 1 s.
+`--synthetic-checker` replaces it. To check the client against the installed server
+without the UI: `dune exec source/bench/lsp_probe.exe -- -build`.
 
 ### Synthetic checker (live diagnostic source)
 
@@ -265,10 +291,11 @@ source, `synthetic`, running two checks and merging them into one list per file:
 The open file's list describes the revision of the newest edit check, so its findings
 dim while you type ahead of it. As with dune, a build finding stays until you save.
 
-`Space v K` crashes the checker: one `Checker stopped` problem takes attention, and
-its last findings stay listed, dimmed and marked `stopped`. `Space v R` restarts it,
-which resolves the problem; kept findings stay dimmed until the restarted checker
-replaces them. There is no automatic restart. Without the flag both keys only say
+`Space v K` crashes the checker. As in Neovim, that is a one-off warning
+(`synthetic stopped: … (Space v R to restart)`), gone at the next command but kept in
+history; nothing takes attention. Its last findings stay listed, dimmed and marked
+`stopped`. `Space v R` restarts it; kept findings stay dimmed until the restarted
+checker replaces them. There is no automatic restart. Without the flag both keys only say
 there is no source.
 
 ### Demo report (tile-system fixture)

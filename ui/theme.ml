@@ -190,6 +190,7 @@ module Font = struct
     | Hint
     | Info
     | Warning
+    | Severity_hint
     | Stale
     | Smear -> []
   ;;
@@ -241,6 +242,8 @@ let colors (style : Ches_screen.Style.t) =
   | Info -> colors Foreground Surface
   | Warning -> colors Warning Surface
   | Error -> colors Error Surface
+  (* Quieter than Info but, unlike Stale, still in color: a hint is current, not dimmed. *)
+  | Severity_hint -> colors Syntax_comment Surface
   | Stale -> colors Muted Surface
   | Smear -> [ Attr.fg (Role.color Smear) ]
 ;;

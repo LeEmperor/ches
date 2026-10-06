@@ -12,6 +12,9 @@ type t =
       }
   | Started of { source : string; root : string }
   | Stopped of { source : string; root : string; reason : string }
+  (** A running session ended: it crashed, exited, or failed while starting. *)
+  | Unavailable of { source : string; root : string; reason : string }
+  (** No session could be started, such as a server missing from PATH. *)
 [@@deriving sexp_of]
 
 (** The feedback update, stamping [current_revision] (the editor's revision when

@@ -86,6 +86,7 @@ let severity_rank : Feedback.Severity.t -> int = function
   | Error -> 0
   | Warning -> 1
   | Info -> 2
+  | Hint -> 3
 ;;
 
 let problem_row (p : Feedback.Problem.t) : Row.t =
@@ -161,6 +162,7 @@ let count feedback =
 let description (row : Row.t) =
   let severity =
     match row.severity with
+    | Hint -> "hint"
     | Info -> "info"
     | Warning -> "warning"
     | Error -> "error"
@@ -179,6 +181,7 @@ let description (row : Row.t) =
 let style (row : Row.t) : Style.t =
   match row.kind, row.severity with
   | Finding { stale = true; _ }, _ -> Stale
+  | _, Hint -> Severity_hint
   | _, Info -> Info
   | _, Warning -> Warning
   | _, Error -> Error

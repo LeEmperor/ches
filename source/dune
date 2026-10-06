@@ -2,10 +2,12 @@
 ; Ches_error.Source_event / Source_request. It owns timers, processes, and (from phase
 ; 10) the language-server session. It must not depend on ches_screen, ches_ui, bonsai,
 ; or any terminal library; ches_ui wires it into the UI state. Unlike ches_core,
-; ches_input, ches_app, and ches_error, it may use Async.
+; ches_input, ches_app, and ches_error, it may use Async. ches_core supplies the
+; cell layout that turns protocol positions into display columns; lsp and jsonrpc
+; (from the ocaml-lsp repository) are the protocol's types and framing only.
 
 (library
  (name ches_source)
- (libraries ches_error core core_unix core_unix.filename_unix async)
+ (libraries ches_error ches_core core core_unix core_unix.filename_unix core_unix.sys_unix async lsp jsonrpc)
  (preprocess
   (pps ppx_jane)))

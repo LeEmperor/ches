@@ -202,11 +202,10 @@ let%expect_test "disconnect and restart" =
   H.status t;
   [%expect
     {|
-      error [synthetic] <root>: Checker stopped: killed by Space v K (synthetic crash)
     ~ error [synthetic stopped] a.ml:1:1: synthetic error: the line contains ERROR
     ~ error [synthetic stopped] a.ml:1:1: synthetic build error: ERROR does not compile
     ~ warning [synthetic stopped] synthetic_other.ml:3:1: synthetic build warning: unused value in a file you have not opened
-    [4 problems] Checker stopped: killed by Space v K (synthetic crash)
+    [3 problems: Space v e] synthetic stopped: killed by Space v K (synthetic crash) (Space v R to restart)
     |}];
   (* Stopped sources ignore edits; a restart clears the stopped marker and checks the
      newest text again; kept findings stay dimmed until replaced. *)
@@ -215,7 +214,6 @@ let%expect_test "disconnect and restart" =
   H.rows t;
   [%expect
     {|
-      error [synthetic] <root>: Checker stopped: killed by Space v K (synthetic crash)
     ~ error [synthetic stopped] a.ml:1:1: synthetic error: the line contains ERROR
     ~ error [synthetic stopped] a.ml:1:1: synthetic build error: ERROR does not compile
     ~ warning [synthetic stopped] synthetic_other.ml:3:1: synthetic build warning: unused value in a file you have not opened
