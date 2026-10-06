@@ -28,6 +28,17 @@ let bonus_consecutive = 4
 let first_char_multiplier = 2
 let bonus_exact = 2 * score_match
 
+(* A token's match in a field counts only if it scores at least this percentage of
+   [ideal_score]. *)
+let min_quality = 50
+
+(* The score of [length] contiguous code points starting at a word boundary. *)
+let ideal_score length =
+  (score_match * length)
+  + (first_char_multiplier * bonus_boundary)
+  + (bonus_consecutive * (length - 1))
+;;
+
 (* Scalar values and byte offsets of the code points of [s]. *)
 let decode s =
   let rec loop pos acc =
@@ -148,13 +159,16 @@ let match_token token field =
         | Some b when last.(b) >= s -> best
         | _ -> Some j)
     in
-    Option.map best_j ~f:(fun j ->
+    Option.bind best_j ~f:(fun j ->
       let rec positions i j acc =
         let acc = field.offsets.(j) :: acc in
         if i = 0 then acc else positions (i - 1) from.(i).(j) acc
       in
       let exact = if m = n then bonus_exact else 0 in
-      last.(j) + exact, positions (m - 1) j []))
+      let score = last.(j) + exact in
+      Option.some_if
+        (score * 100 >= ideal_score m * min_quality)
+        (score, positions (m - 1) j [])))
 ;;
 
 let tokens query =

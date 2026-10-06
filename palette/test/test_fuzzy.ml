@@ -105,6 +105,21 @@ let%expect_test "word boundaries beat matches inside words" =
     |}]
 ;;
 
+let%expect_test "letters scattered through unrelated words do not match" =
+  rank "abs" [ "Toggle relative line numbers"; "Toggle absolute line numbers" ];
+  [%expect {| Toggle [abs]olute line numbers |}];
+  rank "rel" [ "Narrow document tile by 10 columns"; "Toggle relative line numbers" ];
+  [%expect {| Toggle [rel]ative line numbers |}];
+  (* Initials, letters skipped within a word, and runs inside a word still match. *)
+  rank "tgl" [ "Toggle" ];
+  [%expect {| [T]og[gl]e |}];
+  rank "save" [ "Quit, discarding unsaved changes" ];
+  [%expect {| Quit, discarding un[save]d changes |}];
+  (* A single code point matches anywhere. *)
+  rank "v" [ "Save" ];
+  [%expect {| Sa[v]e |}]
+;;
+
 let%expect_test "field weights scale scores" =
   let candidates =
     [ "keyword", [ field ~weight:10 "save" ]; "title", [ field ~weight:100 "Save file" ] ]

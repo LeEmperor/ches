@@ -1,11 +1,76 @@
 # Ches command palette implementation plan
 
-Status: proposed. This document does not implement the feature.
+Status: stages 1–2 (headless backend) software-complete; stages 3–5 not started,
+waiting on the tiling 7A checkpoint. See [Progress](#progress).
 
 Coordination update (2026-10-05): reviewed the working files in `../tiles/`,
 especially `../tiles/workspace_tiles_design.md` and its planned phases 7A–7C.
 Backend work can proceed now. Shared dispatch and runtime integration follow the
 tiling integration checkpoints below; they are no longer the first assignment.
+
+## Progress
+
+### Stage 1 — catalog and matching: done (2026-10-05, commit `0a80828`)
+
+New library `ches_palette` in `palette/` (depends on `ches_core`, `ches_input`,
+`core` only), with headless tests in `palette/test/` (`ches_palette_test`). No
+shared or collision-prone file was edited; `test/dune` is untouched.
+
+- `palette/fuzzy.ml(i)`: pure field-aware matcher depending only on `Core`.
+  Ordered-subsequence matching per whitespace-separated token; every token must
+  match some field. Scoring is modelled on fzf's algorithm (simplified constants:
+  16 per character, word-boundary/camel/consecutive bonuses, affine gap penalty,
+  doubled first-character bonus, whole-field bonus). Field weights scale scores;
+  ties keep input order. ASCII-only case folding; malformed UTF-8 decodes as
+  U+FFFD. Positions are byte offsets at code-point starts, per field.
+- **Minimum-quality cutoff (owner decision, 2026-10-06: keep 50%).** A token's
+  match in a field counts only if it scores at least 50% of the token appearing
+  contiguously at a word boundary (`min_quality` in `fuzzy.ml`). Drops letters
+  scattered through unrelated words (`abs` in "relative numbers", `rel num` in
+  "Narrow document tile…") while keeping initials (`rln`), letters skipped within a
+  word (`tgl` → "Toggle"), contiguous runs inside a word (`save` in "unsaved"), and
+  any single character. Real fzf has no such cutoff; this is a deliberate
+  difference. Known borderline survivor: `numb` → "Narrow document tile by…" (~72%).
+- `palette/catalog.ml(i)`: `Id`, `Context` (`{ mode }`), `Entry` (ID, title,
+  optional description, keywords, `Keymap.Action.t`, availability defaulting to
+  Normal mode only), validated `create` (malformed/duplicate IDs, empty titles),
+  `default` (16 entries), `find`, `search` (title 100 > ID 80 > each keyword 70,
+  available entries only), `title_positions` (empty when only ID/keywords matched).
+- The default catalog uses only view commands common to this branch and tiles
+  (line numbers, centered, smear, reset, shift ±2/±10, width ±10). Tiles' newer view
+  commands (problems, status, zen, demo report) need entries after integration.
+- `palette/shortcut.ml(i)`: derives hints such as `Space v N` from supplied
+  `(Key.t list * Bindings.Target.t)` pairs; only `Editor`/`View` targets count.
+  **Not yet wired**: `Bindings` exposes no table accessor, and `input/bindings.ml`
+  is a collision surface, so tests supply a copy of the default table. At
+  integration, add an accessor (e.g. `Bindings.to_list`) and pass it through.
+
+### Stage 2 — palette state machine: done (2026-10-06, uncommitted)
+
+- `palette/palette.ml(i)`: `create catalog context ~token` (opaque `'token` names
+  the invoking target); `update : 'token t -> Event.t -> 'token t` for `Insert`,
+  `Paste`, `Backspace`, `Next`, `Previous`. Because `update` returns only state, query
+  edits and navigation cannot execute by construction.
+- `accept t ~context` takes the target's *current* context (`None` if the target is
+  gone) and returns `Execute { token; id; action }`, `No_selection` (stay open, no-op),
+  `Target_gone token`, or `Unavailable { token; id }` (both: close without
+  dispatch and report). Cancel has no function: the adapter discards the palette and
+  restores focus from `token`.
+- Selection is by ID: kept while it still matches, otherwise the best match; none
+  when empty; Next/Previous clamp.
+- Query policy: single line of valid UTF-8. CR LF, LF, CR, and tab become a space;
+  other C0/DEL/C1 controls are dropped; malformed UTF-8 becomes U+FFFD; Backspace
+  removes one code point. Typed and pasted text share this sanitizing.
+- Tests use a fake adapter (tokens are view numbers mapped to their current mode)
+  for target-gone and availability rechecks.
+
+Not done in stage 2, by design: key-to-event mapping (`Ctrl-n`/`Ctrl-p`, Enter,
+Escape) awaits 7A binding/precedence confirmation; the palette's own small
+selection policy should adopt tiles' shared list navigation (`tile/navigation.ml`
+in the tiles worktree) at integration; hidden-palette query retention and
+workspace-shortcut coexistence remain open adapter policies.
+
+Checks: `dune build` and `dune runtest` pass on the OxCaml switch.
 
 ## Goal
 
@@ -163,6 +228,8 @@ Initial behavior:
 - Use a deterministic tie-breaker, such as catalog order then ID.
 - Empty or whitespace-only query returns available commands in stable order.
 - No matches returns an empty list; accepting it performs no action.
+- Reject a token's match in a field that scores below 50% of a contiguous
+  word-boundary match, so scattered letters across unrelated words do not match.
 
 For example, `rel num`, `rln`, and `gutter relative` should discover the relative
 line-number command. Keywords supply synonyms; fuzzy matching is not semantic
@@ -306,7 +373,7 @@ or buffers. These should not block a usable command palette.
 
 ## Implementation stages
 
-### Stage 1 — Add isolated catalog and matching (ready now)
+### Stage 1 — Add isolated catalog and matching (done; see Progress)
 
 1. Define catalog entries, stable IDs, context, and availability.
 2. Register the initial command set and validate unique IDs.
@@ -321,7 +388,7 @@ tests; keep the pure matcher independent of screen, controller, and error librar
 Catalog entries may reference existing editor/view action types. Feature metadata
 can start in a new catalog module rather than editing every command-owner file.
 
-### Stage 2 — Add palette state machine (ready after stage 1)
+### Stage 2 — Add palette state machine (done; see Progress)
 
 1. Implement query editing, paste policy, selection, acceptance, and cancellation.
 2. Track selected command identity across filtering.
@@ -432,6 +499,8 @@ and unresolved integration requirements. New user-facing interactions also recei
 the tiles plan's software-complete/human-feedback-pending handoff. Headless backend
 work can be software-verified without waiting for UI human acceptance.
 
-The next implementation assignment is **stage 1, then stage 2**. Do not begin with
-the old dispatch-first sequence. The feature is complete only after host integration;
-headless completion is a useful, independently deliverable intermediate milestone.
+Stages 1 and 2 are done, so the headless milestone is reached. The next
+assignment is **stage 3**, which starts only once the 7A APIs are recorded, an
+agreed tiling checkpoint is integrated, and one owner is named for controller/UI
+dispatch edits. Do not start it with temporary plumbing in collision-prone files.
+The feature is complete only after host integration.

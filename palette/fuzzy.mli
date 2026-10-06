@@ -10,6 +10,12 @@
     in order, not necessarily next to each other: [rln] matches
     ["Toggle relative line numbers"]. Misspellings do not match.
 
+    A match must also be good enough: its score (see below) must be at least half
+    that of the token appearing contiguously at a word boundary. This keeps word
+    initials such as [rln] and contiguous runs inside words such as [save] in
+    ["unsaved"], but drops letters scattered through unrelated words, such as [abs]
+    in ["relative numbers"]. A single code point always qualifies.
+
     {2 Normalization}
 
     ASCII letters are compared case-insensitively; every other code point, including
