@@ -114,6 +114,10 @@ identity with the original row on the right. Joining protected existing rows, or
 replacing several protected rows with one name, is ambiguous and refuses the whole
 plan: undo and use whole-row operations instead. Undo/redo restores text and IDs
 together. Editing never auto-reveals IDs.
+An existing row whose name has been erased stays protected and invalid: opening
+or linewise pasting above/below it creates a separate row, never fills or adopts
+the empty existing row. Use name insertion to rename it, or `dd`/Visual line
+delete to remove it (even when its final row contains no visible bytes).
 
 ### Backend configuration
 

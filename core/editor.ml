@@ -366,6 +366,7 @@ let visual_delete t ~change =
   | Some selection ->
     let range = selection_range t selection in
     if range.start = range.stop
+       && not (Register.Kind.equal range.kind Linewise && Option.is_some (B.identity_scope t.text))
     then leave_visual t ~cursor:range.start
     else (
       let deleted = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
@@ -426,7 +427,7 @@ let open_line t ~below =
       let at = B.line_start t.text line in
       at, indent ^ "\n", at + String.length indent)
   in
-  match B.insert t.text ~at s with
+  match B.insert ~anchor_affinity:(if below then `Left else `Right) t.text ~at s with
   | Ok text -> edit { t with mode = Insert } ~text ~cursor
   | Error e -> raise_s [%message "indentation is valid text" (e : B.Invalid_text.t)]
 ;;
@@ -1018,8 +1019,11 @@ let paste t ~before ~count =
          then B.line_start t.text (line + 1)
          else B.length t.text
        in
-       let separator =
-         if before || at < B.length t.text || String.is_suffix (B.to_string t.text) ~suffix:"\n"
+        let below_empty_protected = not before && at = B.line_start t.text line
+          && List.exists (B.identities t.text) ~f:(fun (offset, _) -> offset = at) in
+        let separator =
+          if below_empty_protected then "\n"
+          else if before || at < B.length t.text || String.is_suffix (B.to_string t.text) ~suffix:"\n"
          then ""
          else "\n"
        in
@@ -1028,7 +1032,8 @@ let paste t ~before ~count =
        then { t with message = Some (Error "Paste is too large") }
        else (
          let text =
-            B.insert ~identities:(List.concat (List.init count ~f:(fun i ->
+             B.insert ~anchor_affinity:(if below_empty_protected then `Left else `Right)
+               ~identities:(List.concat (List.init count ~f:(fun i ->
               List.map identities ~f:(fun (offset, token) -> String.length separator + i * String.length one + offset, token)))) t.text ~at inserted
            |> Result.map_error ~f:B.Invalid_text.to_string_hum
            |> Result.ok_or_failwith

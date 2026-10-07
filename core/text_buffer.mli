@@ -73,11 +73,17 @@ val length : t -> int
 (** {2 Editing} *)
 
 (** [insert t ~at s] inserts [s] at boundary [at]. Returns [Error] if [s] is not
-    accepted by {!validate}. Raises if [at] is not a boundary. *)
-val insert : ?identities:(int * string) list -> t -> at:int -> string -> (t, Invalid_text.t) Result.t
+    accepted by {!validate}. Raises if [at] is not a boundary. When inserting LF
+    at a protected anchor, [anchor_affinity] specifies whether its existing row
+    stays left of the inserted text or moves right (default [`Right]). Row-opening
+    and linewise-paste operations choose affinity explicitly. *)
+val insert : ?identities:(int * string) list -> ?anchor_affinity:[ `Left | `Right ] -> t -> at:int -> string -> (t, Invalid_text.t) Result.t
 
 (** [delete t ~pos ~len] removes bytes [\[pos, pos + len)]. Both ends must be
-    boundaries and [len >= 0]. *)
+    boundaries and [len >= 0]. Whole covered rows lose their identity; deleting
+    name bytes alone retains it. [linewise] also removes the final unterminated
+    row's identity. [preserve_identities] keeps selected anchors for a change
+    operation, leaving multiple joined identities detectable by validation. *)
 val delete : ?linewise:bool -> ?preserve_identities:bool -> t -> pos:int -> len:int -> t
 
 (** [slice t ~pos ~len] is bytes [\[pos, pos + len)]. Same requirements as
