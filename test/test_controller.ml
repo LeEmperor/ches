@@ -352,3 +352,149 @@ let%expect_test "the newest clipboard request is kept until taken" =
     ()
     |}]
 ;;
+
+(* Everything a frontend can observe after a step, including the file on disk. *)
+let observe ~path (t, views, (status : Controller.Status.t)) =
+  let t, clipboard = Controller.take_clipboard t in
+  let t, saved = Controller.take_saved t in
+  let editor = Controller.editor t in
+  [%sexp
+    { text : string = Text_buffer.to_string (Editor.text editor)
+    ; mode : string = Mode.to_string (Editor.mode editor)
+    ; dirty : bool = Editor.is_dirty editor
+    ; message : Editor.Message.t option = Editor.message editor
+    ; feedback : Ches_error.Error.t = Controller.feedback t
+    ; dispatched : bool = Controller.last_input_dispatched t
+    ; pending : string option = Ches_input.Keymap.pending (Controller.keymap t)
+    ; views : Ches_input.View_command.t list = views
+    ; status : Controller.Status.t
+    ; clipboard : string option
+    ; saved : Controller.Saved.t option
+    ; file : string = In_channel.read_all path
+    }]
+;;
+
+(* Feeds [keys] one input at a time, collecting their view commands. *)
+let keyed t keys =
+  List.fold
+    (Key_notation.keys keys)
+    ~init:(t, [], Controller.Status.Running)
+    ~f:(fun (t, views, _) input ->
+      let t, more, status = Controller.handle_input t input in
+      t, views @ more, status)
+;;
+
+let%expect_test "dispatching an action matches typing its binding" =
+  with_temp_dir (fun dir ->
+    let path = dir ^/ "a.txt" in
+    let start () =
+      Out_channel.write_all path ~data:"abc\n";
+      run (Option.value_exn (open_file ~dir path)) "x"
+    in
+    List.iter
+      Ches_input.Keymap.Action.
+        [ " w", [ Editor Save ]
+        ; "u", [ Editor Undo ]
+        ; "u<C-r>", [ Editor Undo; Editor Redo ]
+        ; "yy", [ Editor (Yank_lines 1) ]
+        ; " q", [ Editor Quit ]
+        ; " Q", [ Editor Force_quit ]
+        ; " vN", [ View Toggle_relative_numbers ]
+        ]
+      ~f:(fun (keys, actions) ->
+        let by_key = observe ~path (keyed (start ()) keys) in
+        let by_dispatch = observe ~path (Controller.dispatch (start ()) actions) in
+        if Sexp.equal by_key by_dispatch
+        then printf "%-7S same\n" keys
+        else
+          print_s
+            [%message
+              "differs" (keys : string) (by_key : Sexp.t) (by_dispatch : Sexp.t)]));
+  [%expect
+    {|
+    " w"    same
+    "u"     same
+    "u<C-r>" same
+    "yy"    same
+    " q"    same
+    " Q"    same
+    " vN"   same
+    |}]
+;;
+
+let%expect_test "a dispatched save keeps its failure until a matching save recovers" =
+  with_temp_dir (fun dir ->
+    let path = dir ^/ "later" ^/ "f.txt" in
+    let t = Option.value_exn (open_file ~dir path) in
+    let t = run t "ihi<Esc>" in
+    let problems t =
+      List.iter (Ches_error.Error.problems (Controller.feedback t)) ~f:(fun problem ->
+        print_endline (hide_dir ~dir (Sexp.to_string [%sexp (problem : Ches_error.Error.Problem.t)])))
+    in
+    let save t =
+      let t, (_ : Ches_input.View_command.t list), (_ : Controller.Status.t) =
+        Controller.dispatch t [ Editor Save ]
+      in
+      t
+    in
+    let t = save t in
+    show ~dir t;
+    problems t;
+    [%expect
+      {|
+      NORMAL dirty error: Failed to write $TMP/later/f.txt: No such file or directory
+      hi
+      ((identity((source file)(kind Save)(resource $TMP/later/f.txt)))(severity Error)(text"Failed to write $TMP/later/f.txt: No such file or directory")(attention true)(location()))
+      |}];
+    (* Another command keeps the problem. Dispatching what idle Escape dispatches does not
+       acknowledge it either: only the key does. *)
+    let t, (_ : Ches_input.View_command.t list), (_ : Controller.Status.t) =
+      Controller.dispatch t [ Editor Clear_search_highlight ]
+    in
+    problems t;
+    [%expect
+      {| ((identity((source file)(kind Save)(resource $TMP/later/f.txt)))(severity Error)(text"Failed to write $TMP/later/f.txt: No such file or directory")(attention true)(location())) |}];
+    Core_unix.mkdir (dir ^/ "later");
+    let t = save t in
+    show ~dir t;
+    problems t;
+    print_file ~dir path;
+    [%expect
+      {|
+      NORMAL info: Wrote $TMP/later/f.txt (2 bytes)
+      hi
+      ($TMP/later/f.txt hi)
+      |}])
+;;
+
+let%expect_test "dispatch stops at Exit and leaves the keymap alone" =
+  let t =
+    Controller.create (Editor.create ~path:"f.txt" ~cell_width:Cell_width.f Text_buffer.empty)
+  in
+  let t = run t " " in
+  let print (t, views, status) =
+    print_s
+      [%message
+        ""
+          (views : Ches_input.View_command.t list)
+          (status : Controller.Status.t)
+          (Controller.last_input_dispatched t : bool)
+          (Ches_input.Keymap.pending (Controller.keymap t) : string option)];
+    t
+  in
+  let t = print (Controller.dispatch t [ View Toggle_centered ]) in
+  [%expect
+    {|
+    ((views (Toggle_centered)) (status Running)
+     ("Controller.last_input_dispatched t" false)
+     ("Ches_input.Keymap.pending (Controller.keymap t)" (Space)))
+    |}];
+  let (_ : Controller.t) =
+    print (Controller.dispatch t [ View Reset; Editor Force_quit; View Toggle_centered ])
+  in
+  [%expect
+    {|
+    ((views (Reset)) (status Exit) ("Controller.last_input_dispatched t" true)
+     ("Ches_input.Keymap.pending (Controller.keymap t)" (Space)))
+    |}]
+;;

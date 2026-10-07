@@ -72,6 +72,23 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     view.move-tile-right-10        Move document tile right by 10 columns Space v L
     view.narrow-tile-10            Narrow document tile by 10 columns     Space v -
     view.widen-tile-10             Widen document tile by 10 columns      Space v +, Space v =
+    workspace.toggle-status        Toggle status tile
+    workspace.status-left          Move status tile left
+    workspace.status-right         Move status tile right
+    workspace.status-above         Move status tile above
+    workspace.status-below         Move status tile below
+    workspace.shrink-status        Shrink status tile by 2
+    workspace.grow-status          Grow status tile by 2
+    workspace.toggle-zen           Toggle zen mode
+    problems.toggle                Toggle problems tile
+    problems.focus                 Focus problems
+    problems.toggle-filter         Toggle problems filter (workspace / current document)
+    problems.inspect               Inspect next problem
+    history.toggle                 Toggle notification history
+    history.focus                  Focus notification history
+    report.toggle                  Toggle demo report
+    report.focus                   Focus demo report
+    source.restart                 Restart diagnostic source
     |}]
 ;;
 
@@ -129,6 +146,7 @@ let%expect_test "realistic queries" =
   [%expect {|
     file.save                      [Save] file
     app.quit-discarding-changes    Quit, discarding un[save]d changes
+    workspace.status-above         Move [s]tatus tile [a]bo[ve]
     |}];
   search "quit";
   [%expect
@@ -143,6 +161,7 @@ let%expect_test "realistic queries" =
     {|
     view.move-tile-left-2          Move document [tile] [left] by 2 columns
     view.move-tile-left-10         Move document [tile] [left] by 10 columns
+    workspace.status-left          Move status [tile] [left]
     |}];
   search "zzzz";
   [%expect {| |}]

@@ -40,7 +40,7 @@ let%expect_test "opening lists available commands and selects the first" =
       app.quit
       app.quit-discarding-changes
       edit.undo
-      ... 12 more
+      ... 29 more
     |}]
 ;;
 
@@ -50,6 +50,7 @@ let%expect_test "typing filters; ordinary letters such as j and k are query text
     {|
     query: "rel num"
     > view.toggle-relative-numbers
+      problems.toggle-filter
     |}];
   show (type_ (create ()) "jk");
   [%expect
@@ -128,12 +129,12 @@ let%expect_test "the selected command stays selected while it still matches" =
 ;;
 
 let%expect_test "no matches: no selection, navigation and accept do nothing" =
-  let palette = type_ (create ()) "zzz" in
+  let palette = type_ (create ()) "###" in
   let palette = events palette [ Next; Previous ] in
   show palette;
   [%expect
     {|
-    query: "zzz"
+    query: "###"
     (no selection)
     |}];
   print_s [%sexp (Palette.accept palette ~context:(Some normal) : int Palette.Accept.t)];
@@ -144,7 +145,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 15 more
+      ... 32 more
     |}]
 ;;
 
@@ -162,6 +163,21 @@ let%expect_test "backspace removes a whole code point, and nothing when empty" =
     {|
     "\195\169x"
     "\195\169"
+    ""
+    ""
+    |}]
+;;
+
+let%expect_test "delete word removes trailing spaces, then the word before them" =
+  let palette = events (create ()) [ Paste "gutter  rél num  " ] in
+  List.fold [ 1; 2; 3; 4 ] ~init:palette ~f:(fun palette _ ->
+    let palette = events palette [ Delete_word ] in
+    print_s [%sexp (Palette.query palette : string)];
+    palette)
+  |> (ignore : int Palette.t -> unit);
+  [%expect {|
+    "gutter  r\195\169l "
+    "gutter  "
     ""
     ""
     |}]
@@ -196,6 +212,7 @@ let%expect_test "pasted and typed text is one line of valid UTF-8" =
     {|
     query: "rel num"
     > view.toggle-relative-numbers
+      problems.toggle-filter
     |}]
 ;;
 

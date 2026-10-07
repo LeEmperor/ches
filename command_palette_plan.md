@@ -1,14 +1,12 @@
 # Ches command palette implementation plan
 
-Status: stages 1–2 (headless backend) software-complete; stages 3–5 not started.
-Tiling 7A–7C have landed; stage 3 waits on an agreed integration checkpoint and
-stage 4 on three host extensions. See [Progress](#progress) and
+Status: stages 1–5 software-complete (docked milestone; floating presentation is later
+work). Human feedback on the terminal UI is pending. Stage 3, the host extensions,
+stage 4, and the word-delete follow-up are uncommitted.
+The tiling system (7A–7C, 8, diagnostic sources) is merged into `oxcaml` (`ef77f9a`)
+and this branch (`4ccde73`). See
+[Progress](#progress) and
 [Tiling status and integration blockers](#tiling-status-and-integration-blockers-2026-10-06).
-
-Coordination update (2026-10-05): reviewed the working files in `../tiles/`,
-especially `../tiles/workspace_tiles_design.md` and its planned phases 7A–7C.
-Backend work can proceed now. Shared dispatch and runtime integration follow the
-tiling integration checkpoints below; they are no longer the first assignment.
 
 ## Progress
 
@@ -36,14 +34,16 @@ shared or collision-prone file was edited; `test/dune` is untouched.
 - `palette/catalog.ml(i)`: `Id`, `Context` (`{ mode }`), `Entry` (ID, title,
   optional description, keywords, `Keymap.Action.t`, availability defaulting to
   Normal mode only), validated `create` (malformed/duplicate IDs, empty titles),
-  `default` (16 entries), `find`, `search` (title 100 > ID 80 > each keyword 70,
+  `default` (16 entries at stage 1: 5 editor, 11 view; 33 since stage 4), `find`, `search` (title 100 > ID 80 > each keyword 70,
   available entries only), `title_positions` (empty when only ID/keywords matched).
-- The default catalog uses only view commands common to this branch and tiles
-  (line numbers, centered, smear, reset, shift ±2/±10, width ±10). Tiles' newer view
-  commands (problems, status, zen, demo report) need entries after integration.
+- The default catalog has save, quit, force quit, undo, redo, and the view commands
+  common to this branch and tiles before the merge (line numbers, centered, smear,
+  reset, shift ±2/±10, width ±10). Stage 4 added the merged view commands (status
+  toggle/position/size, zen, problems, history, demo report, source restart).
 - `palette/shortcut.ml(i)`: derives hints such as `Space v N` from supplied
   `(Key.t list * Bindings.Target.t)` pairs; only `Editor`/`View` targets count.
-  **Not yet wired**: `Bindings` exposes no table accessor, and `input/bindings.ml`
+  Wired in stage 4 through `Bindings.to_list` and `Keymap.bindings`. Originally
+  not wired: `Bindings` exposed no table accessor, and `input/bindings.ml`
   is a collision surface, so tests supply a copy of the default table. At
   integration, add an accessor (e.g. `Bindings.to_list`) and pass it through.
 
@@ -74,21 +74,128 @@ workspace-shortcut coexistence remain open adapter policies.
 
 Checks: `dune build` and `dune runtest` pass on the OxCaml switch.
 
+### Stage 3 — shared execution: done (2026-10-06, uncommitted)
+
+Traced keyboard execution end to end: `Ui_state.feed` → `Controller.handle_input` →
+`Keymap.feed` → private `perform_all` (editor dispatch, effects, feedback) →
+highlighting update and `Exit` close → view commands back to `Ui_state`. `perform_all`
+already took `Keymap.Action.t list`, so only the entry point was missing.
+
+- `app/controller.ml(i)`: new `Controller.dispatch : t -> Keymap.Action.t list ->
+  t * View_command.t list * Status.t`. `handle_input` and `dispatch` share one private
+  `run` (editor commands, effects, `Command_completed` clearing, save/reload problem
+  identity, clipboard and save hand-off, highlighting with reload reset, `Exit` cutoff
+  and close). `handle_input` keeps the keymap feed and the idle-Escape `Acknowledge`.
+  `dispatch` leaves the keymap alone and never acknowledges.
+  `last_input_dispatched` now covers both routes.
+- `screen/ui_state.ml`: `feed`'s tail is extracted as the private `finish_step`
+  (applies view commands in order, then one notification). A keymap notice is passed
+  only by the keyed route, so a palette dispatch never re-posts a stale keymap notice.
+  Behavior of `feed` is unchanged. Stage 4's accept path calls `Controller.dispatch` then
+  `finish_step`, inside `apply_running`'s Key branch so refit, animation and `exited`
+  bookkeeping apply as for keys. No public `Ui_state` dispatch was added, since it would
+  bypass that bookkeeping.
+- Tests (`test/test_controller.ml`, `test/test_highlighting.ml`):
+  - Key/dispatch equivalence: whole observable state, including file on disk, for
+    save, undo, undo+redo, yank (clipboard), dirty quit refusal, force quit, and a
+    view command.
+  - A dispatched save failure is retained across another dispatch, and dispatching
+    `Clear_search_highlight` does not acknowledge it; a matching save resolves it.
+  - Dispatch stops at `Exit` (later actions neither run nor return) and keeps a
+    pending keymap prefix.
+  - Highlights stay current through dispatched undo/redo/reload, and a reload reparses.
+
+Decided here: `dispatch` does not cancel a pending prefix itself; the adapter calls
+`cancel_pending` on open, as the cross-worktree contract says.
+
+Checks: `dune build` and `dune runtest` pass on the OxCaml switch.
+
+### Stage 4 — host integration: done, docked (2026-10-06, uncommitted)
+
+- **Input.** `View_command.Open_palette`, bound to `Space c c` (`input/bindings.ml`,
+  documented in `input/keymap.mli`). `Bindings.to_list` and `Keymap.bindings` expose
+  the active table for shortcut hints. `screen` now depends on `ches_palette`.
+- **Adapter** `screen/palette_tile.ml(i)` (`Palette_tile`, view `palette`,
+  `Spec.text_input` titled "Commands"): wraps `Palette.t` with the document's
+  `View_id` as token. It keeps a `Navigation.Selection` only for the viewport `top`;
+  the palette's selected ID stays authoritative (`fit` feeds it in). Keys: characters
+  (Space, `j`, `k` included) insert, Backspace, Ctrl-n/Ctrl-p, Enter accepts; Escape,
+  Tab, and Ctrl-c are the host's. Rows: `> query` prompt, then one result per row with
+  a `> ` selection marker, matched title letters in `Pending`, and the first bound
+  shortcut right-aligned in `Stale`, dropped when the title would not fit. The query
+  keeps its end visible with a `<` marker. Cursor: a bar after the query on row 0,
+  always inside the content. Footer: `i/n | Enter run, Ctrl-n/p, Esc`, or the host notice.
+- **`Ui_state`.** `palette : Palette_tile.t option`; the palette is open only while
+  focused. It goes first in the minor list, so it gets a slot whenever the band
+  exists. `open_palette` refuses in Insert/Visual and in zen, and in a layout with no
+  band (notice in each case). Opening from another minor view leaves that view: with
+  one document the target is unambiguous. `leave` closes it and discards the query,
+  so Escape, Tab, a focus change, or the band disappearing (resize, zen) all close it
+  without running anything. `route` sends keys to `feed_palette`. Accept closes first
+  (`return_to_document`), then `Controller.dispatch` and `finish_step` with no keymap
+  notice, returning the controller status so a palette quit exits. `No_selection`
+  stays open with a footer notice; `Unavailable` and `Target_gone` close and report.
+  `cursor_intent` and `paste_capture` have palette branches.
+- **Adapter policies settled.** A hidden palette discards its query. A paste whose
+  palette closes before it ends is dropped with "Commands closed; paste dropped".
+  Workspace shortcuts: Escape first, then Space (the leader is query text).
+- **Frame** renders it via `Palette_tile.render`.
+- **Word delete (follow-up).** `Palette.Event.Delete_word` (trailing spaces, then the
+  word, as readline's Ctrl-w) on Ctrl-w and Ctrl-h. `ui/terminal_input.ml` now reports
+  Ctrl-Backspace (notty's reading of `^H`, what most terminals send) as `Ctrl 'h'`
+  instead of `Backspace`. The keymap treats `Ctrl 'h'` as Backspace in Insert mode
+  and in the `:` and search prompts, so the editor behaves as before. A terminal that
+  sends Ctrl-Backspace as plain `^?` or as an extended-key sequence gives Backspace or
+  nothing; Ctrl-w works everywhere.
+- **Tests.** `screen/test/test_palette_tile.ml` covers:
+  - opening, rendering, and the bar cursor;
+  - typed Space/`j`/`k` as query text, with Enter running once on the document and the
+    text, dirty state, and cursor unchanged;
+  - the acceptance queries (`rel num`, `rln`, `gutter relative`, `rnu`);
+  - Ctrl-n/p and filtering keeping the selection;
+  - Escape leaving search, prefs, and problem attention unchanged, and reopening fresh;
+  - no-match Enter, Ctrl-c, and Tab;
+  - paste into the query, and a paste interrupted by the band disappearing;
+  - resize keeping query and selection;
+  - undo, refused dirty quit, focus problems, and forced quit (exit) through the palette;
+  - zen and compact refusals, the full band, and bounded rendering from 80x4 to 120x40.
+
+  Palette backend tests were updated for the larger catalog; the no-match test now
+  types `###`, since `z` matches "Toggle zen mode".
+- **Smoke.** `scripts/smoke.sh` section "command palette (Space c c)": open, search,
+  accept, Escape cancel, bracketed paste, undo via palette, quit via palette, and the
+  file's bytes. It passes. The rest of the smoke run also passed.
+- **README.** `Space c c` key row and a "Command palette" section, including how to
+  add a command.
+
+Not done: floating presentation (docked only, as decided); description lines
+(`Entry.description` is unused); arrow keys (the normalized key type has none).
+`rel num` also lists *Toggle problems filter (workspace / current document)* second, a weak
+fuzzy match that passes the 50% cutoff; retuning is left to the matcher owner.
+
+Checks: `dune build` and `dune runtest` pass on the OxCaml switch; smoke passes.
+
 ## Tiling status and integration blockers (2026-10-06)
 
-Reviewed `../tiles/` (`bpurtell/tiles` at `ce3e799`, which merges `oxcaml`) and
-`../tiles/workspace_tiles_design.md`. This supersedes the "planned, not
-implemented" baseline below. The host extensions are written up for the tiles
-owner in the shared doc
+The tiling work is merged: `oxcaml` at `ef77f9a` ("Feature: Tilling System") and
+this branch at `4ccde73`, 0 behind `oxcaml`. The separate `../tiles/` worktree and
+its uncommitted state are no longer the reference; read the code in this checkout.
+The design doc is now `docs/workspace_tiles_design.md`. `dune build` and
+`dune runtest` pass after the merge. The host extensions are written up in the shared doc
 [Tile host extensions for the command palette](https://claude.ai/code/artifact/108bae1c-4291-47fe-aec0-ebc01949ae8a).
 
 | Phase | State |
 | --- | --- |
-| 7A generic host/routing | Committed (`tile/`, library `ches_tile`); human-accepted 2026-10-05 |
-| 7B shared shell, padding, gaps, 10-row band | Committed; human-accepted 2026-10-06; owner chose the open look (frames on the backdrop), toggle removed |
-| 7C read-only text cursor/selection/copy | Committed (`tile/text_view.ml`); human-accepted 2026-10-06; not a palette prerequisite |
-| 8 notification history tile | Committed; human-accepted 2026-10-06 |
-| Diagnostic sources | In progress, uncommitted (touches `app/controller.ml`, `screen/ui_state.ml`, `screen/frame.ml`; not `tile/`) |
+| 7A generic host/routing | Merged (`tile/`, library `ches_tile`); human-accepted 2026-10-05 |
+| 7B shared shell, padding, gaps, 10-row band | Merged; human-accepted 2026-10-06; open look (frames on the backdrop) |
+| 7C read-only text cursor/selection/copy | Merged (`tile/text_view.ml`); human-accepted 2026-10-06; not a palette prerequisite |
+| 8 notification history tile | Merged; human-accepted 2026-10-06 |
+| Diagnostic sources (synthetic checker, LSP) | Merged (`source/`) |
+
+Also merged and useful here: `Keymap.reset` and `Keymap.lookup` (workspace-only
+routing without feeding editor input), `Controller.cancel_pending`, and the shared
+`Ches_error.Error` feedback lifecycle. `Space c` has no binding (`Space v c` is
+Toggle centered), so `Space c c` is free.
 
 ### What the host provides for the palette
 
@@ -114,7 +221,7 @@ owner in the shared doc
   row and result rows render into.
 - Not used: `Text_view` (the query is editable, not read-only text).
 
-### Blockers: three host extensions for the tiles owner
+### Host extensions (originally blockers; done 2026-10-06, uncommitted)
 
 1. **Space cannot be query text.** In `tile/host.ml`, `Host.key` matches
    `_, [] when Key.equal key t.leader -> prefix [ key ]` before the content
@@ -139,38 +246,52 @@ owner in the shared doc
 All three are small changes in tiles-owned files; implement them there or as an
 agreed patch, not as palette-side workarounds.
 
-### Decisions for the tiles owner
+All three were still open after the merge and are now implemented as proposed:
 
-| Question | Today | Palette-side recommendation |
-| --- | --- | --- |
-| Workspace keys from a text-input view | Space is the only leader | Escape first, then Space; no second leader chord |
-| Band full | `Workspace.allocate` drops from the end of `[problems; report; history]`; each view needs 16 columns + 1 gap | Put the palette first while open, so opening never fails for width |
-| Zen | Zen allocates no minor views | Notice for the first milestone; revisit later |
-| Floating overlay | No overlay support | Not needed now; first palette docks in the bottom band; floating stays recorded as later work |
+1. **Leader as text.** `Spec.t` has `accepts_text` (false in `primary`, `read_only`,
+   `read_only_text`, `companion`). New `Spec.text_input`: Minor, focusable, accepts
+   paste and text, owns the cursor. `Host.key` starts a leader sequence only when the
+   focused view does not accept text. Escape, Ctrl-c and Tab keep their precedence.
+   Test: `tile/test/test_host.ml` "a text-input view takes the leader as text".
+2. **Cursor intent.** New `Ches_tile.Cursor` (`{ row; column; shape = Block | Bar }`,
+   relative to the content area). `Ui_state.text_cursor` is replaced by
+   `Ui_state.minor_cursor`, which returns cell and shape. A private
+   `cursor_intent` asks the view's adapter; `Text_view` views give today's block.
+   Clipping to the content and the single `Host.cursor_owner` rule are unchanged.
+   `Frame` draws the requested shape. The palette adds its branch to `cursor_intent`:
+   row 0, the query's display width after the prompt, `Bar`. Existing cursor tests
+   pass with the renamed accessor.
+3. **Paste delivery.** `` `Deliver `` to a minor owner goes to the private
+   `Ui_state.paste_capture`. If the owner is no longer allocated, the paste is dropped
+   with "<title> closed; paste dropped" and never redirected. Otherwise the owner's
+   adapter takes the text. No adapter accepts paste yet, so today's fallback is a
+   "<title>: paste unsupported" notice; the palette adds its branch there and
+   sanitizes the text. This path is unreachable until a `text_input` view exists, so
+   its tests come with stage 4 (including a paste interrupted by a visibility change).
+
+### Decisions (settled 2026-10-06: palette-side recommendations accepted)
+
+| Question | Decision |
+| --- | --- |
+| Workspace keys from a text-input view | Escape first, then Space; no second leader chord (implemented by extension 1) |
+| Band full | Put the palette first in the minor order while open, so opening never fails for width |
+| Zen | Opening in zen gives a notice for the first milestone; revisit later |
+| Floating overlay | First palette docks in the bottom band; floating stays recorded as later work |
 
 Opening the palette needs no host change: `Space c c` can be a view command
 handled in `Ui_state`, like `Focus_problems`.
 
-### Branch situation
+### Ownership
 
-| Branch | vs `oxcaml` |
-| --- | --- |
-| `bpurtell/tiles` | 13 ahead, 0 behind (`oxcaml` merged in `ce3e799`) |
-| `bpurtell/fzf-commands` | 3 ahead, 1 behind (themes) |
-
-Stage 3 edits `app/controller.ml`, where tiles' feedback/cancellation work meets
-this branch's highlighting; tiles' uncommitted diagnostic-sources work is editing
-it now. Integrate on an agreed committed tiles checkpoint, with one named owner for
-controller edits.
+The same owner now holds both the tiling and palette work, so the "one named owner
+for controller/UI dispatch edits" condition is met on this branch. The host
+extensions above can be made here as small, separately reviewable changes in
+`tile/` and `screen/`, not as palette-side workarounds.
 
 ### Next steps
 
-1. Tiles owner reviews the shared doc and settles the three extensions and four
-   decisions.
-2. Agree a committed tiles checkpoint for integration (after diagnostic sources,
-   or before it).
-3. Bring `bpurtell/fzf-commands` onto that checkpoint and start stage 3.
-4. Stage 4 once the extensions have landed.
+1. Human check of the palette in a real terminal (look, cursor shape, colors).
+2. Remaining stage 5 item and later work: see Stage 4 progress.
 
 ## Goal
 
@@ -196,9 +317,8 @@ and Bonsai. The workspace/tiling worktree supplies the generic presentation host
 - `screen/ui_state.ml` and `.mli`: terminal-independent UI transitions, view-command
   application, scrolling, paste collection, feedback, and animation state.
 - `ui/editor_view.ml`: Bonsai frontend and rendering integration.
-- The local `workspace_tiles_design.md` predates the current tiling work. For
-  coordination, consult `../tiles/workspace_tiles_design.md` and the actual working
-  files there; do not implement host APIs from the older local copy.
+- `tile/` (`ches_tile`): generic host, view specs, shared navigation, read-only text.
+  `docs/workspace_tiles_design.md` is the merged tiling design.
 
 ### Tiling worktree baseline and dependencies
 
@@ -502,7 +622,7 @@ can start in a new catalog module rather than editing every command-owner file.
 Deliverable: fully testable headless palette interaction. This stage can complete
 before generic floating-window support lands.
 
-### Stage 3 — Integrate shared execution (coordinated checkpoint)
+### Stage 3 — Integrate shared execution (done; see Progress)
 
 Prerequisite: record the 7A APIs, integrate the agreed tiling checkpoint, and assign
 one owner for controller/UI dispatch edits. Carry forward this branch's highlighting
@@ -517,7 +637,7 @@ behavior as well as the tile branch's shared feedback and cancellation behavior.
 Deliverable: supported command execution without synthetic key presses or a second
 feedback/host dispatch system. No speculative host refactor is part of this stage.
 
-### Stage 4 — Integrate with the generic host
+### Stage 4 — Integrate with the generic host (done, docked; see Progress)
 
 Prerequisites: stage 3, integrated 7A routing and 7B shell contracts, and an agreed
 placement mode. 7C is needed only if text-inspection/copy capabilities are included.
@@ -533,7 +653,7 @@ placement mode. 7C is needed only if text-inspection/copy capabilities are inclu
 
 Deliverable: usable command palette in the terminal editor.
 
-### Stage 5 — Verify and document
+### Stage 5 — Verify and document (done; see Stage 4 progress)
 
 1. Run the relevant focused tests, then `dune build` and `dune runtest` using the
    OxCaml switch documented in `README.md`.
@@ -602,9 +722,7 @@ and unresolved integration requirements. New user-facing interactions also recei
 the tiles plan's software-complete/human-feedback-pending handoff. Headless backend
 work can be software-verified without waiting for UI human acceptance.
 
-Stages 1 and 2 are done, so the headless milestone is reached. The next
-assignment is **stage 3**. The 7A APIs are now recorded (see Tiling status); it
-starts once an agreed tiling checkpoint merged with `oxcaml` is integrated and one
-owner is named for controller/UI dispatch edits. Stage 4 additionally needs the three
-host extensions listed there. Do not start it with temporary plumbing in collision-prone files.
-The feature is complete only after host integration.
+Stages 1 and 2 are done, so the headless milestone is reached. The tiling work is
+merged and one owner holds both workstreams, so the collision-prone list above no
+longer gates work on this branch; keep edits to those files small and focused.
+Stages 1–5 are done (docked milestone); human feedback on the terminal UI is pending.

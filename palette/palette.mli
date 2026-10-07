@@ -33,6 +33,8 @@ module Event : sig
     | Insert of Uchar.t (** A typed character, appended to the query. *)
     | Paste of string (** A whole paste, sanitized and appended at once. *)
     | Backspace
+    | Delete_word
+    (** Remove trailing spaces, then the word before them (readline's Ctrl-w). *)
     | Next (** Select the next result, toward the bottom. *)
     | Previous (** Select the previous result, toward the top. *)
   [@@deriving sexp_of]

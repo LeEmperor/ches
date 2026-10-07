@@ -82,7 +82,7 @@ let%expect_test "report details: the text cursor reaches rows beyond the viewpor
   print_s
     [%sexp
       (focused t : string)
-    , (Ui_state.text_cursor t ~width ~height : (int * int) option)
+    , (Ui_state.minor_cursor t ~width ~height : (int * int * Ches_tile.Cursor.Shape.t) option)
     , (Report_tile.details (Option.value_exn (Ui_state.report t)) : bool)];
   [%expect {| (demo-report () false) |}]
 ;;

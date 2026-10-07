@@ -250,7 +250,7 @@ let%expect_test "three minor views stay bounded and disjoint in every allocation
             assert (
               [%equal: (int * int) option]
                 (Option.map frame.cursor ~f:(fun c -> c.x, c.y))
-                (Ui_state.text_cursor t ~width ~height))))));
+                (Option.map (Ui_state.minor_cursor t ~width ~height) ~f:(fun (x, y, _) -> x, y)))))));
   print_endline "panes bounded and disjoint; one cursor owner draws a cursor";
   [%expect {| panes bounded and disjoint; one cursor owner draws a cursor |}]
 ;;

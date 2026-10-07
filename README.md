@@ -123,6 +123,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`) |
 | Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
+| Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
 | Normal | `Escape` | Cancel pending input; when idle, clear search highlights and acknowledge the presented problem |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
@@ -175,6 +176,34 @@ and supporting views), and phase 7C read-only text selection and copying in
 supporting views. The problems view and its navigation (phases 6 and 7) are
 human-accepted too, as is phase 8's notification history.
 See [`docs/workspace_tiles_design.md`](docs/workspace_tiles_design.md).
+
+### Command palette
+
+`Space c c` opens a palette in the bottom band, listing every command that can run
+from Normal mode with its shortcut (taken from the active bindings). Type part of a
+command's name, or a related word: `rel num`, `rln`, and `gutter relative` all find
+*Toggle relative line numbers*. Matching is fuzzy and in-process (no `fzf` needed):
+each space-separated word must match, in order, in the title, the command's ID, or
+one of its keywords, and matched title letters are highlighted.
+
+| Palette keys | Action |
+| --- | --- |
+| text, including Space and `j`/`k` | Edit the query (a paste goes into it too) |
+| `Backspace` | Delete the last character |
+| `Ctrl-Backspace` or `Ctrl-w` | Delete the last word (most terminals send Ctrl-Backspace as `Ctrl-h`, which works too) |
+| `Ctrl-n` / `Ctrl-p` | Select the next / previous command |
+| `Enter` | Close the palette and run the selected command once, on the document |
+| `Escape` or `Tab` | Close it without running anything |
+
+A command run from the palette behaves exactly as its key binding: an ordinary quit
+is still refused with unsaved changes, and save failures are reported the same way.
+The palette opens only from Normal mode. While it is open it takes the first slot in
+the bottom band, so it needs no extra width; in zen or in a window too short for the
+band it does not open, and says why. Closing it discards the query.
+
+To add a command, add an entry (ID, title, keywords, and the existing editor or view
+action) to `Catalog.default` in `palette/catalog.ml`. Its shortcut is derived from the
+bindings, so it needs no label and no execution code of its own.
 
 ### Problems pane
 

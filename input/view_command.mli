@@ -57,7 +57,8 @@ type t =
   | Restart_source (** Restart the diagnostic source ([--synthetic-checker]). *)
   | Kill_source (** Crash the synthetic diagnostic source, to test the stopped state. *)
   | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)
-  | Reset (** Centered, at the default width and offset, with hybrid line numbers. *)
+  | Open_palette (** Open the command palette for the document. *)
+  | Reset (** Centered, at the default width and offset, with line numbers off. *)
   | Scroll of
       { scroll : Scroll.t
       ; count : int option

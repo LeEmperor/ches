@@ -5,6 +5,7 @@ module Event = struct
     | Insert of Uchar.t
     | Paste of string
     | Backspace
+    | Delete_word
     | Next
     | Previous
   [@@deriving sexp_of]
@@ -99,6 +100,15 @@ let backspace t =
   | Some start -> refresh { t with query = String.prefix t.query start }
 ;;
 
+(* Trailing spaces, then the word before them, as readline's Ctrl-w does. Space is the
+   only whitespace a query holds, and it is ASCII, so cutting next to one keeps the
+   query valid UTF-8. *)
+let delete_word t =
+  let query = String.rstrip t.query ~drop:(Char.equal ' ') in
+  let keep = Option.value_map (String.rindex query ' ') ~default:0 ~f:(fun i -> i + 1) in
+  if String.is_empty t.query then t else refresh { t with query = String.prefix query keep }
+;;
+
 let move t ~by =
   match t.selected with
   | None -> t
@@ -116,6 +126,7 @@ let update t (event : Event.t) =
   | Insert u -> append t (Uchar.Utf8.to_string u)
   | Paste text -> append t text
   | Backspace -> backspace t
+  | Delete_word -> delete_word t
   | Next -> move t ~by:1
   | Previous -> move t ~by:(-1)
 ;;

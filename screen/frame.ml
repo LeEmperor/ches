@@ -113,6 +113,10 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
             ~width ~rows
         | Some report when Ches_tile.View_id.equal id Report_tile.id ->
           Report_tile.render ~focused ?notice ?pending report ~width ~rows
+        | _ when Ches_tile.View_id.equal id Palette_tile.id ->
+          (match Ui_state.palette ui with
+           | Some palette -> Palette_tile.render ?notice palette ~width ~rows
+           | None -> { title = "Commands"; footer = None; body = [] })
         | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }
       in
       Some (layout.outer, Array.of_list (Tile_shell.render layout ~focused content))) in
@@ -364,9 +368,15 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
   let cursor =
     if not document_cursor
     then
-      (* A focused read-only text view's cursor, the one other terminal-cursor owner. *)
-      Option.map (Ui_state.text_cursor ui ~width ~height) ~f:(fun (x, y) ->
-        { Cursor.x; y; shape = Block })
+      (* A focused minor view's cursor, the one other terminal-cursor owner. *)
+      Option.map (Ui_state.minor_cursor ui ~width ~height) ~f:(fun (x, y, shape) ->
+        { Cursor.x
+        ; y
+        ; shape =
+            (match (shape : Ches_tile.Cursor.Shape.t) with
+             | Block -> Block
+             | Bar -> Bar)
+        })
     else if Animation.active animation || not (List.is_empty insert_points)
     then None
     else

@@ -144,6 +144,91 @@ let default =
         ~title:"Widen document tile by 10 columns"
         ~keywords:[ "width"; "grow" ]
         (Adjust_width 10)
+    ; view
+        ~id:"workspace.toggle-status"
+        ~title:"Toggle status tile"
+        ~keywords:[ "statusline"; "info"; "panel" ]
+        Toggle_status
+    ; view
+        ~id:"workspace.status-left"
+        ~title:"Move status tile left"
+        ~keywords:[ "position"; "dock" ]
+        (Position_status Left)
+    ; view
+        ~id:"workspace.status-right"
+        ~title:"Move status tile right"
+        ~keywords:[ "position"; "dock" ]
+        (Position_status Right)
+    ; view
+        ~id:"workspace.status-above"
+        ~title:"Move status tile above"
+        ~keywords:[ "position"; "dock"; "top" ]
+        (Position_status Above)
+    ; view
+        ~id:"workspace.status-below"
+        ~title:"Move status tile below"
+        ~keywords:[ "position"; "dock"; "bottom" ]
+        (Position_status Below)
+    ; view
+        ~id:"workspace.shrink-status"
+        ~title:"Shrink status tile by 2"
+        ~keywords:[ "size"; "smaller" ]
+        (Adjust_status_size (-2))
+    ; view
+        ~id:"workspace.grow-status"
+        ~title:"Grow status tile by 2"
+        ~keywords:[ "size"; "bigger" ]
+        (Adjust_status_size 2)
+    ; view
+        ~id:"workspace.toggle-zen"
+        ~title:"Toggle zen mode"
+        ~keywords:[ "distraction free"; "focus"; "hide" ]
+        Toggle_zen
+    ; view
+        ~id:"problems.toggle"
+        ~title:"Toggle problems tile"
+        ~keywords:[ "errors"; "diagnostics"; "warnings" ]
+        Toggle_problems
+    ; view
+        ~id:"problems.focus"
+        ~title:"Focus problems"
+        ~keywords:[ "errors"; "diagnostics"; "warnings" ]
+        Focus_problems
+    ; view
+        ~id:"problems.toggle-filter"
+        ~title:"Toggle problems filter (workspace / current document)"
+        ~keywords:[ "errors"; "diagnostics" ]
+        Toggle_problems_filter
+    ; view
+        ~id:"problems.inspect"
+        ~title:"Inspect next problem"
+        ~keywords:[ "errors"; "details"; "cycle" ]
+        Inspect_problems
+    ; view
+        ~id:"history.toggle"
+        ~title:"Toggle notification history"
+        ~keywords:[ "messages"; "log"; "notifications" ]
+        Toggle_history
+    ; view
+        ~id:"history.focus"
+        ~title:"Focus notification history"
+        ~keywords:[ "messages"; "log"; "notifications" ]
+        Focus_history
+    ; view
+        ~id:"report.toggle"
+        ~title:"Toggle demo report"
+        ~keywords:[ "demo" ]
+        Toggle_demo_report
+    ; view
+        ~id:"report.focus"
+        ~title:"Focus demo report"
+        ~keywords:[ "demo" ]
+        Focus_demo_report
+    ; view
+        ~id:"source.restart"
+        ~title:"Restart diagnostic source"
+        ~keywords:[ "checker"; "lsp"; "diagnostics" ]
+        Restart_source
     ]
   |> Or_error.ok_exn
 ;;

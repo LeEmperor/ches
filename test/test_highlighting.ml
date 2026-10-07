@@ -275,3 +275,28 @@ let%test_unit "acceptance: provider fallback does not block a successful save or
     current t;
     Controller.close t)
 ;;
+
+let%test_unit "dispatched edits and reloads keep highlights current, like their keys" =
+  with_dir (fun dir ->
+    let path = dir ^/ "f.ml" in
+    Out_channel.write_all path ~data:"let a = 1\n";
+    let t = Controller.open_file ~cell_width:Cell_width.f path |> Or_error.ok_exn in
+    let dispatch t actions =
+      let t, _, status = Controller.dispatch t actions in
+      assert (Controller.Status.equal status Running);
+      current t;
+      t
+    in
+    let t = run t "x" in
+    let t = dispatch t [ Editor Undo ] in
+    let t = dispatch t [ Editor Redo ] in
+    assert (String.equal (source t) "et a = 1\n");
+    let before = count t
+    and incremental = Controller.For_testing.highlight_incremental_count t in
+    let t = dispatch t [ Editor Reload ] in
+    (* A reload reparses the whole source rather than editing the cached tree. *)
+    assert (count t = before + 1);
+    assert (Controller.For_testing.highlight_incremental_count t = incremental);
+    assert (String.equal (source t) "let a = 1\n");
+    Controller.close t)
+;;

@@ -17,6 +17,9 @@ type t =
   ; focusable : bool (** Can own keyboard input. *)
   ; accepts_paste : bool (** A paste started here is delivered rather than rejected. *)
   ; owns_cursor : bool (** Supplies the terminal cursor while focused. *)
+  ; accepts_text : bool
+    (** Typed text, including the leader key, goes to the content: the view has an
+        input field, so the leader cannot start a workspace sequence there. *)
   }
 [@@deriving sexp_of]
 
@@ -32,3 +35,8 @@ val read_only_text : View_id.t -> title:string -> t
 
 (** Minor and not focusable, such as status: it observes, never captures input. *)
 val companion : View_id.t -> title:string -> t
+
+(** Minor, focusable, accepts paste and text, and supplies the terminal cursor: a view
+    with an input field, such as the command palette. Escape is its way back to the
+    workspace (see {!Host.key}). *)
+val text_input : View_id.t -> title:string -> t

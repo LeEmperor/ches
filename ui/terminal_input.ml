@@ -16,7 +16,11 @@ let key (key : Event.Key.t) (mods : Event.Modifier.t list) : Key.t option =
     Some (Ctrl (Char.lowercase c))
   | Enter, [] -> Some Enter
   | Tab, [] -> Some Tab
-  | Backspace, ([] | [ Ctrl ]) -> Some Backspace
+  | Backspace, [] -> Some Backspace
+  (* What most terminals send for Ctrl-Backspace, and for Ctrl-h: ^H, which notty
+     reports as Ctrl-Backspace. As in Vim, it backspaces in Insert mode and prompts;
+     the command palette deletes a word with it. *)
+  | Backspace, [ Ctrl ] -> Some (Ctrl 'h')
   | Delete, [] -> Some Delete
   | Escape, [] -> Some Escape
   | _ -> None
