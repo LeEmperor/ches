@@ -23,6 +23,8 @@ let%expect_test "on-disk literal label safe paths byte columns highlight status 
       assert (String.is_suffix c.title ~suffix:"/root\\x0A");
       assert (String.is_prefix (row_text (List.nth_exn c.body 1)) ~prefix:expected);
       assert (String.is_substring (Option.value_exn c.footer).text ~substring:"BYTES, not cells");
+      assert (String.is_substring (Option.value_exn c.footer).text ~substring:expected);
+      assert (not (String.is_substring (Option.value_exn c.footer).text ~substring:"Tab/Shift-Tab"));
       let row = List.nth_exn c.body 2 in
       assert (String.is_prefix (row_text row) ~prefix:"> odd\\x0A\\xFF:1:5 | 界\\x09needle\\xFF");
       assert (List.exists row ~f:(fun s -> String.equal s.Span.text "needle" && Style.equal s.style Pending)));

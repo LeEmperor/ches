@@ -111,7 +111,7 @@ let result_row t (result : Catalog.result) ~selected ~width =
   |> Span.merge
 ;;
 
-let render ?notice t ~width ~rows : Tile_shell.Content.t =
+let render ?(hotkey_hints = false) ?notice t ~width ~rows : Tile_shell.Content.t =
   let t = fit t ~rows in
   let results = Palette.results t.palette in
   let count = List.length results in
@@ -139,9 +139,10 @@ let render ?notice t ~width ~rows : Tile_shell.Content.t =
            ~pending:None
            ~default:
              (sprintf
-                "%d/%d | Enter run, Tab/Shift-Tab, Ctrl-n/p, Esc"
+                "%d/%d%s"
                 (if count = 0 then 0 else t.view.index + 1)
-                count))
+                count
+                (if hotkey_hints then " | Enter run, Tab/Shift-Tab, Ctrl-n/p, Esc" else "")))
   ; body
   }
 ;;

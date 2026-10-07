@@ -56,7 +56,7 @@ let result_row (hit : Model.hit) ~selected ~width =
   let spans = Span.keep_left spans ~n:(Int.max 0 width) ~marker_style:Status_special in
   Span.merge (spans @ [ Span.blank Status (Int.max 0 (width - Span.total_width spans)) ])
 ;;
-let render ?notice t ~width ~rows : Tile_shell.Content.t =
+let render ?(hotkey_hints = false) ?notice t ~width ~rows : Tile_shell.Content.t =
   fit t ~rows;
   let snapshot = Model.snapshot t.session in
   let count = List.length snapshot.hits in
@@ -71,6 +71,7 @@ let render ?notice t ~width ~rows : Tile_shell.Content.t =
   let query = query @ [ Span.blank Status (Int.max 0 (width - Span.total_width query)) ] in
   { title = "Literal search | ON DISK (excludes unsaved edits) | " ^ safe snapshot.request.root
    ; footer = Some (Tile_shell.Label.hint
-        (Option.value notice ~default:(sprintf "%d matches | columns are 1-based BYTES, not cells | %s | Tab/Shift-Tab, Ctrl-n/p, Enter, Esc" count summary)))
+         (Option.value notice ~default:(sprintf "%d matches | columns are 1-based BYTES, not cells | %s%s" count summary
+           (if hotkey_hints then " | Tab/Shift-Tab, Ctrl-n/p, Enter, Esc" else ""))))
   ; body = List.take (query :: Tile_text.row Stale summary ~width :: results) (Int.max 0 rows) }
 ;;

@@ -83,6 +83,7 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     view.narrow-tile-10            Narrow document tile by 10 columns     Space v -
     view.widen-tile-10             Widen document tile by 10 columns      Space v +, Space v =
     workspace.toggle-status        Toggle status tile
+    workspace.toggle-hotkey-hints  Toggle tile hotkey hints
     buffers.top                    Show open buffers in top strip
     buffers.status-rows            Show open buffers as status rows
     workspace.status-left          Move status tile left

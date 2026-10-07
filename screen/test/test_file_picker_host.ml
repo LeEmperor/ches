@@ -29,14 +29,14 @@ let%test_unit "file-only responsive floating geometry and screen resize delivery
     |> fun t -> finish t 90 in
   List.iter [ 14, 14; 80, 78; 100, 80; 104, 102; 120, 118; 180, 175 ] ~f:(fun (width, outer_width) ->
     let placement = Option.value_exn (Ui_state.file_picker_layout t ~width ~height) in
-    assert (placement.outer.width = outer_width && placement.outer.height = 28);
+    assert (placement.outer.width = outer_width && placement.outer.height = 38);
     let left, right = File_picker_tile.columns ~width:placement.content.width in
     assert (left > 0);
     assert (Bool.equal (Option.is_some right) (width >= 104));
     let cursor = Option.value_exn (Ui_state.minor_cursor t ~width ~height) in
     let x, _, _ = cursor in
     assert (x >= placement.content.x && x < placement.content.x + left));
-  List.iter [ 5, 5; 6, 6; 7, 5; 24, 22; 30, 28; 48, 28 ] ~f:(fun (height, outer_height) ->
+  List.iter [ 5, 5; 6, 6; 7, 5; 24, 22; 30, 28; 40, 38; 42, 40; 48, 40 ] ~f:(fun (height, outer_height) ->
     let placement = Option.value_exn (Ui_state.file_picker_layout t ~width:180 ~height) in
     assert (placement.outer.width = 175 && placement.outer.height = outer_height));
   let model = Interaction.model (session t) in

@@ -7,7 +7,7 @@ for implementation/validation status and the
 [command palette reference](editor_reference.md#command-palette) for current usage.
 
 Current directory-workspace integration (2026-10-07): the default catalog now has
-54 entries, including all three pickers, tabs, directory navigation/marks/placement and missing-path
+55 entries, including tile hotkey hints, all three pickers, tabs, directory navigation/marks/placement and missing-path
 recreation. **Save buffer** targets the invoking file or directory via Session;
 directory save applies filesystem edits directly, including permanent deletion.
 The palette remains Normal-only and floating. Commands derive configured shortcuts;

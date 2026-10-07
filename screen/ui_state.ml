@@ -355,11 +355,14 @@ let picker_placement ~width ~height =
 
 let file_picker_layout t ~width ~height =
   Option.bind t.file_picker ~f:(fun _ ->
-    Floating.layout
+    Floating.place
       ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
-      ~preferred:{ width = (if width >= 104 then 175 else 80); height = 28 }
+      ~preferred:{ width = (if width >= 104 then 175 else 80); height = 40 }
       ~minimum:{ width = 14; height = 5 }
-      ~policy:{ Tile_shell.Policy.minor with min_content_height = 3 })
+    |> Option.map ~f:(fun rect ->
+      let top_margin = if height - rect.height >= 2 then 1 else 0 in
+      let rect = { rect with y = Int.max top_margin (rect.y - 2) } in
+      Tile_shell.layout { Tile_shell.Policy.minor with min_content_height = 3 } rect))
 ;;
 
 let line_picker_layout t ~width ~height =

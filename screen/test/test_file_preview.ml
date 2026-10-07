@@ -65,7 +65,7 @@ let%test_unit "preview geometry, safe cells, visible rows and identity/generatio
   File_picker_tile.expect_preview replacement (Some (request replacement 1));
   assert (not (File_picker_tile.install_preview replacement delivery))
 
-let%test_unit "preview states keep padded columns aligned; narrow footer exposes essential keys" =
+let%test_unit "preview states keep padded columns aligned; narrow footer hints are opt-in" =
   let picker = File_picker_tile.create ~token:() ~discovery:(discovery 3) in
   drain picker;
   let expected = request picker 1 in
@@ -93,6 +93,12 @@ let%test_unit "preview states keep padded columns aligned; narrow footer exposes
         List.iter [ '\027'; '\t'; '\r' ] ~f:(fun control ->
           assert (not (String.contains rendered control)))));
   let content = File_picker_tile.render picker ~width:80 ~rows:8 in
+  let hint = (Option.value_exn content.footer).text in
+  let visible = Tile_text.row Status hint ~width:76 |> fun row -> text [ row ] in
+  assert (not (String.is_substring visible ~substring:"Enter, Esc"));
+  assert (not (String.is_substring visible ~substring:"Tab/Shift-Tab"));
+  assert (String.is_substring visible ~substring:"discovered");
+  let content = File_picker_tile.render ~hotkey_hints:true picker ~width:80 ~rows:8 in
   let hint = (Option.value_exn content.footer).text in
   let visible = Tile_text.row Status hint ~width:76 |> fun row -> text [ row ] in
   assert (String.is_substring visible ~substring:"Enter, Esc");

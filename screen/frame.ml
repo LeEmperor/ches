@@ -38,6 +38,7 @@ type t =
 [@@deriving sexp_of]
 
 let floating_layer ?allocation ?floating ui ~width ~height =
+    let hotkey_hints = Ui_state.hotkey_hints ui in
     match floating with
     | Some _ -> floating
     | None when Option.is_some allocation -> None
@@ -46,7 +47,7 @@ let floating_layer ?allocation ?floating ui ~width ~height =
         Option.map (Ui_state.content_picker ui) ~f:(fun picker ->
           let content = layout.content in
           { Floating_layer.id = Content_picker_tile.id; layout
-          ; content = Content_picker_tile.render ?notice:(Ui_state.capture_notice ui)
+           ; content = Content_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
               picker ~width:content.width ~rows:content.height
           ; cursor = Some (Content_picker_tile.cursor picker ~width:content.width) }))
     | None when Option.is_some (Ui_state.line_picker ui) ->
@@ -56,7 +57,7 @@ let floating_layer ?allocation ?floating ui ~width ~height =
           let content = layout.content in
           { Floating_layer.id = Line_picker_tile.id
           ; layout
-          ; content = Line_picker_tile.render ?notice:(Ui_state.capture_notice ui)
+           ; content = Line_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
               picker ~width:content.width ~rows:content.height
           ; cursor = Some (Line_picker_tile.cursor picker ~width:content.width)
           }))
@@ -66,7 +67,7 @@ let floating_layer ?allocation ?floating ui ~width ~height =
            let content = layout.content in
            { Floating_layer.id = File_picker_tile.id
            ; layout
-           ; content = File_picker_tile.render ?notice:(Ui_state.capture_notice ui)
+           ; content = File_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
                picker ~width:content.width ~rows:content.height
            ; cursor = Some (File_picker_tile.cursor picker ~width:content.width)
            }))
@@ -76,7 +77,7 @@ let floating_layer ?allocation ?floating ui ~width ~height =
           let content = layout.content in
           { Floating_layer.id = Palette_tile.id
           ; layout
-          ; content = Palette_tile.render ?notice:(Ui_state.capture_notice ui)
+           ; content = Palette_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
               palette ~width:content.width ~rows:content.height
           ; cursor = Some (Palette_tile.cursor palette ~width:content.width)
           }))

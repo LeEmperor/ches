@@ -47,7 +47,7 @@ let%expect_test "frontend Tab and terminal Shift-Tab navigate palette, not focus
     │││                                                        │││
     │││                                                        │││
     │││                                                        │││
-    │╰╰─ 1/2 | Enter run, Tab/Shift-Tab, Ctrl-n/p, Esc ────────╯╯│
+    │╰╰─ 1/2 ──────────────────────────────────────────────────╯╯│
     │ NORMAL  f.txt                                          1:1 │
     └────────────────────────────────────────────────────────────┘
     |}];

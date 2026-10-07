@@ -16,4 +16,5 @@ val accept : t -> current:(unit -> Ches_app.Controller.t) -> release:(unit -> un
   -> Ches_app.Controller.t option Or_error.t
 val cancel : t -> release:(unit -> unit) -> unit
 val cursor : t -> width:int -> Ches_tile.Cursor.t
-val render : ?notice:string -> t -> width:int -> rows:int -> Tile_shell.Content.t
+(** Control hints default to hidden; counts, status and notices remain visible. *)
+val render : ?hotkey_hints:bool -> ?notice:string -> t -> width:int -> rows:int -> Tile_shell.Content.t

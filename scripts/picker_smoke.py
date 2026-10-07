@@ -91,7 +91,31 @@ def main():
         files("alpha")
         wait("buffer r")
         wait("  1 DIRTYSTART document")
+        assert "Enter, Esc" not in screen() and "Tab/Shift-Tab" not in screen()
+        resize(180, 48)
+        wait("  1 DIRTYSTART document")
+        rows = screen().splitlines()
+        top = next(i for i, row in enumerate(rows) if "Files |" in row)
+        bottom = next(i for i, row in enumerate(rows) if "matches" in row and "╰" in row)
+        assert bottom - top + 1 == 40
+        assert rows[top].index("╮") - rows[top].index("╭") + 1 == 175
+        save("preferred-175x40-hidden-controls")
+        resize(140, 30)
+        wait("  1 DIRTYSTART document")
         save("dirty-selected-preview")
+        key("Escape")
+        # Existing global toggle, also discoverable through the command palette.
+        send(" ccToggle tile hotkey hints")
+        wait("> Toggle tile hotkey hints")
+        key("Enter")
+        files("alpha")
+        wait("Enter, Esc")
+        wait("Tab/Shift-Tab")
+        save("file-controls-requested")
+        key("Escape")
+        send(" v?")
+        files("alpha")
+        wait("buffer r", ("Enter, Esc", "Tab/Shift-Tab"))
         key("Escape")
         # Real terminal Tab and CSI Z (tmux BTab), not normalized test inputs.
         files("nav/")
@@ -298,6 +322,7 @@ def main():
         print("      file/directory startup scope and tty restore")
         print("      native Tab/Shift-Tab file+palette selected acceptance, bounded/dirty/missing")
         print("      previews, safe controls, narrow/wide resize, A-B-A, reopen/interrupted paste")
+        print("      175x40 preferred float, hidden-default/requested controls and existing toggle")
         print("Fixtures and captures:", root)
     finally:
         try:

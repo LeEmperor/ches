@@ -55,5 +55,6 @@ val update : t -> rows:int -> Palette.Event.t -> t
     area: a bar, always within the area when [width > 0]. *)
 val cursor : t -> width:int -> Ches_tile.Cursor.t
 
-(** Shell content for a [width] by [rows] content viewport. *)
-val render : ?notice:string -> t -> width:int -> rows:int -> Tile_shell.Content.t
+(** Shell content for a [width] by [rows] content viewport. Control hints default
+    to hidden; counts and notices remain visible. *)
+val render : ?hotkey_hints:bool -> ?notice:string -> t -> width:int -> rows:int -> Tile_shell.Content.t

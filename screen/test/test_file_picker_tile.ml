@@ -31,6 +31,8 @@ let%expect_test "file tile exposes root, status, partial results, errors, limits
       assert (String.equal content.title "Files | /project\\x0Aroot");
       assert (String.is_prefix (row_text (List.nth_exn content.body 1)) ~prefix:expected);
       assert (String.is_substring (Option.value_exn content.footer).text ~substring:expected);
+      assert (not (String.is_substring (Option.value_exn content.footer).text ~substring:"Tab/Shift-Tab"));
+      assert (not (String.is_substring (Option.value_exn content.footer).text ~substring:"Enter, Esc"));
       (match status with
        | Complete { truncated = false } ->
          assert (String.is_prefix (row_text (List.nth_exn content.body 2)) ~prefix:"No project files")

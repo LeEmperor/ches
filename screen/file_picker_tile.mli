@@ -27,4 +27,5 @@ val work : _ t -> budget:int -> unit
 val accept : 'token t -> release:(unit -> unit) -> consume:('token Model.Request.t -> unit) -> unit
 val cancel : _ t -> release:(unit -> unit) -> unit
 val cursor : _ t -> width:int -> Ches_tile.Cursor.t
-val render : ?notice:string -> _ t -> width:int -> rows:int -> Tile_shell.Content.t
+(** Control hints default to hidden; counts, status and notices remain visible. *)
+val render : ?hotkey_hints:bool -> ?notice:string -> _ t -> width:int -> rows:int -> Tile_shell.Content.t

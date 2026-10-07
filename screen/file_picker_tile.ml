@@ -84,7 +84,7 @@ let result_row (result : Model.Query_result.t) ~selected ~width =
   |> fun spans -> Span.merge (spans @ [ Span.blank Status (Int.max 0 (width - Span.total_width spans)) ])
 ;;
 
-let render_results ?notice t ~width ~rows : Tile_shell.Content.t =
+let render_results ~hotkey_hints ?notice t ~width ~rows : Tile_shell.Content.t =
   fit t ~rows;
   let model = Interaction.model t.session in
   let discovery = Model.discovery model in
@@ -110,12 +110,14 @@ let render_results ?notice t ~width ~rows : Tile_shell.Content.t =
   let query = Picker_text.query_row (Interaction.query t.session) ~width in
   let query = query @ [ Span.blank Status (Int.max 0 (width - Span.total_width query)) ] in
   { title = "Files | " ^ safe discovery.request.root
-  (* Keep acceptance/cancellation/navigation ahead of duplicated discovery metadata
-     so the normal narrow layout does not clip away all of its key guidance. *)
+  (* When requested, keep controls ahead of duplicated discovery metadata so
+     narrow layouts still show key guidance. Status is independent of hints. *)
   ; footer = Some (Tile_shell.Label.hint
       (Option.value_map notice ~default:"" ~f:(fun text -> text ^ " | ")
-       ^ sprintf "%d/%d matches | Enter, Esc | Tab/Shift-Tab, Ctrl-n/p | %d discovered | %s"
-         (if count = 0 then 0 else t.view.index + 1) count (List.length discovery.candidates) summary))
+       ^ sprintf "%d/%d matches%s | %d discovered | %s"
+         (if count = 0 then 0 else t.view.index + 1) count
+         (if hotkey_hints then " | Enter, Esc | Tab/Shift-Tab, Ctrl-n/p" else "")
+         (List.length discovery.candidates) summary))
   ; body = List.take (query :: Tile_text.row Stale summary ~width :: list) (Int.max 0 rows)
   }
 ;;
@@ -155,9 +157,9 @@ let preview_rows t ~width ~rows =
   List.take (title :: row Stale status :: lines) (Int.max 0 rows)
 ;;
 
-let render ?notice t ~width ~rows =
+let render ?(hotkey_hints = false) ?notice t ~width ~rows =
   let left, right = columns ~width in
-  let content = render_results ?notice t ~width:left ~rows in
+  let content = render_results ~hotkey_hints ?notice t ~width:left ~rows in
   match right with
   | None -> content
   | Some right ->

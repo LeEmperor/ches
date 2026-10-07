@@ -40,9 +40,14 @@ jumping. Unrelated supporting tiles still use Tab to return focus. A changed
 document invalidates line results permanently; close/reopen to refresh, never
 accept stale coordinates.
 
+Picker and command-palette control footers follow the global tile hotkey-hints
+preference, hidden by default. Toggle with `Space v ?` before opening a picker or
+**Toggle tile hotkey hints** in the palette. Counts, status, loading, errors,
+limits and capture notices remain visible; palette result shortcuts are unchanged.
+
 ## Read-only file preview
 
-File floats prefer 175×28 on terminals at least 104 cells wide (80×28 otherwise),
+File floats prefer 175×40 on terminals at least 104 cells wide (80×40 otherwise),
 centered and clamped with a one-cell margin where possible. With at least 96 content
 cells, results stay left and a numbered plain-text preview appears right; narrow
 terminals hide it without changing selection, keyboard focus or Enter behavior.
@@ -142,7 +147,8 @@ buffer and content-opening blockers are superseded by the production handoffs in
 [`FILE_PICKER_PLAN.md`](../FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete).
 The build and forced full suite pass; no unrelated snapshots were promoted here.
 Production frontend tests use real rg and session opening, not just fake consumers.
-The catalog currently has **54 commands**, including all three picker entries.
+The catalog currently has **55 commands**, including all three picker entries and
+**Toggle tile hotkey hints**.
 
 Run the isolated terminal checks after building:
 

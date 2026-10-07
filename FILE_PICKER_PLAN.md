@@ -193,8 +193,8 @@ presentation, and phase 13 verified it. This is not a current no-presentation cl
 
 ### Phase 12 implementation and handoff (2026-10-07)
 
-- **Outcome:** production file-only read-only preview. File floats now prefer 175×28
-  at terminal widths >=104 (80×28 otherwise), increased from the initial 140×14 /
+- **Outcome:** production file-only read-only preview. File floats now prefer 175×40
+  at terminal widths >=104 (80×40 otherwise), increased from the initial 140×14 /
   80×14 defaults and still centered/clamped to the terminal; content >=96 cells splits results
   left / preview right. Narrow terminals hide the pane, and existing 14×5 minimum,
   tiny resize close, query/selection, capture/cursor and Enter acceptance remain.

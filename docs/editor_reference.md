@@ -140,7 +140,8 @@ command's name, or a related word: `rel num`, `rln`, and `gutter relative` all f
 *Toggle relative line numbers*. Matching is fuzzy and in-process (no `fzf` needed):
 each space-separated word must match, in order, in the title, the command's ID, or
 one of its keywords, and matched title letters are highlighted.
-The current default catalog contains **54 commands**, including all three pickers.
+The current default catalog contains **55 commands**, including all three pickers
+and **Toggle tile hotkey hints**.
 
 | Palette keys | Action |
 | --- | --- |
@@ -186,7 +187,7 @@ Filtering/no-match Enter is inert. Document changes invalidate results; reopen t
 refresh. Minimum 14×5, including zen; undersized resize closes safely.
 
 `Space f f` / **Find project files** opens or activates retained buffers without
-reloading unsaved text. Its file-only float prefers 175×28 (80×28 below 104 terminal
+reloading unsaved text. Its file-only float prefers 175×40 (80×40 below 104 terminal
 columns), centered and clamped with a one-cell margin where possible. At terminal
 widths of 104 cells or more, its wider float
 shows results left and a read-only numbered preview right (first 64 KiB/100 lines,
@@ -219,8 +220,10 @@ applies edits directly, without a confirmation dialog or filesystem undo.**
 
 `Space v b` toggles a bottom preview; `Space v f` switches workspace/current-file
 filtering. Tile hotkey hints are hidden by default; `Space v ?` toggles them in
-Problems, History, and the demo report, including focused lists and details.
-Overflow counts, detail positions, and action feedback remain visible.
+Problems, History, and the demo report, including focused lists and details, and
+in all picker/palette control footers. For text-input floats, toggle before opening
+or use **Toggle tile hotkey hints** in the palette; captured keys still edit queries.
+Overflow counts, detail positions, picker status, errors and action feedback remain visible.
 `Space v o` shows and focuses the pane. It remains read-only:
 
 | Pane keys | Action |

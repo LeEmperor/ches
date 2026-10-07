@@ -155,6 +155,11 @@ let default =
         ~keywords:[ "statusline"; "info"; "panel" ]
         Toggle_status
     ; view
+        ~id:"workspace.toggle-hotkey-hints"
+        ~title:"Toggle tile hotkey hints"
+        ~keywords:[ "keys"; "controls"; "help"; "show"; "hide" ]
+        Toggle_hotkey_hints
+    ; view
         ~id:"buffers.top"
         ~title:"Show open buffers in top strip"
         ~keywords:[ "file tabs"; "presentation"; "horizontal" ]

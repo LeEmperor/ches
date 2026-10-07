@@ -42,9 +42,12 @@ Human visual/ranking/performance acceptance remains separate and unperformed.
     appear in feedback/history, with restored focus and the current buffer intact.
     Cancellation releases once with no intent. Exceptions are not retried.
 
-The file-only float prefers 80×28 on narrow terminals and 175×28 at terminal widths
+The file-only float prefers 80×40 on narrow terminals and 175×40 at terminal widths
 of 104 cells or more, centered and clamped with a one-cell margin where possible;
 it requires a 14×5 terminal (three content rows). Other pickers retain their sizes.
+Control footers follow the global hotkey-hints preference (hidden by default).
+Use `Space v ?` before opening a picker, or **Toggle tile hotkey hints** in the
+command palette. Counts, discovery status, errors and notices remain visible.
 At 96 content cells or more, results are on the left and a read-only plain-text
 preview is on the right. The preview never takes focus or opens a tab. It follows
 selection and shows the first 64 KiB/100 lines, current dirty retained text when
