@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase-6 PTY smoke; all filesystem fixtures live under /tmp/opencode."""
+"""Pending directory edits, backing paths and undo/save boundaries in an isolated PTY."""
 import fcntl
 import os
 import pty
@@ -40,8 +40,7 @@ def main():
     try:
         pump(1)
         send(b" vt vb")  # Leave history wide enough for actionable feedback.
-        send(b" mmA.renamed\x1b w")
-        assert b"Rename a.txt -> a.txt.renamed" in capture
+        send(b" mmA.renamed\x1b")
         assert b"1 pending" in capture
         assert not (root / "a.txt.renamed").exists()
         send(b" r")
@@ -52,16 +51,18 @@ def main():
         send(b" q")
         assert proc.poll() is None
         assert b"Unsaved changes:" in capture
-        send(b" ouofresh/\x1b w")
-        assert b"Create directory fresh/" in capture
+        send(b" ouofresh/\x1b")
         send(b"\r")
         assert b"requires save" in capture
         assert not (root / "fresh").exists()
-        send(b"u q")  # Undo fresh row; original rename was already undone.
+        send(b" w")
+        assert b"Create directory fresh/" in capture
+        assert (root / "fresh").is_dir()
+        send(b"u q")  # Text undo cannot undo the committed directory creation.
         assert proc.wait(timeout=5) == 0
-        assert sorted(p.name for p in root.iterdir()) == ["a.txt"]
-        print("PASS: modal planning/undo, save and refresh refusal, backing-path open,")
-        print("      hidden dirty quit guard, fresh-row refusal, no listing writes")
+        assert sorted(p.name for p in root.iterdir()) == ["a.txt", "fresh"]
+        print("PASS: pending edits/undo, dirty refresh refusal, backing-path open,")
+        print("      hidden dirty quit guard, fresh-row refusal, apply/undo boundary")
         print("Fixture:", root)
     finally:
         Path("/tmp/opencode/directory-phase6-pty.log").write_bytes(capture)

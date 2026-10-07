@@ -51,6 +51,7 @@ type t =
   | Previous_tab (** Activate the previous file tab, wrapping in open order. *)
   | Close_tab (** Close the current file; refuse unsaved changes. *)
   | Force_close_tab (** Explicitly discard the current file's unsaved changes. *)
+  | Recreate_missing_file (** Exclusive explicit recovery; ordinary save refuses. *)
   | Toggle_centered (** Switch between the centered tile and full width. *)
   | Shift of int
   (** Move the centered tile by this many display cells; negative is left. *)

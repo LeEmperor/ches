@@ -180,6 +180,7 @@ let default =
     ; [ leader; Key.char 'b'; Key.char 'p' ], View Previous_tab
     ; [ leader; Key.char 'b'; Key.char 'c' ], View Close_tab
     ; [ leader; Key.char 'b'; Key.char 'C' ], View Force_close_tab
+    ; [ leader; Key.char 'b'; Key.char 'r' ], View Recreate_missing_file
     ; view 'c' Toggle_centered
     ; view 'h' (Shift (-2))
     ; view 'l' (Shift 2)

@@ -129,7 +129,7 @@ let%test_unit "join split and invalid token edits cannot validate" =
   List.iter
     [ "@ches[99]\tname"; "@ches[01]\talpha"; "@ches[1] alpha"
     ; "@ches[1]\talpha@ches[2]\tfolder/"; "@ches[1]\talpha/"
-    ; "@ches[1]\nalpha"; "@ches[1]\t"; "@ches[1]\t../x"
+    ; "@ches[1]\nalpha"; "@ches[1]\t"
     ; "@ches[1]\ta\\x00b"; "@ches[1]\ta\\x2Fb"; "\\x61lpha"
     ; "\\xFF\\xff"; "new\\"; "."; ".."; "nested/name"; "@filename"
     ]

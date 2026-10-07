@@ -76,11 +76,12 @@ let default =
   in
   let numbers = [ "gutter"; "numbering"; "line numbers" ] in
   create
-     [ editor ~id:"file.save" ~title:"Save file" ~keywords:[ "write"; "w" ] Save
+     [ editor ~id:"file.save" ~title:"Save buffer" ~keywords:[ "write"; "w"; "file"; "directory"; "apply"; "permanent delete" ] Save
     ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab
     ; view ~id:"tabs.previous" ~title:"Previous file tab" ~keywords:[ "buffer"; "switch" ] Previous_tab
     ; view ~id:"tabs.close" ~title:"Close file tab" ~keywords:[ "buffer" ] Close_tab
     ; view ~id:"tabs.close-discarding-changes" ~title:"Close file tab, discarding unsaved changes" ~keywords:[ "buffer"; "force close" ] Force_close_tab
+    ; view ~id:"file.recreate-missing" ~title:"Recreate missing path" ~keywords:[ "deleted"; "recover" ] Recreate_missing_file
     ; editor
         ~id:"app.quit"
         ~title:"Quit"

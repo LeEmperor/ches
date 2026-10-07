@@ -45,6 +45,7 @@ type t =
   | Previous_tab
   | Close_tab
   | Force_close_tab
+  | Recreate_missing_file
   | Toggle_centered
   | Shift of int
   | Adjust_width of int

@@ -2,6 +2,30 @@ open! Core
 open! Async
 open Ches_source
 
+let%expect_test "many resource lifetimes release drivers exactly once" =
+  let active = ref 0 and created = ref 0 and stopped = ref 0 in
+  let manager = Workspace.start ~create:(fun _ ->
+    incr active; incr created;
+    Some (Source.create (fun ~emit:_ ->
+      { handle = ignore; stop = (fun () -> decr active; incr stopped) }))) () in
+  List.iter (List.init 64 ~f:Fn.id) ~f:(fun n ->
+    Source.send manager (Document_opened { resource = sprintf "/file-%d.ml" n; generation = n }));
+  assert (!active = 64);
+  List.iter (List.init 64 ~f:Fn.id) ~f:(fun n ->
+    let resource = sprintf "/file-%d.ml" n in
+    Source.send manager (Document_closed { resource });
+    Source.send manager (Document_closed { resource }));
+  assert (!active = 0 && !stopped = 64);
+  List.iter (List.init 32 ~f:Fn.id) ~f:(fun n ->
+    Source.send manager (Document_opened { resource = sprintf "/file-%d.ml" n; generation = 100 + n }));
+  Source.stop manager; Source.stop manager;
+  let%bind () = Scheduler.yield_until_no_jobs_remain () in
+  assert (!active = 0 && !created = 96 && !stopped = 96);
+  printf "96 runtimes released; close and shutdown idempotent\n";
+  [%expect {| 96 runtimes released; close and shutdown idempotent |}];
+  return ()
+;;
+
 let%expect_test "per-resource runtimes route writes, stop only on close, and tag late batches" =
   let requests = String.Table.create () in
   let stops = String.Table.create () in

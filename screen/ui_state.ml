@@ -664,7 +664,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
-  | Next_tab | Previous_tab | Close_tab | Force_close_tab
+   | Next_tab | Previous_tab | Close_tab | Force_close_tab | Recreate_missing_file
   | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files
   | Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory
   | Directory_major | Directory_side | Hide_directory | Focus_directory | Adjust_directory_size _
@@ -739,7 +739,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
     Some (if t.source_attached then "Diagnostic source restart requested" else no_source)
   | Kill_source ->
     Some (if t.source_attached then "Diagnostic source kill requested" else no_source)
-  | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Close_tab | Force_close_tab -> None
+   | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Close_tab | Force_close_tab | Recreate_missing_file -> None
   | Open_palette -> Host.notice t.host
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
@@ -916,6 +916,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     adopt_session_state t (Session.set_directory_placement (session t)
       (if View_command.equal view Directory_major then Major else Side)) ~width ~height
   | Hide_directory -> adopt_session_state t (Session.hide_directory (session t)) ~width ~height
+  | Recreate_missing_file -> adopt_session_state t (Session.recreate_current (session t)) ~width ~height
   | Focus_directory ->
     let s = session t in
     let s = if Option.is_none (Session.directory_buffer s) then Session.set_directory_placement s Side
@@ -1241,7 +1242,7 @@ let route t ~width ~height key =
   | Some id when View_id.equal id directory_id ->
     (* A directory is a modal document, not a details/palette capture. In
        particular Space, Visual Enter, search and mark bindings use its keymap. *)
-    if Key.equal key Tab then
+    if Key.equal key Tab && not (Mode.equal (Editor.mode (Controller.editor t.controller)) Insert) then
       apply_view_command t ~width ~height Focus_directory, Controller.Status.Running
     else feed t ~width ~height (Key key)
   | Some id when View_id.equal id Palette_tile.id ->

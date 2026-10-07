@@ -27,7 +27,8 @@ let fields ui : Status_field.t list =
         (Span.of_text path ~style:Status ~special:Status_special))
   in
   let dirty =
-    if Editor.is_dirty editor
+    if Controller.is_missing (Ui_state.controller ui) then field Dirty ~priority:1 [ Span.create Dirty "[missing]" ~width:9 ]
+    else if Editor.is_dirty editor
     then field Dirty ~priority:3 [ Span.create Dirty "[+]" ~width:3 ]
     else None
   in

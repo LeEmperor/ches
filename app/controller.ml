@@ -32,6 +32,8 @@ type t =
   ; highlighting : Highlighting.t
   ; display_path : string option
   ; kind : Kind.t
+  ; missing : bool
+  ; had_backing : bool
   }
 
 let create ?(keymap_config = Keymap.Config.default) ?(kind = Kind.File) editor =
@@ -44,6 +46,9 @@ let create ?(keymap_config = Keymap.Config.default) ?(kind = Kind.File) editor =
   ; highlighting = Highlighting.create editor
   ; display_path = Editor.path editor
   ; kind
+  ; missing = false
+  ; had_backing = Option.value_map (Editor.path editor) ~default:false ~f:(fun path ->
+      Option.is_some (Option.try_with (fun () -> Core_unix.stat path)))
   }
 ;;
 
@@ -62,6 +67,8 @@ let open_file ?keymap_config ~cell_width path =
 
 let editor t = t.editor
 let kind t = t.kind
+let is_missing t = t.missing
+let mark_missing t = { t with missing = true; had_backing = true }
 let display_path t = t.display_path
 let keymap t = t.keymap
 let highlights t = Highlighting.snapshot t.highlighting
@@ -237,6 +244,17 @@ let rec perform_all
 (* The shared route from typed actions to the editor, effects, highlighting, and the
    [Exit] cutoff, for both {!handle_input} and {!dispatch}. *)
 let run t ~keymap ~feedback actions =
+  let t = if t.had_backing && Kind.equal t.kind File &&
+    Option.exists (Editor.path t.editor) ~f:(fun path ->
+      try ignore (Core_unix.stat path); false with
+      | Core_unix.Unix_error ((Core_unix.ENOENT | Core_unix.ENOTDIR), _, _) -> true
+      | _ -> false)
+    then mark_missing t else t in
+  let feedback = if t.missing && List.exists actions ~f:(function Keymap.Action.Editor Save -> true | _ -> false)
+    then Feedback.apply feedback (Notify { source = "file"; scope = Editor.path t.editor; severity = Error;
+      text = "Missing backing file: text retained; use Recreate missing file or explicit save-as; routine save refused"; history = true })
+    else feedback in
+  let actions = if t.missing then List.filter actions ~f:(function Keymap.Action.Editor Save -> false | _ -> true) else actions in
   (* Defence in depth: even callers bypassing Session cannot serialize a directory
      listing through file save/reload effects. Session supplies planning feedback. *)
   let actions = if Kind.equal t.kind Directory then List.filter actions ~f:(function
@@ -253,7 +271,8 @@ let run t ~keymap ~feedback actions =
       ~reloaded:false
   in
   let highlighting = Highlighting.update t.highlighting editor ~reset:reloaded in
-   let t = { t with editor; feedback; keymap; dispatched; clipboard; saved; highlighting } in
+   let t = { t with editor; feedback; keymap; dispatched; clipboard; saved; highlighting;
+     had_backing = t.had_backing || Option.is_some saved } in
   (match status with
    | Exit -> close t
    | Running -> ());
@@ -279,6 +298,31 @@ let handle_input t input =
 
 let dispatch t actions = run t ~keymap:t.keymap ~feedback:t.feedback actions
 
+let save_as t path =
+  let path = Resource.normalize ~cwd:(Core_unix.getcwd ()) path in
+  let result = Or_error.try_with (fun () ->
+    let fd = Core_unix.openfile path ~mode:[ O_WRONLY; O_CREAT; O_EXCL ] ~perm:0o666 in
+    Exn.protect ~finally:(fun () -> Core_unix.close fd) ~f:(fun () ->
+      let bytes = Bytes.of_string (Text_buffer.to_string (Editor.text t.editor)) in
+      let rec write pos = if pos < Bytes.length bytes then
+        let n = Core_unix.write fd ~buf:bytes ~pos ~len:(Bytes.length bytes - pos) in
+        if n = 0 then failwith "Write made no progress" else write (pos + n) in
+      write 0)) in
+  match result with
+  | Error error -> Error error
+  | Ok () ->
+    let t = reassociate t path in
+    let text = Editor.text t.editor in
+    let revision = Editor.revision t.editor in
+    let editor = Editor.handle_outcome t.editor (Write_file_finished { path; text; revision; result = Ok () }) in
+    Ok { t with editor; missing = false; had_backing = true; saved = Some { path; revision } }
+;;
+
+let recreate t =
+  if not t.missing then Or_error.error_string "Buffer is not marked missing" else
+  match Editor.path t.editor with None -> Or_error.error_string "No backing path; use save-as" | Some path -> save_as t path
+;;
+
 let move t motion ~count =
   match Editor.dispatch t.editor (Move { motion; count }) with
   | editor, [] ->
@@ -292,6 +336,7 @@ let move t motion ~count =
 ;;
 
 module For_testing = struct
+  let has_live_highlight_provider t = Highlighting.For_testing.has_live_provider t.highlighting
   let highlight_incremental_count t =
     Highlighting.For_testing.incremental_count t.highlighting
   ;;

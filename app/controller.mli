@@ -37,6 +37,10 @@ module Kind : sig
   type t = File | Directory [@@deriving sexp_of, equal]
 end
 val kind : t -> Kind.t
+val is_missing : t -> bool
+val mark_missing : t -> t
+val recreate : t -> t Or_error.t
+val save_as : t -> string -> t Or_error.t
 
 (** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing exists
     there. IO uses lexical absolute normalization against the current working directory;
@@ -131,6 +135,7 @@ val feed_input : t -> Keymap.Input.t -> t * Keymap.Action.t list
 val jump : t -> line:int -> column:int -> t Or_error.t
 
 module For_testing : sig
+  val has_live_highlight_provider : t -> bool
   val with_highlight_language : t -> Ches_highlight.Language.t -> t
   val fail_next_highlight : t -> unit
   val highlight_incremental_count : t -> int

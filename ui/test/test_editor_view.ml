@@ -3,7 +3,7 @@ open Bonsai_test
 open Bonsai_term
 open Ches_core
 
-let handle ?(width = 40) ?(height = 6) s =
+let handle ?(width = 40) ?(height = 6) ?(document_only = true) s =
   let text =
     Result.ok_or_failwith
       (Result.map_error
@@ -16,6 +16,12 @@ let handle ?(width = 40) ?(height = 6) s =
     Bonsai_term_test.create_handle (Ches_ui.Editor_view.app controller ~exit)
   in
   Bonsai_term_test.set_dimensions handle { width; height };
+  (* These geometry scenarios predate the default-visible workspace companions.
+     Select their document-only fixture explicitly, rather than snapshotting a
+     different layout or changing production defaults to satisfy old expectations. *)
+  if document_only then
+    List.iter (String.to_list " vt vb vm0") ~f:(fun key ->
+      Bonsai_term_test.send_event handle (Key_press { key = ASCII key; mods = [] }));
   handle
 ;;
 
@@ -25,6 +31,22 @@ let send handle keys =
 ;;
 
 let chars s = List.map (String.to_list s) ~f:(fun c -> Event.Key.ASCII c, [])
+
+let%expect_test "startup shows the installed workspace companions" =
+  let handle = handle ~document_only:false "hello\nworld\n" in
+  Handle.show handle;
+  [%expect {|
+    (cursor (((position ((x 0) (y 0))) (kind Block))))
+    ┌────────────────────────────────────────┐
+    │hello            NORMAL                 │
+    │world            f.txt                  │
+    │                 1:1                    │
+    │╭─ Problems (wor> ╮ ╭─ History: 0 ent> ╮│
+    ││ No active prob> │ │ No history       ││
+    │╰─────────────────╯ ╰──────────────────╯│
+    └────────────────────────────────────────┘
+    |}]
+;;
 
 let%expect_test "the app renders, edits, and follows resizes" =
   let handle = handle "hello\nworld\n" in

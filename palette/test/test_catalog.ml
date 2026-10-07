@@ -26,6 +26,7 @@ let bindings =
    ; keys " bp", View Previous_tab
    ; keys " bc", View Close_tab
    ; keys " bC", View Force_close_tab
+   ; keys " br", View Recreate_missing_file
   ; view 'c' Toggle_centered
   ; view 'h' (Shift (-2))
   ; view 'l' (Shift 2)
@@ -60,11 +61,12 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
       (shortcuts (Catalog.Entry.action entry)));
   [%expect
     {|
-    file.save                      Save file                              Space w
+    file.save                      Save buffer                            Space w
     tabs.next                      Next file tab                          Space b n
     tabs.previous                  Previous file tab                      Space b p
     tabs.close                     Close file tab                         Space b c
     tabs.close-discarding-changes  Close file tab, discarding unsaved changes Space b C
+    file.recreate-missing          Recreate missing path                  Space b r
     app.quit                       Quit                                   Space q
     app.quit-discarding-changes    Quit, discarding unsaved changes       Space Q
     edit.undo                      Undo                                   u
@@ -155,7 +157,7 @@ let%expect_test "keyword and ID matches" =
   search ~limit:1 "rnu";
   [%expect {| view.toggle-relative-numbers   Toggle relative line numbers |}];
   search ~limit:1 "write";
-  [%expect {| file.save                      Save file |}];
+  [%expect {| file.save                      Save buffer |}];
   search ~limit:2 "smear";
   [%expect {| view.toggle-smear              Toggle animated [smear] cursor |}]
 ;;
@@ -163,7 +165,7 @@ let%expect_test "keyword and ID matches" =
 let%expect_test "realistic queries" =
   search "save";
   [%expect {|
-    file.save                      [Save] file
+    file.save                      [Save] buffer
     tabs.close-discarding-changes  Close file tab, discarding un[save]d changes
     app.quit-discarding-changes    Quit, discarding un[save]d changes
     |}];
@@ -190,7 +192,7 @@ let%expect_test "empty query lists available commands in catalog order" =
   search ~limit:4 "";
   [%expect
     {|
-    file.save                      Save file
+    file.save                      Save buffer
     tabs.next                      Next file tab
     tabs.previous                  Previous file tab
     tabs.close                     Close file tab

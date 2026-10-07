@@ -24,7 +24,7 @@ let tabs session =
       then label (n + 1)
       else String.concat ~sep:"/" (List.map candidate ~f:Directory_identity.encode_name)
     in
-    { id; label = label 1
+    { id; label = label 1 ^ (if Controller.is_missing c then " [missing]" else "")
     ; active = Option.equal Buffer_id.equal (Some id) (Session.active_id session)
     ; modified = Editor.is_dirty (Controller.editor c) })
 ;;

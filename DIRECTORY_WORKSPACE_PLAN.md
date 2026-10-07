@@ -1,6 +1,6 @@
 # Directory Workspace: buffers, tabs, and editable directories
 
-Status: phases 0–6 implemented; phases 7–9 pending. Scoped on 2026-10-06.
+Status: phases 0–9 implemented; final integration checks recorded below. Scoped on 2026-10-06.
 
 ## Goal
 
@@ -1233,3 +1233,370 @@ Next-phase integration notes:
 - Retain dormant marks until commit reconciliation; use `backing_entry` for pending
   opens and current `Row.line` for rendering/navigation. Resource/path reassociation
   for open files/descendants remains phase 7; no index changes were implemented here.
+
+### Phase 7 / 2026-10-07 / implemented
+
+#### Implemented behavior and public contracts
+
+- Explicit directory Save (`Space w`) now applies the entire validated create/rename
+  proposal directly, using the existing feedback/history conventions rather than a
+  confirmation dialog. Save-all applies retained dirty directories and files in ID
+  order, continues on failure, and fetches each live owner again after earlier renames.
+  Listing text never goes through file-write effects. Delete/copy/type changes and
+  cross-directory/move syntax remain rejected by the pure phase-6 planner.
+- New `app/directory_apply.ml` / `.mli` executor performs whole-plan preflight, then
+  rechecks the directory device/inode and each rename source's lstat device/inode,
+  kind, size, mtime and ctime immediately before its mutation. Destination checks
+  include dangling symlinks. Normal refresh retains entry IDs by device/inode/kind,
+  not mutable file size/times; recheck fingerprints are refreshed separately.
+- Every rename source is first staged to a collision-checked immediate-child
+  `.ches-stage-PID-counter` name, then placed at its final destination. This handles
+  dependencies, swaps and longer cycles, including creation into a vacated source
+  name. Staging skips disk occupants, desired row names, and open/cached resource
+  paths. New files use `O_CREAT|O_EXCL`; new directories use `mkdir`. Creation modes
+  are 0666/0777 subject to umask; existing contents and rename metadata are retained.
+- `app/directory_fs_stubs.c` uses Linux `renameat2(RENAME_NOREPLACE)` for **both**
+  staging and final placement. There is deliberately no unsafe check-then-rename
+  fallback. Occupants appearing after the absence check cannot be overwritten.
+  Unsupported kernels/filesystems return a visible failure, not ordinary rename.
+- The executor result records completed mutation operations (including staging),
+  aggregate original-to-actual backing paths, reconciled directory state and error.
+  Each successful syscall updates the journal/backing identity before fallible
+  post-operation work. A partial failure assigns IDs to completed creations,
+  rebases the baseline to actual tracked backing names, and retains canonical text
+  describing only unresolved intent. Ordinary Save retries from that baseline:
+  successful creations/final renames are not replayed. Session feedback records
+  completed mutations, actual backing paths, remaining operations and the failure.
+- Partial progress is **not rolled back**. An incomplete cycle can leave owned staging
+  names on disk; existing rows/open files then resolve to those actual paths. Retry
+  rechecks staged identities and final destinations. A collision or external source
+  replacement blocks retry rather than overwriting/adopting unrelated data. Force
+  close/quit explicitly discards remaining in-memory intent, not disk changes.
+- `app/session` reassociates paths simultaneously, not sequentially through swap
+  destinations: file buffers, open descendants, cached directories, startup fallback,
+  resource indexes and queued successful-save paths follow actual outcomes. Buffer IDs,
+  tabs/order, text, dirty state, file undo, cursor, registers and viewport ownership
+  survive. Destination conflicts with an open missing-file buffer are rejected before
+  mutation. Cached dirty directories keep their pending text and history at new paths.
+- `Controller.reassociate` refreshes display labels and highlighting language while
+  preserving the editor/highlight document identity. File diagnostic generations are
+  now distinct from stable buffer IDs and increment on path reassociation. UI requests
+  close old resources, open new generations and resend current text even when its
+  revision did not change. Retired diagnostics, held lists and problem anchors are
+  cleared; late owned events cannot attach to a swapped or subsequently reused path.
+- Known session file saves update matching tracked fingerprints without accepting a
+  different device/inode/kind. This permits ID-ordered save-all to save a file before
+  applying its pending directory rename. Directory applies similarly update a cached
+  parent's fingerprint for the known changed child directory.
+- `Editor.rebase_text` / `Controller.rebase_text` establish the saved actual snapshot
+  and reset directory text undo at the filesystem boundary. Success rereads the listing,
+  preserves surviving entry IDs/marks/selection and clears dirty state. Partial progress
+  also resets old undo so it cannot resurrect pre-apply identity associations; remaining
+  intent is still dirty and retryable. A post-apply listing-read failure reports that
+  the applied baseline was retained and recommends explicit refresh rather than hiding
+  the error. No filesystem undo is implied.
+
+#### Checks run and results
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test palette/test source/test`:
+  passed. Thirteen new isolated-filesystem tests in `test/test_directory_apply.ml`
+  cover exclusive creation, directory creation, cycles, symlink/link-target behavior,
+  external replacements/content changes/parent replacements, dangling destinations,
+  invalid plans, every swap/create failure boundary, actual staged backing paths,
+  retry without replay, source/destination races, staging reservation/collision checks,
+  dirty file/descendant preservation, file and directory swaps, dirty cached reindexing,
+  next-save paths, language changes, file undo, save-all ordering and queued saves.
+  The primitive-level test introduces an occupant after the absence check and verifies
+  that the rename syscall itself rejects it without changing either file/link.
+- Added a diagnostic lifetime regression to `screen/test/test_directory_editing.ml`:
+  clears old findings, sends close/open/current-text at unchanged revision, rejects
+  old generations, and rejects late events after returning to the original path.
+  Prior phase-6 save-refusal expectations were updated to real apply; planner/editing,
+  backing-path-before-save, unsupported-operation and dirty-lifetime coverage remains.
+- `python3 scripts/directory_apply_smoke.py`: passed with isolated PATH `.` fixtures.
+  PTY checks explicit rename/file/directory creation saves, disk unchanged before Save,
+  dirty-file next-save reassociation, dirty descendant saves after parent rename,
+  directory undo boundary, invalid-plan zero mutation, no leftover staging paths, and
+  clean quit (0). Capture: `/tmp/opencode/directory-phase7-pty.log`; successful fixture:
+  `/tmp/opencode/directory-phase7-pty-ebr7xccd`. An initial summary-text assertion was
+  clipped by the history tile; the final smoke verifies the visible rename summary
+  and actual filesystem outcomes. No human visual acceptance is claimed.
+- Full `opam exec --switch=5.2.0+ox -- dune runtest`: exit 1, only the documented
+  `ui/test/test_editor_view.ml` default-visible-tile snapshot mismatch. Log:
+  `/tmp/opencode/directory-phase7-runtest.log`. No baseline snapshots promoted.
+- `git diff --check`: passed. This agent used only read-only Git status/log/diff;
+  no metadata/index/history/config/branch/worktree/staging operations, remote
+  mutations/publications or subagents. A checkpoint appeared during implementation
+  in read-only inspection; this agent did not create it or alter that state.
+
+#### Limits and next-phase integration
+
+- Phase 7 complete; phases 8–9 remain pending. The full-suite baseline UI mismatch is
+  still a repository check gap. Historical phase-6 PTY save-refusal assertions are
+  superseded by `scripts/directory_apply_smoke.py`; no phase-8 operations were added.
+- This is not a transaction, lock, watcher or crash-persistent journal. Rechecks cannot
+  atomically bind path lookup/source identity to the mutation; concurrent parent/source
+  replacement after the last check and indistinguishable inode/stat reuse remain race
+  limits. Destination no-overwrite is syscall-enforced, unlike source race detection.
+  Process termination can leave staging entries; reopening shows them as ordinary
+  escaped entries, while the prior remaining intent is not persisted across sessions.
+- The no-overwrite primitive currently targets this Linux checkout. There is no
+  portable fallback, cross-device copy/delete emulation, filesystem rollback or
+  filesystem undo. Renaming a symlink operates on the link, not its resolved target;
+  resource reassociation remains the agreed lexical-path policy, not realpath alias
+  discovery. Diagnostic runtimes remain per-resource as in phase 1.
+- Phase 8 can extend the executor/journal and reconciliation contracts for its explicitly
+   chosen delete/copy/cross-directory policy. It must not bypass no-overwrite checks or
+   represent cross-device copy-plus-delete as atomic rename. Phase 9 should document
+   these save/retry/staging and directory text-undo boundaries and the Linux limitation.
+
+### Phase 8 / 2026-10-07 / implemented
+
+#### Implemented behavior and policy decisions
+
+- **Deletion is permanent, not trash.** Omitting an existing identity row requests
+  unlink of a regular file/symlink or rmdir of an **empty** directory on explicit
+  directory Save (`Space w`). Summaries say **Permanently delete**, with “empty only”
+  for directories. Nonempty directories refuse the entire preflight, including other
+  proposed operations; there is no recursive delete, trash fallback, implicit save,
+  confirmation dialog, or filesystem undo. Unsupported entry kinds remain read-only.
+  Unlinking a directory symlink removes the link, never traverses/removes its target.
+- Deleted open file buffers retain their text, dirty state, undo, cursor and stable
+  IDs. Controllers carry an explicit missing flag; status shows `[missing]`, tabs
+  include `[missing]`, save/save-all refuse resurrection, and close/quit require
+  explicit discard even for clean missing buffers. Direct controller save also detects
+  external ENOENT for a previously backed file. Initially new/unbacked file buffers
+  retain their ordinary create-on-save behavior. This is not background watching:
+  external deletions are detected at save; known directory deletions mark immediately.
+- Normal `Space b r`, or palette **Recreate missing path**, exclusively recreates the
+  missing file from retained buffer text. An externally reappeared occupant (including
+  a dangling symlink) is never overwritten. Missing parent directories are not created.
+  Clean cached parent listings refresh after recreation. `Session.save_as` provides
+  an addressed, exclusive application API for recovery to a different path, reindexes
+  the same buffer and refreshes its clean destination listing. There is no interactive
+  path-prompt/save-as palette command in this phase; recreate is the user-facing action.
+- **Copied-row semantics are deliberate:** yank/paste of an unchanged `@ches[ID]`
+  still rejects duplicate identities. Change the copied token to `@copy[ID]`, keep
+  its TAB separator/kind suffix, and give it a distinct destination. The ID refers
+  to that directory baseline's original backing entry, not edited source text or
+  another directory's ID. Multiple explicit copies from one source are allowed.
+  Copy rows have no open/markable backing identity until committed. Retaining the
+  original `@ches[ID]` keeps the source; omitting it proposes copy **and permanent
+  delete**. Copies always read disk, not unsaved text in an open file tab.
+- Existing/copy destinations accept relative (`../other/name`, `sub/name`) or absolute
+  (`/absolute/name`) lexical paths; slash separates individually byte-encoded components.
+  `.`/`..` are permitted as intermediate components, never the final name. Existing
+  directories/copies of directories keep final `/`; symlinks do not acquire `/` even
+  if their targets are directories. Bare/fresh rows still create immediate children
+  only. Normalize against the source directory using the existing lexical resource
+  policy. Parents must already exist. No path prompt, glob, shell expansion or realpath
+  resource deduplication is introduced.
+- Move destinations use the same no-overwrite Linux rename primitive and staging
+  journal as phase 7. **Cross-device moves are explicitly unsupported**: device
+  mismatch rejects preflight; a later EXDEV remains a visible syscall failure. There
+  is no copy/delete fallback and no atomicity claim for the multi-operation apply.
+  Destinations whose parent belongs to another dirty cached listing (including dirty
+  ancestors) are refused until its edits are saved/undone. Dirty source descendants
+  follow a directory move with their intent intact. Destinations overlapping moved or
+  deleted parents require separate saves. Directory destinations inside their source,
+  including symlink-parent aliases verified by ancestor inode checks, are rejected.
+- Copies support regular files, symlinks and recursive directory trees; special kinds
+  anywhere in a tree reject preflight. Symlinks copy their **link bytes**, never their
+  targets, including dangling links. Relative targets are not rewritten, so they may
+  resolve differently in the destination. File/directory rwx bits are preserved;
+  set-ID/sticky bits, ownership, timestamps, ACLs, xattrs, sparseness and hard-link
+  relationships are not preserved. New ownership is the copying process's; hard-linked
+  files become separate byte copies. No filesystem snapshot consistency is promised.
+- Copies are built in an owned `.ches-copy-*` temporary tree **at the destination**,
+  then published by no-overwrite rename. They may cross devices because they do not
+  move the source. A copy IO/publication failure cleans only its owned private tree;
+  previously published copies remain journaled and are not replayed. Destination
+  occupants appearing during the copy cannot be replaced. Crash termination can leave
+  private trees, as it can leave rename staging paths; there is no persistent recovery
+  journal. Copy publication precedes source staging/deletion so copy-plus-delete uses
+  the original backing identity. Delete/create follow completed rename placement.
+
+#### Changed modules and reconciliation contracts
+
+- `core/directory_identity`: explicit `Row.Copy`, destination-component decoder and
+  kind/identity validation. `core/directory_plan`: `Delete {id; source; kind}` and
+  `Copy {id; source; destination; kind}` alongside existing create/rename operations;
+  readable destructive/copy summaries. Parsing/planning remain filesystem-free.
+- `app/directory_apply`: result adds `deleted` backing paths and `affected` parent
+  listings. Normalized destination uniqueness, destination-parent inode rechecks,
+  empty-directory policy, recursive copy validation and no-overwrite publication are
+  whole-plan checks. Mutation and copy-publication fault hooks support isolated tests.
+  Successful cross-directory rows leave the source baseline/intent; successful local
+  copies get fresh IDs; successful deletes leave no retry proposal. Actual outcomes
+  and unresolved intent remain separately reported after all supported partial failures.
+  Actual removed marks are pruned; affected tracked child-directory fingerprints are
+  refreshed without accepting inode replacements.
+- `app/session`: actual cross-directory moves reuse simultaneous path reassociation,
+  including resource indexes/diagnostic generation/queued-save paths. Clean affected
+  destination caches reload after progress, including partial progress; deleted clean
+  directory caches are released and presentation references fall back to the source.
+  Dirty destination caches block before IO rather than being silently reloaded. Failed
+  affected-cache refresh is reported with explicit refresh guidance. Missing file
+  resources stay indexed to their retained buffers. `Controller` guards save in depth
+  and exposes missing/recreate/exclusive-save-as contracts. Failed exclusive save-as
+  writes can leave a partial newly created file; they never replace an existing file.
+- `input/view_command`, `input/bindings`, `palette/catalog`, `screen/ui_state`,
+  `screen/status`, `screen/file_tabs`: explicit recovery command/routing and persistent
+  missing display. Only intentional new command/count expectations and superseded
+  deletion/path-rejection tests changed; unrelated UI snapshots were not promoted.
+
+#### Checks run and results
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test palette/test source/test`:
+  passed. Twelve new isolated-filesystem phase-8 tests in `test/test_directory_apply.ml`
+  plus one pure planner test cover clean/dirty missing buffers, save-all/close/quit
+  refusal, exclusive recreate/save-as, external deletion/direct-controller defence,
+  nonempty refusal, unlink/link-target safety, recursive copy/rwx/dangling links,
+  every copy/move/delete/create mutation boundary and retry, publication faults and
+  races/cleanup, dirty descendant cache/path retention, clean destination refresh,
+  dirty destination coordination, normalized collisions, parent replacement races,
+  symlink-ancestor self-copy/move rejection, partial-delete missing state and cross-device
+  rejection/copy. The cross-device test conditionally uses an isolated `/dev/shm`
+  fixture when a distinct writable device exists; all other fixtures use `/tmp/opencode`.
+  Log: `/tmp/opencode/directory-phase8-targeted.log`.
+- `python3 scripts/directory_operations_smoke.py`: passed. PTY checks dirty backing
+  source versus copied disk bytes, no mutation before Save, permanent delete, routine
+  missing save refusal and `[missing]`, palette recreation, cross-directory move,
+  dirty file next-save reassociation, unchanged copy, no leftover private staging,
+  and clean quit (0). Final fixture `/tmp/opencode/directory-phase8-pty-nvrn3ybg`;
+  capture `/tmp/opencode/directory-phase8-pty.log`. Initial smoke assertions were
+  corrected for clipped feedback and the intentionally retained file cursor; no
+  human visual acceptance is claimed. Phase-7 smoke's cross-path rejection assertion
+  is superseded by this phase's supported destination syntax.
+- Full `opam exec --switch=5.2.0+ox -- dune runtest`: exit 1, the known
+  `ui/test/test_editor_view.ml` visible-tile snapshot mismatch only. Log:
+  `/tmp/opencode/directory-phase8-runtest.log`. No baseline snapshots promoted.
+- `git diff --check`: passed. Git use was read-only inspection only. No Git metadata,
+  index, history, config, branch/worktree changes, remote mutations/publications or
+  subagents. Prior working-tree changes were retained.
+
+#### Limits and phase-9 handoff
+
+- Phase 8 is complete under the policies above; phase 9 remains pending. Nonempty
+  directory deletion and cross-device moves are intentionally unsupported, not stubs.
+  Interactive save-as path prompting is not provided; explicit recreate is available.
+- Phase-7 source/parent lookup race limits still apply: there are no locks, rollback,
+  transactions, watchers or crash-persistent intents. Recursive copy descendants can
+  change during traversal; root rechecks do not prove a consistent tree snapshot.
+  Directory ancestor checks do not remove races after validation. No-overwrite
+  publication is syscall-enforced; source identity is best-effort rechecked.
+- Phase 9 should document permanent/empty-only deletion prominently, `@copy[ID]`
+  versus duplicated identities, destination syntax/dirty-cache ordering, rwx-only
+  copy metadata, relative link semantics, missing/recreate behavior, cross-device
+  limits and partial-progress/undo boundaries in end-user docs. It should update the
+  old phase-7 smoke's invalid cross-path case, perform full workflow integration and
+  terminal validation, and retain the known baseline snapshot gap unless addressed
+   in a separate authorized task. No phase-9 README/CLI/reference sweep was done here.
+
+### Phase 9 / 2026-10-07 / implemented
+
+#### Integrated fixes and documentation
+
+- Reviewed the full plan and all current handoffs, then the integrated session,
+  directory identity/planner/executor, controller, side input and diagnostic runtime
+  ownership. Unsupported cross-device moves, nonempty deletion and interactive
+  save-as are explicit policies, not unfinished executor stubs. Previous phase
+  implementation and working-tree changes were preserved.
+- Fixed partial-apply serialization of cross-directory destinations: byte-escape
+  each component independently so leading/trailing component spaces remain canonical
+  and retryable. A regression stages a move, injects failure, then safely retries
+  into escaped space-edged parent and child names.
+- Fixed copy publication to recheck destination-parent identity **after** the copy
+  and publication hook, immediately before no-overwrite publication. Private-root
+  cleanup checks its owned device/inode before recursive removal; an unrelated
+  replacement tree is left untouched. Regression coverage externally relocates the
+  parent and inserts a replacement private-root path, verifying zero publication
+  and no deletion of the unrelated data. As documented, the externally relocated
+  owned tree can remain behind; path-based cleanup cannot safely discover it.
+- Fixed side-browser Tab routing after editing became enabled: Insert Tab now
+  performs ordinary soft-tab editing rather than unexpectedly returning focus.
+  Normal/Visual Tab retains the explicit editor-focus return. A durable headless
+  regression verifies mode, text/undo and both focus paths.
+- Updated `README.md`, `docs/editor_reference.md`, CLI `-help`, and the palette
+  integration notes. Added `docs/directory_workspace.md` covering exact bindings,
+  placement/focus, tabs/marks, visible validation-protected IDs, real TAB separators,
+  byte/path encoding, explicit `@copy[ID]` versus duplicated identities, disk-versus-
+  dirty-buffer copy content, permanent empty-only deletion, missing/recreate/save-as,
+  destination coordination, symlink/rwx policies, cross-device limits, partial retry,
+  staging/crash races and text-versus-filesystem undo. Palette Save is now accurately
+  named **Save buffer** with directory/apply/delete search keywords; catalog ID and
+  command order stay stable. Save-all is documented as an API, not a nonexistent key.
+
+#### Baseline snapshot and durable terminal coverage resolution
+
+- The unchanged-HEAD frontend snapshot failures recorded in phases 0–8 were stale
+  **fixture assumptions**, not directory regressions: these scenarios expected
+  document-only geometry while the documented production defaults show Status,
+  Problems and History. `ui/test/test_editor_view.ml` now explicitly hides those
+  companions and clears fixture-only feedback before its original editing/resize/
+  layout scenarios. Their existing expected frames remain unchanged. A separate
+  snapshot verifies the actual default-visible workspace. No production default
+  was changed, failing suite excluded, or broad snapshot promotion performed.
+- Added `scripts/directory_workspace_smoke.py`, a durable runner for the four
+  directory PTY scenarios. Updated the historical phase-6 smoke to current apply/
+  undo behavior, and phase-7's obsolete cross-path-invalid assertion to a genuinely
+  malformed identity. Extended side smoke with persistent tab switching, independent
+  edit/undo and last-file-close fallback. All fixtures are isolated under
+  `/tmp/opencode`; these tests never exercise mutations against repository files.
+- Updated `scripts/smoke.sh` assertions for lexical absolute resource paths,
+  generation-suffixed diagnostic names, supported directory startup, and **Save
+  buffer**. Long diagnostics get sufficient width for source/path/location/message
+  assertions; narrow layout failures still assert displayed error attention, with
+  resource-specific checks in the problems pane and disk/dirty/recovery checks.
+  Startup-error restoration now uses invalid file contents rather than a valid
+  directory. No obsolete directory-startup failure strands subsequent scenarios.
+- Added long-session lifecycle regressions: 48 files and visited directories retain
+  distinct IDs and live highlight providers until actual close; closed providers are
+  released and repeated dispose is safe. 96 diagnostic driver lifetimes release
+  exactly once across addressed close, reopen and repeated session shutdown.
+  Narrow `For_testing` provider-liveness accessors support actual cleanup assertions,
+  not merely rendered-state assertions. This is functional lifetime coverage, not
+  an RSS/performance guarantee.
+
+#### Checks and remaining limits
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest --force`: passed across the full suite,
+  including frontend snapshots, new regressions and all earlier phase tests. Log:
+  `/tmp/opencode/directory-phase9-runtest-final.log`.
+- `python3 scripts/directory_workspace_smoke.py`: passed all four current PTY
+  scenarios; repeated successful run log:
+  `/tmp/opencode/directory-phase9-workspace-final.log`. Verified directory startup
+  without tabs, single/Visual/marked opens and partial-open feedback, major/side/hide,
+  zen/tiny focus, tab retention/undo/last-close fallback, hidden dirty quit/refresh
+  guards, backing-path opens, explicit create/rename/copy/permanent-delete/recreate/
+  cross-directory saves, dirty descendant next-save paths, text-undo boundaries,
+  invalid-plan zero mutation, no ordinary leftover private/staging paths and clean
+  exit status 0. No human visual sign-off is claimed.
+- CLI `_build/default/bin/ches.exe -help`: passed; output reflects editable directory
+  policy and destructive save behavior. `git diff --check`: passed.
+- `TMPDIR=/tmp/opencode scripts/smoke.sh`: passed all checks (exit 0), including
+  editing, save/reload/dirty recovery, startup default tiles, tiny resizes, palette,
+  synthetic and fake LSP diagnostics/crash/restart, no surviving language server,
+  SIGTERM/SIGHUP/error exits and terminal modes/cursor restoration. Final log:
+  `/tmp/opencode/directory-phase9-terminal-pass.log`; review captures:
+  `/tmp/opencode/ches-smoke-screens.psOLHY`. Initial runs identified stale relative-
+  path/source-name/startup assertions and clipping, not hidden feature failures;
+  they were investigated and corrected as described above. `bash -n scripts/smoke.sh`
+  also passed. Final post-Tab-fix directory PTY run passed:
+  `/tmp/opencode/directory-phase9-workspace-last.log`.
+- Residual limitations are intentional and documented: one editor group/browser,
+  session-local state, retained directories/no eviction, whole-text unbounded undo,
+  one diagnostic runtime/process per file, Linux-specific no-overwrite mutation,
+  no cross-device move/nonempty deletion/trash/filesystem undo/rollback/watcher or
+  crash-persistent intent; best-effort source/parent race detection and non-snapshot
+  recursive copies; rwx-only copy metadata; no interactive open/save-as prompt;
+  in-place ordinary file writes can truncate on failure and do not detect external
+  content conflicts. Colors/cursor shape/flicker still need human terminal review.
+- Only local source edits, build/tests, isolated fixture operations and read-only
+  Git inspection were performed. No Git metadata/index/staging/history/config/
+  branch/worktree operations, remote mutations/publications or subagents were used.
+  Historical earlier-phase pending statements/snapshot gaps describe their original
+  handoffs and are superseded by this final integration handoff.

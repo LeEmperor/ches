@@ -15,6 +15,7 @@ val parse_count : t -> int
 val close : t -> unit
 
 module For_testing : sig
+  val has_live_provider : t -> bool
   val incremental_count : t -> int
   (** Simulate a changed language association without adding editing commands. *)
   val with_language : t -> Editor.t -> Language.t -> t

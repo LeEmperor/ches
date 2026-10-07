@@ -3,10 +3,23 @@ open! Async
 
 let command =
   Command.async
-    ~summary:"Edit a UTF-8, LF text file or browse a directory"
+    ~summary:"Edit UTF-8, LF files and directory workspaces"
     ~readme:(fun () ->
-       "Directory PATH opens a read-only browser (including ches .): Enter opens, \
-        - goes to the parent, Space o toggles file/directory, Space r refreshes.\n\
+       "Directory PATH opens an editable directory buffer (including ches .): Enter opens, \
+         - goes to the parent, Space o toggles file/directory, Space r refreshes.\n\
+         Files stay open in tabs: Space b n/p switches, b c closes, b C discards.\n\
+         Visual Enter opens selected files; Space m m/s/u/c/o toggles/marks/unmarks/clears/opens marks.\n\
+         Space d m/s/h/f selects major/side/hide/focus; d +/- sizes the side browser.\n\
+         Edit only names after @ches[ID] and its TAB. Bare rows create files; final / creates directories.\n\
+         Explicit @copy[ID]<TAB>destination copies disk contents; duplicate @ches IDs are invalid.\n\
+         Existing/copy rows accept relative or absolute destinations with existing parents.\n\
+         Space w applies directory edits directly: omitted rows PERMANENTLY DELETE files/links\n\
+         or EMPTY directories. No trash, recursive delete, filesystem undo, or confirmation dialog.\n\
+         Directory save may partially succeed: actual paths and remaining intent are retained; save retries.\n\
+         Linux no-overwrite renames are required; cross-device moves are refused (copies may cross devices).\n\
+         Deleted open files retain text; routine save refuses. Space b r recreates a missing path exclusively.\n\
+         Quit checks hidden dirty directories and missing files too; Space Q discards only memory intent.\n\
+         See docs/editor_reference.md for byte escapes, identity, copy metadata, and race limits.\n\
         File PATH opens, or starts an empty document if nothing exists there; saving \
        creates it.\n\
        Normal mode: h/j/k/l move, w/b/e and W/B/E move by words, 0/^/$ to the\n\
@@ -30,7 +43,7 @@ let command =
          --demo-report installs a static report: Space v d shows it, Space v D focuses it.\n\
          --demo-diagnostics seeds static synthetic checker findings (two sources, another\n\
          file, one stopped source) to review the problems view; edits leave them dimmed.\n\
-         --synthetic-checker runs a synthetic checker, one source like ocamllsp: about\n\
+          --synthetic-checker runs a per-file synthetic checker like ocamllsp: about\n\
          0.4s after an edit, lines containing ERROR/TODO are errors/warnings; about 0.8s\n\
          after a save, ERROR lines again plus a finding in another file, merged into the\n\
          same lists. Space v K crashes it; Space v R restarts it. It replaces the LSP.\n\
@@ -40,7 +53,7 @@ let command =
          problems view. It never runs dune: errors needing a build need your own\n\
          `dune build --watch`. For .sv, .svh, .v, or .vh, ches runs slang-server\n\
          from PATH, rooted at .slang, then .git, else PATH's directory. Configure it\n\
-         in .slang/server.json. Space v R restarts the server; --no-lsp turns it off.")
+          in .slang/server.json. Space v R restarts all managed servers; --no-lsp disables them.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)
      and demo_problems = flag "--demo-problems" no_arg
        ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"

@@ -93,6 +93,20 @@ let%test_unit "side opens keep browser and target group; tabs and editor input s
     Session.dispose (Ui_state.session ui))
 ;;
 
+let%test_unit "side Insert Tab edits text; Normal Tab returns focus" =
+  fixture (fun root ->
+    let ui = create root |> fun ui -> run ui " ds<CR> df" in
+    let before = Editor.text (editor ui) |> Text_buffer.to_string in
+    let ui = run ui "A<Tab>" in
+    assert (Mode.equal (Editor.mode (editor ui)) Insert);
+    assert (Ches_tile.View_id.equal (focused ui) Ui_state.directory_id);
+    assert (not (String.equal before (Text_buffer.to_string (Editor.text (editor ui)))));
+    let ui = run ui "<Esc>u<Tab>" in
+    assert (String.equal before (Text_buffer.to_string (Editor.text (Controller.editor (dir ui).controller))));
+    assert (Ches_tile.View_id.equal (focused ui) Ui_state.document_id);
+    Session.dispose (Ui_state.session ui))
+;;
+
 let%test_unit "placement and hiding retain controller, selection, scroll and marks" =
   fixture (fun root ->
     let ui = create root |> fun ui -> run ui "<CR> o25j mmVj" in

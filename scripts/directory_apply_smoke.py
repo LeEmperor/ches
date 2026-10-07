@@ -63,7 +63,7 @@ def main():
         assert (root / "dir.moved/nested.ml").read_text() == "let x = 1\n"
         send(b" o w")
         assert (root / "dir.moved/nested.ml").read_text() == "NESTEDlet x = 1\n"
-        send(b" o-ggA.bad/escape\x1b w")
+        send(b" o-gg0x w")  # Malformed identity, not the now-supported cross-path syntax.
         assert b"Invalid directory plan" in capture
         assert sorted(p.name for p in root.iterdir()) == ["a.txt.renamed", "dir.moved", "fresh", "newdir"]
         send(b"u q")

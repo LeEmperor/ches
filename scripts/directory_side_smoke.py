@@ -77,13 +77,16 @@ def main():
         send(b" dfgg4j\r")  # Directory Enter navigates rather than opening a tab.
         send(b"- o")  # Parent + return target; side remains requested.
         send(b" cchide directory browser\r")  # Discoverable placement command.
-        send(b" ds\t q")  # Restore then explicit focus return and clean quit.
+        send(b" ds\t")  # Restore then explicit focus return.
+        send(b" bniB\x1b bp bn")  # Tab switch preserves an independent dirty edit.
+        send(b"u bc bc bc")  # Undo B, close b/c/a, return to zero-file directory.
+        send(b" q")
         assert proc.wait(timeout=5) == 0
         assert (root / "b.txt").read_text() == "b.txt\n"
         assert (root / "c.txt").read_text() == "c.txt\n"
         assert (root / "bad.txt").read_bytes() == b"\0"
         print("PASS: side/major/hide, visual+marked opens, editor focus/save, partial failures,")
-        print("      zen/tiny focus return, parent navigation, palette placement, clean quit")
+        print("      zen/tiny focus return, tabs/undo/last-close fallback, clean quit")
         print("Fixture:", root)
     finally:
         Path("/tmp/opencode/directory-phase5-pty.log").write_bytes(capture)

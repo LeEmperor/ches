@@ -23,6 +23,7 @@ type t = Entry.t list
 module Row = struct
   type identity =
     | Existing of int
+    | Copy of int
     | Fresh
   [@@deriving sexp_of, equal]
 
@@ -86,6 +87,16 @@ let decode_name encoded =
   loop 0
 ;;
 
+let decode_destination encoded =
+  String.split encoded ~on:'/'
+  |> List.map ~f:(function
+    | "" -> Ok "" | "." -> Ok "." | ".." -> Ok ".." | part -> decode_name part)
+  |> Or_error.combine_errors
+  |> Or_error.bind ~f:(fun parts ->
+    if not (Option.value_map (List.last parts) ~default:false ~f:valid_name)
+    then Or_error.error_string "Destination requires a legal final name" else Ok (String.concat ~sep:"/" parts))
+;;
+
 let create entries =
   if List.exists entries ~f:(fun (entry : Entry.t) -> entry.id <= 0 || not (valid_name entry.name))
   then Or_error.error_string "invalid baseline ID or child name"
@@ -116,23 +127,25 @@ let parse entries text =
   let open Or_error.Let_syntax in
   let parse_line line raw =
     let%bind identity, encoded =
-      if String.is_prefix raw ~prefix:"@ches["
+      if String.is_prefix raw ~prefix:"@ches[" || String.is_prefix raw ~prefix:"@copy["
       then (
         match String.lsplit2 raw ~on:'\t' with
         | Some (token, name) ->
           (match List.find entries ~f:(fun (entry : Entry.t) ->
-             String.equal token (sprintf "@ches[%d]" entry.id)) with
-           | Some entry -> Ok (Row.Existing entry.id, name)
+              String.equal token (sprintf "@ches[%d]" entry.id)
+              || String.equal token (sprintf "@copy[%d]" entry.id)) with
+            | Some entry -> Ok ((if String.is_prefix token ~prefix:"@copy[" then Row.Copy entry.id else Existing entry.id), name)
            | None -> Or_error.error_string "unknown or malformed identity token")
         | None -> Or_error.error_string "identity token requires a TAB separator")
       else Ok (Row.Fresh, raw)
     in
     let directory = String.is_suffix encoded ~suffix:"/" in
-    let%bind name = decode_name (if directory then String.drop_suffix encoded 1 else encoded) in
+    let%bind name = (match identity with Fresh -> decode_name | Existing _ | Copy _ -> decode_destination)
+      (if directory then String.drop_suffix encoded 1 else encoded) in
     let%bind kind =
       match identity with
       | Fresh -> Ok (if directory then Kind.Directory else File)
-      | Existing id ->
+      | Existing id | Copy id ->
         let entry = List.find_exn entries ~f:(fun (entry : Entry.t) -> entry.id = id) in
         if not (Bool.equal directory (Kind.equal entry.kind Directory))
         then Or_error.error_string "existing entry kind cannot change"
@@ -154,9 +167,9 @@ let parse entries text =
     |> Or_error.map ~f:List.filter_opt
   in
   let ids = List.filter_map rows ~f:(fun row ->
-    match row.Row.identity with Existing id -> Some id | Fresh -> None) in
+    match row.Row.identity with Existing id -> Some id | Fresh | Copy _ -> None) in
   if List.contains_dup ids ~compare:Int.compare
-  then Or_error.error_string "duplicate identity: copying existing rows is unsupported"
+   then Or_error.error_string "duplicate identity: copying existing rows is unsupported without explicit @copy[ID] token and a unique destination"
   else if List.exists entries ~f:(fun (entry : Entry.t) ->
     Kind.equal entry.kind Unsupported && List.mem (missing_ids entries rows) entry.id ~equal:Int.equal)
   then Or_error.error_string "unsupported entry is read-only; restore its row"

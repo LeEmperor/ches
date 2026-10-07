@@ -6,6 +6,9 @@ let fingerprint path =
   let s = Core_unix.lstat path in
   s.st_dev, s.st_ino, s.st_kind, s.st_size, s.st_mtime, s.st_ctime
 ;;
+let same_identity (dev, ino, kind, _, _, _) (dev', ino', kind', _, _, _) =
+  dev = dev' && ino = ino' && Poly.equal kind kind'
+;;
 
 type t =
   { id : Buffer_id.t
@@ -26,7 +29,7 @@ let is_directory path =
 let load ?previous ~id ~path ~cell_width ~keymap_config () =
   Or_error.try_with (fun () ->
     if Option.exists previous ~f:(fun t -> Editor.is_dirty (Controller.editor t.controller))
-    then failwith "Directory has unsaved edits; undo them before refreshing";
+    then failwith "Directory has unsaved edits; save/retry or undo them before refreshing; explicit force-close discards remaining intent";
     if not (is_directory path) then failwith ("Not a directory: " ^ path);
     let names = Stdlib.Sys.readdir path |> Array.to_list |> List.sort ~compare:String.compare in
     let next = ref (Option.value_map previous ~default:1 ~f:(fun t -> t.next_entry)) in
@@ -42,7 +45,7 @@ let load ?previous ~id ~path ~cell_width ~keymap_config () =
         | _ -> Unsupported in
       let old = Option.bind previous ~f:(fun t -> List.find t.entries ~f:(fun e ->
         String.equal e.name name && Directory_identity.Kind.equal e.kind kind
-        && Option.value_map (Map.find t.fingerprints name) ~default:false ~f:(Poly.equal fingerprint))) in
+        && Option.value_map (Map.find t.fingerprints name) ~default:false ~f:(same_identity fingerprint))) in
       let entry_id = Option.value_map old ~default:0 ~f:(fun e -> e.id) in
       let entry_id = if entry_id > 0 then entry_id else (let n = !next in incr next; n) in
       { Directory_identity.Entry.id = entry_id; name; kind }) in
@@ -55,7 +58,7 @@ let load ?previous ~id ~path ~cell_width ~keymap_config () =
         let index = Editor.cursor_line (Controller.editor old.controller) in
         let selected = Directory_identity.parse old.baseline (Editor.text (Controller.editor old.controller))
           |> Result.ok |> Option.bind ~f:(fun rows -> List.find rows ~f:(fun r -> r.line = index))
-          |> Option.bind ~f:(fun r -> match r.identity with Existing id -> Some id | Fresh -> None) in
+           |> Option.bind ~f:(fun r -> match r.identity with Existing id -> Some id | Fresh | Copy _ -> None) in
         let index = Option.value (List.findi entries ~f:(fun _ e -> Option.equal Int.equal selected (Some e.id)) |> Option.map ~f:fst)
           ~default:(Int.min index (Int.max 0 (List.length entries - 1))) in
         Controller.jump controller ~line:(index + 1) ~column:1 |> Or_error.ok_exn in
@@ -70,7 +73,7 @@ let rows t = Directory_identity.parse t.baseline (Editor.text (Controller.editor
 let plan t = Directory_plan.plan t.entries (Editor.text (Controller.editor t.controller))
 let is_dirty t = Editor.is_dirty (Controller.editor t.controller)
 let backing_entry t row = match row.Directory_identity.Row.identity with
-  | Fresh -> None
+  | Fresh | Copy _ -> None
   | Existing id -> List.find t.entries ~f:(fun e -> e.id = id)
 let current_rows t = Result.ok (rows t) |> Option.value ~default:[]
 

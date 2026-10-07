@@ -5,6 +5,7 @@ open Ches_core
     Identity text is the actual editor text; headers/kind hints are decorations. *)
 type fingerprint = int * int * Core_unix.file_kind * int64 * float * float
 val fingerprint : string -> fingerprint
+val same_identity : fingerprint -> fingerprint -> bool
 type t =
   { id : Buffer_id.t
   ; path : string
@@ -24,7 +25,7 @@ val select : t -> string -> t
 val selected : t -> Directory_identity.Entry.t option
 val is_dirty : t -> bool
 val rows : t -> Directory_identity.Row.t list Or_error.t
-(** All-or-nothing pure plan. Deletion/copy proposals are unsupported. *)
+(** All-or-nothing pure create/rename/delete/copy plan; IO checks remain in apply. *)
 val plan : t -> Directory_plan.operation list Or_error.t
 val row_at : t -> int -> Directory_identity.Row.t option
 val selected_row : t -> Directory_identity.Row.t option

@@ -34,16 +34,19 @@ type resource_buffer = File_buffer of Buffer_id.t * Controller.t | Directory_buf
 val find_resource_buffer : t -> string -> resource_buffer option
 val active_controller : t -> Controller.t option
 (** Collect document-local effects and synchronize session feedback/register.
-    The replacement must belong to the same active buffer; resource reassociation
-    is a later-phase operation, not arbitrary controller replacement. *)
+     The replacement must belong to the same active buffer; resource reassociation
+     is session-owned, not arbitrary controller replacement. *)
 val replace_active : t -> Controller.t -> t
 val open_or_activate : t -> string -> (t * Buffer_id.t) Or_error.t
 val activate : t -> Buffer_id.t -> t Or_error.t
 val close_buffer : t -> Buffer_id.t -> force:bool -> t * bool
 val close_current : t -> force:bool -> t * bool
-(** Directory save explicitly applies validated create/rename proposals; never
+(** Directory save explicitly applies validated create/rename/copy/permanent-delete proposals; never
     writes listing text. Partial failures retain reconciled unresolved intent. *)
 val save_current : t -> t
+val recreate_current : t -> t
+(** Exclusive save-as; refuses existing destinations, reindexes the same buffer. *)
+val save_as : t -> Buffer_id.t -> string -> t Or_error.t
 (** Dirty file and retained directory buffers in ID order; continue on error. *)
 val save_all : t -> t * (Buffer_id.t * bool) list
 val quit : t -> force:bool -> t * Controller.Status.t

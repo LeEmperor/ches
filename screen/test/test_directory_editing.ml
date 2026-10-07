@@ -73,7 +73,7 @@ let%test_unit "current rows reconcile blanks, reorder, dormant deleted marks, co
     assert (Set.length (directory ui).marks = 1);
     assert (List.is_empty (Directory_buffer.marked_entries (directory ui)));
     assert (String.equal (Directory_buffer.selected (directory ui) |> Option.value_exn).name "b.txt");
-    let ui = run ui " w" in message ui "Deletion is unsupported";
+    assert (String.is_substring (Directory_plan.summary (Directory_buffer.plan (directory ui) |> Or_error.ok_exn)) ~substring:"Permanently delete");
     let ui = run ui "u" in
     assert (List.length (Directory_buffer.marked_entries (directory ui)) = 1);
     let ui = run ui "ddp" in

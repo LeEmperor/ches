@@ -25,6 +25,7 @@ type t
 module Row : sig
   type identity =
     | Existing of int
+    | Copy of int
     | Fresh
   [@@deriving sexp_of, equal]
 
@@ -46,18 +47,21 @@ val create : Entry.t list -> t Or_error.t
     All legal Unix child names, including invalid UTF-8, round-trip exactly. *)
 val encode_name : string -> string
 val decode_name : string -> string Or_error.t
+val decode_destination : string -> string Or_error.t
 
 (** Existing rows: [@ches[ID]<TAB>ENCODED_NAME], plus [/] only for directories.
+    Explicit copies use [@copy[ID]] with a distinct destination. Existing/copy
+    destinations accept slash-separated encoded components, including [..].
     Header, kind icons and marks are not part of the editable text. *)
 val text : t -> Text_buffer.t
 
 (** Validate the entire snapshot, rejecting malformed/unknown/duplicate tokens,
-    noncanonical escaping, invalid child names, and existing type changes.
+    noncanonical escaping, invalid destinations, and existing type changes.
     Blank lines are ignored; bare names are fresh creation proposals (no backing
     identity until committed). Missing IDs represent deletions, NOT renames.
     Unsupported entries must remain unchanged and present. No IO occurs. *)
 val parse : t -> Text_buffer.t -> Row.t list Or_error.t
 
-(** Baseline IDs absent from validated rows, in baseline order. Consumers must
-    reject unsupported deletion proposals before execution. *)
+(** Baseline IDs absent from existing rows, in baseline order. Copy rows do not
+    retain their source: copying and omitting it requests copy plus delete. *)
 val missing_ids : t -> Row.t list -> int list

@@ -112,7 +112,7 @@ let dispose t = List.iter t.buffers ~f:(fun b -> Controller.close b.controller);
 let notify t text =
   { t with feedback = Feedback.apply t.feedback (Notify { source = "session"; scope = None; severity = Error; text; history = true }) }
 ;;
-let dirty t = List.filter t.buffers ~f:(fun b -> Editor.is_dirty (Controller.editor b.controller))
+let recoverable t = List.filter t.buffers ~f:(fun b -> Editor.is_dirty (Controller.editor b.controller) || Controller.is_missing b.controller)
 let dirty_directories t = List.filter t.directories ~f:Directory_buffer.is_dirty
 let relocate moves path =
   Option.value (List.find_map moves ~f:(fun (source, destination) ->
@@ -169,31 +169,78 @@ let directory_save ?before_mutation t d =
   | Error error -> notify t ("Invalid directory plan: " ^ Error.to_string_hum error)
   | Ok operations ->
     let moves = List.filter_map operations ~f:(function
-      | Directory_plan.Rename r -> Some (Filename.concat d.path r.source, Filename.concat d.path r.destination)
+      | Directory_plan.Rename r -> Some (normalize t (Filename.concat d.path r.source), Resource.normalize ~cwd:d.path r.destination)
       | _ -> None) in
-    match check_resource_moves t moves with
+    let coordination = Or_error.bind (check_resource_moves t moves) ~f:(fun () -> Or_error.try_with (fun () ->
+      List.iter operations ~f:(fun operation ->
+        let destination = match operation with
+          | Directory_plan.Rename r -> Some r.destination | Copy r -> Some r.destination | _ -> None in
+        Option.iter destination ~f:(fun name ->
+          let path = Resource.normalize ~cwd:d.path name in
+          if (match operation with Copy _ -> true | _ -> false) &&
+            (Map.mem t.resources path || List.exists t.directories ~f:(fun other -> String.equal other.path path))
+          then failwith "Copy destination belongs to an open resource; close it first";
+          List.iter t.directories ~f:(fun other ->
+            if not (Buffer_id.equal other.id d.id) && Directory_buffer.is_dirty other &&
+              (String.equal other.path (Filename.dirname path) || String.is_prefix (Filename.dirname path) ~prefix:(other.path ^ "/"))
+            then failwith "Destination directory has pending edits; save or undo those edits first"));
+        match operation with
+        | Delete r -> List.iter t.directories ~f:(fun other ->
+            if Directory_buffer.is_dirty other && String.equal other.path (Filename.concat d.path r.source)
+            then failwith "Deleted directory has pending edits; save or undo them first")
+        | _ -> ()))) in
+    match coordination with
     | Error error -> notify t (Error.to_string_hum error)
     | Ok () ->
       let reserved_paths = List.filter_map t.buffers ~f:(fun b -> Editor.path (Controller.editor b.controller))
         @ List.map t.directories ~f:(fun d -> d.path) in
       let result = Directory_apply.apply ~reserved_paths ?before_mutation d in
       let t = reconcile_paths t result.moves in
+      let t = { t with buffers = List.map t.buffers ~f:(fun b ->
+        if Option.exists (Editor.path (Controller.editor b.controller)) ~f:(fun path ->
+          List.exists result.deleted ~f:(fun deleted -> String.equal path deleted || String.is_prefix path ~prefix:(deleted ^ "/")))
+        then { b with controller = Controller.mark_missing b.controller } else b) } in
       let fresh, refresh_error = if Option.is_some result.error then result.buffer, None else
         match Directory_buffer.load ~previous:result.buffer ~id:d.id ~path:d.path
           ~cell_width:t.cell_width ~keymap_config:t.keymap_config () with
         | Ok fresh -> Controller.close result.buffer.controller; fresh, None
         | Error error -> result.buffer, Some error in
       let t = { t with directories = List.map t.directories ~f:(fun old ->
-        if Buffer_id.equal old.id d.id then fresh else old) } in
-      let t = if result.completed = 0 then t else refresh_tracked_resource t d.path in
+         if Buffer_id.equal old.id d.id then fresh else old) } in
+      let removed, directories = List.partition_tf t.directories ~f:(fun cached ->
+        List.exists result.deleted ~f:(String.equal cached.path)) in
+      List.iter removed ~f:(fun cached -> Controller.close cached.controller);
+      let retained id = not (List.exists removed ~f:(fun cached -> Buffer_id.equal cached.id id)) in
+      let t = { t with directories;
+        directory = Option.map t.directory ~f:(fun id -> if retained id then id else d.id);
+        remembered = Option.map t.remembered ~f:(fun id -> if retained id then id else d.id) } in
+      let cache_errors = ref [] in
+      let t = List.fold result.affected ~init:t ~f:(fun t path ->
+        { t with directories = List.map t.directories ~f:(fun cached ->
+          if Buffer_id.equal cached.id d.id || not (String.equal cached.path path) || Directory_buffer.is_dirty cached then cached
+          else match Directory_buffer.load ~previous:cached ~id:cached.id ~path:cached.path ~cell_width:t.cell_width ~keymap_config:t.keymap_config () with
+            | Ok fresh -> Controller.close cached.controller; fresh
+            | Error error -> cache_errors := (cached.path, error) :: !cache_errors; cached) }) in
+      let t = if result.completed = 0 then t else List.fold result.affected ~init:t ~f:refresh_tracked_resource in
       let text = Directory_plan.summary operations ^
         (match result.error with None -> "; directory saved" | Some error ->
           sprintf "; apply stopped after %d mutations: %s; actual backing paths reconciled; unresolved edits retained, save to retry"
             result.completed (Error.to_string_hum error)) ^
-        Option.value_map refresh_error ~default:"" ~f:(fun error ->
-          "; applied baseline retained, listing refresh failed: " ^ Error.to_string_hum error ^ "; refresh with Space r") in
+         Option.value_map refresh_error ~default:"" ~f:(fun error ->
+           "; applied baseline retained, listing refresh failed: " ^ Error.to_string_hum error ^ "; refresh with Space r") ^
+         String.concat (List.map !cache_errors ~f:(fun (path, error) ->
+           "; affected listing refresh failed for " ^ Directory_identity.encode_name path ^ ": " ^ Error.to_string_hum error ^ "; visit it and refresh with Space r")) in
+      let t = if Option.is_none result.error then t else
+        let t = List.fold result.moves ~init:t ~f:(fun t (source, destination) ->
+          notify t ("Actual backing: " ^ Directory_identity.encode_name (Filename.basename source)
+            ^ " -> " ^ Directory_identity.encode_name (Filename.basename destination))) in
+        let t = if List.is_empty result.applied then t else
+          notify t ("Completed mutations: " ^ Directory_plan.summary result.applied) in
+        match Directory_buffer.plan result.buffer with
+        | Ok remaining -> notify t ("Remaining intent: " ^ Directory_plan.summary remaining)
+        | Error _ -> t in
       { t with feedback = Feedback.apply t.feedback (Notify { source = "session"; scope = Some d.path
-        ; severity = (if Option.is_none result.error && Option.is_none refresh_error then Info else Error); text; history = true }) }
+        ; severity = (if Option.is_none result.error && Option.is_none refresh_error && List.is_empty !cache_errors then Info else Error); text; history = true }) }
 ;;
 let names bs = String.concat ~sep:", " (List.map bs ~f:(fun b -> Option.value (Controller.display_path b.controller) ~default:"[unnamed]"))
 
@@ -335,7 +382,7 @@ let navigation t (view : View_command.t) =
     | (Toggle_entry_mark | Mark_selection), Some d
       when List.exists (if View_command.equal view Toggle_entry_mark then
           Option.to_list (Directory_buffer.selected_row d) else Directory_buffer.selection_rows d)
-        ~f:(fun r -> Directory_identity.Row.equal_identity r.identity Fresh) ->
+        ~f:(fun r -> match r.Directory_identity.Row.identity with Existing _ -> false | Fresh | Copy _ -> true) ->
       Or_error.error_string "New rows require save before marking/opening"
     | Toggle_entry_mark, Some d -> Ok (update_directory t (Directory_buffer.toggle_mark d))
     | Mark_selection, Some d -> Ok (update_directory t (Directory_buffer.mark_selection d ~marked:true))
@@ -343,7 +390,7 @@ let navigation t (view : View_command.t) =
     | Clear_directory_marks, Some d -> Ok (update_directory t { d with marks = Int.Set.empty })
     | Open_marked_files, Some d -> Ok (batch_open t d (Directory_buffer.marked_entries d) ~clear_marks:true)
     | Open_directory_entry, Some d when Option.is_some (Editor.selection (Controller.editor d.controller)) ->
-      let fresh = List.count (Directory_buffer.selection_rows d) ~f:(fun r -> Directory_identity.Row.equal_identity r.identity Fresh) in
+      let fresh = List.count (Directory_buffer.selection_rows d) ~f:(fun r -> match r.Directory_identity.Row.identity with Existing _ -> false | Fresh | Copy _ -> true) in
       let t = batch_open t d (Directory_buffer.selection_entries d) ~clear_marks:false in
       Ok (if fresh = 0 then t else notify t (sprintf "%d new rows require save before opening" fresh))
     | View_command.Toggle_directory, None ->
@@ -376,7 +423,7 @@ let navigation t (view : View_command.t) =
 
 let quit t ~force =
   if t.exited then t, Controller.Status.Exit else
-  let dirty = dirty t in
+  let dirty = recoverable t in
   let directories = dirty_directories t in
   if not force && (not (List.is_empty dirty) || not (List.is_empty directories))
   then notify t ("Unsaved changes: " ^ String.concat ~sep:", "
@@ -385,10 +432,48 @@ let quit t ~force =
   else (dispose t; { t with exited = true }, Controller.Status.Exit)
 ;;
 
+let save_as t id path =
+  let path = normalize t path in
+  match find t id with
+  | None -> Or_error.error_string "File buffer is not open"
+  | Some controller ->
+    if Map.mem t.resources path && not (Option.equal Buffer_id.equal (Map.find t.resources path) (Some id))
+      || List.exists t.directories ~f:(fun d -> String.equal d.path path)
+    then Or_error.error_string "Save-as destination belongs to another open resource" else
+    Or_error.map (Controller.save_as (install t controller) path) ~f:(fun controller ->
+      let t = Option.value_map (Editor.path (Controller.editor (Option.value_exn (find t id)))) ~default:t
+        ~f:(fun old -> reconcile_paths t [ old, path ]) in
+      let active = t.active and directory_focused = t.directory_focused in
+      let t = replace_active { t with active = Some id; directory_focused = false } controller in
+      let directories = List.map t.directories ~f:(fun d ->
+        if Directory_buffer.is_dirty d || not (String.equal d.path (Filename.dirname path)) then d else
+        match Directory_buffer.load ~previous:d ~id:d.id ~path:d.path ~cell_width:t.cell_width ~keymap_config:t.keymap_config () with
+        | Ok fresh -> Controller.close d.controller; fresh | Error _ -> d) in
+      { t with active; directory_focused; directories; resources = Map.set t.resources ~key:path ~data:id })
+;;
+
+let recreate_current t =
+  match active_controller t with
+  | None -> notify t "No file buffer to recreate"
+  | Some _ when t.directory_focused -> notify t "Recreate targets a missing file tab, not a directory"
+  | Some c ->
+    match Controller.recreate (install t c) with
+    | Error error -> notify t (Error.to_string_hum error)
+    | Ok c ->
+      let t = replace_active t c in
+      { t with directories = List.map t.directories ~f:(fun d ->
+        if Directory_buffer.is_dirty d || not (Option.exists (Editor.path (Controller.editor c))
+          ~f:(fun path -> String.equal (Filename.dirname path) d.path)) then d else
+        match Directory_buffer.load ~previous:d ~id:d.id ~path:d.path ~cell_width:t.cell_width ~keymap_config:t.keymap_config () with
+        | Ok fresh -> Controller.close d.controller; fresh
+        | Error _ -> d) }
+;;
+
 let rec dispatch t actions =
   if t.exited then t, [], Controller.Status.Exit
   else match actions with
   | [] -> t, [], Controller.Status.Running
+  | Keymap.Action.View Recreate_missing_file :: rest -> dispatch (recreate_current t) rest
    | Keymap.Action.View (Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory
        | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files as view) :: rest ->
     dispatch (navigation t view) rest
@@ -403,6 +488,7 @@ let rec dispatch t actions =
   | _ ->
     let prefix, rest = List.split_while actions ~f:(function
       | Keymap.Action.Editor (Quit | Force_quit) -> false
+      | Keymap.Action.View Recreate_missing_file -> false
       | Keymap.Action.Editor (Save | Reload) when t.directory_focused -> false
       | Keymap.Action.View (Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory
           | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files) -> false
@@ -437,7 +523,7 @@ let save_all t =
   let original = t.active in
   let directory = t.directory in
   let directory_focused = t.directory_focused in
-  let targets = List.map (dirty t) ~f:(fun b -> b.id, `File b)
+   let targets = List.map (recoverable t) ~f:(fun b -> b.id, `File b)
     @ List.map (dirty_directories t) ~f:(fun d -> d.id, `Directory d)
     |> List.sort ~compare:(fun (a, _) (b, _) -> Buffer_id.compare a b) in
   let t, results = List.fold targets ~init:(t, []) ~f:(fun (t, results) (id, target) ->
@@ -451,7 +537,7 @@ let save_all t =
       let b = List.find_exn t.buffers ~f:(fun b -> Buffer_id.equal b.id original.id) in
       let c, _, _ = Controller.dispatch (install t b.controller) [ Editor Save ] in
       let t = replace_active { t with active = Some b.id; directory = None; directory_focused = false } c in
-      t, results @ [ id, not (Editor.is_dirty (Controller.editor c)) ]) in
+       t, results @ [ id, not (Controller.is_missing c || Editor.is_dirty (Controller.editor c)) ]) in
   let failures = List.count results ~f:(fun (_, ok) -> not ok) in
   let feedback = Feedback.apply t.feedback (Notify { source = "session"; scope = None
     ; severity = (if failures = 0 then Info else Error)
@@ -466,7 +552,7 @@ let close_buffer t id ~force =
     (match List.find t.directories ~f:(fun d -> Buffer_id.equal d.id id) with
      | None -> t, false
      | Some d when Directory_buffer.is_dirty d && not force ->
-       notify t ("Unsaved directory: " ^ Directory_identity.encode_name d.path ^ "; undo edits or explicitly force close"), false
+        notify t ("Unsaved directory: " ^ Directory_identity.encode_name d.path ^ "; save/retry, undo edits, or explicitly force close"), false
      | Some d ->
        Controller.close d.controller;
        let t = { t with directories = List.filter t.directories ~f:(fun old -> not (Buffer_id.equal old.id id))
@@ -476,7 +562,7 @@ let close_buffer t id ~force =
        let t = if Option.is_some t.active || Option.is_some t.directory then t else
          match show_directory t t.startup_directory with Ok t -> t | Error e -> notify t (Error.to_string_hum e) in
        t, true)
-  | Some c when Editor.is_dirty (Controller.editor c) && not force ->
+   | Some c when (Controller.is_missing c || Editor.is_dirty (Controller.editor c)) && not force ->
     notify t ("Unsaved buffer: " ^ Option.value (Editor.path (Controller.editor c)) ~default:"[unnamed]" ^ "; save it (Space w) or force close (Space b C)"), false
   | Some c ->
     let was_active = Option.equal Buffer_id.equal t.active (Some id) in
