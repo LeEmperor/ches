@@ -357,7 +357,7 @@ let file_picker_layout t ~width ~height =
   Option.bind t.file_picker ~f:(fun _ ->
     Floating.layout
       ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
-      ~preferred:{ width = (if width >= 104 then 140 else 80); height = 14 }
+      ~preferred:{ width = (if width >= 104 then 175 else 80); height = 28 }
       ~minimum:{ width = 14; height = 5 }
       ~policy:{ Tile_shell.Policy.minor with min_content_height = 3 })
 ;;

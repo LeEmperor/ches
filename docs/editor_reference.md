@@ -186,7 +186,9 @@ Filtering/no-match Enter is inert. Document changes invalidate results; reopen t
 refresh. Minimum 14×5, including zen; undersized resize closes safely.
 
 `Space f f` / **Find project files** opens or activates retained buffers without
-reloading unsaved text. At terminal widths of 104 cells or more, its wider float
+reloading unsaved text. Its file-only float prefers 175×28 (80×28 below 104 terminal
+columns), centered and clamped with a one-cell margin where possible. At terminal
+widths of 104 cells or more, its wider float
 shows results left and a read-only numbered preview right (first 64 KiB/100 lines,
 current unsaved buffer text if retained). Narrow terminals hide preview; it never
 takes focus, opens tabs or changes Enter behavior. Loading/errors/truncation are

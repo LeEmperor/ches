@@ -42,7 +42,8 @@ accept stale coordinates.
 
 ## Read-only file preview
 
-File floats widen on terminals at least 104 cells wide. With at least 96 content
+File floats prefer 175×28 on terminals at least 104 cells wide (80×28 otherwise),
+centered and clamped with a one-cell margin where possible. With at least 96 content
 cells, results stay left and a numbered plain-text preview appears right; narrow
 terminals hide it without changing selection, keyboard focus or Enter behavior.
 The prefix is bounded to 64 KiB/100 lines. Retained buffers supply current unsaved
