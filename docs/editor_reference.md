@@ -131,7 +131,7 @@ Pending prefixes, ignored keys, resize, and animation do not clear it.
 
 ### Command palette
 
-`Space c c` opens a palette in the bottom band, listing every command that can run
+`Space c c` opens a centered floating palette, listing every command that can run
 from Normal mode with its shortcut (taken from the active bindings). Type part of a
 command's name, or a related word: `rel num`, `rln`, and `gutter relative` all find
 *Toggle relative line numbers*. Matching is fuzzy and in-process (no `fzf` needed):
@@ -146,12 +146,26 @@ one of its keywords, and matched title letters are highlighted.
 | `Ctrl-n` / `Ctrl-p` | Select the next / previous command |
 | `Enter` | Close the palette and run the selected command once, on the document |
 | `Escape` or `Tab` | Close it without running anything |
+| `Ctrl-c` | Show the host's reminder to use Escape; keep the palette open |
 
 A command run from the palette behaves exactly as its key binding: an ordinary quit
 is still refused with unsaved changes, and save failures are reported the same way.
-The palette opens only from Normal mode. While it is open it takes the first slot in
-the bottom band, so it needs no extra width; in zen or in a window too short for the
-band it does not open, and says why. Closing it discards the query.
+The palette opens only from Normal mode, including in zen. It is an opaque framed
+window above the workspace, not a bottom-band tile: opening, filtering, and closing
+do not reallocate the document, status, problems, report, or history tiles, or change
+the document scroll. Its preferred outer size is 80 columns by 14 rows, centered in
+the terminal and clamped with a one-cell margin where possible. Filtering does not
+change that size; results scroll inside the frame, with one bar cursor in the query.
+
+It needs at least 14 columns and 4 rows for a frame, query, and one result row.
+Below that size it refuses to open with shared feedback. Resizing preserves the
+query and selected command while it still fits; if it cannot fit, it closes safely
+without execution and returns focus to the document. Closing restores the covered
+workspace and discards the query. Pasted text goes only into the query (line breaks
+become spaces); if the palette closes mid-paste, the rest is dropped even if the
+terminal grows before the paste ends. With no matching result, Enter leaves it open
+and reports that nothing matched. Opening from another supporting view still targets
+the document and returns there on cancellation.
 
 To add a command, add an entry (ID, title, keywords, and the existing editor or view
 action) to `Catalog.default` in `palette/catalog.ml`. Its shortcut is derived from the
@@ -876,6 +890,11 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
 - workspace status on all four sides, separate width/height requests, scrolling and
   cursor alignment, hide/show, zen and saved-layout changes, compact fallback and
   restoration, edit/undo/redo/save, and error visibility across layout transitions
+- floating command palette placement and cursor ownership, typed queries and pasted
+  text, acceptance/cancellation and exact colored workspace restoration, no-match
+  Enter, coexistence with all installed tiles, zen, clamped/minimum-size resizing,
+  selected-command retention, too-small refusal/closure, and interrupted paste
+  dropping after a resize and growth
 - line-number styles: both toggles from the default (none), a rejected count,
   `Space v r`, renumbering as the cursor moves, and a toggle while too small
 - view scrolling: `Ctrl-e`/`Ctrl-y` with counts and a pushed cursor, `Ctrl-d`/
@@ -891,6 +910,8 @@ It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
 dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe
 scripts/smoke.sh path/to/ches                # or another binary
 python3 scripts/directory_workspace_smoke.py # directory/tab integration PTY scenarios
+scripts/smoke.sh --palette-only             # only floating-palette scenarios
+scripts/smoke.sh --palette-only path/to/ches
 ```
 
 It prints `ok` or `FAIL` for each check, with a screen dump after each failure,
@@ -898,7 +919,7 @@ and exits nonzero if any check failed. It never touches your own tmux sessions,
 and it deletes its temporary directory on exit. It also saves colored captures
 of review screens (Normal, Insert and dirty, pending `Space` and `Space v`, a
 moved tile, relative and no line numbers, and a save error at 80x24 and
-160x48, plus tiny sizes) and prints
+160x48, plus tiny sizes and floating-palette open/close/resize/zen screens) and prints
 their directory (`cat` a file to view it).
 
 Cursor assertions poll for a visible cursor at the expected position within five
@@ -921,6 +942,13 @@ The smoke script cannot check these, so check them in a real terminal:
   blue, the other lines' insertion points are grey cells, and none of them flicker
   while you type, including while the smear animation runs.
 - Nothing flickers while typing fast, scrolling, or resizing.
+- Floating palette acceptance: open `Space c c` with all docked tiles visible, and
+  again in zen, at about 80×24 and 120×40. Check its centering, preferred/clamped
+  size, readable title/query/results/footer, and a single bar cursor with no
+  document smear. Filter until results scroll; cancel with Escape/Tab and confirm
+  the covered workspace returns without a viewport jump. Resize through 14×4 and
+  below the minimum, then grow again; review the saved `palette-*.ansi` captures.
+  Record a human visual review separately from automated smoke/headless results.
 - Pasting from the terminal's own clipboard inserts text literally in Insert mode.
   This depends on the terminal; the script pastes through tmux.
 - Syntax acceptance: open `highlight_tree_sitter/provider.ml`, `core/text_buffer.mli`

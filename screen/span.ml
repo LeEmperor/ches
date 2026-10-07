@@ -86,6 +86,49 @@ let of_text s ~style ~special =
   of_glyphs glyphs ~left:0 ~cols:(Cell_map.total_width glyphs) ~text:style ~special
 ;;
 
+(* Unlike document clipping, composition leaves no clip markers. Attachment state
+   crosses style boundaries: a combining mark may have its own styled span. *)
+let slice spans ~left ~cols =
+  let right = left + Int.max 0 cols in
+  let spans, _, _ =
+    List.fold spans ~init:([], 0, false) ~f:(fun (acc, origin, attachable) span ->
+      let acc, attachable =
+        Array.fold (Cell_map.glyphs span.text) ~init:(acc, attachable)
+          ~f:(fun (acc, attachable) (glyph : Cell_map.Glyph.t) ->
+            let first = origin + glyph.col in
+            let stop = first + glyph.width in
+            if glyph.width = 0
+            then
+              if attachable
+              then create span.style glyph.text ~width:0 :: acc, true
+              else acc, false
+            else if first >= left && stop <= right
+            then create span.style glyph.text ~width:glyph.width :: acc, true
+            else if stop <= left || first >= right
+            then acc, false
+            else blank span.style (Int.min stop right - Int.max first left) :: acc, false)
+      in
+      acc, origin + span.width, attachable)
+  in
+  List.rev spans |> merge
+;;
+
+let overlay base ~x ~width layer =
+  let total = total_width base in
+  let width = Int.max 0 width in
+  let left = Int.clamp_exn x ~min:0 ~max:total in
+  let right = Int.clamp_exn (x + width) ~min:0 ~max:total in
+  if right <= left
+  then base
+  else (
+    let middle = slice layer ~left:(left - x) ~cols:(right - left) in
+    merge
+      (slice base ~left:0 ~cols:left
+       @ middle
+       @ [ blank Backdrop (right - left - total_width middle) ]
+       @ slice base ~left:right ~cols:(total - right)))
+;;
+
 (* Span text is already mapped, so mapping it again to find glyph boundaries changes
    nothing. *)
 let concat_glyphs glyphs =
@@ -93,24 +136,7 @@ let concat_glyphs glyphs =
 ;;
 
 let take spans ~n =
-  let rec take spans k =
-    match spans with
-    | [] -> []
-    | s :: rest ->
-      if k <= 0
-      then []
-      else if s.width <= k
-      then s :: take rest (k - s.width)
-      else (
-        let kept =
-          Array.filter (Cell_map.glyphs s.text) ~f:(fun g -> g.col + g.width <= k)
-        in
-        let kept_width = Cell_map.total_width kept in
-        [ create s.style (concat_glyphs kept) ~width:kept_width
-        ; blank s.style (k - kept_width)
-        ])
-  in
-  take spans n |> merge
+  if total_width spans <= n then merge spans else slice spans ~left:0 ~cols:n
 ;;
 
 let keep_left spans ~n ~marker_style =

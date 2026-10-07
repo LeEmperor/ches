@@ -51,6 +51,13 @@ val of_text : string -> style:Style.t -> special:Style.t -> t list
     spaces. *)
 val take : t list -> n:int -> t list
 
+(** Replace [width] cells of [base] starting at [x] with an opaque [layer].
+    Clips to the base row, pads short layers with [Backdrop], and preserves the
+    base width. Cut wide glyph fragments become spaces in their original style;
+    combining marks survive only with a fully surviving base, even across spans.
+    Inputs must satisfy the mapped-span contract. *)
+val overlay : t list -> x:int -> width:int -> t list -> t list
+
 (** The first [n] cells of [spans], ending with [>] in [marker_style] when cut. *)
 val keep_left : t list -> n:int -> marker_style:Style.t -> t list
 

@@ -25,6 +25,17 @@ module Cursor : sig
   [@@deriving sexp_of, equal]
 end
 
+module Floating_layer : sig
+  (** Adapter-independent opaque shell. [cursor] is relative to [layout.content];
+      it is drawn only when [id] is the host's cursor owner. *)
+  type t =
+    { id : Ches_tile.View_id.t
+    ; layout : Tile_shell.Layout.t
+    ; content : Tile_shell.Content.t
+    ; cursor : Ches_tile.Cursor.t option
+    }
+end
+
 type t =
   { width : int
   ; height : int
@@ -44,7 +55,14 @@ type t =
     {!Ui_state.minor_cursor}). Scrolling and cursor placement share its document geometry.
     Compact/zen layouts retain bottom-row feedback. An explicit [allocation] instead
     renders only the document there, clipped to screen bounds, reserving a status row
-    by default. [reserve_status_row] overrides either policy for headless callers.
+     by default. [reserve_status_row] overrides either policy for headless callers.
+
+     The live palette renders as one opaque shell over the complete tiled frame;
+     [floating] can supply an explicit adapter-independent shell instead, clipping
+     it to the screen without reallocating the workspace. Its supplied layout
+     drives shell rendering, host availability, and content-relative cursor placement.
+     Only the host's cursor owner supplies a cursor; floating capture suppresses
+     document smear. Covered document cursor/smear cells are never drawn above it.
 
     The document uses the controller's cached current highlights by default, with no
     parsing. [highlights] overrides them with an expected current key and snapshot. The
@@ -54,7 +72,8 @@ type t =
 val render
   :  ?highlights:Ches_highlight.Snapshot.Key.t * Ches_highlight.Snapshot.t
   -> ?allocation:Geometry.Rect.t
-  -> ?reserve_status_row:bool
+   -> ?reserve_status_row:bool
+   -> ?floating:Floating_layer.t
   -> Ui_state.t
   -> width:int
   -> height:int

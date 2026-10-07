@@ -19,6 +19,15 @@ module Cursor = struct
   [@@deriving sexp_of, equal]
 end
 
+module Floating_layer = struct
+  type t =
+    { id : Ches_tile.View_id.t
+    ; layout : Tile_shell.Layout.t
+    ; content : Tile_shell.Content.t
+    ; cursor : Ches_tile.Cursor.t option
+    }
+end
+
 type t =
   { width : int
   ; height : int
@@ -28,11 +37,45 @@ type t =
   }
 [@@deriving sexp_of]
 
-let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~height =
+(* The live palette's floating shell, when open and the screen can fit it. *)
+let palette_layer ui ~width ~height =
+  Option.bind (Ui_state.palette_layout ui ~width ~height) ~f:(fun layout ->
+    Option.map (Ui_state.palette ui) ~f:(fun palette ->
+      let content = layout.content in
+      { Floating_layer.id = Palette_tile.id
+      ; layout
+      ; content = Palette_tile.render ?notice:(Ui_state.capture_notice ui)
+          palette ~width:content.width ~rows:content.height
+      ; cursor = Some (Palette_tile.cursor palette ~width:content.width)
+      }))
+;;
+
+let overlay_floating rows (layer : Floating_layer.t) ~focused =
+  let outer = layer.layout.outer in
+  let layer_rows = Array.of_list (Tile_shell.render layer.layout ~focused layer.content) in
+  List.mapi rows ~f:(fun y row ->
+    if y < outer.y || y >= outer.y + outer.height
+    then row
+    else Span.overlay row ~x:outer.x ~width:outer.width layer_rows.(y - outer.y))
+;;
+
+let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
   let screen_width = width in
   let explicit_allocation = Option.is_some allocation in
+  let floating =
+    match floating with
+    | Some _ -> floating
+    | None when explicit_allocation -> None
+    | None -> palette_layer ui ~width ~height
+  in
+  let floating_view =
+    match floating with
+    | Some layer -> Some (layer.id, Some layer.layout)
+    | None when explicit_allocation -> Some (Palette_tile.id, None)
+    | None -> None
+  in
   let workspace = Ui_state.workspace ui ~width ~height in
   let buffers_in_status = not explicit_allocation && Ui_state.buffers_in_status ui ~width ~height in
   let pane_relative = Option.is_some allocation || Option.is_some workspace.status
@@ -102,7 +145,7 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
   in
   (* Each minor pane's content comes from its adapter; only the focused view shows the
      host's capture notice and pending prefix. *)
-  let focused_view = Ui_state.focused_view ui ~width ~height in
+  let focused_view = Ui_state.focused_view ?floating:floating_view ui ~width ~height in
   let hotkey_hints = Ui_state.hotkey_hints ui in
   let minor_tiles = List.filter_map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
     match pane.id with
@@ -133,10 +176,6 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
             ~width ~rows
         | Some report when Ches_tile.View_id.equal id Report_tile.id ->
           Report_tile.render ~hotkey_hints ~focused ?notice ?pending report ~width ~rows
-        | _ when Ches_tile.View_id.equal id Palette_tile.id ->
-          (match Ui_state.palette ui with
-           | Some palette -> Palette_tile.render ?notice palette ~width ~rows
-           | None -> { title = "Commands"; footer = None; body = [] })
         | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }
       in
       Some (layout.outer, Array.of_list (Tile_shell.render layout ~focused content))) in
@@ -387,22 +426,50 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
       in
       Span.merge (spans @ [ Span.blank Backdrop (width - right) ]))
   in
+  let rows =
+    match floating with
+    | None -> rows
+    | Some layer ->
+      overlay_floating rows layer ~focused:(Ches_tile.View_id.equal focused_view layer.id)
+  in
   let animation = Ui_state.animation ui in
   let document_cursor =
-    Option.exists (Ui_state.cursor_owner ui ~width ~height)
+    Option.exists (Ui_state.cursor_owner ?floating:floating_view ui ~width ~height)
       ~f:(Ches_tile.View_id.equal Ui_state.document_id) in
+  let covered_by_float (x, y) =
+    Option.exists floating ~f:(fun layer ->
+      let rect = layer.layout.outer in
+      x >= rect.x && x < rect.x + rect.width
+      && y >= rect.y && y < rect.y + rect.height)
+  in
   let smear =
     (if not document_cursor then [] else Animation.cells animation ~width ~height)
     |> List.filter ~f:(fun (x, y) ->
-      not pane_relative
-      || (x >= viewport.x && x < viewport.x + viewport.width
-          && y >= viewport.y && y < viewport.y + viewport.height))
+      not (covered_by_float (x, y))
+      && (not pane_relative
+          || (x >= viewport.x && x < viewport.x + viewport.width
+              && y >= viewport.y && y < viewport.y + viewport.height)))
   in
   let cursor =
     if not document_cursor
     then
       (* A focused minor view's cursor, the one other terminal-cursor owner. *)
-      Option.map (Ui_state.minor_cursor ui ~width ~height) ~f:(fun (x, y, shape) ->
+      let position =
+        match floating with
+        | Some layer when Option.exists
+            (Ui_state.cursor_owner ?floating:floating_view ui ~width ~height)
+            ~f:(Ches_tile.View_id.equal layer.id) ->
+          Option.bind layer.cursor ~f:(fun intent ->
+            let content = layer.layout.content in
+            let x = content.x + intent.column and y = content.y + intent.row in
+            Option.some_if
+              (intent.column >= 0 && intent.column < content.width
+               && intent.row >= 0 && intent.row < content.height
+               && x >= 0 && x < width && y >= 0 && y < height)
+              (x, y, intent.shape))
+        | Some _ | None -> Ui_state.minor_cursor ?floating:floating_view ui ~width ~height
+      in
+      Option.map position ~f:(fun (x, y, shape) ->
         { Cursor.x
         ; y
         ; shape =
@@ -422,14 +489,20 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
              | Insert -> Bar)
         })
   in
+  let cursor =
+    Option.filter cursor ~f:(fun cursor ->
+      cursor.x >= 0 && cursor.x < width && cursor.y >= 0 && cursor.y < height
+      && (not document_cursor || not (covered_by_float (cursor.x, cursor.y))))
+  in
   { width; height; rows; cursor; smear }
 ;;
 
-let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
+let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
   if Ui_state.has_document ui then
     match allocation, Ui_state.side_layout ui ~width ~height with
     | None, Some layout ->
-      let file = render_document ?highlights (Ui_state.surface ui ~directory:false) ~width ~height in
+      let floating = match floating with Some _ -> floating | None -> palette_layer ui ~width ~height in
+      let file = render_document ?highlights ?floating (Ui_state.surface ui ~directory:false) ~width ~height in
       let dir = render_document (Ui_state.surface ui ~directory:true)
         ~allocation:{ Geometry.Rect.x = 0; y = 0; width = layout.content.width; height = layout.content.height }
         ~reserve_status_row:false ~width:layout.content.width ~height:layout.content.height in
@@ -447,9 +520,13 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
         if y < layout.outer.y || y >= layout.outer.y + layout.outer.height then row else
         let tail = drop_backdrop row (layout.outer.x + layout.outer.width) in
         Span.merge (Span.take row ~n:layout.outer.x @ List.nth_exn side (y - layout.outer.y) @ tail)) in
+      (* The floating layer stays above the side pane. *)
+      let rows = Option.fold floating ~init:rows ~f:(fun rows layer ->
+        let focused_view = Ui_state.focused_view ~floating:(layer.id, Some layer.layout) ui ~width ~height in
+        overlay_floating rows layer ~focused:(Ches_tile.View_id.equal focused_view layer.id)) in
       let cursor = if focused then Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) -> { Cursor.x; y; shape = Block }) else file.cursor in
       { file with rows; cursor; smear = (if focused then [] else file.smear) }
-    | _ -> render_document ?highlights ?allocation ?reserve_status_row ui ~width ~height
+    | _ -> render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height
   else
     let width = Int.max 0 width and height = Int.max 0 height in
     let messages =

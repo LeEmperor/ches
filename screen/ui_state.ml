@@ -275,9 +275,7 @@ let workspace t ~width ~height =
     then []
     else
       List.filter_opt
-        [ (* First, so that opening never fails for width while the band has room. *)
-          Option.some_if (Option.is_some t.palette) Palette_tile.id
-        ; Option.some_if t.problems_visible Problems_tile.id
+        [ Option.some_if t.problems_visible Problems_tile.id
         ; Option.some_if (t.report_visible && Option.is_some t.report) Report_tile.id
         ; Option.some_if t.history_visible History_tile.id
         ]
@@ -298,9 +296,27 @@ let buffers_in_status t ~width ~height =
     content.width > 0 && content.height > 0)
 ;;
 
+let palette_placement ~width ~height =
+  Floating.layout
+    ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
+    ~preferred:{ width = 80; height = 14 }
+    ~minimum:{ width = 14; height = 4 }
+    ~policy:{ Tile_shell.Policy.minor with min_content_height = 2 }
+;;
+
+let palette_layout t ~width ~height =
+  Option.bind t.palette ~f:(fun _ -> palette_placement ~width ~height)
+;;
+
+let effective_floating floating t ~width ~height =
+  match floating with
+  | Some _ -> floating
+  | None -> Option.map t.palette ~f:(fun _ ->
+    Palette_tile.id, palette_layout t ~width ~height)
+;;
+
 (* A supplied floating identity overrides its tiled placement, including when
-   resize makes its layout unavailable. The docked palette will opt into this
-   layer when its compositor is ready; existing callers retain tiled behavior. *)
+   resize makes its layout unavailable. Otherwise resolve the live palette. *)
 let view_layout_in ?floating (workspace : Workspace.t) id =
   if View_id.equal id document_id
   then None
@@ -316,10 +332,12 @@ let view_layout_in ?floating (workspace : Workspace.t) id =
 ;;
 
 let view_layout ?floating t ~width ~height id =
+  let floating = effective_floating floating t ~width ~height in
   view_layout_in ?floating (workspace t ~width ~height) id
 ;;
 
 let view_available ?floating t ~width ~height =
+  let floating = effective_floating floating t ~width ~height in
   let workspace = workspace t ~width ~height in
   fun id ->
     View_id.equal id document_id
@@ -336,10 +354,11 @@ let input_allocation t ~width ~height =
   | _ -> let w = workspace t ~width ~height in w.document.rect, w.reserve_status_row
 ;;
 
-let focused_view t ~width ~height = Host.focused t.host ~available:(available t ~width ~height)
+let focused_view ?floating t ~width ~height =
+  Host.focused t.host ~available:(view_available ?floating t ~width ~height)
 
-let cursor_owner t ~width ~height =
-  Option.filter (Host.cursor_owner t.host ~available:(available t ~width ~height))
+let cursor_owner ?floating t ~width ~height =
+  Option.filter (Host.cursor_owner t.host ~available:(view_available ?floating t ~width ~height))
     ~f:(fun id -> not (View_id.equal id document_id) || has_document t)
 ;;
 
@@ -360,17 +379,17 @@ let problems_focused t ~width ~height =
 let minor_layout t ~width ~height id =
   if View_id.equal id status_id || View_id.equal id document_id
   then None
-  else view_layout t ~width ~height id
+  else view_layout_in (workspace t ~width ~height) id
 ;;
 
 (* A minor view's content viewport: what it scrolls by and wraps to. *)
 let minor_rows t ~width ~height id =
-  Option.value_map (minor_layout t ~width ~height id) ~default:1
+  Option.value_map (view_layout t ~width ~height id) ~default:1
     ~f:(fun layout -> Int.max 1 layout.content.height)
 ;;
 
 let minor_width t ~width ~height id =
-  Option.value_map (minor_layout t ~width ~height id) ~default:width
+  Option.value_map (view_layout t ~width ~height id) ~default:width
     ~f:(fun layout -> layout.content.width)
 ;;
 
@@ -416,12 +435,12 @@ let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option 
       { Ches_tile.Cursor.row = row - Ches_tile.Text_view.top view; column; shape = Block })
 ;;
 
-let supporting_cursor t ~width ~height =
-  match Host.cursor_owner t.host ~available:(available t ~width ~height) with
+let supporting_cursor ?floating t ~width ~height =
+  match cursor_owner ?floating t ~width ~height with
   | None -> None
   | Some id when View_id.equal id document_id -> None
   | Some id ->
-    Option.bind (minor_layout t ~width ~height id) ~f:(fun (layout : Tile_shell.Layout.t) ->
+    Option.bind (view_layout ?floating t ~width ~height id) ~f:(fun (layout : Tile_shell.Layout.t) ->
       let content = layout.content in
       Option.bind (cursor_intent t id ~content) ~f:(fun { row; column; shape } ->
         Option.some_if
@@ -659,10 +678,10 @@ let cursor_position t ~width ~height =
     ~reserve_status_row
 ;;
 
-let minor_cursor t ~width ~height =
-  if View_id.equal (focused_view t ~width ~height) directory_id then
+let minor_cursor ?floating t ~width ~height =
+  if View_id.equal (focused_view ?floating t ~width ~height) directory_id then
     Option.map (cursor_position t ~width ~height) ~f:(fun (x, y) -> x, y, Ches_tile.Cursor.Shape.Block)
-  else supporting_cursor t ~width ~height
+  else supporting_cursor ?floating t ~width ~height
 ;;
 
 let min_width = 20
@@ -887,11 +906,9 @@ let toggle_focus t ~width ~height id ~show =
       { t with host = Host.focus t.host id }))
 ;;
 
-let palette_title = "Command palette"
-
-(* Open the palette for the document, focused. It opens only in Normal mode, and needs
-   room in the bottom band (it goes first there, so only a compact layout or zen leaves
-   none). From another minor view it leaves that view: the document is the target. *)
+(* Open the palette for the document, focused, including in zen. It needs a framed
+   query and result row. From another minor view it leaves that view; the document
+   remains the target. Refusal does not disturb the current focus. *)
 let open_palette t ~width ~height =
   let notice text = { t with host = Host.with_notice t.host text } in
   let editor = Controller.editor t.controller in
@@ -899,8 +916,8 @@ let open_palette t ~width ~height =
   then notice "No file open; Space q quits the session"
   else if not (Mode.equal (Editor.mode editor) Normal)
   then notice "Leave Insert/Visual mode before opening the command palette"
-  else if t.zen
-  then notice "Command palette unavailable in zen; Space v z restores the workspace"
+  else if Option.is_none (palette_placement ~width ~height)
+  then notice "Command palette cannot fit; needs at least 14 columns and 4 rows"
   else (
     let palette =
       Palette_tile.create
@@ -916,18 +933,11 @@ let open_palette t ~width ~height =
       ; palette = Some palette
       }
     in
-    if not (available t ~width ~height Palette_tile.id)
-    then
-      { t with
-        palette = None
-      ; host = Host.with_notice (Host.return t.host) (palette_title ^ " cannot fit in compact layout")
-      }
-    else
-      { t with
-        host = Host.focus t.host Palette_tile.id
-      ; palette =
-          Some (Palette_tile.fit palette ~rows:(minor_rows t ~width ~height Palette_tile.id))
-      })
+    { t with
+      host = Host.focus t.host Palette_tile.id
+    ; palette =
+        Some (Palette_tile.fit palette ~rows:(minor_rows t ~width ~height Palette_tile.id))
+    })
 ;;
 
 let apply_view_command t ~width ~height (view : View_command.t) =

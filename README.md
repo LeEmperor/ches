@@ -19,8 +19,9 @@ for general distribution.
 - **Workspace:** adjustable document placement and width, configurable status
   placement, line-number styles, zen mode, and supporting views with read-only
   selection and copying.
-- **Command palette:** in-process fuzzy search over Normal-mode commands, with
-  shortcuts derived from the active bindings.
+- **Command palette:** centered floating fuzzy search over Normal-mode commands,
+  with shortcuts derived from the active bindings; works in zen without resizing
+  the document or docked tiles.
 - **Persistent file tabs:** independent text, undo, cursor and scroll, with a shared
   unnamed register and resource-addressed diagnostics.
 - **Directory workspace:** editable listings in the main editor or a left side tile;
@@ -75,6 +76,14 @@ See the [editor reference](docs/editor_reference.md) for the complete keybinding
 editing semantics, workspace controls, and diagnostic-source behavior.
 `ches -help` also provides a command-line summary.
 
+The command palette prefers an 80×14 framed window, clamped to the terminal with
+a one-cell margin where possible. Filtering keeps its size fixed and scrolls results
+inside it. `Escape` or `Tab` cancels; `Enter` runs the selection once. It requires at
+least 14 columns and 4 rows: opening below that size reports why, and shrinking an
+open palette below it closes without execution. Closing discards the query and
+restores the covered workspace; an interrupted palette paste is dropped, never
+redirected to the document.
+
 **Directory saves are destructive:** removing an existing `@ches[ID]` row and
 pressing `Space w` permanently deletes its backing file/link or empty directory.
 There is no trash or confirmation dialog. Keep the token and TAB intact when
@@ -126,6 +135,8 @@ dune runtest
 dune exec ches -- PATH
 scripts/smoke.sh
 python3 scripts/directory_workspace_smoke.py
+# Just the floating palette's terminal scenarios:
+scripts/smoke.sh --palette-only
 ```
 
 `ches.opam` is generated from `dune-project`; package metadata changes belong in
