@@ -91,6 +91,53 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
     (Filename.concat starting_directory "__picker_scope__") in
   let file_runtime = Option.value_map file_picker ~default:production_runtime
     ~f:(fun host -> host.File_picker_host.runtime) in
+  let initial_ui = match content_picker, file_picker with
+    | Some _, Some _ -> invalid_arg "Only one initial picker host is allowed"
+    | Some host, None -> host.Content_picker_host.initial_ui
+    | None, Some host -> host.File_picker_host.initial_ui
+    | None, None -> Ui_state.create ~smear_enabled ?buffer_presentation ?report
+        ~source_attached:(Option.is_some source) controller in
+  let current_ui = ref initial_ui in
+  let preview = Ches_file_preview.Provider.create ~buffer:(fun ~path ->
+    Ches_file_preview.Buffer_snapshot.lookup (Ui_state.session !current_ui) ~path) () in
+  let preview_pumping = ref false in
+  let preview_revision = ref None in
+  let clear_preview () =
+    preview_revision := None;
+    Ches_file_preview.Provider.clear preview;
+    Option.iter (Ui_state.file_picker !current_ui) ~f:File_picker_tile.clear_preview in
+  let synchronize_preview model =
+    (* Replacements must release the old screen payload as well as provider work. *)
+    let old_picker = Ui_state.file_picker !current_ui in
+    let picker = if Ui_state.exited model then None else Ui_state.file_picker model in
+    if not (Option.equal phys_equal old_picker picker) then (
+      clear_preview ());
+    current_ui := model;
+    let selected_model = Option.map picker ~f:(fun picker ->
+      Ches_file_picker.Interaction.model (File_picker_tile.session picker)) in
+    let expected = Ches_file_preview.Provider.follow preview selected_model in
+    let revision = Option.bind expected ~f:(fun request ->
+      Option.bind (Ches_app.Session.find_resource (Ui_state.session model)
+        (Ches_file_picker.Model.Candidate.Id.to_string request.selected))
+        ~f:(fun (id, controller) -> match Ches_app.Controller.kind controller with
+          | Directory -> None
+          | File -> Some (id, Ches_core.Editor.revision (Ches_app.Controller.editor controller)))) in
+    let refresh = match !preview_revision, expected with
+      | Some (previous, old_revision), Some expected ->
+        Ches_file_preview.Model.equal_request previous expected
+        && not (Option.equal
+          (fun (id, revision) (other_id, other_revision) ->
+            Ches_app.Buffer_id.equal id other_id && revision = other_revision)
+          old_revision revision)
+      | _ -> false in
+    let expected = if refresh then Ches_file_preview.Provider.follow ~refresh:true preview selected_model
+      else expected in
+    preview_revision := Option.map expected ~f:(fun expected -> expected, revision);
+    Option.iter picker ~f:(fun picker ->
+      File_picker_tile.expect_preview picker expected;
+      Option.iter (Ches_file_preview.Provider.snapshot preview) ~f:(fun snapshot ->
+        ignore (File_picker_tile.install_preview picker snapshot : bool)));
+    model in
   let picker_turn_scheduled = ref false in
   let active_file_session = ref (Option.bind file_picker ~f:(fun host ->
     Option.map (Ui_state.file_picker host.File_picker_host.initial_ui)
@@ -115,18 +162,14 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
   in
   let model, inject =
     Bonsai.state_machine_with_input
-      ~default_model:
-         (match content_picker, file_picker with
-          | Some _, Some _ -> invalid_arg "Only one initial picker host is allowed"
-          | Some host, None -> host.Content_picker_host.initial_ui
-          | None, Some host -> host.File_picker_host.initial_ui
-           | None, None -> Ui_state.create ~smear_enabled ?buffer_presentation ?report
-               ~source_attached:(Option.is_some source) controller)
+       ~default_model:initial_ui
       ~apply_action:(fun context input model inputs ->
         match input with
-        | Inactive -> model
+         | Inactive -> clear_preview (); model
         | Active ({ Dimensions.width; height }, write_to_tty) ->
-          let was_running = not (Ui_state.exited model) in
+           let was_running = not (Ui_state.exited model) in
+           if List.exists inputs ~f:(function Ui_state.Input.Resize -> true | _ -> false)
+           then clear_preview ();
           let activate_pickers model =
             let model, activate_files = Ui_state.take_file_picker_activation model in
             let model = if not activate_files then model else
@@ -140,9 +183,25 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
                 ~root:project_root ~width ~height with
               | Ok model -> model
               | Error error -> Ui_state.with_notice ~source:"content picker" model (Error.to_string_hum error) in
-            model
+             synchronize_preview model
           in
-          let model, status = Ui_state.apply_all ~after_step:activate_pickers model ~width ~height inputs in
+           let model, status = Ui_state.apply_all ~after_step:activate_pickers model ~width ~height inputs in
+           let model = synchronize_preview model in
+           if not !preview_pumping && Option.is_some (Ches_file_preview.Provider.snapshot preview)
+           then (
+             preview_pumping := true;
+             let rec pump () =
+               (* Capture BEFORE snapshot/injection: injection yields and may itself
+                  change selection. Notifications retain no queued payloads. *)
+               let changed = Ches_file_preview.Provider.changed preview in
+               match Ches_file_preview.Provider.snapshot preview with
+               | None -> preview_pumping := false; Effect.Ignore
+               | Some snapshot ->
+                 let%bind.Effect () = Bonsai.Apply_action_context.inject context
+                   [ Ui_state.Input.File_preview snapshot ] in
+                 let%bind.Effect () = Effect.of_deferred_thunk (fun () -> changed) in
+                 pump () in
+             Bonsai.Apply_action_context.schedule_event context (pump ()));
           active_file_session := Option.map (Ui_state.file_picker model) ~f:File_picker_tile.session;
           active_line_session := Option.map (Ui_state.line_picker model) ~f:Line_picker_tile.session;
           active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
@@ -210,7 +269,8 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
       (Effect.of_thunk (fun () ->
         Option.iter !active_file_session ~f:(fun session ->
           Ches_file_picker.Interaction.cancel session ~release:(fun () -> ()));
-        Ches_file_picker_host.Runtime.cancel file_runtime))) graph;
+         clear_preview ();
+         Ches_file_picker_host.Runtime.cancel file_runtime))) graph;
   Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
     ~on_deactivate:(Bonsai.return
       (Effect.of_thunk (fun () ->

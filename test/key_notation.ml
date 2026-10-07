@@ -1,7 +1,7 @@
 open! Core
 open Ches_input
 
-(* Keys in a vim-like notation: [<Esc>], [<CR>], [<Tab>], [<BS>], [<Del>], and [<C-x>]
+(* Keys in a vim-like notation: [<Esc>], [<CR>], [<Tab>], [<S-Tab>], [<BS>], [<Del>], and [<C-x>]
    for Ctrl and a lowercase letter; any other code point, including a literal space,
    is that character. *)
 let keys s : Keymap.Input.t list =
@@ -9,6 +9,7 @@ let keys s : Keymap.Input.t list =
     [ "<Esc>", Key.Escape
     ; "<CR>", Enter
     ; "<Tab>", Tab
+    ; "<S-Tab>", Shift_tab
     ; "<BS>", Backspace
     ; "<Del>", Delete
     ]

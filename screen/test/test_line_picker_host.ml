@@ -15,6 +15,30 @@ let rec finish t = if Lines.busy (session t) then finish (work t) else t
 let editor t = Controller.editor (Ui_state.controller t)
 let text t = Text_buffer.to_string (Editor.text (editor t))
 
+let%test_unit "Tab/Shift-Tab navigate duplicate lines independently of query and jump selection" =
+  let initial = Helpers.ui (String.concat ~sep:"\n" (List.init 40 ~f:(fun _ -> "same"))) in
+  let t = run initial " flsame" |> finish in
+  let t = run t "<S-Tab>" in
+  assert ([%equal: int option] (Lines.selected (session t)) (Some 1));
+  let t = run t (String.concat (List.init 45 ~f:(fun _ -> "<Tab>"))) in
+  assert ([%equal: int option] (Lines.selected (session t)) (Some 40));
+  assert (String.equal (Lines.query (session t)) "same");
+  (* The rendered viewport reveals the selected last line, not just its model index. *)
+  assert (String.is_substring (Frame.to_string (Frame.render t ~width ~height)) ~substring:"> 40  same");
+  let t = run t "<S-Tab><C-p><C-n>" in
+  assert ([%equal: int option] (Lines.selected (session t)) (Some 39));
+  let t = run t "<BS>" |> finish in
+  assert (String.equal (Lines.query (session t)) "sam");
+  assert ([%equal: int option] (Lines.selected (session t)) (Some 39));
+  let t = run t "<CR>" in
+  assert (Option.is_none (Ui_state.line_picker t));
+  assert (Editor.cursor (editor t) = Text_buffer.line_start (Editor.text (editor t)) 38);
+  assert (String.equal (text initial) (text t));
+  let t = run t " flzzzz" |> finish |> fun t -> run t "<Tab><S-Tab><CR>" in
+  assert (Option.is_some (Ui_state.line_picker t) && Option.is_none (Lines.selected (session t)));
+  assert (Option.is_none (Ui_state.line_picker (run t "<Esc>")))
+;;
+
 let%test_unit "live line binding: unsaved snapshot, bounded turns, Unicode jump and viewport reveal" =
   let initial = Helpers.ui (String.concat ~sep:"\n" (List.init 300 ~f:(sprintf "row %d"))) in
   let initial = run initial "GA<Tab>界éneedle<Esc>gg" in
@@ -67,7 +91,7 @@ let%test_unit "line float zen, duplicates, no-match Enter, exact cancel and pale
 let%test_unit "line host focus/paste/resize/reopen isolation and shared one-float policy" =
   let initial = run (Helpers.ui "untouched") " vo" in
   let t = Ui_state.open_line_picker initial ~width ~height |> finish in
-  let t = run t "<Tab>" in
+  let t = run t "<Esc>" in
   assert (Ches_tile.View_id.equal (Ui_state.focused_view t ~width ~height) Problems_tile.id);
   let t = Ui_state.open_line_picker t ~width ~height |> finish in
   let t = apply t (Helpers.paste "un<CR>touched") |> finish in

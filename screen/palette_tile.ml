@@ -4,7 +4,7 @@ open Ches_palette
 module Selection = Ches_tile.Navigation.Selection
 
 let id = Ches_tile.View_id.of_string "palette"
-let spec = Ches_tile.Spec.text_input id ~title:"Commands"
+let spec = Ches_tile.Spec.result_picker id ~title:"Commands"
 
 type t =
   { palette : (Ches_tile.View_id.t Palette.t[@sexp.opaque])
@@ -53,13 +53,13 @@ let interpret (keys : Key.t list) : action Ches_tile.Content_key.t =
   | [ Char c ] -> Action (Event (Insert c))
   | [ Backspace ] -> Action (Event Backspace)
   | [ Ctrl ('w' | 'h') ] -> Action (Event Delete_word)
-  | [ Ctrl 'n' ] -> Action (Event Next)
-  | [ Ctrl 'p' ] -> Action (Event Previous)
+  | [ Tab | Ctrl 'n' ] -> Action (Event Next)
+  | [ Shift_tab | Ctrl 'p' ] -> Action (Event Previous)
   | [ Enter ] -> Action Accept
   | _ -> Unbound
 ;;
 
-let hint = "Type to search; Ctrl-w deletes a word, Ctrl-n/p select, Enter runs"
+let hint = "Type to search; Ctrl-w deletes a word, Tab/Shift-Tab or Ctrl-n/p select, Enter runs"
 let update t ~rows event = fit { t with palette = Palette.update t.palette event } ~rows
 let prompt = Picker_text.prompt
 
@@ -139,7 +139,7 @@ let render ?notice t ~width ~rows : Tile_shell.Content.t =
            ~pending:None
            ~default:
              (sprintf
-                "%d/%d | Enter run, Ctrl-n/p, Esc"
+                "%d/%d | Enter run, Tab/Shift-Tab, Ctrl-n/p, Esc"
                 (if count = 0 then 0 else t.view.index + 1)
                 count))
   ; body

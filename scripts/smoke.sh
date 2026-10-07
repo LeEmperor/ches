@@ -40,8 +40,8 @@ if [ ! -x "$ches" ]; then
 fi
 export LC_ALL=C.UTF-8
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke.XXXXXX")
-screens=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke-screens.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp/opencode}/ches-smoke.XXXXXX")
+screens=$(mktemp -d "${TMPDIR:-/tmp/opencode}/ches-smoke-screens.XXXXXX")
 # A per-run socket prevents another checkout's smoke run from sharing this session.
 tmux_cmd=(tmux -S "$work/tmux.sock" -f /dev/null)
 session=smoke
@@ -1919,13 +1919,16 @@ expect_screen "No matching command"
 expect_palette 20 13 80 14
 keys C-c
 expect_screen "Escape returns to the editor"
-keys Tab
+keys Tab BTab
+expect_screen "No matching command"
+expect_palette 20 13 80 14
+keys Escape
 expect_restored "$screens/palette-workspace-before.ansi"
 save_screen "palette-workspace-after"
 
 keys Space c c
 type_text 'tile'
-keys C-n C-n C-n
+keys Tab Tab Tab Tab BTab
 expect_screen "4/18 | Enter run"
 expect_palette 20 13 80 14
 resize 50 12

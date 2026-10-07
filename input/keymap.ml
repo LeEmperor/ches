@@ -308,7 +308,7 @@ let feed_insert_key t (key : Key.t) =
          | Literal_tab -> [ Insert_text "\t" ]
          | Spaces width -> [ Insert_soft_tab width ])
       | Enter -> [ Insert_newline ]
-      | Char _ | Ctrl _ ->
+      | Char _ | Ctrl _ | Shift_tab ->
         (match Key.text key with
          | Some text -> [ Insert_text text ]
          | None -> [])

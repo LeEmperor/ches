@@ -9,8 +9,9 @@
       modifier.
     - [Char] is never a control character (U+0000–U+001F, U+007F–U+009F). Keys that
       would produce one are [Enter], [Tab], [Backspace], [Escape], or [Ctrl].
-    - Ctrl plus an ASCII letter is [Ctrl] of the {i lowercase} letter, whether or not
-      Shift was held: Ctrl-R is [Ctrl 'r'].
+     - Ctrl plus an ASCII letter is [Ctrl] of the {i lowercase} letter, whether or not
+       Shift was held: Ctrl-R is [Ctrl 'r'].
+     - Shift-Tab is [Shift_tab], distinct from the text-producing [Tab].
     - Keys with no constructor here (arrows, function keys, Meta combinations, ...)
       are dropped by the adapter. They therefore neither run commands nor cancel a
       pending sequence.
@@ -24,6 +25,7 @@ type t =
   | Ctrl of char
   | Enter
   | Tab
+  | Shift_tab (** Shift-Tab, distinct from text-producing Tab. *)
   | Backspace
   | Delete
   | Escape

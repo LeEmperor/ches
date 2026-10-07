@@ -17,6 +17,45 @@ let session t = Content_picker_tile.session (picker t)
 let text t = Ches_core.Text_buffer.to_string
   (Ches_core.Editor.text (Ches_app.Controller.editor (Ui_state.controller t)))
 
+let%test_unit "content Tab routing, bounded selection, viewport, query invalidation and acceptance" =
+  let t = open_picker (Helpers.ui "unchanged") 70 |> fun t -> run t "needle" in
+  let hits = List.init 40 ~f:(fun i ->
+    let candidate = Model.Candidate.create ~root:"/project" ~relative_path:(sprintf "file%02d" i)
+      |> Or_error.ok_exn in
+    { Model.candidate; line = i + 1; start_byte = 0; end_byte = 6; text = "needle" }) in
+  let install t n =
+    let query = Model.query (session t) in
+    let hits = List.map hits ~f:(fun hit -> { hit with Model.end_byte = String.length query }) in
+    let snapshot = { Model.request = request n query; hits
+      ; status = Complete { truncated = false } } in
+    Content_picker_tile.expect (picker t) snapshot.request;
+    apply t [ Content_picker_snapshot snapshot ] in
+  let t = install t 71 |> fun t -> run t "<S-Tab>" in
+  assert ((Content_picker_tile.view (picker t)).index = 0);
+  let t = run t (String.concat (List.init 45 ~f:(fun _ -> "<Tab>"))) in
+  let view = Content_picker_tile.view (picker t) in
+  let layout = Option.value_exn (Ui_state.content_picker_layout t ~width ~height) in
+  assert (view.index = 39 && view.top > 0 && view.index < view.top + layout.content.height - 2);
+  assert (String.equal (Model.query (session t)) "needle");
+  let t = run t "<S-Tab><C-p><C-n>" in
+  assert ((Content_picker_tile.view (picker t)).index = 38);
+  let t = run t "<BS><Tab><S-Tab><CR>" in
+  assert (Option.is_some (Ui_state.content_picker t) && Model.pending (session t));
+  assert (String.equal (Model.query (session t)) "needl");
+  assert (List.is_empty (snd (Ui_state.take_content_requests t)));
+  let t = install t 72 |> fun t -> run t "<Tab><S-Tab>" in
+  let expected = Option.value_exn (Model.selected (session t)) in
+  let t = run t "<CR>" in
+  assert (Option.is_none (Ui_state.content_picker t));
+  let _, intents = Ui_state.take_content_requests t in
+  assert (List.length intents = 1 && (List.hd_exn intents).line = expected.line);
+  assert (String.equal (List.hd_exn intents).path (Model.Candidate.path expected.candidate));
+  assert (String.equal (text t) "unchanged");
+  let t = open_picker t 73 |> fun t -> run t "<Tab><S-Tab><CR>" in
+  assert (Option.is_some (Ui_state.content_picker t) && Option.is_none (Model.selected (session t)));
+  assert (Option.is_none (Ui_state.content_picker (run t "<Esc>")))
+;;
+
 let%test_unit "content shared float: zen, workspace/scroll preservation, cursor and exact cancel" =
   List.iter [ false; true ] ~f:(fun zen ->
     let initial = Helpers.ui (String.concat ~sep:"\n" (List.init 100 ~f:(sprintf "line %d"))) in
@@ -52,7 +91,7 @@ let%test_unit "content paste isolation, resize and focus: no late paste into doc
   assert (String.equal (Model.query (session t)) "needle tail");
   let t = Helpers.run ~width:14 ~height:5 t [ Resize ] in
   assert (String.equal (Model.query (session t)) "needle tail");
-  let t = run t "<Tab>" in
+  let t = run t "<Esc>" in
   assert (!releases = 1 && Ches_tile.View_id.equal (Ui_state.focused_view t ~width ~height) Problems_tile.id);
   let t = open_picker t 3 ~release:(fun () -> incr releases) in
   let t = apply t (Paste_start :: Helpers.keys "OLD") in
@@ -83,7 +122,7 @@ let%test_unit "content paste isolation, resize and focus: no late paste into doc
   let noticed = run t "<C-c>" in
   assert (Option.is_some (Ui_state.content_picker noticed));
   assert (String.equal (Option.value_exn (Ui_state.capture_notice noticed)) "Escape returns to the editor");
-  List.iter [ "<Esc>"; "<Tab>" ] ~f:(fun key ->
+  List.iter [ "<Esc>" ] ~f:(fun key ->
     let t = run t key in
     assert (Option.is_none (Ui_state.content_picker t) && String.equal (text t) "untouched"))
 ;;

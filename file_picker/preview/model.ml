@@ -1,0 +1,1 @@
+include Ches_file_preview_model.Model

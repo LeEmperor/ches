@@ -28,6 +28,7 @@ module Input = struct
     | Resize
     | Source of Ches_error.Source_event.t
     | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
+    | File_preview of Ches_file_preview_model.Model.snapshot
     | File_picker_work of Ches_file_picker.Model.Discovery.request
     | File_picker_accept of View_id.t Ches_file_picker.Model.Request.t
     | Content_picker_accept of (View_id.t Ches_content_picker.Model.intent [@sexp.opaque])
@@ -353,7 +354,12 @@ let picker_placement ~width ~height =
 ;;
 
 let file_picker_layout t ~width ~height =
-  Option.bind t.file_picker ~f:(fun _ -> picker_placement ~width ~height)
+  Option.bind t.file_picker ~f:(fun _ ->
+    Floating.layout
+      ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
+      ~preferred:{ width = (if width >= 104 then 140 else 80); height = 14 }
+      ~minimum:{ width = 14; height = 5 }
+      ~policy:{ Tile_shell.Policy.minor with min_content_height = 3 })
 ;;
 
 let line_picker_layout t ~width ~height =
@@ -1450,7 +1456,7 @@ let accept_palette t ~width ~height palette =
 ;;
 
 (* A key typed into the open palette. Every character is query text (it accepts text),
-   so only Escape, Tab, and Ctrl-c are the host's. *)
+   so only Escape and Ctrl-c are the host's; Tab/Shift-Tab reach result navigation. *)
 let feed_palette t ~width ~height palette key =
   let host, (decision : _ Host.Decision.t) =
     Host.key
@@ -1695,6 +1701,10 @@ and apply_running t ~width ~height (input : Input.t) =
   | File_picker_snapshot snapshot ->
     Option.iter t.file_picker ~f:(fun picker -> ignore (File_picker_tile.install picker snapshot : bool));
     t, Running
+  | File_preview snapshot ->
+    Option.iter t.file_picker ~f:(fun picker ->
+      ignore (File_picker_tile.install_preview picker snapshot : bool));
+    t, Running
   | File_picker_work request ->
     Option.iter t.file_picker ~f:(fun picker ->
       let current = (Ches_file_picker.Model.discovery
@@ -1709,12 +1719,14 @@ and apply_running t ~width ~height (input : Input.t) =
 and apply_regular t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = match input with
-    | Resize -> synchronize t ~width ~height
+    | Resize ->
+      Option.iter t.file_picker ~f:File_picker_tile.clear_preview;
+      synchronize t ~width ~height
     | _ -> refit t ~width ~height in
   match input with
   | Resize -> t, Running
   | Source event -> receive_all t ~width ~height [ event ], Running
-    | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
+     | File_preview _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
   | Animation_tick now ->
     let dt =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
@@ -1750,7 +1762,7 @@ and apply_regular t ~width ~height (input : Input.t) =
         | Key key when not (has_document t) ->
           feed t ~width ~height (Key key)
         | Key key -> route ~width ~height t key
-       | Animation_tick _ | Resize | Source _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
+       | Animation_tick _ | Resize | Source _ | File_preview _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
     in
     let t = release_held t ~width ~height in
     let t = refit t ~width ~height in

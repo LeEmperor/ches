@@ -24,6 +24,69 @@ let open_picker ?(release = fun () -> ()) t discovery =
 ;;
 let text t = Text_buffer.to_string (Editor.text (Controller.editor (Ui_state.controller t)))
 
+let%test_unit "file-only responsive floating geometry and screen resize delivery teardown" =
+  let t = open_picker (Helpers.ui "untouched") (snapshot 90 [ "a.ml" ])
+    |> fun t -> finish t 90 in
+  List.iter [ 14; 80; 100; 104; 120; 180 ] ~f:(fun width ->
+    let placement = Option.value_exn (Ui_state.file_picker_layout t ~width ~height) in
+    let left, right = File_picker_tile.columns ~width:placement.content.width in
+    assert (left > 0);
+    assert (Bool.equal (Option.is_some right) (width >= 104));
+    let cursor = Option.value_exn (Ui_state.minor_cursor t ~width ~height) in
+    let x, _, _ = cursor in
+    assert (x >= placement.content.x && x < placement.content.x + left));
+  let model = Interaction.model (session t) in
+  let request : Ches_file_preview_model.Model.request =
+    { session = (Model.discovery model).request; selected = Option.value_exn (Model.selected model)
+    ; generation = 1 } in
+  let delivery : Ches_file_preview_model.Model.snapshot = { request; state = Missing } in
+  File_picker_tile.expect_preview (picker t) (Some request);
+  let t = apply t [ File_preview delivery ] in
+  assert (Option.is_some (File_picker_tile.preview (picker t)));
+  let t = apply t [ Resize; File_preview delivery ] in
+  assert (Option.is_none (File_picker_tile.preview (picker t)));
+  let previous = picker t in
+  let t = open_picker t (snapshot 91 [ "a.ml" ]) |> fun t -> finish t 91 in
+  assert (Option.is_none (File_picker_tile.preview previous));
+  let t = apply t [ File_preview delivery ] in
+  assert (Option.is_none (File_picker_tile.preview (picker t)));
+  let t, requests = Ui_state.take_file_requests t in
+  assert (List.is_empty requests && String.equal (text t) "untouched");
+  let t = fst (Ui_state.apply_all t ~width:13 ~height:5 [ Resize; File_preview delivery ]) in
+  assert (Option.is_none (Ui_state.file_picker t))
+;;
+
+let%test_unit "Tab/Shift-Tab route, clamp, reveal, preserve query and accept selected file" =
+  let paths = List.init 40 ~f:(sprintf "sub/file%02d.ml") in
+  let t = open_picker (Helpers.ui "unchanged") (snapshot 70 paths) |> fun t -> finish t 70 in
+  let t = run t "sub" |> fun t -> finish t 70 in
+  let selected t = Model.selected (Interaction.model (session t)) in
+  let first = selected t in
+  let t = run t "<S-Tab><S-Tab>" in
+  assert ([%equal: Model.Candidate.Id.t option] first (selected t));
+  let t = run t (String.concat (List.init 45 ~f:(fun _ -> "<Tab>"))) in
+  let view = File_picker_tile.view (picker t) in
+  assert (view.index = 39 && view.top > 0);
+  let layout = Option.value_exn (Ui_state.file_picker_layout t ~width ~height) in
+  assert (view.index >= view.top && view.index < view.top + layout.content.height - 2);
+  assert (String.equal (Interaction.query (session t)) "sub");
+  let t = run t "<S-Tab><C-p><C-n>" in
+  assert ((File_picker_tile.view (picker t)).index = 38);
+  let keep = selected t in
+  let t = run t "/" |> fun t -> finish t 70 in
+  assert ([%equal: Model.Candidate.Id.t option] keep (selected t));
+  assert (String.equal (Interaction.query (session t)) "sub/");
+  let expected = Option.value_exn (Model.accept (Interaction.model (session t))) in
+  let t = run t "<CR>" in
+  assert (Option.is_none (Ui_state.file_picker t));
+  let _, intents = Ui_state.take_file_requests t in
+  assert (String.equal (List.hd_exn intents).path expected.path && List.length intents = 1);
+  assert (String.equal (text t) "unchanged");
+  let t = open_picker t (snapshot 71 []) |> fun t -> finish t 71 |> fun t -> run t "<Tab><S-Tab><CR>" in
+  assert (Option.is_some (Ui_state.file_picker t) && Option.is_none (selected t));
+  assert (Option.is_none (Ui_state.file_picker (run t "<Esc>")))
+;;
+
 let%test_unit "shared floating host: zen/workspace, query, scroll, cursor and exact restoration" =
   List.iter [ false; true ] ~f:(fun zen ->
     let initial = Helpers.ui (String.concat ~sep:"\n" (List.init 100 ~f:(sprintf "line %d"))) in
@@ -107,7 +170,7 @@ let%test_unit "host paste sanitization and identity selection survive incrementa
 let%test_unit "focus return, one transient, fitting and undersized resize, interrupted paste" =
   let initial = run (Helpers.ui "untouched") " vo" in
   let t = open_picker initial (snapshot 3 [ "a"; "b" ]) |> fun t -> finish t 3 in
-  let t = run t "<Tab>" in
+  let t = run t "<Esc>" in
   assert (Ches_tile.View_id.equal (Ui_state.focused_view t ~width ~height) Problems_tile.id);
   let t = open_picker t (snapshot 4 [ "a"; "b" ]) |> fun t -> finish t 4 in
   let t = run t "a" |> fun t -> finish t 4 in

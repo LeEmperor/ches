@@ -79,7 +79,8 @@ let key t (key : Key.t) ~lookup ~content ~escape ~hint : t * _ Decision.t =
      | Some a -> action a
      | None -> t, Return)
   | Ctrl 'c', _ -> notice "Escape returns to the editor"
-  | Tab, _ -> t, Return
+  | Tab, _ when not (spec t t.focus).accepts_tab -> t, Return
+  | Shift_tab, _ when not (spec t t.focus).accepts_tab -> t, Handled
   | _, first :: _ when Key.equal first t.leader ->
     let keys = t.pending @ [ key ] in
     (match (lookup keys : Bindings.lookup) with

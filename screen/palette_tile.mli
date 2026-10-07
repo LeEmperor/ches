@@ -42,8 +42,8 @@ type action =
 
 (** Characters, including Space and [j]/[k], edit the query; Backspace deletes a
     character, and Ctrl-w or Ctrl-h (most terminals' Ctrl-Backspace) a word;
-    Ctrl-n and Ctrl-p select the next and previous result; Enter accepts. Escape, Tab,
-    and Ctrl-c are the host's ({!Ches_tile.Host.key}). *)
+    Tab/Ctrl-n and Shift-Tab/Ctrl-p select the next and previous result; Enter
+    accepts. Escape and Ctrl-c are the host's ({!Ches_tile.Host.key}). *)
 val interpret : Key.t list -> action Ches_tile.Content_key.t
 
 val hint : string

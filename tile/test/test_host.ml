@@ -26,6 +26,31 @@ let keys s =
 
 let all _ = true
 
+let%test_unit "Tab delegation is explicit, not implied by accepting text or paste" =
+  List.iter
+    [ Spec.read_only report ~title:"Report", false
+    ; Spec.text_input report ~title:"Prompt", false
+    ; Spec.result_picker report ~title:"Results", true
+    ] ~f:(fun (spec, delegates) ->
+      let t = Host.create ~leader:(Key.char ' ') ~primary:document
+        [ Spec.primary document ~title:"Document"; spec ] |> fun t -> Host.focus t report in
+      let route key = snd (Host.key t key ~lookup:(fun _ -> Bindings.Unbound)
+        ~content:(function
+          | [ Key.Tab ] -> Content_key.Action `Next
+          | [ Key.Shift_tab ] -> Action `Previous
+          | _ -> Unbound)
+        ~escape:None ~hint:"hint") in
+      assert (match route Key.Tab with
+        | Content `Next -> delegates
+        | Return -> not delegates
+        | _ -> false);
+      assert (match route Key.Shift_tab with
+        | Content `Previous -> delegates
+        | Handled -> not delegates
+        | _ -> false);
+      assert (match route Key.Escape with Return -> true | _ -> false))
+;;
+
 (* A content adapter that knows only [x] and the shared list motions, and closes
    something on Escape when [open_] is set. *)
 let content keys : [ `X | `Close | `Move of Navigation.Motion.t ] Content_key.t =

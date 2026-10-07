@@ -27,7 +27,7 @@ let%expect_test "file tile exposes root, status, partial results, errors, limits
     ] ~f:(fun (status, paths, expected) ->
       let t = File_picker_tile.create ~token:() ~discovery:(snapshot status paths) in
       drain t;
-      let content = File_picker_tile.render t ~width:100 ~rows:4 in
+      let content = File_picker_tile.render t ~width:180 ~rows:4 in
       assert (String.equal content.title "Files | /project\\x0Aroot");
       assert (String.is_prefix (row_text (List.nth_exn content.body 1)) ~prefix:expected);
       assert (String.is_substring (Option.value_exn content.footer).text ~substring:expected);
@@ -37,7 +37,7 @@ let%expect_test "file tile exposes root, status, partial results, errors, limits
        | _ -> ());
       File_picker_tile.update t ~rows:4 (Paste "zzzz");
       drain t;
-      let content = File_picker_tile.render t ~width:100 ~rows:4 in
+      let content = File_picker_tile.render t ~width:180 ~rows:4 in
       assert (List.is_empty (Model.results (Interaction.model (File_picker_tile.session t))));
       assert (String.is_substring (Option.value_exn content.footer).text ~substring:"0/0 matches"));
   [%expect {| |}]

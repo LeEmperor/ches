@@ -7,7 +7,7 @@ for implementation/validation status and the
 [command palette reference](editor_reference.md#command-palette) for current usage.
 
 Current directory-workspace integration (2026-10-07): the default catalog now has
-52 entries, including document-line search, tabs, directory navigation/marks/placement and missing-path
+54 entries, including all three pickers, tabs, directory navigation/marks/placement and missing-path
 recreation. **Save buffer** targets the invoking file or directory via Session;
 directory save applies filesystem edits directly, including permanent deletion.
 The palette remains Normal-only and floating. Commands derive configured shortcuts;
@@ -15,6 +15,9 @@ there is no save-all, open-path or interactive save-as action. Current user beha
 is documented in [editor reference](editor_reference.md#command-palette) and
 [directory workspace reference](directory_workspace.md). Historical stage counts
 and single-document observations below describe their implementation milestones.
+Follow-up navigation now uses Tab/Shift-Tab (or Ctrl-n/p) to select results;
+Escape cancels and Enter runs the selected command. Historical Tab-closes claims
+below describe earlier milestones, superseded by phases 10–13 of `FILE_PICKER_PLAN.md`.
 
 Status: stages 1–5 software-complete (docked milestone; floating presentation is later
 work). Human feedback on the terminal UI is pending. Stage 3, the host extensions,

@@ -9,7 +9,7 @@ module Model = Ches_file_picker.Model
 module Expect_test_config = Async.Expect_test_config
 
 let%expect_test "frontend chains async turns and consumes only after release, without a live binding" =
-  let root = Filename_unix.realpath (Filename_unix.temp_dir "ches-picker-ui" "") in
+  let root = Filename_unix.realpath (Filename_unix.temp_dir ~in_dir:"/tmp/opencode" "ches-picker-ui" "") in
   List.iter (List.init 300 ~f:(fun n -> sprintf "file%03d.ml" n)) ~f:(fun p ->
     Out_channel.write_all (root ^ "/" ^ p) ~data:"");
   let runtime = Runtime.create () in
@@ -44,6 +44,15 @@ let%expect_test "frontend chains async turns and consumes only after release, wi
     cursor_output := output;
     assert (String.is_substring output ~substring:"file000.ml");
     assert (not (String.is_substring output ~substring:"Filtering..."));
+    let selected () = Model.selected (Interaction.model session) in
+    let first = selected () in
+    Bonsai_term_test.send_event handle (Key_press { key = Tab; mods = [] });
+    Handle.recompute_view handle;
+    assert (not ([%equal: Model.Candidate.Id.t option] first (selected ())));
+    Bonsai_term_test.send_event handle (Key_press { key = Tab; mods = [ Shift ] });
+    Handle.recompute_view handle;
+    assert ([%equal: Model.Candidate.Id.t option] first (selected ()));
+    assert (String.is_empty (Interaction.query session) && not (Interaction.closed session));
     List.iter (String.to_list "file299") ~f:(fun c ->
       Bonsai_term_test.send_event handle (Key_press { key = ASCII c; mods = [] }));
     let%bind result = Clock_ns.with_timeout (Time_ns.Span.of_int_sec 10) (settle ()) in
@@ -55,6 +64,9 @@ let%expect_test "frontend chains async turns and consumes only after release, wi
     cursor_output := !cursor_output ^ output;
     assert (String.is_substring output ~substring:"file299.ml");
     assert (not (String.is_substring output ~substring:"Filtering..."));
+    (* Singleton navigation must not close the float or change acceptance. *)
+    Bonsai_term_test.send_event handle (Key_press { key = Tab; mods = [] });
+    Bonsai_term_test.send_event handle (Key_press { key = Tab; mods = [ Shift ] });
     Bonsai_term_test.send_event handle (Key_press { key = Enter; mods = [] });
     Handle.recompute_view handle;
     assert ([%equal: string list] !consumed [ root ^ "/file299.ml" ]);
@@ -115,12 +127,23 @@ let%expect_test "frontend deactivation drops retained file results and rejects l
     let handle = Bonsai_term_test.create_handle ~initial_dimensions:{ width = 80; height = 24 }
       component in
     Handle.recompute_view handle;
+    let picker = Option.value_exn (Ui_state.file_picker !state) in
+    let rec wait_preview () =
+      Handle.recompute_view handle;
+      match File_picker_tile.preview picker with
+      | Some { state = Ches_file_preview_model.Model.Empty _; _ } -> return ()
+      | _ -> let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 2) in wait_preview () in
+    let%bind result = Clock_ns.with_timeout (Time_ns.Span.of_int_sec 10) (wait_preview ()) in
+    assert (match result with `Result () -> true | `Timeout -> false);
+    let delivered = Option.value_exn (File_picker_tile.preview picker) in
     Bonsai_term_test.send_event handle (Key_press { key = ASCII 'x'; mods = [] });
     Handle.recompute_view handle;
     assert (Interaction.busy session);
     Bonsai.Expert.Var.set active false;
     Handle.recompute_view handle;
     assert (Interaction.closed session);
+    assert (Option.is_none (File_picker_tile.preview picker));
+    assert (not (File_picker_tile.install_preview picker delivered));
     assert (not (Interaction.busy session));
     assert (List.is_empty (Model.discovery (Interaction.model session)).candidates);
     assert (List.is_empty (Model.results (Interaction.model session)));

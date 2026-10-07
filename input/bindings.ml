@@ -36,7 +36,7 @@ let is_count_start key =
 let is_reserved (key : Key.t) =
   match key with
   | Escape | Ctrl 'c' -> true
-  | Char _ | Ctrl _ | Enter | Tab | Backspace | Delete -> false
+  | Char _ | Ctrl _ | Enter | Tab | Shift_tab | Backspace | Delete -> false
 ;;
 
 let problems_of_sequence keys =

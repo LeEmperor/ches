@@ -56,7 +56,7 @@ let%expect_test "content frontend deactivation closes session and rejects late s
 ;;
 
 let%expect_test "real rg content frontend: scheduling, edits, raw byte intent and released cursor" =
-  let root = Filename_unix.realpath (Filename_unix.temp_dir "ches-content-ui" "") in
+  let root = Filename_unix.realpath (Filename_unix.temp_dir ~in_dir:"/tmp/opencode" "ches-content-ui" "") in
   List.iter (List.init 300 ~f:(fun n -> sprintf "file%03d.ml" n)) ~f:(fun p ->
     Out_channel.write_all (root ^ "/" ^ p) ~data:"界\tneedle needle\n");
   let runtime = Runtime.create
@@ -93,6 +93,13 @@ let%expect_test "real rg content frontend: scheduling, edits, raw byte intent an
     let%bind () = settle () in
     assert (List.length (Model.snapshot session).hits = 600);
     assert (List.for_all (Model.snapshot session).hits ~f:(fun hit -> hit.start_byte = 4 || hit.start_byte = 11));
+    send Tab;
+    Handle.recompute_view handle;
+    assert ((Option.value_exn (Model.selected session)).start_byte = 11);
+    Bonsai_term_test.send_event handle (Key_press { key = Tab; mods = [ Shift ] });
+    Handle.recompute_view handle;
+    assert ((Option.value_exn (Model.selected session)).start_byte = 4);
+    assert (String.equal (Model.query session) "needle" && not (Model.closed session));
     send (ASCII 'x');
     let%bind () = settle () in
     assert (List.is_empty (Model.snapshot session).hits);
@@ -105,10 +112,11 @@ let%expect_test "real rg content frontend: scheduling, edits, raw byte intent an
     let output = [%expect.output] in
     assert (String.is_substring output ~substring:"ON DISK");
     assert (String.is_substring output ~substring:"(kind Bar)");
+    send Tab;
     send Enter;
     Handle.recompute_view handle;
     let intent = List.hd_exn !consumed in
-    assert (List.length !consumed = 1 && intent.line = 1 && intent.byte_column = 4);
+    assert (List.length !consumed = 1 && intent.line = 1 && intent.byte_column = 11);
     assert (String.equal intent.literal "needle" && String.equal intent.expected_text "界\tneedle needle\n");
     assert (String.is_prefix intent.path ~prefix:(root ^ "/file"));
     Handle.recompute_view handle;

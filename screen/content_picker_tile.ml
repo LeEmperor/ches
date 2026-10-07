@@ -2,7 +2,7 @@ open! Core
 open Ches_content_picker
 module Selection = Ches_tile.Navigation.Selection
 let id = Ches_tile.View_id.of_string "content-picker"
-let spec = Ches_tile.Spec.text_input id ~title:"On-disk literal search"
+let spec = Ches_tile.Spec.result_picker id ~title:"On-disk literal search"
 type 'token t = { session : 'token Model.t; mutable view : Model.hit Selection.t }
 let create ~token ~snapshot = { session = Model.create ~token snapshot; view = Selection.empty }
 let session t = t.session
@@ -71,6 +71,6 @@ let render ?notice t ~width ~rows : Tile_shell.Content.t =
   let query = query @ [ Span.blank Status (Int.max 0 (width - Span.total_width query)) ] in
   { title = "Literal search | ON DISK (excludes unsaved edits) | " ^ safe snapshot.request.root
    ; footer = Some (Tile_shell.Label.hint
-       (Option.value notice ~default:(sprintf "%d matches | columns are 1-based BYTES, not cells | %s | Ctrl-n/p, Enter, Esc" count summary)))
+        (Option.value notice ~default:(sprintf "%d matches | columns are 1-based BYTES, not cells | %s | Tab/Shift-Tab, Ctrl-n/p, Enter, Esc" count summary)))
   ; body = List.take (query :: Tile_text.row Stale summary ~width :: results) (Int.max 0 rows) }
 ;;

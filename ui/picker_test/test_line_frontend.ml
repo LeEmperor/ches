@@ -47,6 +47,11 @@ let%expect_test "shipped line command chains yielded turns, accepts dirty text a
   send Enter;
   let%bind _ = wait (fun s -> String.is_substring s ~substring:"Document lines"
     && not (String.is_substring s ~substring:"Filtering...")) in
+  send Tab;
+  let%bind view = wait (fun s -> String.is_substring s ~substring:"> 2  row 1") in
+  assert (String.is_substring view ~substring:"Document lines");
+  Bonsai_term_test.send_event handle (Key_press { key = Tab; mods = [ Shift ] });
+  let%bind _ = wait (fun s -> String.is_substring s ~substring:"> 1  row 0") in
   send Escape;
   let%bind view = wait (fun s -> not (String.is_substring s ~substring:"Document lines")) in
   assert (String.is_substring view ~substring:"UNSAVEDneedle");

@@ -71,7 +71,8 @@ to the opening generation across query changes, not to an obsolete query run.
 `Ui_state.open_content_picker` reuses the one-transient float/Host/shell: preferred
 80×14, minimum 14×5, zen and prior-focus return. Fitting resize retains state;
 undersized resize closes/cancels. Interrupted paste is dropped, not redirected to
-the document/new picker. Escape/Tab close; Ctrl-c uses shared notice behavior.
+the document/new picker. Tab/Shift-Tab or Ctrl-n/p select next/previous results;
+Escape closes; Ctrl-c uses shared notice behavior.
 Workspace/document stay unchanged. Errors/truncation appear in status and footer;
 host notices may temporarily replace the footer hint.
 

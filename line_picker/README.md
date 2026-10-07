@@ -4,7 +4,7 @@
 including dirty edits. It performs no IO, project traversal or buffer opening.
 `Ches_screen.Line_picker_tile` uses the shared transient floating host. In Normal
 mode, `Space f l` opens it; the catalog command is **Search current document lines**
-(`document.lines`). `Space f f` stays reserved/unbound until buffer opening exists.
+(`document.lines`). `Space f f` opens the production retained-buffer file picker.
 The line command requires no ripgrep, disk reads or buffer manager.
 
 ## Host contract
@@ -25,7 +25,8 @@ The line command requires no ripgrep, disk reads or buffer manager.
   returned controller synchronously and reveal the cursor using normal host view
   policy. `current` is a read-only getter. Errors do not edit/jump; the host must
   surface errors and restore focus. Cancellation releases once and never jumps.
-- `Ui_state` owns Escape/Tab/Ctrl-c, paste isolation, prior-focus restoration, resize
+- Tab/Shift-Tab or Ctrl-n/p select next/previous, clamping at result boundaries
+  without editing the query. `Ui_state` owns Escape/Ctrl-c, paste isolation, prior-focus restoration, resize
   and shared floating geometry. Preferred 80×14, minimum 14×5, including zen;
   undersized resize closes and drops work. A fitting resize retains the query.
 - `Editor_view` reuses the file host's one-scheduled-turn chain, yields through

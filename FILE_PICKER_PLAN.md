@@ -19,6 +19,343 @@ superseded by the phase-8 production handoff.
 The current phase-9 production verification handoff below supersedes historical
 dependency blockers and full-suite snapshot failures; historical evidence is retained.
 
+## Follow-up phases 10–13: selection navigation and bounded file preview
+
+Owner-approved scope: implement sequentially with one GPT-6.1 Sol medium agent
+at a time, orchestrator review between phases, and the mandatory no-mutative-Git
+and no-publication constraints below. Phase 10 is software-implemented and verified;
+phase 11 standalone data/lifecycle is software-implemented and verified;
+phase 12 production presentation/integration is software-implemented and verified;
+phase 13 terminal verification/final review is software COMPLETE.
+The owner reports the base file/content functions work; this is not a performance
+or comprehensive visual acceptance claim.
+
+### Phase 10 — Consistent result navigation
+
+- Tab selects the next result; Shift-Tab selects the previous result in file,
+  content, document-line pickers and the command palette.
+- Retain Ctrl-n/p, Enter acceptance and Escape cancellation. Do not introduce
+  Ctrl-j as a required alias because terminal encodings can conflate it with Enter.
+- Query, selected result and list viewport remain independent existing state:
+  navigation does not edit the query, and Enter accepts the selected result.
+- Make Tab routing capability-/consumer-specific so unrelated tiles preserve
+  focus-return behavior; verify Shift-Tab through the terminal adapter.
+- Keep selected results visible, update hints/docs, and test real routing,
+  boundaries, query edits and acceptance rather than just key interpretation.
+
+### Phase 10 implementation and handoff (2026-10-07)
+
+- **Outcome:** Tab selects next and Shift-Tab selects previous in file, content,
+  current-document-line pickers and the command palette. Ctrl-n/p, Enter and Escape
+  retain their semantics. Existing models clamp at list ends (no wrapping), leave
+  query text unchanged and fit the viewport to the selected identity. No preview
+  data, IO, lifecycle or layout work was introduced.
+- **Routing decision / review boundary:** `Spec.accepts_tab` is explicit and false
+  for all existing generic constructors, including `text_input`; `result_picker`
+  opts in only the four consumers. Host delegates Tab/Shift-Tab for those consumers,
+  while unrelated captures still return on Tab and ignore Shift-Tab (the previous
+  terminal behavior). Directory-specific Normal/Visual Tab focus return and Insert
+  Tab editing routes are unchanged. No view-ID checks or picker events were added
+  to the service-agnostic host. Shared palette interpretation supplies the aliases
+  to all pickers; no Ctrl-j alias was added.
+- **Terminal boundary:** native Bonsai_term `Tab` with `[Shift]` now normalizes to
+  distinct `Key.Shift_tab`; it produces no text in Insert mode or bracketed paste.
+  Human-readable notation is `Shift-Tab`; test notation is `<S-Tab>`.
+- **Changed files (implementation):** `input/{key.ml,key.mli,bindings.ml,keymap.ml}`;
+  `tile/{spec.ml,spec.mli,host.ml,host.mli}`;
+  `screen/{palette_tile.ml,palette_tile.mli,file_picker_tile.ml,file_picker_tile.mli,
+  content_picker_tile.ml,line_picker_tile.ml,ui_state.ml}`;
+  `ui/{terminal_input.ml,terminal_input.mli}`. Hints expose both navigation aliases.
+- **Changed files (tests):** `tile/test/test_host.ml`;
+  `screen/test/{test_palette_tile.ml,test_file_picker_host.ml,
+  test_line_picker_host.ml,test_content_picker_host.ml}`;
+  `test/{key_notation.ml,test_keymap.ml}`;
+  `ui/test/{test_terminal_input.ml,test_editor_view.ml}`;
+  `ui/picker_test/{test_frontend.ml,test_line_frontend.ml,test_content_frontend.ml}`.
+  Tests cover explicit capabilities versus text/paste, real host routes, empty and
+  singleton results, first/last clamping, viewport visibility, selection-preserving
+  query edits, content query invalidation, selected acceptance and cancellation.
+  Actual Bonsai frontends exercise native Tab/Shift-Tab for all four consumers,
+  including selected command execution and the second content occurrence's byte
+  intent. Extended file/content frontend scenarios use `/tmp/opencode` fixtures.
+- **Changed files (docs):** `README.md`, `docs/{editor_reference.md,pickers.md}`,
+  `file_picker/README.md`, `content_picker/README.md`, and this plan. Existing plan
+  edits were present at start and preserved; historical phase handoffs retain the
+  old Tab-cancellation behavior as historical evidence, superseded by this entry.
+- **Checks:** using `opam exec --switch=5.2.0+ox --`, `dune build` PASS;
+  `dune runtest --force` PASS (including picker frontends and existing unrelated
+  tile/directory regressions).
+  `dune runtest tile/test screen/test ui/test ui/picker_test file_picker/test
+  line_picker/test content_picker palette/test test --force` PASS;
+  initial new-constructor exhaustiveness, test modifier annotation, and expected
+  hint snapshot mismatches were corrected with patch edits, not promotion.
+  Read-only `git diff --check` PASS. No mutative Git/index/history/ref/worktree
+  operations, GitHub/publication, delegation or user-work reverts occurred.
+- **Remaining / review hotspots:** review the explicit capability and terminal
+  normalization boundaries and narrow-terminal footer clipping. No new live PTY
+  smoke, human visual review or measured latency/p99/RSS claim for phase 10;
+  durable terminal integration verification remains phase 13. Phase 11 bounded
+  read-only preview data/lifecycle is the next implementation step, followed by
+  phase 12 presentation; both are deliberately untouched.
+
+### Phase 11 — Bounded preview data and lifecycle
+
+- File-picker-only first release: preview the selected file's beginning, read-only.
+- Read at most 64 KiB and retain at most 100 lines, whichever limit comes first;
+  enforce the byte limit during reading, never load a whole file then truncate.
+- Already-open files use a bounded snapshot of current buffer text, including
+  unsaved changes; other files use asynchronous prefix reads without opening tabs,
+  starting language servers or full-file syntax parsing.
+- Represent loading, ready, truncated, empty, missing, unreadable and unsupported
+  binary/encoding states explicitly. Handle UTF-8 boundaries at the byte cap.
+- Briefly debounce selection changes; bound concurrent/pending work and retained
+  data. Identify work by picker session and selected file; reject stale responses
+  and release work/data on close, replacement and frontend deactivation.
+- Add meaningful bounded-read, dirty-buffer and stale-work/lifecycle tests.
+
+### Phase 11 implementation and handoff (2026-10-07)
+
+Historical phase-11-only scope below: phase 12 subsequently installed production
+presentation, and phase 13 verified it. This is not a current no-presentation claim.
+
+- **Outcome / scope:** complete standalone `ches_file_preview` library with a
+  bounded pure model, Async provider and retained-buffer adapter. No production
+  preview activation, screen input/state, rendering, layout or acceptance changes;
+  those remain phase 12. Existing phase-10/user working-tree changes are preserved.
+- **Changed files:** new `file_picker/preview/{dune,model.ml,model.mli,provider.ml,
+  provider.mli,buffer_snapshot.ml,buffer_snapshot.mli,README.md}` and
+  `file_picker/preview/test/{dune,test_preview.ml}`; this plan's status/handoff only.
+- **Read/data contract:** hard 64 KiB/100-line limits during disk reads (each read
+  bounded by remaining byte AND LF budgets), no whole-file/unbounded-line reads.
+  Buffer snapshots use bounded boundary-safe slices of current immutable text,
+  including unsaved/missing retained files. Explicit Loading/Ready/Truncated/Empty/
+  Missing/Unreadable/Unsupported states; source/revision, cap reasons and dropped
+  UTF-8 boundary metadata. Cap hits conservatively report truncation without EOF
+  lookahead. NUL detects binary prefixes; other malformed UTF-8 is unsupported.
+  CR/tab/control bytes can remain and must be safely rendered in phase 12.
+- **Lifecycle / IO:** reusable service, default 60 ms debounce/2 s disk timeout,
+  one physical read plus one overwritten latest pending identity/current payload.
+  Cancellation clears data/timers immediately and cooperatively stops reads;
+  session/root + selected identity + generation guards reject old A-B-A/reopen
+  responses. All disk stat/open/fstat/read/close calls run off the Async scheduler.
+  Reject known special targets before open, use O_NONBLOCK and descriptor fstat
+  against FIFO replacement races, follow symlinks only for regular-file previews.
+  No tabs, activation, parsing/highlighting or language servers are initialized.
+- **API integration guide:** `Provider.create ~buffer:(fun ~path ->
+  Buffer_snapshot.lookup (Ui_state.session current_ui) ~path) ()`, with a CURRENT
+  frontend session lookup, then `Provider.follow` on the pure picker model after
+  activation/navigation/query/discovery changes. It returns expected request for
+  `Model.accept` on screen delivery; `snapshot`/`changed` support a single Async
+  pump with coalesced data, not queued payloads. `~refresh:true` supports known
+  buffer revision changes. Pass None for inactive/empty selection and call `clear`
+  on release/replacement/exit/frontend deactivation; screen must clear its payload/
+  expected token too. `finished` is physical read completion, not required for UI
+  close. Full integration instructions are in `file_picker/preview/README.md`.
+- **Exercised seams:** actual pure picker selection/empty-result follow/refresh;
+  late current-buffer lookup; retained dirty missing-file controller with unchanged
+  tab/buffer count and highlight parse count; queued-event installation guard;
+  controlled reader returning stale data despite cancellation; 1000 rapid changes
+  launch no concurrent read and retain only latest pending work. Tests also cover
+  strict byte/line reads, giant lines, UTF-8 cap/EOF errors, binary/empty/missing,
+  FIFO/symlink/directory/error policies, debounce, timeout, exceptions and teardown.
+- **Checks:** with `opam exec --switch=5.2.0+ox --`, `dune build` PASS;
+  `dune runtest file_picker/preview/test --force` PASS;
+  `dune runtest file_picker/preview/test file_picker/test file_picker/discovery/test
+  file_picker/host/test screen/test ui/picker_test --force` PASS.
+  Full forced suite: first attempt failed in existing content-host test's PID-file
+  read (`Int.of_string: ""` at `content_picker/host/test/test_runtime.ml:156`);
+  unchanged rerun `dune runtest --force` PASS. No snapshot promotion or unrelated
+  test/source edits were made. Final post-handoff `dune build`, the same targeted
+  forced command and `dune runtest --force` all PASS; read-only `git diff --check`
+  PASS. Compile-time API/test annotations and the inline-test source-root flag
+  were corrected with patch edits, not snapshot promotion.
+- **Review hotspots / limitation:** an already-blocked regular-filesystem syscall
+  cannot be forcibly cancelled safely in an OCaml thread. Timeout exposes an error,
+  drops stale data and keeps a single occupied read slot; pending selections wait
+  for physical completion rather than spawning workers. `finished` can therefore
+  be delayed. Phase 12 must reuse one service, guard queued UI deliveries, safely
+  clip/control-escape payloads and wire every actual teardown path. No live preview,
+  human visual review or measured latency/p99/RSS claim. Phase 13 owns durable
+  terminal verification. No delegation, mutative Git or publication occurred.
+
+### Phase 12 — Responsive file-preview presentation
+
+- Wider shared floating file picker with results left and plain-text preview right
+  when space permits; hide the preview on narrow terminals, preserving usable
+  results and existing tiny-terminal close behavior.
+- Preview follows selected result, never takes keyboard focus and does not alter
+  Enter/open behavior. Show filename, line numbers and loading/error/truncation
+  states; render only visible rows and clip safely using shared display utilities.
+- Integrate phase-11 data with actual production activation, navigation, typing,
+  resize and teardown. Preserve command/content/line picker layouts.
+- Verify geometry, cursor/capture, dirty text, rapid selection and late responses.
+  Content-search match-centered previews remain a future follow-up.
+
+### Phase 12 implementation and handoff (2026-10-07)
+
+- **Outcome:** production file-only read-only preview. File floats prefer 140×14
+  at terminal widths >=104 (80×14 otherwise); content >=96 cells splits results
+  left / preview right. Narrow terminals hide the pane, and existing 14×5 minimum,
+  tiny resize close, query/selection, capture/cursor and Enter acceptance remain.
+  Palette, content and document-line layouts are unchanged.
+- **Pure/Async boundary:** phase-11 Model moved intact to
+  `file_picker/preview/pure/{dune,model.ml,model.mli}` (`ches_file_preview_model`);
+  the service retains the source-compatible `Ches_file_preview.Model` alias.
+  Screen depends only on the pure library, never Async or the provider.
+- **Production lifecycle:** `ui/editor_view.ml` owns one reusable provider, with
+  late CURRENT UI session retained-buffer lookup. Follow occurs synchronously
+  after each transition, including between batched inputs and discovery/work
+  publication; expected identity and immediate Loading/latest snapshot install
+  before queued deliveries. One coalescing pump captures `changed` BEFORE reading
+  snapshot/injecting, then awaits that captured waiter. Retained buffer identity/
+  revision changes refresh without refreshing unchanged renders. Resize clears
+  and re-follows with a fresh generation. Close, replacement, deactivation and
+  exit clear provider work and screen payload/expected state without joining IO.
+  Screen delivery checks `Model.accept` plus current discovery session/selection;
+  A-B-A, reopened sessions and queued pre-resize/pre-close events are rejected.
+- **Presentation:** filename, source/revision, line numbers and explicit Loading,
+  Ready, Truncated (cap reasons), Empty, Missing, Unreadable, Unsupported states.
+  Only visible prefix rows are mapped, using shared `Cell_map`/`Span` display-cell
+  tab expansion, control escaping and UTF-8/wide-glyph clipping. No file-wide
+  highlighting, tab activation, language-server initialization or preview focus.
+- **Changed implementation files:** `file_picker/preview/{dune,model.ml,model.mli}`
+  and new `pure/` above; `screen/{dune,file_picker_tile.ml,file_picker_tile.mli,
+  ui_state.ml,ui_state.mli}`; `ui/{dune,editor_view.ml}`.
+- **Changed tests/docs:** new `screen/test/test_file_preview.ml` and
+  `ui/picker_test/test_preview_frontend.ml`; extended
+  `screen/test/{test_file_picker_host.ml,test_file_picker_tile.ml}` and
+  `ui/picker_test/test_frontend.ml`; `README.md`, `docs/{pickers.md,
+  editor_reference.md}`, `file_picker/{README.md,preview/README.md}`, this plan.
+  Tests exercise safe/visible rows and exact cell widths, responsive geometry and
+  left-owned cursor, session/generation/selection guards, rapid Tab/Shift-Tab,
+  dirty retained vs disk prefixes, unchanged retained tab/buffer/parse counts,
+  no consumption before Enter, fitting/tiny resize, close/reopen and deactivation.
+- **Checks:** `opam exec --switch=5.2.0+ox -- dune build` PASS;
+  `dune runtest screen/test ui/picker_test file_picker/preview/test --force` PASS;
+  `dune runtest --force` PASS. New test fixture CR rejection, event constructor,
+  equality typing and misplaced reopen sequence were corrected with patch edits;
+  no snapshot promotion or unrelated reverts. Final post-implementation/docs
+  `dune runtest --force`, `dune build` and read-only `git diff --check` all PASS.
+- **Review hotspots / residuals:** review pump waiter ordering, synchronous
+  per-step expected-token installation, resize generation reset, late current
+  session/revision lookup and narrow footer clipping. Phase 13 owns broad isolated
+  terminal preview smoke/final review; no new live PTY preview smoke, human visual
+  sign-off or measured latency/p99/RSS claim. Phase-11 blocked-syscall limitation
+  remains: pending preview waits for the single physical IO slot to finish.
+  Existing phase10/11/unrelated work preserved; no delegation, mutative Git/index/
+  history/ref/worktree operation or GitHub publication occurred.
+
+### Phase 13 — Integration verification and handoff
+
+- Review all follow-up changes and fix material issues. Add durable isolated
+  terminal scenarios for Tab/Shift-Tab acceptance and preview selection/resize,
+  large/missing files, dirty buffers and close/reopen as practical.
+- Run build, full forced suite, picker smoke and relevant existing regressions;
+  use fixtures under /tmp/opencode, never repository files for mutation fixtures.
+- Reconcile README, picker/editor docs, hints and this plan with shipped behavior.
+- Each phase records changed files, exact checks/outcomes, decisions and remaining
+  work. Human visual review and measured latency/p99/RSS acceptance remain separate.
+
+### Phase 13 implementation and handoff (2026-10-07) — software complete
+
+- **Review:** inspected the actual tracked working diff and all untracked preview
+  implementation/API/test files, phase-10–12 handoffs and current picker docs.
+  `Spec.result_picker` explicitly opts in the four consumers; text/paste capability
+  alone does not opt in. Native Shift-Tab normalizes independently of Tab text;
+  unrelated tiles retain Tab focus return, directory/Insert routes are unchanged.
+  Selection clamps, remains visible, preserves query/identity across valid edits,
+  and Enter uses the selected result; pending/no-match Enter is inert.
+- **Preview correctness:** strict byte AND LF budgets are applied to every read,
+  including giant lines/newline-only data; buffer slices stay bounded and UTF-8
+  boundary-safe. Safe display-cell mapping escapes controls, clips wide glyphs,
+  pads both columns and keeps the separator fixed. Screen uses only the pure
+  preview library; disk work/provider remain in the Async frontend. The coalescing
+  pump captures the waiter before snapshot/injection, and synchronous follow runs
+  after EVERY input/work/discovery step, not only the final state of a batch.
+  Expected session/root/selection/generation guards reject close/reopen, resize,
+  queued old deliveries and A-B-A. Close/replacement/exit/deactivation clear screen
+  payload and provider work. Current retained resource/revision lookup supports
+  dirty text without activation/tabs/highlighting/LSP. One physical reader plus
+  latest overwritten pending selection remains the resource policy. No additional
+  material IO/lifecycle correctness defect was found in these inspected seams;
+  automated evidence is not proof of all filesystem/terminal behavior.
+- **Fix:** the file footer previously placed key guidance behind duplicated long
+  discovery metadata, clipping navigation/cancel hints in the ordinary narrow
+  layout. Acceptance/cancellation/navigation now precede that metadata. Regression
+  checks the visible 76-cell footer, explicit loading/empty/missing/unreadable/all
+  unsupported states, escaped error controls, exact row widths and fixed separator
+  at odd/even split widths. Tiny allocations still cannot show every hint/label.
+- **New durable terminal evidence:** `scripts/picker_smoke.py` uses its private tmux
+  server and `/tmp/opencode` tree. Native Tab and tmux BTab/CSI-Z select file results
+  and palette commands, Shift-Tab returns to the first result, and Enter accepts
+  the second selected file/relative-number command. It checks dirty active AND
+  inactive retained previews versus unchanged disk, 100-line/64-KiB truncation,
+  missing-after-discovery, empty/binary files, TAB/wide/escape/CR/C0/bidi-safe text,
+  narrow/wide resize, rapid A-B-A, close/reopen and interrupted-paste reopen.
+  Existing file/content, failure/stale/undo, directory-startup, zen/tiny, paste
+  isolation and tty restoration scenarios remain. Unit/frontend coverage supplies
+  controlled delayed readers, timeout/stale generations, 1000 replacements,
+  no-preview tab/buffer/parse changes and deactivation, which terminal capture
+  alone cannot prove. New frontend test queues Tab/Shift-Tab before recomputing a
+  single frame and rejects the pre-batch A delivery despite final A identity.
+- **Smoke reconciliation:** full/palette `scripts/smoke.sh` no longer expects Tab
+  to cancel; no-match Tab/Shift-Tab stays open, Escape restores the exact workspace,
+  and native navigation crosses the resized viewport. Its default fixture/capture
+  directory is now `/tmp/opencode`; verification explicitly sets TMPDIR there.
+  No mutation fixture was placed in the repository.
+- **Changed files (phase 13 only):** `screen/file_picker_tile.ml`,
+  `screen/test/test_file_preview.ml`, `ui/picker_test/test_preview_frontend.ml`,
+  `scripts/{picker_smoke.py,smoke.sh}`, `file_picker/{README.md,preview/README.md}`,
+  `line_picker/README.md`, `docs/{pickers.md,editor_reference.md,
+  command_palette_plan.md}`, this plan. Corrected live line README's unbound-file
+  picker/host-owned-Tab claims and the manual checklist's Tab-cancels claim;
+  phase-11 no-presentation statements are explicitly historical. Historical
+  handoffs are retained, not rewritten as current implementation evidence.
+
+**Exact final check record:** all commands ran from `/home/wayne/devel/files`;
+all below returned exit 0. Dune uses the documented `5.2.0+ox` switch. Build and
+full forced tests were repeated after the final frontend regression; terminal
+checks use the final production implementation/scripts.
+
+| Command | Outcome / log under `/tmp/opencode/phase13-verification/` |
+| --- | --- |
+| `opam exec --switch=5.2.0+ox -- dune build` | PASS, `final-build.log` |
+| `opam exec --switch=5.2.0+ox -- dune runtest --force` | PASS, `final-full-tests.log` (no snapshot promotion) |
+| `python3 scripts/picker_smoke.py` | PASS, `final-picker-smoke.log` |
+| `python3 scripts/directory_workspace_smoke.py` | PASS, all four child smokes, `final-directory-workspace-smoke.log` |
+| `TMPDIR=/tmp/opencode bash scripts/smoke.sh` | PASS, full editing/tile/palette/line/source/LSP/tty checks, `final-full-smoke.log` |
+| `TMPDIR=/tmp/opencode bash scripts/smoke.sh --palette-only` | PASS, `palette-smoke.log` |
+| `bash -n scripts/smoke.sh` | PASS |
+| `git diff --check` (read-only) | PASS, `diff-check.log` |
+
+Initial build/full forced tests, expanded picker smoke, directory smoke and full
+smoke also passed (`build.log`, `full-tests.log`, `picker-smoke.log`,
+`directory-workspace-smoke.log`, `full-smoke.log`). The new row test initially
+referenced private `Span.slice` and failed compilation; it was corrected to use
+public `Span.of_glyphs`, not promoted. Final build/tests then passed. No product
+test failure or unrelated expectation correction was hidden by these reruns.
+
+Final picker fixtures and plain/ANSI captures:
+`/tmp/opencode/picker-terminal-o6okly_3/.captures/`.
+Full smoke captures: `/tmp/opencode/ches-smoke-screens.eGeekH/`;
+palette-only captures: `/tmp/opencode/ches-smoke-screens.2apsYG/`.
+Directory fixtures/captures: `/tmp/opencode/directory-phase5-pty-vevy56e5/`,
+`directory-phase6-pty-jbh12u5q/`, `directory-phase7-pty-bul3e41a/`,
+`directory-phase8-pty-95zk9e07/` (each under `/tmp/opencode`). Initial tracked diff,
+final tracked diff/status and untracked preview-source archive are retained in
+the verification log directory for review.
+
+**Remaining limits:** human visual/flicker/ranking acceptance and agreed live
+latency/p99/peak-RSS acceptance are NOT performed. Prefix-only binary detection,
+conservative cap-at-exact-EOF truncation and no disk watch/automatic disk refresh
+remain intentional. Hidden previews still use bounded provider work. A blocked
+regular-filesystem syscall can occupy the single reader beyond timeout; latest
+pending work waits for physical completion, while close clears visible data
+without joining it. Count-bounded matching/publication/navigation can still have
+DP/GC/O(results) costs. Content match-centered previews remain future scope.
+All starting phase10–12/user work is preserved; one agent, no delegation, mutative
+Git/index/history/ref/worktree operations, staging/commit/push or GitHub publication.
+
 ## Goal
 
 Provide an fzf-lua-style project file picker on `Space f f`: type loose filename

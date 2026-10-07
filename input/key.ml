@@ -5,6 +5,7 @@ type t =
   | Ctrl of char
   | Enter
   | Tab
+  | Shift_tab
   | Backspace
   | Delete
   | Escape
@@ -18,7 +19,7 @@ let digit = function
     if code >= Char.to_int '0' && code <= Char.to_int '9'
     then Some (code - Char.to_int '0')
     else None
-  | Ctrl _ | Enter | Tab | Backspace | Delete | Escape -> None
+  | Ctrl _ | Enter | Tab | Shift_tab | Backspace | Delete | Escape -> None
 ;;
 
 let is_control u =
@@ -33,6 +34,7 @@ let to_string_hum = function
   | Ctrl c -> sprintf "Ctrl-%c" c
   | Enter -> "Enter"
   | Tab -> "Tab"
+  | Shift_tab -> "Shift-Tab"
   | Backspace -> "Backspace"
   | Delete -> "Delete"
   | Escape -> "Escape"
@@ -43,5 +45,5 @@ let text = function
   | Char u -> Some (Uchar.Utf8.to_string u)
   | Enter -> Some "\n"
   | Tab -> Some "\t"
-  | Ctrl _ | Backspace | Delete | Escape -> None
+  | Ctrl _ | Shift_tab | Backspace | Delete | Escape -> None
 ;;

@@ -42,6 +42,7 @@ module Input : sig
         resource) until Insert ends; started/stopped apply at once. Never reaches the
         editor. *)
     | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
+    | File_preview of Ches_file_preview_model.Model.snapshot
     | File_picker_work of Ches_file_picker.Model.Discovery.request
     | File_picker_accept of Ches_tile.View_id.t Ches_file_picker.Model.Request.t
     | Content_picker_accept of (Ches_tile.View_id.t Ches_content_picker.Model.intent [@sexp.opaque])

@@ -1,0 +1,5 @@
+(library
+ (name ches_file_preview_test)
+ (libraries ches_file_preview ches_file_picker ches_core ches_app core core_unix async)
+ (inline_tests (flags (:standard -source-tree-root .)))
+ (preprocess (pps ppx_jane)))

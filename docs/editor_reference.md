@@ -147,9 +147,9 @@ The current default catalog contains **54 commands**, including all three picker
 | text, including Space and `j`/`k` | Edit the query (a paste goes into it too) |
 | `Backspace` | Delete the last character |
 | `Ctrl-Backspace` or `Ctrl-w` | Delete the last word (most terminals send Ctrl-Backspace as `Ctrl-h`, which works too) |
-| `Ctrl-n` / `Ctrl-p` | Select the next / previous command |
+| `Tab` / `Shift-Tab` or `Ctrl-n` / `Ctrl-p` | Select the next / previous command |
 | `Enter` | Close the palette and run the selected command once, on the document |
-| `Escape` or `Tab` | Close it without running anything |
+| `Escape` | Close it without running anything |
 | `Ctrl-c` | Show the host's reminder to use Escape; keep the palette open |
 
 A command run from the palette behaves exactly as its key binding: an ordinary quit
@@ -179,14 +179,18 @@ bindings, so it needs no label and no execution code of its own.
 
 `Space f l` (Normal) or **Search current document lines** in the command palette
 opens numbered in-memory lines in the shared float. Type loose subsequences;
-Ctrl-n/p selects, Enter jumps to the earliest matched character and reveals it.
-Backspace/Ctrl-w edit the query; paste is sanitized like the palette. Escape/Tab
-cancel without moving the document; Ctrl-c shows a reminder, not cancellation.
+Tab/Shift-Tab or Ctrl-n/p selects, Enter jumps to the earliest matched character and reveals it.
+Backspace/Ctrl-w edit the query; paste is sanitized like the palette. Escape
+cancels without moving the document; Ctrl-c shows a reminder, not cancellation.
 Filtering/no-match Enter is inert. Document changes invalidate results; reopen to
 refresh. Minimum 14×5, including zen; undersized resize closes safely.
 
 `Space f f` / **Find project files** opens or activates retained buffers without
-reloading unsaved text. `Space f g` / **Search project contents** searches on-disk
+reloading unsaved text. At terminal widths of 104 cells or more, its wider float
+shows results left and a read-only numbered preview right (first 64 KiB/100 lines,
+current unsaved buffer text if retained). Narrow terminals hide preview; it never
+takes focus, opens tabs or changes Enter behavior. Loading/errors/truncation are
+labelled. `Space f g` / **Search project contents** searches on-disk
 case-sensitive literals, then validates the current target's entire raw line and
 literal byte range before activating and revealing it. Dirty matching lines are
 allowed; stale lines and missing new files fail visibly without changing tabs.
@@ -951,6 +955,8 @@ text/colored captures under the printed fixture's hidden `.captures` directory.
 It covers file/content binding and palette activation, query/select/cancel/accept,
 dirty retained text/undo, missing/stale failures, Unicode/TAB location reveal, zen
 restoration, minimum/tiny/resize and interrupted paste, disk bytes and tty modes.
+It also checks native Tab/Shift-Tab file/palette selected acceptance, dirty/missing/
+large/empty/binary previews, safe controls, narrow/wide resize and close/reopen.
 These are automated checks, not human visual or ranking/performance acceptance.
 
 Cursor assertions poll for a visible cursor at the expected position within five
@@ -976,10 +982,16 @@ The smoke script cannot check these, so check them in a real terminal:
 - Floating palette acceptance: open `Space c c` with all docked tiles visible, and
   again in zen, at about 80×24 and 120×40. Check its centering, preferred/clamped
   size, readable title/query/results/footer, and a single bar cursor with no
-  document smear. Filter until results scroll; cancel with Escape/Tab and confirm
+  document smear. Filter until results scroll; navigate with Tab/Shift-Tab,
+  accept with Enter or cancel with Escape, and confirm
   the covered workspace returns without a viewport jump. Resize through 14×4 and
   below the minimum, then grow again; review the saved `palette-*.ansi` captures.
   Record a human visual review separately from automated smoke/headless results.
+- File-preview acceptance: review the results/preview split at 104, 140 and 160
+  columns, then hide it at narrow widths. Check readable labels, numbered dirty
+  text, safe control/wide-character clipping, selection visibility, Enter behavior,
+  close/reopen and rapid navigation. Judge flicker and responsiveness separately;
+  automated captures are not visual or measured-performance acceptance.
 - Pasting from the terminal's own clipboard inserts text literally in Insert mode.
   This depends on the terminal; the script pastes through tmux.
 - Syntax acceptance: open `highlight_tree_sitter/provider.ml`, `core/text_buffer.mli`

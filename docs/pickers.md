@@ -29,13 +29,33 @@ an empty query launches no subprocess and searches nothing. Content requests are
 debounced by 150 ms; obsolete runs are cancelled and cannot install results.
 
 Picker adapters reuse palette-style text/paste editing, Backspace, Ctrl-w,
-Ctrl-n/p and Enter. Pending file/line filtering or edited-but-unrequested content
+Tab/Shift-Tab (next/previous), Ctrl-n/p and Enter. Navigation clamps at the first
+and last result, leaves the query unchanged and keeps the selection visible.
+Pending file/line filtering or edited-but-unrequested content
 queries disable acceptance; Enter is not queued. Shared host capture, focus, cursor
-and interrupted paste are verified for files, lines and contents. Escape/Tab close;
+and interrupted paste are verified for files, lines and contents. Escape closes;
 Ctrl-c displays the shared host notice. These floats require 14×5, work in zen,
-and close safely below that minimum. Escape
-or Tab restores prior available focus without jumping. A changed document invalidates
-line results permanently; close/reopen to refresh, never accept stale coordinates.
+and close safely below that minimum. Escape restores prior available focus without
+jumping. Unrelated supporting tiles still use Tab to return focus. A changed
+document invalidates line results permanently; close/reopen to refresh, never
+accept stale coordinates.
+
+## Read-only file preview
+
+File floats widen on terminals at least 104 cells wide. With at least 96 content
+cells, results stay left and a numbered plain-text preview appears right; narrow
+terminals hide it without changing selection, keyboard focus or Enter behavior.
+The prefix is bounded to 64 KiB/100 lines. Retained buffers supply current unsaved
+text; other files use debounced asynchronous prefix reads without opening tabs or
+starting highlighting/language servers. Loading, empty, missing, unreadable,
+unsupported binary/encoding/special files and truncation are labelled explicitly.
+Controls and tabs are safely mapped and wide UTF-8 clipped using editor display
+cells. Resize replaces preview generations; close/replacement/deactivation/exit
+clear work and screen data, and stale deliveries cannot install. Content/line
+pickers and the command palette retain their existing layouts.
+Phase-13 build/full tests and isolated terminal smokes pass, including native
+Tab/Shift-Tab selected acceptance and dirty/missing/large previews. This is not
+human visual or performance acceptance; exact evidence is in `FILE_PICKER_PLAN.md`.
 
 ## Scope, dependencies and setup
 

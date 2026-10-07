@@ -2,7 +2,7 @@ open! Core
 module Lines = Ches_line_picker.Lines
 module Selection = Ches_tile.Navigation.Selection
 let id = Ches_tile.View_id.of_string "line-picker"
-let spec = Ches_tile.Spec.text_input id ~title:"Document lines"
+let spec = Ches_tile.Spec.result_picker id ~title:"Document lines"
 type t = { session : Lines.t; mutable view : int Selection.t }
 let create controller = { session = Lines.create controller; view = Selection.empty }
 let session t = t.session
@@ -48,6 +48,6 @@ let render ?notice t ~width ~rows : Tile_shell.Content.t =
   let query = Picker_text.query_row (Lines.query session) ~width in
   let query = query @ [ Span.blank Status (Int.max 0 (width - Span.total_width query)) ] in
   { title = "Document lines | in-memory"
-   ; footer = Some (Tile_shell.Label.hint (Option.value notice ~default:(sprintf "%d matches / %d lines | %s | Ctrl-n/p, Enter, Esc"
+   ; footer = Some (Tile_shell.Label.hint (Option.value notice ~default:(sprintf "%d matches / %d lines | %s | Tab/Shift-Tab, Ctrl-n/p, Enter, Esc"
        (List.length results) (Lines.line_count session) status)))
   ; body = List.take (query :: Tile_text.row Stale status ~width :: list) (Int.max 0 rows) }

@@ -738,7 +738,8 @@ let%expect_test "Key.to_string_hum and Key.text" =
       ; Char (Uchar.of_scalar_exn 0x1b)
       ; Ctrl 'r'
       ; Enter
-      ; Tab
+       ; Tab
+      ; Shift_tab
       ; Backspace
       ; Delete
       ; Escape
@@ -755,6 +756,7 @@ let%expect_test "Key.to_string_hum and Key.text" =
     (Ctrl-r ())
     (Enter ("\n"))
     (Tab ("\t"))
+    (Shift-Tab ())
     (Backspace ())
     (Delete ())
     (Escape ())

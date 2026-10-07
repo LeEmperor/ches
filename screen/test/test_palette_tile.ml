@@ -21,6 +21,34 @@ let focused ?(width = width) ?(height = height) t =
   Ches_tile.View_id.to_string (Ui_state.focused_view t ~width ~height)
 ;;
 
+let%test_unit "palette Tab/Shift-Tab clamp and reveal; query refinement and acceptance use selection" =
+  let t = run (create ()) " cc" in
+  let selected t = Palette.selected (Option.value_exn (palette t)) in
+  let first = selected t in
+  let t = run t "<S-Tab>" in
+  assert ([%equal: Ches_palette.Catalog.Id.t option] first (selected t));
+  let t = run t (String.concat (List.init 60 ~f:(fun _ -> "<Tab>"))) in
+  let tile = Option.value_exn (Ui_state.palette t) in
+  let view = Palette_tile.view tile in
+  let layout = Option.value_exn (Ui_state.palette_layout t ~width ~height) in
+  assert (view.index = List.length (Palette.results (Palette_tile.palette tile)) - 1);
+  assert (view.top > 0 && view.index < view.top + layout.content.height - 1);
+  assert (String.is_empty (Palette.query (Palette_tile.palette tile)));
+  let t = run t "<S-Tab><C-p><C-n>" in
+  assert ((Palette_tile.view (Option.value_exn (Ui_state.palette t))).index = view.index - 1);
+  let t = run t "gutter" in
+  let t = run t "<Tab><S-Tab><Tab>" in
+  let keep = selected t in
+  let t = run t " rel" in
+  assert ([%equal: Ches_palette.Catalog.Id.t option] keep (selected t));
+  assert (String.equal (Palette.query (Option.value_exn (palette t))) "gutter rel");
+  let prefs = Ui_state.prefs t in
+  let t = run t "<CR>" in
+  assert (Option.is_none (Ui_state.palette t));
+  assert (not (Geometry.Prefs.equal prefs (Ui_state.prefs t)));
+  assert (String.equal (text t) "first\nsecond\nthird")
+;;
+
 let%test_unit "floating open/filter/cancel preserves all tiled rectangles, document and scroll" =
   let width, height = 120, 40 in
   let contents = String.concat ~sep:"\n" (List.init 100 ~f:(fun n -> sprintf "line %d 界́" n)) in
@@ -111,7 +139,7 @@ let%test_unit "opening from a docked capture still targets and returns to the do
   let opened = run initial " cc" in
   assert (Ches_tile.View_id.equal (Ui_state.focused_view opened ~width ~height) Palette_tile.id);
   assert ([%equal: Workspace.t] workspace (Ui_state.workspace opened ~width ~height));
-  let closed = run opened "<Tab>" in
+  let closed = run opened "<Esc>" in
   assert (Ches_tile.View_id.equal (Ui_state.focused_view closed ~width ~height) Ui_state.document_id);
   assert (String.equal (text initial) (text closed))
 ;;
@@ -164,7 +192,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     ││ >                                                                          ││|
     ││ > Save buffer                                                      Space w ││|
     ││   Next file tab                                                  Space b n ││|
-    ╰╰─ 1/54 | Enter run, Ctrl-n/p, Esc ──────────────────────────────────────────╯╯|
+    ╰╰─ 1/54 | Enter run, Tab/Shift-Tab, Ctrl-n/p, Esc ───────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;
@@ -187,7 +215,7 @@ let%expect_test "typed text, Space and j/k included, is query text; Enter runs t
     ││ > rel num                                                                  ││|
     ││ > Toggle relative line numbers                                   Space v N ││|
     ││   Search current document lines                                  Space f l ││|
-    ╰╰─ 1/3 | Enter run, Ctrl-n/p, Esc ───────────────────────────────────────────╯╯|
+    ╰╰─ 1/3 | Enter run, Tab/Shift-Tab, Ctrl-n/p, Esc ────────────────────────────╯╯|
     cursor: 12,2 Bar
     |}];
   let t = run t "<CR>" in
@@ -305,7 +333,7 @@ let%expect_test "Escape cancels: nothing runs, search and problems are untouched
     |}]
 ;;
 
-let%expect_test "Tab and Ctrl-c are the host's; no match leaves the palette open" =
+let%expect_test "Tab on no match keeps the palette open; Ctrl-c and Escape remain host-owned" =
   let t = run (create ()) " cc###" in
   let t = run t "<CR>" in
   print_endline (focused t);
@@ -315,10 +343,15 @@ let%expect_test "Tab and Ctrl-c are the host's; no match leaves the palette open
   let t = run t "<Tab>" in
   print_endline (focused t);
   results t;
+  let t = run t "<Esc>" in
+  print_endline (focused t);
+  results t;
   [%expect {|
     palette
     ("No matching command")
     ("Escape returns to the editor")
+    palette
+    query: "###"
     document
     closed
     |}]
@@ -395,7 +428,7 @@ let%expect_test "resizing keeps the query and selected command" =
     ││ > tile                                       ││|
     ││   Move document tile left by 2 columns       ││|
     ││   Move document tile right by 2 columns      ││|
-    ╰╰─ 4/18 | Enter run, Ctrl-n/p, Esc ────────────╯╯|
+    ╰╰─ 4/18 | Enter run, Tab/Shift-Tab, Ctrl-n/p,> ╯╯|
     cursor: 9,2 Bar
     |}]
 ;;

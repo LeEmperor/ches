@@ -1,4 +1,4 @@
-# File picker (phases 1–6)
+# File picker (phases 1–6, 10–13)
 
 `Interaction` is a single-owner, scheduler-independent mutable session. The screen
 adapter is `Ches_screen.File_picker_tile`, now registered with the shared floating
@@ -11,7 +11,8 @@ after capture release and UI installation. Dirty buffers are never reread.
 Production activation is installed between inputs, including batched input, so
 following query keys cannot reach the document. `scripts/picker_smoke.py` checks
 real file/content opening with isolated terminal fixtures; build/full suites and
-terminal checks pass. See the current phase-9 handoff in `FILE_PICKER_PLAN.md`.
+terminal checks pass, including native Tab/Shift-Tab and bounded selected previews.
+See the current phase-13 handoff in `FILE_PICKER_PLAN.md`.
 Human visual/ranking/performance acceptance remains separate and unperformed.
 
 ## Host contract
@@ -22,7 +23,8 @@ Human visual/ranking/performance acceptance remains separate and unperformed.
    closed sessions are rejected. The provider still owns ordering, deduplication,
    candidate limits and process cleanup. A refresh uses a new session/run.
 3. Forward query events/paste to `update`. Keys follow the command palette's
-   conventions. Escape/Tab/Ctrl-c remain host-owned; cancellation calls `cancel`.
+   conventions. Tab/Shift-Tab and Ctrl-n/p navigate results; Escape/Ctrl-c remain
+   host-owned; cancellation calls `cancel`.
 4. Schedule `work ~budget:128` **outside input/render callbacks**, yielding between
    turns and polling for new input/delivery. Do not synchronously drain work in the
    live host. Also do not restrict work to one turn per terminal redraw: a broad
@@ -40,12 +42,20 @@ Human visual/ranking/performance acceptance remains separate and unperformed.
     appear in feedback/history, with restored focus and the current buffer intact.
     Cancellation releases once with no intent. Exceptions are not retried.
 
-The shared float prefers 80×14 and requires a 14×5 terminal (three content rows).
+The shared float prefers 80×14 on narrow terminals and 140×14 at terminal widths
+of 104 cells or more; it requires a 14×5 terminal (three content rows).
+At 96 content cells or more, results are on the left and a read-only plain-text
+preview is on the right. The preview never takes focus or opens a tab. It follows
+selection and shows the first 64 KiB/100 lines, current dirty retained text when
+available, otherwise a debounced asynchronous disk prefix. Loading, empty, missing,
+unsupported, unreadable and truncated states are visible. Only visible rows are
+rendered, with line numbers and safe control/TAB/UTF-8 display-cell clipping.
+See [`preview/README.md`](preview/README.md) for lifecycle/data contracts.
 It does not reallocate the underlying workspace and works in zen. Fitting resizes
 retain query/selection; undersized resize closes and restores prior available
 focus. Interrupted paste is invalidated on close, collected to its end, then
-dropped even if the view reopens. Opening during paste is refused. Escape/Tab
-cancel; Ctrl-c follows the shared host's existing return-guidance notice.
+dropped even if the view reopens. Opening during paste is refused. Escape cancels;
+Tab/Shift-Tab navigate; Ctrl-c follows the shared host's existing return-guidance notice.
 
 For explicit assembly, call `Runtime.open_picker runtime ui ~root ~width ~height`,
 then install that returned UI. Headless callers await `Runtime.next`, apply its

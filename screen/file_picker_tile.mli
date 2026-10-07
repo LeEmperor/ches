@@ -11,9 +11,15 @@ type 'token t
 val create : token:'token -> discovery:Model.Discovery.t -> 'token t
 val session : 'token t -> 'token Interaction.t
 val view : _ t -> Model.Candidate.Id.t Ches_tile.Navigation.Selection.t
+val preview : _ t -> Ches_file_preview_model.Model.snapshot option
+val expect_preview : _ t -> Ches_file_preview_model.Model.request option -> unit
+val clear_preview : _ t -> unit
+val install_preview : _ t -> Ches_file_preview_model.Model.snapshot -> bool
+val columns : width:int -> int * int option
 val fit : _ t -> rows:int -> unit
 type action = Event of Ches_palette.Palette.Event.t | Accept [@@deriving sexp_of]
-(** Escape, Tab and Ctrl-c remain host-owned. Paste is delivered as an Event. *)
+(** Tab/Shift-Tab and Ctrl-n/p navigate results. Escape and Ctrl-c remain
+    host-owned. Paste is delivered as an Event. *)
 val interpret : Ches_input.Key.t list -> action Ches_tile.Content_key.t
 val update : _ t -> rows:int -> Ches_palette.Palette.Event.t -> unit
 val install : _ t -> Model.Discovery.t -> bool

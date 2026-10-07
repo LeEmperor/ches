@@ -38,7 +38,9 @@ and preserves the file's contents, including whether it ends with a newline.
 
 `Space f l` opens fuzzy current-document lines, including unsaved edits, in the
 shared float. The file picker opens files through `Space f f` / Find project
-files, retaining dirty session buffers.
+files, retaining dirty session buffers. Wide file floats show a read-only selected
+file prefix (up to 64 KiB/100 lines), using unsaved retained text when available;
+narrow terminals hide the preview, and only Enter opens a file.
 `Space f g` / Search project contents searches on-disk literals and validates the
 current target text before opening and jumping. See
 [picker status and setup](docs/pickers.md) for behavior, limits and integration status.
@@ -88,7 +90,8 @@ editing semantics, workspace controls, and diagnostic-source behavior.
 
 The command palette prefers an 80×14 framed window, clamped to the terminal with
 a one-cell margin where possible. Filtering keeps its size fixed and scrolls results
-inside it. `Escape` or `Tab` cancels; `Enter` runs the selection once. It requires at
+inside it. `Tab` / `Shift-Tab` (or `Ctrl-n` / `Ctrl-p`) select next / previous;
+`Escape` cancels; `Enter` runs the selection once. It requires at
 least 14 columns and 4 rows: opening below that size reports why, and shrinking an
 open palette below it closes without execution. Closing discards the query and
 restores the covered workspace; an interrupted palette paste is dropped, never
