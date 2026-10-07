@@ -3,7 +3,8 @@
 # reaches the screen, the cursor, the files written, and the terminal state left for
 # the shell. See README.md, "Terminal smoke test".
 #
-# Usage: scripts/smoke.sh [PATH-TO-CHES]   (default: _build/default/bin/ches.exe)
+# Usage: scripts/smoke.sh [--palette-only] [PATH-TO-CHES]
+#        (default: _build/default/bin/ches.exe)
 #
 # Needs tmux (tested with 3.4) and a UTF-8 locale. Run `dune build` first. It uses a
 # private per-run tmux socket and a temporary directory, both removed on exit,
@@ -15,6 +16,11 @@
 set -u
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+palette_only=false
+if [ "${1:-}" = --palette-only ]; then
+  palette_only=true
+  shift
+fi
 ches=${1:-$root/_build/default/bin/ches.exe}
 ches=$(cd "$(dirname "$ches")" && pwd)/$(basename "$ches")
 
@@ -215,6 +221,7 @@ t set -g window-size manual
 t set -g default-terminal tmux-256color
 shell "cd $work"
 
+if [ "$palette_only" = false ]; then
 # ---------------------------------------------------------------------------
 section "all installed tiles are shown at startup"
 printf 'startup workspace\n' > "$work/startup.txt"
@@ -1779,8 +1786,31 @@ expect_status "2:1"
 keys Space q
 expect_exit 0
 
+fi
+
 # ---------------------------------------------------------------------------
-section "command palette (Space c c)"
+section "floating command palette (Space c c)"
+# The shell's corner cells prove placement independently of document geometry.
+palette_is() {
+  local x=$1 y=$2 width=$3 height=$4 top bottom
+  top=$(row "$y")
+  bottom=$(row "$((y + height - 1))")
+  [ "${top:x:1}" = '╭' ] && [ "${top:$((x + width - 1)):1}" = '╮' ] \
+    && [ "${bottom:x:1}" = '╰' ] && [ "${bottom:$((x + width - 1)):1}" = '╯' ] \
+    && [[ "$top" = *"Commands"* ]]
+}
+expect_palette() {
+  if poll palette_is "$@"; then ok "floating shell at $1,$2, size $3×$4";
+  else fail "floating shell not at $1,$2, size $3×$4"; fi
+}
+screen_matches() {
+  t capture-pane -e -p -t "$session" > "$work/palette.actual"
+  cmp -s "$1" "$work/palette.actual"
+}
+expect_restored() {
+  if poll screen_matches "$1"; then ok "covered workspace restored exactly";
+  else fail "workspace differs after closing the palette"; fi
+}
 resize 80 24
 printf 'one\ntwo\nthree\n' > "$work/palette.txt"
 cp "$work/palette.txt" "$work/palette.expected"
@@ -1790,6 +1820,8 @@ keys Space c c
 expect_screen "╭─ Commands ─"
 expect_screen "> Save file"
 expect_screen "Space w"
+expect_palette 1 5 78 14
+expect_cursor "5 6 1"
 # Space and j/k are query text, never document input.
 type_text "gutter rel nmu"
 expect_screen "│ > gutter rel nmu"
@@ -1812,6 +1844,7 @@ expect_status "Line numbers: absolute"
 expect_no_screen "╭─ Commands ─"
 expect_cursor_row "1 one"
 # Escape cancels without running anything or reaching the document.
+save_screen "palette-cancel-before"
 keys Space c c
 expect_screen "╭─ Commands ─"
 type_text "jjdd"
@@ -1819,6 +1852,8 @@ keys Escape
 if poll eval '! screen_has "╭─ Commands ─"'; then ok "Escape closed the palette"; else fail "palette still open after Escape"; fi
 expect_no_screen "[+]"
 expect_status "1:1"
+expect_restored "$screens/palette-cancel-before.ansi"
+save_screen "palette-cancel-after"
 # A bracketed paste goes into the query.
 keys Space c c
 t set-buffer -b smoke 'undo'
@@ -1839,6 +1874,108 @@ type_text "quit"
 keys Enter
 expect_exit 0
 expect_file "$work/palette.txt" "$work/palette.expected"
+
+# Coexistence: all installed tiled views retain their allocations under the float.
+section "floating palette with all tiles, zen, resize and interrupted paste"
+resize 120 40
+keep_startup_tiles=true
+launch --demo-report palette.txt
+expect_screen "Problems (workspace): 0/0"
+expect_screen "Demo report (static): 10 items"
+expect_screen "History:"
+expect_cursor_row "one"
+save_screen "palette-workspace-before"
+keys Space c c
+expect_palette 20 13 80 14
+expect_cursor "24 14 1"
+expect_screen "Problems (workspace): 0/0"
+expect_screen "Demo report (static): 10 items"
+expect_screen "History:"
+save_screen "palette-workspace-open"
+type_text '###'
+keys Enter
+expect_screen "No matching command"
+expect_palette 20 13 80 14
+keys C-c
+expect_screen "Escape returns to the editor"
+keys Tab
+expect_restored "$screens/palette-workspace-before.ansi"
+save_screen "palette-workspace-after"
+
+keys Space c c
+type_text 'tile'
+keys C-n C-n C-n
+expect_screen "4/16 | Enter run"
+expect_palette 20 13 80 14
+resize 50 12
+expect_palette 1 1 48 10
+expect_cursor "9 2 1"
+expect_screen "│ > tile"
+expect_screen "4/16 | Enter run"
+save_screen "palette-resize-clamped"
+resize 14 4
+expect_palette 0 0 14 4
+expect_cursor "7 1 1"
+save_screen "palette-minimum"
+resize 120 40
+expect_palette 20 13 80 14
+expect_screen "4/16 | Enter run"
+expect_screen "│ > tile"
+save_screen "palette-resize-restored"
+resize 120 3
+if poll eval '! screen_has "╭─ Commands ─"'; then ok "undersized resize closed the float";
+else fail "float survived undersized resize"; fi
+resize 120 40
+expect_cursor "7 1 1"
+expect_cursor_row "one"
+expect_no_screen "╭─ Commands ─"
+expect_no_screen "[+]"
+expect_restored "$screens/palette-workspace-before.ansi"
+
+# Deliver a bracketed paste in two pieces with an undersized resize between them.
+# Growing before completion must not redirect the palette's paste to the document.
+keys Space c c
+expect_palette 20 13 80 14
+type_text $'\e[200~iXYZ'
+sleep 0.1
+resize 120 3
+if poll eval '! screen_has "╭─ Commands ─"'; then ok "resize closed the paste owner";
+else fail "paste owner remained open"; fi
+resize 120 40
+expect_screen "Problems (workspace): 0/0"
+type_text $'remaining\e[201~'
+# The narrow status tile clips the suffix; headless tests check the complete notice.
+expect_screen "Commands closed; paste"
+expect_cursor_row "one"
+expect_no_screen "[+]"
+save_screen "palette-paste-dropped"
+
+keys Space v z
+expect_status "Zen (status hidden)"
+expect_no_screen "Problems ("
+save_screen "palette-zen-before"
+keys Space c c
+expect_palette 20 13 80 14
+expect_cursor "24 14 1"
+save_screen "palette-zen-open"
+keys Escape
+expect_restored "$screens/palette-zen-before.ansi"
+resize 120 3
+# Wait for the application, not just tmux, to process the resize before opening.
+expect_cursor "13 0 1"
+keys Space c c
+expect_status "Command palette cannot fit; needs at least 14 columns and 4 rows"
+expect_no_screen "╭─ Commands ─"
+save_screen "palette-too-small"
+resize 120 40
+keys Space v z
+expect_screen "Problems (workspace): 0/0"
+keys Space w
+expect_screen "Wrote palette.txt"
+expect_file "$work/palette.txt" "$work/palette.expected"
+keys Space q
+expect_exit 0
+keep_startup_tiles=false
 
 echo
 echo "review screens (view with: cat FILE): $screens"

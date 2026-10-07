@@ -1,6 +1,7 @@
 # Floating tiles: command palette first
 
-Status: phase 1 implemented; phases 2–4 pending. Scoped on 2026-10-06.
+Status: phases 1–4 software-complete (automated validation and documentation done).
+Human terminal visual acceptance remains pending. Scoped on 2026-10-06.
 
 ## Goal and starting point
 
@@ -116,6 +117,37 @@ Verify overlay coverage, unchanged cells outside it, styled rows, wide/combining
 text at both edges, clipping, and cursor/smear ownership. Use synthetic shell
 content to prove the compositor does not depend on the palette.
 
+### Phase 2 implementation and handoff (2026-10-06)
+
+- `Span.overlay` replaces an opaque cell interval in a styled row, clips the
+  layer horizontally, and pads missing layer content with backdrop spaces. Wide
+  glyphs cut on either layer's edges leave styled blanks, never partial UTF-8 or
+  clip markers. Combining attachment follows the surviving base across styled
+  spans. `Span.take` shares this slicing behavior when clipping, preserving marks
+  at the right edge of a surviving base in shell content.
+- `Frame.Floating_layer` supplies a view identity, the already computed shell
+  layout, synthetic or adapter content, and an optional content-relative cursor
+  intent. `Frame.render ~floating` first renders the unchanged workspace, then
+  overlays the shell rows, clipping vertically and horizontally. It does not
+  introduce palette matching, dispatch, or floating content state.
+- `Ui_state.focused_view`, `cursor_owner`, and `minor_cursor` accept the same
+  optional floating layout override as phase 1's availability queries. The frame
+  uses that override for host focus/cursor ownership; only the owner can supply a
+  terminal cursor. Floating capture suppresses document smear, and an opaque
+  shell also occludes covered document cursor/smear cells when unfocused.
+- Eight new headless tests cover opaque coverage and styles, short layers,
+  negative/offscreen placement, Unicode cuts at both edges, combining marks
+  across style boundaries, exhaustive row-width/UTF-8 checks, synthetic shell
+  composition/restoration, unchanged workspace allocation, floating capture's
+  cursor origin/shape and invalid intents, zero-sized frames, and cursor occlusion.
+- Verification with `5.2.0+ox`: `dune build` and `dune runtest screen/test` pass.
+  Full `dune runtest` reports the previously documented stale snapshots in
+  `ui/test/test_editor_view.ml`; no expectations were promoted. No terminal smoke
+  or human floating visual acceptance was performed in this phase.
+- Phase 3 must remove the palette from requested tiled minors and wire its live
+  state/input/resize paths to the shared floating layout. The live palette remains
+  docked in phase 2; the optional frame layer is the explicit staging boundary.
+
 ## 3. Move the palette onto the floating surface
 
 Remove the palette from the requested bottom-band minors. Resolve its availability,
@@ -132,6 +164,37 @@ views, resize, and interrupted paste. Assert opening/closing leaves tiled
 rectangles, document text, and document scroll unchanged; accepted commands may
 of course change their own intended state.
 
+### Phase 3 implementation and handoff (2026-10-06)
+
+- The palette is no longer a requested bottom-band minor. `Ui_state.palette_layout`
+  uses the shared floating placement with the 80×14 preference and 14×4 framed
+  minimum. Opening it, including in zen and compact workspaces, leaves all tiled
+  rectangles and the document viewport unchanged. A smaller terminal refuses
+  opening with shared feedback without changing the current focus.
+- Default view-layout/availability queries now resolve the open floating palette.
+  Input capture, paste delivery, query/result fitting, and minor cursor queries
+  use that layout. `minor_layout` retains its tiled-only contract. Explicit
+  floating overrides remain available for the synthetic compositor tests.
+- `Frame.render` builds the live palette's content and cursor intent from its
+  computed layout and passes them through the phase 2 compositor. It no longer
+  has a docked palette adapter case. Explicit document-allocation rendering still
+  renders only the document, not the palette or its cursor.
+- Existing query keys, cancellation, no-match Enter, paste sanitization, target
+  token, and close-before-controller-dispatch behavior are retained. Fitting
+  resizes preserve query/selection and scroll the results within the float;
+  undersized resizes close without execution and return to the document. The host
+  keeps interrupted paste ownership, so completion is dropped even after growth.
+- Updated palette snapshots and size expectations describe floating geometry.
+  Five additional headless tests verify all docked views coexisting with the float,
+  zen, unchanged document text/cursor/scroll and exact screen restoration, fixed
+  size during filtering, selected-result visibility down to 14×4, cursor agreement,
+  width/height/zero-size closure with interrupted paste, document-only rendering,
+  and opening from another capture with the existing document-return policy.
+- Verification with `5.2.0+ox`: `dune build` and `dune runtest screen/test` pass.
+  Full `dune runtest` still reports the previously documented stale snapshots in
+  `ui/test/test_editor_view.ml`; those expectations were not changed. Terminal
+  smoke extensions, README changes, and human visual acceptance remain phase 4.
+
 ## 4. Validate and document
 
 Run focused geometry/composition/palette tests, then `dune build`, `dune runtest`,
@@ -142,6 +205,42 @@ Update palette documentation to describe floating and tiny-terminal behavior.
 Human terminal review checks centering, size, readability, and restoration of the
 covered workspace after close. Record automated verification separately from
 human visual acceptance.
+
+### Phase 4 implementation and validation (2026-10-06)
+
+- `scripts/smoke.sh` now checks floating shell corner coordinates and query cursor
+  ownership at 80×24 and 120×40, exact colored-screen restoration after Escape/Tab
+  and undersized resize, all installed docked tiles coexisting with the palette,
+  no-match Enter, Ctrl-c, typed and pasted queries, command execution, zen, clamped
+  and 14×4 minimum placement, query/selection retention across resize, tiny-terminal
+  refusal, interrupted paste dropping even after growth, unchanged saved bytes,
+  and terminal restoration. `--palette-only [PATH-TO-CHES]` runs just these scenarios.
+- Resize/open checks wait for the application's cursor geometry, rather than only
+  tmux's dimensions, so keys cannot race an unprocessed resize. The interrupted
+  paste smoke assertion allows the narrow status tile's clipped notice; headless
+  tests verify the full notice and paste ownership/data safety.
+- README and `docs/editor_reference.md` describe floating placement, stable size,
+  zen, the 14×4 minimum, cancellation, resize and interrupted paste behavior, and
+  the targeted smoke command. The original command-palette plan is marked as a
+  historical docked milestone with links to current behavior.
+- Automated verification uses the README's `5.2.0+ox` switch: `dune build` and
+  `dune runtest screen/test palette/test --force` pass, covering shared geometry,
+  composition, palette matching and live routing. `bash -n scripts/smoke.sh` and
+  `git diff --check` pass. Full `dune runtest` still reports the previously
+  documented stale snapshots in `ui/test/test_editor_view.ml`; no
+  unrelated expectations were promoted. Log:
+  `/tmp/opencode/ches-floating-phase4-runtest.log`.
+- Corrected targeted terminal smoke passes. Log:
+  `/tmp/opencode/ches-floating-phase4-palette-final.log`; colored captures:
+  `/tmp/opencode/ches-smoke-screens.lMJXfa`. The complete `scripts/smoke.sh` run also
+  passes, including all existing terminal scenarios and the extended palette checks.
+  Full smoke log: `/tmp/opencode/ches-floating-phase4-smoke-final.log`; full colored
+  captures: `/tmp/opencode/ches-smoke-screens.zyYmUF`.
+- **Human visual acceptance: pending, not performed by the agent.** Review the
+  saved `palette-*.ansi` captures and a live terminal at 80×24 and 120×40, with all
+  docked tiles and in zen: centering, size/readability, a single bar cursor, no
+  document smear/flicker, result scrolling, and restoration on close. Exercise
+  14×4 and undersized resize. Automated tests/captures are not visual sign-off.
 
 ## Done when
 
