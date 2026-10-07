@@ -13,13 +13,108 @@ let height = 16
 let run ?(width = width) ?(height = height) t keys = Helpers.run ~width ~height t (Helpers.keys keys)
 let create () = Helpers.ui ~path:"a" "first\nsecond\nthird"
 
+let editor t = Controller.editor (Ui_state.controller t)
+let text t = Text_buffer.to_string (Editor.text (editor t))
+let palette t = Option.map (Ui_state.palette t) ~f:Palette_tile.palette
+
 let focused ?(width = width) ?(height = height) t =
   Ches_tile.View_id.to_string (Ui_state.focused_view t ~width ~height)
 ;;
 
-let editor t = Controller.editor (Ui_state.controller t)
-let text t = Text_buffer.to_string (Editor.text (editor t))
-let palette t = Option.map (Ui_state.palette t) ~f:Palette_tile.palette
+let%test_unit "floating open/filter/cancel preserves all tiled rectangles, document and scroll" =
+  let width, height = 120, 40 in
+  let contents = String.concat ~sep:"\n" (List.init 100 ~f:(fun n -> sprintf "line %d 界́" n)) in
+  List.iter [ false; true ] ~f:(fun zen ->
+    let initial = Ui_state.create ~report:Report_tile.demo
+        (Ui_state.controller (Helpers.ui contents)) in
+    let initial = run ~width ~height initial (if zen then " vzG" else "G") in
+    let workspace = Ui_state.workspace initial ~width ~height in
+    let geometry = Ui_state.geometry initial ~width ~height in
+    let scroll = Ui_state.scroll initial in
+    let before_frame = Frame.render initial ~width ~height in
+    if not zen then assert (List.length workspace.minors = 3 && Option.is_some workspace.status);
+    let check t =
+      assert ([%equal: Workspace.t] workspace (Ui_state.workspace t ~width ~height));
+      assert ([%equal: Geometry.Rect.t] geometry.text (Ui_state.geometry t ~width ~height).text);
+      assert (Scroll.equal scroll (Ui_state.scroll t));
+      assert (String.equal contents (text t));
+      assert (Editor.cursor (editor t) = Editor.cursor (editor initial));
+      assert (Option.is_none (Ui_state.minor_layout t ~width ~height Palette_tile.id))
+    in
+    let opened = run ~width ~height initial " cc" in
+    check opened;
+    let layout = Option.value_exn (Ui_state.palette_layout opened ~width ~height) in
+    assert ([%equal: Geometry.Rect.t] layout.outer
+      { x = 20; y = 13; width = 80; height = 14 });
+    let queried = run ~width ~height opened "###" in
+    check queried;
+    assert ([%equal: Tile_shell.Layout.t option]
+      (Some layout) (Ui_state.palette_layout queried ~width ~height));
+    let closed = run ~width ~height queried "<Esc>" in
+    check closed;
+    assert (Option.is_none (Ui_state.palette closed));
+    assert (String.equal (Frame.to_string before_frame)
+      (Frame.to_string (Frame.render closed ~width ~height))))
+;;
+
+let%test_unit "result selection scrolls within the stable float and survives fitting resizes" =
+  let t = run ~width:120 ~height:40 (create ())
+      (" cc" ^ String.concat (List.init 20 ~f:(fun _ -> "<C-n>"))) in
+  let selected = Option.bind (palette t) ~f:Palette.selected in
+  List.iter [ 120, 40; 80, 16; 14, 4; 50, 12; 120, 40 ] ~f:(fun (width, height) ->
+    let resized = Helpers.run ~width ~height t [ Resize ] in
+    assert ([%equal: Ches_palette.Catalog.Id.t option]
+      selected (Option.bind (palette resized) ~f:Palette.selected));
+    let tile = Option.value_exn (Ui_state.palette resized) in
+    let layout = Option.value_exn (Ui_state.palette_layout resized ~width ~height) in
+    let view = Palette_tile.view tile in
+    assert (view.index >= view.top && view.index < view.top + layout.content.height - 1);
+    assert (layout.framed && layout.content.width >= 12 && layout.content.height >= 2);
+    let frame = Frame.render resized ~width ~height in
+    let cursor = Option.value_exn frame.cursor in
+    let x, y, shape = Option.value_exn (Ui_state.minor_cursor resized ~width ~height) in
+    assert (cursor.x = x && cursor.y = y && Ches_tile.Cursor.Shape.equal shape Bar);
+    assert (List.is_empty frame.smear))
+;;
+
+let%test_unit "unfitting resize closes without execution; interrupted paste remains owned after growth" =
+  List.iter [ 13, 40; 120, 3; 0, 0 ] ~f:(fun (small_width, small_height) ->
+    let initial = run ~width:120 ~height:40 (create ()) " ccrel num" in
+    let prefs = Ui_state.prefs initial in
+    let t = Helpers.run ~width:120 ~height:40 initial
+        (Ui_state.Input.Paste_start :: Helpers.keys "iXYZ") in
+    let t = Helpers.run ~width:small_width ~height:small_height t [ Resize ] in
+    assert (Option.is_none (Ui_state.palette t));
+    assert (Ui_state.pasting t);
+    let t = Helpers.run ~width:120 ~height:40 t
+        ([ Ui_state.Input.Resize ] @ Helpers.keys "remaining<CR>" @ [ Ui_state.Input.Paste_end ]) in
+    assert (not (Ui_state.pasting t));
+    assert (String.equal (text initial) (text t));
+    assert (Geometry.Prefs.equal prefs (Ui_state.prefs t));
+    assert (Ches_tile.View_id.equal (Ui_state.focused_view t ~width:120 ~height:40) Ui_state.document_id);
+    assert (String.equal (Option.value_exn (Ui_state.message t)).text "Commands closed; paste dropped"))
+;;
+
+let%test_unit "explicit document allocation does not draw the open palette or its cursor" =
+  let width, height = 80, 16 in
+  let initial = create () in
+  let opened = run initial " cc" in
+  let allocation : Geometry.Rect.t = { x = 5; y = 2; width = 60; height = 10 } in
+  let render t = Frame.render ~allocation t ~width ~height in
+  assert (String.equal (Frame.to_string (render initial)) (Frame.to_string (render opened)))
+;;
+
+let%test_unit "opening from a docked capture still targets and returns to the document" =
+  let initial = run (create ()) " vo" in
+  assert (Ches_tile.View_id.equal (Ui_state.focused_view initial ~width ~height) Problems_tile.id);
+  let workspace = Ui_state.workspace initial ~width ~height in
+  let opened = run initial " cc" in
+  assert (Ches_tile.View_id.equal (Ui_state.focused_view opened ~width ~height) Palette_tile.id);
+  assert ([%equal: Workspace.t] workspace (Ui_state.workspace opened ~width ~height));
+  let closed = run opened "<Tab>" in
+  assert (Ches_tile.View_id.equal (Ui_state.focused_view closed ~width ~height) Ui_state.document_id);
+  assert (String.equal (text initial) (text closed))
+;;
 
 (* The open palette's query and up to [limit] result IDs, the selected one marked. *)
 let results ?(limit = 3) t =
@@ -39,14 +134,18 @@ let results ?(limit = 3) t =
 
 let band ?(width = width) ?(height = height) t =
   let lines = String.split_lines (Frame.to_string (Frame.render t ~width ~height)) in
-  print_endline (String.concat ~sep:"\n" (List.drop lines (height - 6)))
+  let layout = Option.value_exn (Ui_state.palette_layout t ~width ~height) in
+  let outer = layout.outer in
+  let preview = List.take (List.drop lines outer.y) (Int.min 4 (outer.height - 1)) in
+  print_endline (String.concat ~sep:"\n"
+    (preview @ [ List.nth_exn lines (outer.y + outer.height - 1); List.last_exn lines ]))
 ;;
 
 let message t =
   print_s [%sexp (Option.map (Ui_state.message t) ~f:(fun m -> m.text) : string option)]
 ;;
 
-let%expect_test "Space c c opens a focused palette in the bottom band, with a bar cursor" =
+let%expect_test "Space c c opens a centered floating palette, with a bar cursor" =
   let t = run (create ()) " cc" in
   print_endline (focused t);
   results t;
@@ -61,13 +160,12 @@ let%expect_test "Space c c opens a focused palette in the bottom band, with a ba
   band t;
   [%expect
     {|
-     NORMAL  a                                                                  1:1 |
-    ╭─ Commands ───────────────────────────────────────────────────────────────────╮|
-    │ >                                                                            │|
-    │ > Save file                                                          Space w │|
-    │   Quit                                                               Space q │|
-    ╰─ 1/33 | Enter run, Ctrl-n/p, Esc ────────────────────────────────────────────╯|
-    cursor: 4,12 Bar
+    │╭─ Commands ─────────────────────────────────────────────────────────────────╮│|
+    ││ >                                                                          ││|
+    ││ > Save file                                                        Space w ││|
+    ││   Quit                                                             Space q ││|
+    ╰╰─ 1/33 | Enter run, Ctrl-n/p, Esc ──────────────────────────────────────────╯╯|
+    cursor: 5,2 Bar
     |}]
 ;;
 
@@ -84,13 +182,12 @@ let%expect_test "typed text, Space and j/k included, is query text; Enter runs t
     |}];
   band t;
   [%expect {|
-     NORMAL  a                                                                  1:1 |
-    ╭─ Commands ───────────────────────────────────────────────────────────────────╮|
-    │ > rel num                                                                    │|
-    │ > Toggle relative line numbers                                     Space v N │|
-    │   Toggle problems filter (workspace / current document)            Space v f │|
-    ╰─ 1/2 | Enter run, Ctrl-n/p, Esc ─────────────────────────────────────────────╯|
-    cursor: 11,12 Bar
+    │╭─ Commands ─────────────────────────────────────────────────────────────────╮│|
+    ││ > rel num                                                                  ││|
+    ││ > Toggle relative line numbers                                   Space v N ││|
+    ││   Toggle problems filter (workspace / current document)          Space v f ││|
+    ╰╰─ 1/2 | Enter run, Ctrl-n/p, Esc ───────────────────────────────────────────╯╯|
+    cursor: 12,2 Bar
     |}];
   let t = run t "<CR>" in
   print_s
@@ -263,10 +360,10 @@ let%expect_test "a paste whose palette closes mid-paste is dropped, not redirect
   let t =
     Helpers.run ~width ~height t (Ui_state.Input.Paste_start :: Helpers.keys "iXYZ")
   in
-  (* Shrinking the screen leaves no bottom band: the palette closes. *)
-  let t = Helpers.run ~width ~height:4 t [ Resize ] in
-  let t = Helpers.run ~width ~height:4 t [ Paste_end ] in
-  print_endline (focused ~height:4 t);
+  (* Shrinking below the framed query/result minimum closes the palette. *)
+  let t = Helpers.run ~width ~height:3 t [ Resize ] in
+  let t = Helpers.run ~width ~height:3 t (Helpers.keys "remaining" @ [ Paste_end ]) in
+  print_endline (focused ~height:3 t);
   results t;
   print_s [%sexp (text t : string)];
   message t;
@@ -293,13 +390,12 @@ let%expect_test "resizing keeps the query and selected command" =
   [%expect {|
     (("Option.map (palette t) ~f:Palette.query" (tile))
      ("([%equal : Ches_palette.Catalog.Id.t option]) before (selected t)" true))
-    ╰────────────────────────────────────────────────╯|
-     NORMAL  a                                    1:1 |
-    ╭─ Commands ─────────────────────────────────────╮|
-    │ > tile                                         │|
-    │ > Move document tile right by 10 columns       │|
-    ╰─ 4/16 | Enter run, Ctrl-n/p, Esc ──────────────╯|
-    cursor: 8,9 Bar
+    │╭─ Commands ───────────────────────────────────╮│|
+    ││ > tile                                       ││|
+    ││   Move document tile left by 2 columns       ││|
+    ││   Move document tile right by 2 columns      ││|
+    ╰╰─ 4/16 | Enter run, Ctrl-n/p, Esc ────────────╯╯|
+    cursor: 9,2 Bar
     |}]
 ;;
 
@@ -330,22 +426,32 @@ let%expect_test "palette commands share the keyboard's effects and feedback" =
     |}]
 ;;
 
-let%expect_test "zen and a compact layout refuse to open it, with a notice" =
+let%expect_test "zen and compact workspaces allow it; undersized terminals refuse with feedback" =
   let t = run (create ()) " vz cc" in
   print_endline (focused t);
   message t;
   let t = run ~height:4 (create ()) " cc" in
   print_endline (focused ~height:4 t);
   message t;
+  let t = run ~height:3 (create ()) " cc" in
+  print_endline (focused ~height:3 t);
+  message t;
+  let t = run ~width:13 (create ()) " cc" in
+  print_endline (focused ~width:13 t);
+  message t;
   [%expect {|
+    palette
+    ("Zen (status hidden)")
+    palette
+    ()
     document
-    ("Command palette unavailable in zen; Space v z restores the workspace")
+    ("Command palette cannot fit; needs at least 14 columns and 4 rows")
     document
-    ("Command palette cannot fit in compact layout")
+    ("Command palette cannot fit; needs at least 14 columns and 4 rows")
     |}]
 ;;
 
-let%expect_test "with the band full, the palette takes the first slot" =
+let%expect_test "with the band full, the palette does not take a tiled slot" =
   let t = Ui_state.create ~tiles_visible:false ~report:Report_tile.demo (Ui_state.controller (create ())) in
   let t = run ~width:40 t " vb vd vm cc" in
   print_s
@@ -354,7 +460,7 @@ let%expect_test "with the band full, the palette takes the first slot" =
        : Workspace.Pane_id.t list)];
   print_endline (focused ~width:40 t);
   [%expect {|
-    ((Minor palette) (Minor problems))
+    ((Minor problems) (Minor demo-report))
     palette
     |}]
 ;;
@@ -365,7 +471,7 @@ let%expect_test "every size renders bounded rows, and the cursor stays in the co
     let frame = Frame.render t ~width ~height in
     assert (List.length frame.rows = height);
     List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width));
-    match Ui_state.minor_layout t ~width ~height Palette_tile.id, frame.cursor with
+    match Ui_state.palette_layout t ~width ~height, frame.cursor with
     | Some layout, Some cursor ->
       let c = layout.content in
       assert (cursor.x >= c.x && cursor.x < c.x + c.width && cursor.y = c.y);
@@ -373,14 +479,14 @@ let%expect_test "every size renders bounded rows, and the cursor stays in the co
     | Some _, None -> printf "%dx%d: palette, no cursor\n" width height
     | None, _ -> printf "%dx%d: %s\n" width height (focused ~width ~height t));
   [%expect {|
-    80x4: document
-    80x5: palette, cursor 42,3
-    20x6: palette, cursor 17,4
-    20x8: palette, cursor 17,6
-    24x9: palette, cursor 21,7
-    30x10: palette, cursor 27,8
-    40x8: palette, cursor 37,6
-    80x16: palette, cursor 42,12
-    120x40: palette, cursor 42,31
+    80x4: palette, cursor 43,1
+    80x5: palette, cursor 43,1
+    20x6: palette, cursor 16,2
+    20x8: palette, cursor 16,2
+    24x9: palette, cursor 20,2
+    30x10: palette, cursor 26,2
+    40x8: palette, cursor 36,2
+    80x16: palette, cursor 43,2
+    120x40: palette, cursor 62,14
     |}]
 ;;

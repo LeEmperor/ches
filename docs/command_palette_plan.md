@@ -1,7 +1,13 @@
 # Ches command palette implementation plan
 
-Status: stages 1–5 software-complete (docked milestone; floating presentation is later
-work). Human feedback on the terminal UI is pending. Stage 3, the host extensions,
+Presentation follow-up (2026-10-06): the live palette is now floating. The docked
+placement, zen restriction, and bottom-band sizing below describe the original
+milestone, not current behavior. See [Floating tiles plan](../FLOATING_TILES_PLAN.md)
+for implementation/validation status and the
+[command palette reference](editor_reference.md#command-palette) for current usage.
+
+Original milestone status: stages 1–5 software-complete (docked presentation).
+Human feedback on the terminal UI is pending. Stage 3, the host extensions,
 stage 4, and the word-delete follow-up are uncommitted.
 The tiling system (7A–7C, 8, diagnostic sources) is merged into `oxcaml` (`ef77f9a`)
 and this branch (`4ccde73`). See

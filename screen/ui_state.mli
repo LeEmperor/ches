@@ -83,11 +83,26 @@ val history_tile : t -> History_tile.t
 (** The command palette, while open (it is then focused). *)
 val palette : t -> Palette_tile.t option
 
-(** The effective focus: a minor view only while it is allocated. *)
-val focused_view : t -> width:int -> height:int -> Ches_tile.View_id.t
+(** The open palette's centered floating shell; [None] when closed or when the
+    terminal cannot fit its frame, query row, and one result row. *)
+val palette_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+
+(** The effective focus: a supporting view only while its layout is available.
+    [floating] has the same overriding semantics as {!view_layout}. *)
+val focused_view
+  :  ?floating:(Ches_tile.View_id.t * Tile_shell.Layout.t option)
+  -> t
+  -> width:int
+  -> height:int
+  -> Ches_tile.View_id.t
 
 (** The view supplying the terminal cursor, if any: the document when focused. *)
-val cursor_owner : t -> width:int -> height:int -> Ches_tile.View_id.t option
+val cursor_owner
+  :  ?floating:(Ches_tile.View_id.t * Tile_shell.Layout.t option)
+  -> t
+  -> width:int
+  -> height:int
+  -> Ches_tile.View_id.t option
 
 val problems_focused : t -> width:int -> height:int -> bool
 
@@ -97,7 +112,8 @@ val problems_focused : t -> width:int -> height:int -> bool
     document owns the cursor, in a list, for views without text, or for an intent
     outside the content. Exactly one view owns the terminal cursor at a time. *)
 val minor_cursor
-  :  t
+  :  ?floating:(Ches_tile.View_id.t * Tile_shell.Layout.t option)
+  -> t
   -> width:int
   -> height:int
   -> (int * int * Ches_tile.Cursor.Shape.t) option
@@ -114,7 +130,7 @@ val minor_layout
 (** Resolve a supporting view's shared shell in either layer. [floating] names
     the transient view and its already computed layout; [None] for that layout
     means it cannot fit, and never falls back to a tiled allocation. Without this
-    argument, resolve the existing tiled status/minor views. The document uses
+    argument, resolve the live floating palette or tiled status/minor views. The document uses
     {!geometry}, rather than a supporting shell, and returns [None]. This query
     does not change workspace allocation or state. *)
 val view_layout
