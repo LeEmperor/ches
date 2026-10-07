@@ -102,7 +102,7 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v o` | Show/focus problems, or return to the document |
 | Normal | `Space v d` / `Space v D` | Show/hide, or show/focus, the static demo report (`--demo-report` only) |
 | Normal | `Space v m` / `Space v M` | Show/hide, or show/focus, the notification history |
-| Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
+| Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp, slang-server, or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -245,10 +245,11 @@ file dim after an edit until their checker catches up; nothing updates the demo,
 they stay dimmed. Other files' findings never dim from typing. A finding's selection
 survives lines inserted above it. Lists that arrive during Insert wait until it ends.
 
-### Language server (ocamllsp)
+### Language servers (ocamllsp and slang-server)
 
 ```sh
 dune exec ches -- PATH.ml          # or .mli, .mll, .mly; --no-lsp turns it off
+dune exec ches -- PATH.sv          # or .svh, .v, .vh; requires slang-server on PATH
 ```
 
 Like the owner's Neovim setup, ches starts `ocamllsp` from PATH for OCaml files. Its
@@ -269,6 +270,23 @@ kept in history, its findings kept dimmed and marked `stopped`; nothing restarts
 its own. On quit ches asks the server to shut down and waits up to 1 s.
 `--synthetic-checker` replaces it. To check the client against the installed server
 without the UI: `dune exec source/bench/lsp_probe.exe -- -build`.
+
+For SystemVerilog (`.sv`, `.svh`) and Verilog (`.v`, `.vh`), ches starts
+`slang-server` from PATH with no arguments, using the same diagnostic and lifecycle
+handling. Its root is the nearest ancestor containing `.slang`; if none, the nearest
+`.git`; else the file's directory. `--no-lsp` disables either server, and
+`--synthetic-checker` takes precedence over either.
+
+Set include paths, defines, and file lists in the project's `.slang/server.json`,
+which the server reads itself. For example:
+
+```json
+{ "flags": "-Irtl/include -DSIMULATION", "build": "build/top.f" }
+```
+
+See the [slang-server configuration documentation](https://hudson-trading.github.io/slang-server/start/config/).
+Ches currently consumes LSP diagnostics only; completion, hover, go-to-definition,
+and slang's HDL hierarchy and waveform features are not wired into the editor.
 
 ### Synthetic checker (live diagnostic source)
 

@@ -49,6 +49,27 @@ module Config = struct
     }
   ;;
 
+  let slang_server =
+    { source = "slang-server"
+    ; prog = "slang-server"
+    ; args = []
+    ; applies_to =
+        (fun path ->
+          match snd (Filename.split_extension path) with
+          | Some ("sv" | "svh" | "v" | "vh") -> true
+          | _ -> false)
+    ; language_id =
+        (fun path ->
+          match snd (Filename.split_extension path) with
+          | Some ("v" | "vh") -> "verilog"
+          | _ -> "systemverilog")
+    ; root_markers = [ ".slang"; ".git" ]
+    ; shutdown_grace = Time_ns.Span.of_int_ms 1000
+    }
+  ;;
+
+  let for_path path = List.find [ ocamllsp; slang_server ] ~f:(fun t -> t.applies_to path)
+
   let root t path = Workspace_root.find_first ~markers:t.root_markers path
 end
 

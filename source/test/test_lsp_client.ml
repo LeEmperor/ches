@@ -10,6 +10,32 @@ module Convert = Lsp_client.Convert
 
 let cell_width = Ches_screen.Cell_map.width
 
+let%expect_test "server selection and document language ids" =
+  List.iter
+    [ "a.ml"; "a.mli"; "a.mll"; "a.mly"; "a.sv"; "a.svh"; "a.v"; "a.vh"
+    ; "a.txt"; "a.sv.bak"
+    ]
+    ~f:(fun path ->
+      match Lsp_client.Config.for_path path with
+      | None -> printf "%s: none\n" path
+      | Some config ->
+        printf "%s: %s (%s)\n" path config.prog (config.language_id path));
+  [%expect
+    {|
+    a.ml: ocamllsp (ocaml)
+    a.mli: ocamllsp (ocaml.interface)
+    a.mll: ocamllsp (ocaml.ocamllex)
+    a.mly: ocamllsp (ocaml.menhir)
+    a.sv: slang-server (systemverilog)
+    a.svh: slang-server (systemverilog)
+    a.v: slang-server (verilog)
+    a.vh: slang-server (verilog)
+    a.txt: none
+    a.sv.bak: none
+    |}];
+  return ()
+;;
+
 let%expect_test "conversions: severities, one-line messages, columns per encoding" =
   List.iter
     [ None; Some Lsp.Types.DiagnosticSeverity.Error; Some Warning; Some Information; Some Hint ]
@@ -303,6 +329,22 @@ let%expect_test "the root: markers in priority order, each searched up all ances
     [%expect
       {|
       <root>/repo/proj
+      <root>/repo
+      <root>/loose
+      |}];
+    return ())
+;;
+
+let%expect_test "slang root: project config before git, then the file's directory" =
+  with_root (fun root ->
+    List.iter [ "repo/.git"; "repo/rtl/.slang"; "repo/rtl/sub/.git"; "loose" ]
+      ~f:(fun path -> Core_unix.mkdir_p (Filename.concat root path));
+    List.iter [ "repo/rtl/sub/a.sv"; "repo/b.v"; "loose/c.svh" ] ~f:(fun path ->
+      let found = Lsp_client.Config.(root slang_server) (Filename.concat root path) in
+      print_endline (String.substr_replace_all found ~pattern:root ~with_:"<root>"));
+    [%expect
+      {|
+      <root>/repo/rtl
       <root>/repo
       <root>/loose
       |}];

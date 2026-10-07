@@ -1465,6 +1465,7 @@ expect_exit 0
 fake_lsp=$root/_build/default/source/test/fake_lsp/fake_lsp.exe
 mkdir -p "$work/fakebin" "$work/emptybin"
 ln -s "$fake_lsp" "$work/fakebin/ocamllsp"
+ln -s "$fake_lsp" "$work/fakebin/slang-server"
 
 # Whether a fake server launched by ches is still running.
 fake_lsp_running() {
@@ -1513,6 +1514,37 @@ if poll fake_lsp_gone; then
 else
   fail "a language server outlived ches"
 fi
+
+section "language server for SystemVerilog: findings, edits, --no-lsp, missing server"
+mkdir -p "$work/svproj/.slang" "$work/svproj/rtl"
+printf 'module top;\n  ERROR\nendmodule\n' > "$work/svproj/rtl/top.sv"
+launch_env="env PATH=$work/fakebin:$PATH"
+launch svproj/rtl/top.sv
+launch_env=""
+keys Space v b
+expect_screen "error [slang-server] svproj/rtl/top.sv:2:3: fake error"
+keys j d d
+expect_screen "Problems (workspace): 0/0"
+keys u
+expect_screen "error [slang-server] svproj/rtl/top.sv:2:3: fake error"
+keys Space q
+expect_exit 0
+launch_env="env PATH=$work/fakebin:$PATH"
+launch svproj/rtl/top.sv --no-lsp
+launch_env=""
+sleep 1
+expect_no_screen "problem"
+keys Space q
+expect_exit 0
+launch_env="env PATH=$work/emptybin"
+launch svproj/rtl/top.sv
+launch_env=""
+sleep 1
+expect_no_screen "unavailable"
+keys Space v m
+expect_screen "slang-server unavailable: slang-server not found"
+keys Space q
+expect_exit 0
 
 section "no language server: other files, none on PATH, --no-lsp"
 resize 80 24
