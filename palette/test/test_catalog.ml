@@ -102,6 +102,8 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     report.focus                   Focus demo report
     source.restart                 Restart diagnostic source
     document.lines                 Search current document lines
+    project.contents               Search project contents
+    project.files                  Find project files
     directory.toggle-mark          Toggle directory entry mark
     directory.mark-selection       Mark directory selection
     directory.unmark-selection     Unmark directory selection

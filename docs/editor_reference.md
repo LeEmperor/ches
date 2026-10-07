@@ -69,6 +69,8 @@ checks for [Ches](../README.md).
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
 | Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
 | Normal | `Space f l` | Fuzzy search current-document lines (including unsaved edits) |
+| Normal | `Space f f` | Find project files; open/activate retained buffers |
+| Normal | `Space f g` | Search project contents on disk; validate and jump |
 | Normal | `Escape` | Cancel pending input; when idle, clear search highlights and acknowledge the presented problem |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
@@ -138,6 +140,7 @@ command's name, or a related word: `rel num`, `rln`, and `gutter relative` all f
 *Toggle relative line numbers*. Matching is fuzzy and in-process (no `fzf` needed):
 each space-separated word must match, in order, in the title, the command's ID, or
 one of its keywords, and matched title letters are highlighted.
+The current default catalog contains **54 commands**, including all three pickers.
 
 | Palette keys | Action |
 | --- | --- |
@@ -172,7 +175,7 @@ To add a command, add an entry (ID, title, keywords, and the existing editor or 
 action) to `Catalog.default` in `palette/catalog.ml`. Its shortcut is derived from the
 bindings, so it needs no label and no execution code of its own.
 
-### Fuzzy document lines; planned file/content opening
+### File, document-line and project-content pickers
 
 `Space f l` (Normal) or **Search current document lines** in the command palette
 opens numbered in-memory lines in the shared float. Type loose subsequences;
@@ -182,9 +185,13 @@ cancel without moving the document; Ctrl-c shows a reminder, not cancellation.
 Filtering/no-match Enter is inert. Document changes invalidate results; reopen to
 refresh. Minimum 14×5, including zen; undersized resize closes safely.
 
-`Space f f` remains **unbound**: file/content opening is not yet wired to the new
-session/buffer APIs. See [picker status and setup](pickers.md) for resource limits, coordinates,
-ripgrep dependencies and blockers. Existing `/` and `?` search is unchanged.
+`Space f f` / **Find project files** opens or activates retained buffers without
+reloading unsaved text. `Space f g` / **Search project contents** searches on-disk
+case-sensitive literals, then validates the current target's entire raw line and
+literal byte range before activating and revealing it. Dirty matching lines are
+allowed; stale lines and missing new files fail visibly without changing tabs.
+See [picker status and setup](pickers.md) for scope, limits, coordinates and ripgrep
+dependencies. Existing `/` and `?` search is unchanged.
 
 Workspace commands include **Save buffer**, **Next/Previous file tab**,
 **Close file tab** (and its explicit discard variant), **Recreate missing path**,
@@ -928,6 +935,7 @@ scripts/smoke.sh --palette-only             # only floating-palette scenarios
 scripts/smoke.sh --line-picker-only          # live line binding/jump/zen/paste/resize
 scripts/smoke.sh --palette-only path/to/ches
 python3 scripts/directory_workspace_smoke.py # directory/tab integration PTY scenarios
+python3 scripts/picker_smoke.py              # real file/content opening and stale/dirty navigation
 ```
 
 It prints `ok` or `FAIL` for each check, with a screen dump after each failure,
@@ -937,6 +945,13 @@ of review screens (Normal, Insert and dirty, pending `Space` and `Space v`, a
 moved tile, relative and no line numbers, and a save error at 80x24 and
 160x48, plus tiny sizes and floating-palette open/close/resize/zen screens) and prints
 their directory (`cat` a file to view it).
+
+`picker_smoke.py` uses its own tmux socket and `/tmp/opencode` fixture, retaining
+text/colored captures under the printed fixture's hidden `.captures` directory.
+It covers file/content binding and palette activation, query/select/cancel/accept,
+dirty retained text/undo, missing/stale failures, Unicode/TAB location reveal, zen
+restoration, minimum/tiny/resize and interrupted paste, disk bytes and tty modes.
+These are automated checks, not human visual or ranking/performance acceptance.
 
 Cursor assertions poll for a visible cursor at the expected position within five
 seconds, rather than sampling hidden cursor coordinates during smear. This fixed

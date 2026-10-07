@@ -1,11 +1,18 @@
-# File picker foundations and floating integration (phases 1–5)
+# File picker (phases 1–6)
 
 `Interaction` is a single-owner, scheduler-independent mutable session. The screen
 adapter is `Ches_screen.File_picker_tile`, now registered with the shared floating
 host through explicit `Ui_state.open_file_picker`. `Ches_file_picker_host.Runtime`
 connects Async discovery and yielded ranking; `Editor_view.app ?file_picker`
-assembles the frontend with a required injected consumer. There is still no
-`Space f f` binding, command entry, default/no-op opener or real buffer activation.
+optionally overrides the production consumer for tests. By default `Space f f`
+and **Find project files** use the session's existing-file open/activation path
+after capture release and UI installation. Dirty buffers are never reread.
+
+Production activation is installed between inputs, including batched input, so
+following query keys cannot reach the document. `scripts/picker_smoke.py` checks
+real file/content opening with isolated terminal fixtures; build/full suites and
+terminal checks pass. See the current phase-9 handoff in `FILE_PICKER_PLAN.md`.
+Human visual/ranking/performance acceptance remains separate and unperformed.
 
 ## Host contract
 
@@ -27,8 +34,10 @@ assembles the frontend with a required injected consumer. There is still no
    minimum. Narrow/tiny rendering is bounded but can clip important metadata.
 6. `accept ~release ~consume` first marks the session closed and drops work/cache,
    then invokes `release`, then delivers exactly one raw-path intent. `release`
-   must cancel discovery and release input/paste capture/restore focus. Use a test
-   consumer until the real multi-buffer open/activate-existing-path API lands.
+    must cancel discovery and release input/paste capture/restore focus. Production
+    consumption queues a dedicated UI input using `Session.open_or_activate
+    ~must_exist:true`; missing new files cannot become empty documents. Errors
+    appear in feedback/history, with restored focus and the current buffer intact.
     Cancellation releases once with no intent. Exceptions are not retried.
 
 The shared float prefers 80×14 and requires a 14×5 terminal (three content rows).

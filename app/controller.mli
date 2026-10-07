@@ -57,7 +57,8 @@ val document_id : t -> Document_id.t
     the original spelling is retained for display. The error says which path could not be opened, and why. [cell_width] is passed
     to [Editor.create]. *)
 val open_file
-  :  ?keymap_config:Keymap.Config.t
+  :  ?must_exist:bool
+  -> ?keymap_config:Keymap.Config.t
   -> cell_width:Cell_layout.Width.t
   -> string
   -> t Or_error.t

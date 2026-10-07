@@ -1,22 +1,24 @@
-# Pickers: live document lines and file/content foundations
+# Pickers: project files, document lines and project contents
 
-The editor still edits **one document per session**. The file picker is integrated
-with the shared floating host and Async/Bonsai scheduling through an explicit
-test-consumer assembly boundary; it does not open files. **`Space f l`** searches
+**`Space f f`** opens the project file picker; **Find project files** is also in
+the command palette. Enter opens or activates a retained session buffer without
+saving or reloading dirty buffers. Missing new files, unreadable files and
+unsupported files fail visibly in feedback/history after focus returns; startup
+new-path opening remains supported. **`Space f l`** searches
 current in-memory lines, including unsaved edits, and Enter jumps to the match.
 The catalog entry is **Search current document lines** (`document.lines`).
-`Space f f` is reserved, **not available**. Content search has shared floating
-host/runtime/frontend test integration, but no live activation or real opener.
-Installing ripgrep does not enable file/content opening. Existing `/`, `?`, and
+**`Space f g`** / **Search project contents** (`project.contents`) searches on-disk
+case-sensitive literals. Enter validates the target's current in-memory line,
+opens/activates its session buffer and reveals the location. Existing `/`, `?`, and
 `Space c c` behavior is unchanged.
 
 ## What is implemented
 
 | Foundation | Search behavior | Acceptance tested |
 | --- | --- | --- |
-| File picker (phases 1–5) | Discover once per opening; yielded fuzzy filtering in the shared float, preferring basenames | Raw-path intent to an injected consumer after host release; actual provider/frontend integration tested; no file opened |
+| File picker (phases 1–6) | Discover once per opening; yielded fuzzy filtering in the shared float, preferring basenames | Session open/activation after host release and UI installation; production frontend and terminal dirty revisit, stable scope and failed opens tested |
 | Document lines (phase 7) | Snapshot current in-memory text, **including unsaved edits**, with numbered duplicate/empty lines | Validated current-document jump after capture release, viewport reveal; actual frontend and terminal smoke checked |
-| Project contents (phase 8, partial) | Debounced literal search over **on-disk** bytes in shared float; excludes unsaved edits | Typed byte-location intent after release to an injected consumer; real provider/frontend and interrupted resize/paste tested; no file opened or cross-file jump |
+| Project contents (phase 8) | Debounced literal search over **on-disk** bytes in shared float; excludes unsaved edits | Production session open/activation, exact raw-line/literal/range validation and display-cell jump after release; frontend and terminal dirty/stale navigation tested |
 
 File and line matching accepts ordered subsequences, with ASCII case folding and
 whitespace-separated tokens. It is not typo correction, full Unicode case folding,
@@ -56,10 +58,12 @@ is required. Missing rg/access failures produce actionable provider errors. Only
 file/content providers, their tests and probes require rg, not ordinary editing,
 line matching or the command palette.
 
-The proposed host scope is the nearest ancestor of the starting document directory
+The file scope is the nearest ancestor of the starting document directory
 containing `.git` (file or directory) or `dune-project`, otherwise that directory.
-Hosts must retain and explicitly pass this root rather than silently move it on
-same-project file activation. Diagnostic root discovery is unchanged.
+Directory startup uses that directory; unnamed startup uses cwd. The frontend
+retains and explicitly passes this root for its lifetime, even on cross-project
+tab activation (including nested markers). Restart the editor to select another
+scope. Diagnostic root discovery is unchanged.
 
 Both rg providers include untracked files, respect normal ignore rules (including
 parent/global rules), omit hidden components and `.git` metadata, and do not follow
@@ -96,8 +100,13 @@ acceptance converts raw match bytes using the editor's width table into one-base
 display cells, accounting for TABs/wide/control glyphs; combining marks map to the
 preceding visible glyph/first cell. Content intents retain one-based lines and
 zero-based byte start/end (end exclusive); the UI labels its printed column as
-one-based **BYTES, not cells**. The future consumer must validate opened contents
-and convert coordinates, never pass raw bytes straight to `Controller.jump`.
+one-based **BYTES, not cells**. Production acceptance validates the whole raw line
+(including final LF), literal and UTF-8 byte boundaries before tab activation,
+then converts using the opened editor's display-cell API. Dirty buffers are never
+reloaded: edits elsewhere are allowed, changed searched lines fail visibly. New
+missing/unsupported files also fail, preserving the previous document and restored
+focus. Only LF/valid UTF-8 text is supported; CRLF is not normalized. Reopen search
+to refresh stale results. See [content policy](../content_picker/README.md#location-validation-and-dirtyfailure-policy).
 
 Work uses bounded record turns (suggested 128), not hard time bounds. Prepared
 arrays, maps, old/in-flight results, JSON decoding and rendering add memory beyond
@@ -105,45 +114,36 @@ string caps. DP matching, GC and O(results) publication/navigation can be costly
 The live host must yield and schedule work between input/redraws, neither drain
 inside key callbacks nor limit ranking to one turn per frame.
 
-## Remaining file/content integration blockers
+## Current verification and remaining acceptance
 
-1. **Phase 5 software integration is complete:** shared floating composition,
-   focus/paste/cursor, three-row content minimum, resize, late-event isolation and
-   yielded scheduling have automated host/provider/frontend checks. Its consumer
-   is explicitly injected for tests; there is no shipped file-opening command.
-2. **Phase 6:** the actual multi-buffer open/activate-existing API is absent.
-   Startup `Controller.open_file` can create an empty document on a missing path
-   and is not a safe picker adapter. Dirty-buffer/undo retention, path identity,
-   failure/focus policy and cross-document diagnostic isolation belong to buffers.
-3. **Phase 7 software integration is complete:** current-document jumping does not
-   require buffers. Shared floating host, invalidation, viewport reveal, live binding
-   and catalog dispatch have automated integration/frontend/terminal checks. This
-   does not claim human visual acceptance or a measured responsiveness guarantee.
-4. **Phase 8 remains PARTIAL:** shared floating/runtime test integration is implemented,
-   including debounce/cancellation/reaping, one batch per yielded poll and stale
-   query/session isolation. Actual open-at-location and opened-content/dirty-buffer
-   validation remain required before converting bytes or handling changed/missing
-   files. Live binding/catalog activation waits for that API.
+Phases 1–8 and phase-9 software verification are complete. Historical floating,
+buffer and content-opening blockers are superseded by the production handoffs in
+[`FILE_PICKER_PLAN.md`](../FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete).
+The build and forced full suite pass; no unrelated snapshots were promoted here.
+Production frontend tests use real rg and session opening, not just fake consumers.
+The catalog currently has **54 commands**, including all three picker entries.
 
-The final post-integration phase-9 review, exact future API integration checklist
-and observed checks are recorded in
-[`FILE_PICKER_PLAN.md`](../FILE_PICKER_PLAN.md#phase-9-final-post-integration-review-and-handoff-2026-10-07--partial).
-The forced full suite currently reports seven unpromoted snapshot mismatches in
-four `ui/test/test_editor_view.ml` tests (default-visible tile geometry/cursors).
-File-picker terminal smoke/human visual acceptance has not been performed. The
-phase-5 shared-palette terminal regression smoke passes; that is not file-opening
-acceptance. The actual file-picker Bonsai frontend is exercised headlessly with
-real rg and an explicit consumer, without exposing a no-op user command. Content's
-actual frontend likewise uses real rg and typed test consumption; content-specific
-terminal smoke/human visual review remains unperformed.
+Run the isolated terminal checks after building:
 
-Final review fixed frontend file-session teardown: deactivation now drops retained
-filtering work/cache/results as well as cancelling discovery, with a Bonsai lifecycle
-regression rejecting late work and acceptance. The owner awaits `Runtime.finished`
-for process cleanup. Final build and live `Space f l` terminal smoke pass; the full
-forced suite has only the documented UI snapshot failures above. **Human visual
-validation is still unperformed for all pickers.** File/content tests deliver intents
-to injected consumers; they do not demonstrate real cross-file opening/navigation.
+```sh
+python3 scripts/picker_smoke.py
+python3 scripts/directory_workspace_smoke.py
+TMPDIR=/tmp/opencode bash scripts/smoke.sh
+```
+
+The file/content smoke uses a private tmux socket and fixtures under
+`/tmp/opencode`, never repository files. It checks real binding/catalog activation,
+query/selection/cancel/accept, dirty revisits, missing/stale failures, Unicode/TAB
+navigation, undo, zen restoration, minimum/tiny/resized floats, interrupted paste,
+unchanged disk bytes and terminal-mode restoration. Captures stay in the printed
+fixture's hidden `.captures` directory so they cannot become search results.
+Headless lifecycle tests additionally reject stale provider turns and acceptance
+after deactivation and assert child cleanup/reaping.
+
+**Human visual validation remains unperformed for all pickers** (styles, cursor
+shape, flicker and perceived usability). Automated terminal captures are not
+human sign-off. Owner ranking examples and live performance acceptance also remain
+separate; no new latency, p99 or peak-RSS guarantee is claimed.
 
 For local headless measurements, see [file/query/discovery probes](../file_picker/bench/README.md)
 and [line probe](../line_picker/README.md#reproducible-scale-probe). They do not

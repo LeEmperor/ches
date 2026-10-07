@@ -10,8 +10,9 @@ open Bonsai_term
 
 module File_picker_host : sig
   (** Explicit assembly/test boundary. The caller opens [initial_ui] through the
-      Async runtime and supplies a real/test consumer. No default opener, binding,
-      or command entry is installed. The frontend yields and chains bounded work
+      Async runtime and overrides the production session consumer. Without this
+      override, Space f f / Find project files open existing session buffers.
+      The frontend yields and chains bounded work
       independently of redraws, and delivers intents only after capture release.
       Deactivation closes the filtering session and cancels discovery; the owner
       may await [Runtime.finished] at teardown. [initial_ui] must own the controller/source configuration supplied
@@ -24,7 +25,9 @@ module File_picker_host : sig
 end
 
 module Content_picker_host : sig
-  (** Test assembly only; no live activation or invented open-at-location adapter. *)
+  (** Optional assembly/test override for the production runtime and consumer.
+      By default Space f g / Search project contents validates current target text,
+      opens or activates a session buffer and reveals the display-cell location. *)
   type t =
     { initial_ui : Ches_screen.Ui_state.t
     ; runtime : Ches_content_picker_host.Runtime.t
@@ -34,7 +37,8 @@ end
 
 (** [font] gives the font styles of each part of the screen; the default is
     {!Theme.Font.default}. Current-document line work is always scheduled through
-    yielded bounded turns; [file_picker] is only the optional file-consumer boundary. *)
+    yielded bounded turns; [file_picker] is an optional file-consumer override.
+    File scope is resolved once from startup and retained across tab activation. *)
 val app
   :  ?smear_enabled:bool
   -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t

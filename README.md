@@ -37,10 +37,10 @@ Ches retains multiple files and visited directories per session. Files accept UT
 and preserves the file's contents, including whether it ends with a newline.
 
 `Space f l` opens fuzzy current-document lines, including unsaved edits, in the
-shared float. File/content opening remains unshipped: the file host is tested with
-an injected consumer, as is the floating on-disk content runtime. Neither opens
-files; `Space f f` is not bound and content search has no live activation. The new
-session/buffer APIs are not yet wired to picker consumers. See
+shared float. The file picker opens files through `Space f f` / Find project
+files, retaining dirty session buffers.
+`Space f g` / Search project contents searches on-disk literals and validates the
+current target text before opening and jumping. See
 [picker status and setup](docs/pickers.md) for behavior, limits and integration status.
 
 ## Usage
@@ -77,6 +77,8 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space Q` | Quit and discard unsaved changes |
 | `Space c c` | Open the command palette |
 | `Space f l` | Fuzzy search current-document lines; Enter jumps to the selected match |
+| `Space f f` | Find project files; Enter opens or activates a retained buffer |
+| `Space f g` | Search project contents on disk literally; Enter validates and jumps |
 | `Space v o` | Focus the problems view or return to the document |
 | `Space v M` | Show and focus notification history |
 
@@ -119,9 +121,9 @@ those frames.
 | `source/` | Asynchronous diagnostic sources and language-server client |
 | `tile/` | Shared tile host, focus, and input routing |
 | `palette/` | Command catalog and fuzzy matching |
-| `file_picker/` | File model, bounded discovery/matching and explicit Async floating-host assembly |
+| `file_picker/` | Project file discovery/matching and Async floating-picker runtime |
 | `line_picker/` | Bounded fuzzy search over current in-memory document lines |
-| `content_picker/` | Headless on-disk literal search provider and acceptance intents |
+| `content_picker/` | On-disk literal search provider and Async floating-picker runtime |
 | `screen/` | Screen geometry, workspace state, and frame rendering |
 | `ui/` | Bonsai_term frontend, event adapter, and theme |
 | `bin/` | Command-line entry point |
@@ -151,6 +153,7 @@ scripts/smoke.sh
 # Just the floating palette's terminal scenarios:
 scripts/smoke.sh --palette-only
 python3 scripts/directory_workspace_smoke.py
+python3 scripts/picker_smoke.py
 ```
 
 `ches.opam` is generated from `dune-project`; package metadata changes belong in
@@ -161,10 +164,11 @@ and frontend behavior. The separate terminal smoke test uses tmux, bash, and a
 UTF-8 locale to check the built editor's screen output, saved bytes, and terminal
 restoration. Visual checks and the `ppx_expect` source-path workaround are
 documented in the [editor reference](docs/editor_reference.md#terminal-smoke-test).
-The [final phase-9 check record](FILE_PICKER_PLAN.md#phase-9-final-post-integration-review-and-handoff-2026-10-07--partial)
-records passing headless/injected file/content checks, live `Space f l` terminal
-smoke, and the observed, unpromoted UI snapshot mismatch. Real file/content opening
-still needs session/buffer consumer integration; human visual validation is still unperformed.
+The [current phase-9 check record](FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete)
+records passing build/full tests and real file/content, directory and existing
+terminal checks. All three pickers ship binding/catalog activation (54 catalog
+commands). Human visual review, owner ranking examples and agreed live performance
+acceptance remain separate and unperformed.
 
 ## Current limitations
 

@@ -1,5 +1,29 @@
 # Phase 8 independent checks (2026-10-07)
 
+Historical records below predate production acceptance. The current phase-8
+production check record is in `../FILE_PICKER_PLAN.md`; production frontend tests
+now exercise real cross-file navigation and dirty/stale/missing validation.
+
+## Production phase-9 review (2026-10-07)
+
+Build/full forced suites and `python3 scripts/picker_smoke.py` pass. The latter
+checks real file/content opening, dirty/undo/stale validation, Unicode/TAB reveal,
+catalog dispatch, zen/tiny/resize/interrupted paste and tty restoration using only
+isolated `/tmp/opencode` fixtures. Directory workspace and full existing smoke
+also pass after correcting the latter's stale `tile` palette count (17 → 18).
+Exact logs/outcomes and defects fixed are in the current phase-9 plan handoff.
+Human visual review, owner ranking examples and live performance acceptance remain
+unperformed; historical failures/dependency records below are superseded, not erased.
+
+## Production phase-8 checks (2026-10-07)
+
+With `opam exec --switch=5.2.0+ox --`: build PASS; focused content/file/line/palette/
+screen/source/frontend suites PASS; full `dune runtest --force` PASS. Final additional
+LF/inactive-target regressions: `dune runtest ui/picker_test --force` PASS.
+Read-only `git diff --check` PASS. Logs: `/tmp/opencode/phase8-final-{build,focused,full,ui}.log`.
+Actual production Bonsai/rg acceptance and lifecycle tests passed. No terminal smoke,
+human visual or performance acceptance claimed; those remain phase 9.
+
 Toolchain: all Dune commands prefixed `opam exec --switch=5.2.0+ox --`.
 
 | Check | Outcome |

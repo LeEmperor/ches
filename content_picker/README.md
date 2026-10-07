@@ -1,9 +1,10 @@
-# Project on-disk literal search — phase 8 PARTIAL
+# Project on-disk literal search — phase 8 software complete
 
-The provider/model/tile now has shared floating host and Async/Bonsai integration
-through an explicit typed test-consumer boundary, not a shipped search binding.
-Real multi-buffer open-at-location and live activation remain unavailable.
-No parallel compositor, buffer manager, speculative opening adapter or no-op binding.
+Normal `Space f g` and palette **Search project contents** (`project.contents`)
+use the shared float and Async/Bonsai runtime. Acceptance opens/activates a retained
+session buffer and reveals a validated location. Phase-9 build/full tests and real
+file/content terminal smoke pass (`python3 scripts/picker_smoke.py`). Human visual,
+owner-ranking and agreed live performance acceptance remain separate/unperformed.
 
 ## Scope and semantics
 
@@ -74,25 +75,35 @@ the document/new picker. Escape/Tab close; Ctrl-c uses shared notice behavior.
 Workspace/document stay unchanged. Errors/truncation appear in status and footer;
 host notices may temporarily replace the footer hint.
 
-`Editor_view.app ?content_picker` requires opened UI/runtime/typed consumer. It
-reuses the single frontend turn chain, consumes intents after installing returned
-UI, and cancels provider/closes model on deactivation. No default adapter/binding
-or catalog entry. Real rg/frontend interaction and interrupted paste/resize are
-tested; content terminal smoke/human visual acceptance has not been performed.
+`Editor_view.app ?content_picker` optionally overrides the production runtime and
+consumer for tests. The default reuses the retained startup file scope and single
+frontend turn chain, delivers acceptance after release/UI installation, and cancels
+provider/closes model on deactivation or exit.
 
-## Location contract — not a navigation implementation
+## Location validation and dirty/failure policy
 
 Internal `line` is one-based; `start_byte`/`end_byte` are zero-based raw byte offsets,
 end exclusive. UI prints byte column `start_byte + 1` and explicitly labels BYTES,
 not display cells. A typed intent retains raw path, line, byte range, raw expected
 line and literal. It must **not** be passed straight to `Controller.jump`.
 
-The future actual buffer adapter must open/activate an **existing** file without
-losing dirty buffers, fail on disappearance, validate the expected line/literal
-against the opened current contents (also account for dirty buffers and encoding),
-then convert byte boundaries with that document's navigation API. If changed,
-fail visibly or rerun search rather than jumping blindly. That adapter/API is a
-dependency, not a fake production implementation.
+`Session.open_or_activate ~must_exist:true ~validate` validates before activation
+or registration. Retained text is authoritative, including dirty/deleted buffers:
+edits elsewhere are allowed, but the entire searched line must match raw
+`expected_text`, including its final LF (or lack of one). The nonempty literal
+must equal the exclusive byte range; both boundaries must be valid UTF-8 boundaries.
+The opened editor's `display_position_of_offset` converts the start to display cells,
+then `Controller.jump` and normal viewport fitting reveal it. Zero-width scalars
+follow the editor's preceding-visible-glyph policy; bytes are never jump columns.
+
+No reload, save or automatic refresh occurs. A changed line fails even if the same
+literal moved elsewhere; reopen search explicitly. Disk changes do not override a
+retained buffer. New missing/unreadable/directory/special/invalid-UTF-8/NUL/CRLF or
+bare-CR files fail via existing file IO rules (only LF is supported, no normalization).
+Validation rejection closes a newly loaded controller without registering a tab.
+Failure preserves the prior document, cursor/scroll, tabs, undo and restored focus,
+with escaped Error feedback/history. Success focuses the document and uses shared
+session adoption/source generations; diagnostics policy is unchanged.
 
 ## Bounds and caveats
 

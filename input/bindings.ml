@@ -217,6 +217,8 @@ let default =
     ; view 'r' Reset
     ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
     ; [ leader; Key.char 'f'; Key.char 'l' ], View Open_line_picker
+    ; [ leader; Key.char 'f'; Key.char 'f' ], View Open_file_picker
+    ; [ leader; Key.char 'f'; Key.char 'g' ], View Open_content_picker
     ]
   |> Or_error.ok_exn
 ;;

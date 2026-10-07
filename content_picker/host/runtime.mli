@@ -2,7 +2,8 @@ open! Core
 open! Async
 type t
 (** Single Async-scheduler owner. Reuse one provider. Opening preflights the shared
-    float before replacing discovery; no binding or buffer-opening adapter exists.
+    float before replacing discovery. Production activation/acceptance is owned by
+    Editor_view and Ui_state, not this provider runtime.
     Closing callbacks are session-generation-specific, not query-run-specific. *)
 val create : ?prog:string -> ?limits:Ches_content_search.Provider.Limits.t -> unit -> t
 val open_picker : t -> Ches_screen.Ui_state.t -> root:string -> width:int -> height:int

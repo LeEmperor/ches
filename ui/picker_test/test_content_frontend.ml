@@ -7,6 +7,54 @@ module Runtime = Ches_content_picker_host.Runtime
 module Model = Ches_content_picker.Model
 module Expect_test_config = Async.Expect_test_config
 
+let%expect_test "content frontend deactivation closes session and rejects late snapshots and acceptance" =
+  let root = Filename_unix.realpath (Filename_unix.temp_dir "ches-content-lifecycle" "") in
+  Out_channel.write_all (root ^ "/file.ml") ~data:"needle\n";
+  let runtime = Runtime.create () in
+  let controller = Ches_app.Controller.create
+    (Ches_core.Editor.create ~cell_width:Cell_map.width Ches_core.Text_buffer.empty) in
+  let opened = Runtime.open_picker runtime (Ui_state.create controller)
+    ~root ~width:80 ~height:24 |> Or_error.ok_exn in
+  let session = Content_picker_tile.session (Option.value_exn (Ui_state.content_picker opened)) in
+  let consumed = ref 0 in
+  let content_picker : Ches_ui.Editor_view.Content_picker_host.t =
+    { initial_ui = opened; runtime; consume = (fun _ -> incr consumed) } in
+  let active = Bonsai.Expert.Var.create true in
+  let component ~dimensions (local_ graph) =
+    let open Bonsai.Let_syntax in
+    let both = match%sub Bonsai.Expert.Var.value active with
+      | false -> Bonsai.return (View.none, (fun _ -> Effect.Ignore))
+      | true ->
+        let ~view, ~handler = Ches_ui.Editor_view.app ~content_picker controller
+          ~exit:(fun () -> Effect.Ignore) ~dimensions graph in
+        let%arr view and handler in view, handler in
+    let view = let%arr both in fst both in
+    let handler = let%arr both in snd both in
+    ~view, ~handler in
+  let handle = Bonsai_term_test.create_handle ~initial_dimensions:{ width = 80; height = 24 } component in
+  Handle.recompute_view handle;
+  String.iter "needle" ~f:(fun c ->
+    Bonsai_term_test.send_event handle (Key_press { key = ASCII c; mods = [] }));
+  Handle.recompute_view handle;
+  let snapshot = Model.snapshot session in
+  Bonsai.Expert.Var.set active false;
+  Handle.recompute_view handle;
+  assert (Model.closed session);
+  assert (List.is_empty (Model.snapshot session).hits);
+  assert (not (Model.install session snapshot));
+  Model.accept session ~release:(fun () -> failwith "late release") ~consume:(fun _ -> incr consumed);
+  let%bind () = Runtime.finished runtime in
+  let%bind () = Scheduler.yield () in
+  Handle.recompute_view handle;
+  assert (!consumed = 0 && Model.closed session);
+  Core_unix.unlink (root ^ "/file.ml"); Core_unix.rmdir root;
+  Ches_app.Controller.close controller;
+  ignore ([%expect.output] : string);
+  print_endline "content deactivation drops pending search and late delivery";
+  [%expect {| content deactivation drops pending search and late delivery |}];
+  return ()
+;;
+
 let%expect_test "real rg content frontend: scheduling, edits, raw byte intent and released cursor" =
   let root = Filename_unix.realpath (Filename_unix.temp_dir "ches-content-ui" "") in
   List.iter (List.init 300 ~f:(fun n -> sprintf "file%03d.ml" n)) ~f:(fun p ->

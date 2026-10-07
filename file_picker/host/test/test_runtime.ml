@@ -85,6 +85,61 @@ let%expect_test "provider failures, truncation and empty roots appear through th
       Runtime.cancel runtime))
 ;;
 
+let%expect_test "released acceptance uses session ownership and synchronizes source lifetimes" =
+  with_root "empty" (fun root ->
+    let path = root ^ "/accepted.ml" in
+    Out_channel.write_all path ~data:"let accepted = 1\n";
+    let runtime = Runtime.create () in
+    let initial = Ui_state.create ~source_attached:true
+      (Controller.create (Editor.create ~cell_width:Cell_map.width Ches_core.Text_buffer.empty)) in
+    let state = ref (open_picker runtime initial root) in
+    let%bind () = drain runtime state in
+    String.iter "accepted" ~f:(fun c -> state := key !state (Ches_input.Key.char c));
+    let%bind () = drain runtime state in
+    let picker_session = session !state in
+    state := key !state Enter;
+    assert (Interaction.closed picker_session);
+    let ui, requests = Ui_state.take_file_requests !state in
+    state := ui;
+    assert (List.length requests = 1);
+    assert (List.is_empty (snd (Ui_state.take_file_requests !state)));
+    state := apply !state (List.map requests ~f:(fun r -> Ui_state.Input.File_picker_accept r));
+    assert (List.length (Ches_app.Session.buffers (Ui_state.session !state)) = 2);
+    assert (Option.equal String.equal (Editor.path (Controller.editor (Ui_state.controller !state))) (Some path));
+    assert (Controller.highlight_parse_count (Ui_state.controller !state) > 0);
+    let ui, source_requests = Ui_state.take_source_requests !state in state := ui;
+    assert (List.exists source_requests ~f:(function
+      | Ches_error.Source_request.Document_opened { resource; _ } -> String.equal resource path
+      | _ -> false));
+    assert (List.exists source_requests ~f:(function
+      | Ches_error.Source_request.Document_changed { resource; text; _ } ->
+        String.equal resource path && String.equal text "let accepted = 1\n"
+      | _ -> false));
+    assert (List.is_empty (snd (Ui_state.take_source_requests !state)));
+    let old_generation = Ches_app.Session.source_generation (Ui_state.session !state)
+      (Option.value_exn (Ches_app.Session.active_id (Ui_state.session !state))) |> Option.value_exn in
+    state := fst (Ui_state.close_current !state ~width ~height ~force:false);
+    state := fst (Ui_state.open_file !state ~width ~height path |> Or_error.ok_exn);
+    let stale = Ches_error.Source_event.Owned { resource = path; generation = old_generation;
+      event = Unavailable { source = "stale-picker-test"; root; reason = "STALE" } } in
+    state := apply !state [ Source stale ];
+    assert (not (String.is_substring (rendered !state) ~substring:"STALE"));
+    (* New missing/unsupported files fail without installing any buffer. *)
+    let before = Ui_state.session !state in
+    assert (Result.is_error (Ches_app.Session.open_or_activate ~must_exist:true before (root ^ "/missing.ml")));
+    Out_channel.write_all (root ^ "/invalid.ml") ~data:(String.of_char (Char.of_int_exn 255));
+    assert (Result.is_error (Ches_app.Session.open_or_activate ~must_exist:true before (root ^ "/invalid.ml")));
+    Core_unix.mkfifo (root ^ "/fifo") ~perm:0o600;
+    assert (Result.is_error (Ches_app.Session.open_or_activate ~must_exist:true before (root ^ "/fifo")));
+    assert (List.length (Ches_app.Session.buffers before) = 2);
+    (* Ordinary startup/new-path semantics remain intentionally permissive. *)
+    let new_controller = Controller.open_file ~cell_width:Cell_map.width (root ^ "/new.ml") |> Or_error.ok_exn in
+    assert (String.is_empty (Ches_core.Text_buffer.to_string (Editor.text (Controller.editor new_controller))));
+    Controller.close new_controller;
+    Ches_app.Session.dispose (Ui_state.session !state);
+    timeout (Runtime.finished runtime))
+;;
+
 let%expect_test "bounded Async turns allow input; cancellation and queued stale turns isolate reopening" =
   with_root "pushback" (fun root ->
     let runtime = Runtime.create ~prog:fake_rg () in

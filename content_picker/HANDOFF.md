@@ -1,7 +1,12 @@
 # Phase 8 independent handoff — historical PARTIAL (2026-10-07)
 
-This historical handoff predates floating/runtime integration. Current handoff
-is appended below; buffer/coordinate obligations remain mandatory.
+This historical handoff predates production integration. The current production
+handoff is in `../FILE_PICKER_PLAN.md` (phase 8 software complete): `Space f g`,
+palette activation, retained-session validation before tab activation, and actual
+display-cell navigation are implemented. See README for dirty/failure policy.
+Checks are in RESULTS. Phase-9 production software/terminal checks now pass; the
+current phase-9 plan handoff supersedes stale blockers below. Human visual/ranking/
+performance acceptance remains separate and unperformed.
 
 ## Done
 
@@ -52,7 +57,7 @@ were subsequently completed; see `../FILE_PICKER_PLAN.md`'s phase-9 handoff and
 `../docs/pickers.md`. End-to-end release checks remain blocked by the dependencies
 above. Leave branch reconciliation/publication to the human.
 
-## Current floating/runtime handoff (2026-10-07) — PARTIAL
+## Historical floating/runtime handoff (2026-10-07) — PARTIAL, superseded
 
 - Shared float/focus/cursor/paste/resize and actual Async/Bonsai scheduling are
   implemented. No live activation or real cross-file acceptance exists.

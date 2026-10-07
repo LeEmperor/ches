@@ -249,6 +249,10 @@ let default =
         ~title:"Search current document lines"
         ~keywords:[ "fuzzy"; "unsaved"; "jump" ]
         Open_line_picker
+    ; view ~id:"project.contents" ~title:"Search project contents"
+        ~keywords:[ "grep"; "literal"; "disk" ] Open_content_picker
+    ; view ~id:"project.files" ~title:"Find project files"
+        ~keywords:[ "fuzzy"; "open"; "picker" ] Open_file_picker
      ; view ~id:"directory.toggle-mark" ~title:"Toggle directory entry mark" Toggle_entry_mark
      ; view ~id:"directory.mark-selection" ~title:"Mark directory selection" Mark_selection
      ; view ~id:"directory.unmark-selection" ~title:"Unmark directory selection" Unmark_selection

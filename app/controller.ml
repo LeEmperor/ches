@@ -59,15 +59,19 @@ let create ?(keymap_config = Keymap.Config.default) ?(kind = Kind.File) editor =
   }
 ;;
 
-let open_file ?keymap_config ~cell_width path =
+let open_file ?(must_exist = false) ?keymap_config ~cell_width path =
   let display_path = path in
   let path = Resource.normalize ~cwd:(Core_unix.getcwd ()) path in
   let create editor = { (create ?keymap_config editor) with display_path = Some display_path } in
   match File_io.read path with
   | Error error ->
-    Or_error.error_string (sprintf "Cannot open %s: %s" path (Error.to_string_hum error))
+    Or_error.error_string (if must_exist
+      then sprintf "%s: %s" (Error.to_string_hum error) path
+      else sprintf "Cannot open %s: %s" path (Error.to_string_hum error))
   | Ok (Existing text) ->
     Ok (create (Editor.create ~path ~cell_width text))
+  | Ok Missing when must_exist ->
+    Or_error.error_string (sprintf "file no longer exists: %s" path)
   | Ok Missing ->
     Ok (create (Editor.create ~path ~cell_width Text_buffer.empty))
 ;;

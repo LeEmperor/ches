@@ -43,6 +43,8 @@ module Input : sig
         editor. *)
     | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
     | File_picker_work of Ches_file_picker.Model.Discovery.request
+    | File_picker_accept of Ches_tile.View_id.t Ches_file_picker.Model.Request.t
+    | Content_picker_accept of (Ches_tile.View_id.t Ches_content_picker.Model.intent [@sexp.opaque])
        (** One bounded ranking turn, rejected if its run/root no longer matches. *)
     | Line_picker_work of int (** Bounded turn, rejected after close/reopen. *)
     | Content_picker_snapshot of (Ches_content_picker.Model.snapshot [@sexp.opaque])
@@ -112,7 +114,7 @@ val history_tile : t -> History_tile.t
 (** The command palette, while open (it is then focused). *)
 val palette : t -> Palette_tile.t option
 
-(** Explicit provider/consumer assembly boundary, not a live opening command.
+(** Provider assembly boundary (also used by the production frontend).
     Only one transient float exists. Refusal calls [release]; all closing paths
     cancel discovery once. Returning restores the prior available capture. *)
 val open_file_picker
@@ -134,6 +136,9 @@ val line_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t opt
 (** Take after installing the returned UI state, then deliver to an injected
     consumer. Capture/discovery are already released; intents are not retried. *)
 val take_file_requests : t -> t * Ches_tile.View_id.t Ches_file_picker.Model.Request.t list
+val take_file_picker_activation : t -> t * bool
+val take_content_picker_activation : t -> t * bool
+val with_notice : ?source:string -> t -> string -> t
 
 (** The open palette's centered floating shell; [None] when closed or when the
     terminal cannot fit its frame, query row, and one result row. *)
@@ -357,9 +362,11 @@ val max_offset : int
 
 (** [apply] for each input in order, stopping at [Exit]. Consecutive [Source] inputs
     (a frontend's batch of source events) are applied as one step that synchronizes the
-    views once, with the same result. *)
+     views once, with the same result. [after_step] installs frontend-owned picker
+     activation before the next input, so batched query keys retain their owner. *)
 val apply_all
-  :  t
+   :  ?after_step:(t -> t)
+   -> t
   -> width:int
   -> height:int
   -> Input.t list

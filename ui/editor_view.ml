@@ -77,6 +77,20 @@ end
 
 let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
+  (* Scope belongs to this editor instance, not the currently active tab. Directory
+     startup and unnamed documents use the session's explicit startup directory. *)
+  let production_runtime = Ches_file_picker_host.Runtime.create () in
+  let content_runtime = Option.value_map content_picker
+    ~default:(Ches_content_picker_host.Runtime.create ())
+    ~f:(fun host -> host.Content_picker_host.runtime) in
+  let starting_directory = match Ches_core.Editor.path (Ches_app.Controller.editor controller) with
+    | None -> Core_unix.getcwd ()
+    | Some path -> if Ches_app.Controller.Kind.equal (Ches_app.Controller.kind controller) Directory
+      then path else Filename.dirname path in
+  let project_root = Ches_file_discovery.Project_root.find
+    (Filename.concat starting_directory "__picker_scope__") in
+  let file_runtime = Option.value_map file_picker ~default:production_runtime
+    ~f:(fun host -> host.File_picker_host.runtime) in
   let picker_turn_scheduled = ref false in
   let active_file_session = ref (Option.bind file_picker ~f:(fun host ->
     Option.map (Ui_state.file_picker host.File_picker_host.initial_ui)
@@ -107,16 +121,31 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
           | Some host, None -> host.Content_picker_host.initial_ui
           | None, Some host -> host.File_picker_host.initial_ui
            | None, None -> Ui_state.create ~smear_enabled ?buffer_presentation ?report
-              ~source_attached:(Option.is_some source) controller)
+               ~source_attached:(Option.is_some source) controller)
       ~apply_action:(fun context input model inputs ->
         match input with
         | Inactive -> model
         | Active ({ Dimensions.width; height }, write_to_tty) ->
           let was_running = not (Ui_state.exited model) in
-           let model, status = Ui_state.apply_all model ~width ~height inputs in
-           active_file_session := Option.map (Ui_state.file_picker model) ~f:File_picker_tile.session;
-           active_line_session := Option.map (Ui_state.line_picker model) ~f:Line_picker_tile.session;
-           active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
+          let activate_pickers model =
+            let model, activate_files = Ui_state.take_file_picker_activation model in
+            let model = if not activate_files then model else
+              match Ches_file_picker_host.Runtime.open_picker file_runtime model
+                ~root:project_root ~width ~height with
+              | Ok model -> model
+              | Error error -> Ui_state.with_notice model (Error.to_string_hum error) in
+            let model, activate_contents = Ui_state.take_content_picker_activation model in
+            let model = if not activate_contents then model else
+              match Ches_content_picker_host.Runtime.open_picker content_runtime model
+                ~root:project_root ~width ~height with
+              | Ok model -> model
+              | Error error -> Ui_state.with_notice ~source:"content picker" model (Error.to_string_hum error) in
+            model
+          in
+          let model, status = Ui_state.apply_all ~after_step:activate_pickers model ~width ~height inputs in
+          active_file_session := Option.map (Ui_state.file_picker model) ~f:File_picker_tile.session;
+          active_line_session := Option.map (Ui_state.line_picker model) ~f:Line_picker_tile.session;
+          active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
           let model, clipboard = Ui_state.take_clipboard model in
           Option.iter clipboard ~f:(fun text ->
             Bonsai.Apply_action_context.schedule_event
@@ -130,49 +159,44 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
               Bonsai.Apply_action_context.schedule_event
                 context
                 (Effect.of_thunk (fun () -> Ches_source.Source.send source request))));
-          let model = match file_picker with
-            | None -> model
-            | Some host ->
-              let model, requests = Ui_state.take_file_requests model in
-              List.iter requests ~f:(fun request ->
-                Bonsai.Apply_action_context.schedule_event context
-                  (Effect.of_thunk (fun () -> host.consume request)));
-               model
-           in
-            let model = match content_picker with
-              | None -> model
-              | Some host ->
-                let model, requests = Ui_state.take_content_requests model in
-                List.iter requests ~f:(fun request ->
-                  Bonsai.Apply_action_context.schedule_event context
-                    (Effect.of_thunk (fun () -> host.consume request)));
-                model in
-            if not !picker_turn_scheduled
-               && (line_needs_turn model || (Option.is_some file_picker && picker_needs_turn model)
-                   || Option.exists content_picker ~f:(fun host ->
-                     Ches_content_picker_host.Runtime.needs_turn host.runtime model))
-           then (
-             picker_turn_scheduled := true;
-             Bonsai.Apply_action_context.schedule_event context
-               (let%bind.Effect events = Effect.of_deferred_thunk (fun () ->
-                  if line_needs_turn model then (
-                    let generation = Ui_state.line_picker_generation model in
-                    Async.Deferred.map (Async.Scheduler.yield ()) ~f:(fun () ->
-                      [ Ui_state.Input.Line_picker_work generation ]))
-                   else if Option.exists content_picker ~f:(fun host ->
-                     Ches_content_picker_host.Runtime.needs_turn host.runtime model) then
-                     Ches_content_picker_host.Runtime.next
-                       (Option.value_exn content_picker).runtime model
-                    else match file_picker with
-                      | Some host when picker_needs_turn model ->
-                        Ches_file_picker_host.Runtime.next host.runtime model
-                      | Some _ | None -> Async.return []) in
-                picker_turn_scheduled := false;
-                (* Obsolete turns still wake replacements, without doing their work. *)
-                Bonsai.Apply_action_context.inject context events));
+          let model, requests = Ui_state.take_file_requests model in
+          List.iter requests ~f:(fun request ->
+            Bonsai.Apply_action_context.schedule_event context
+              (match file_picker with
+               | Some host -> Effect.of_thunk (fun () -> host.consume request)
+               | None -> Bonsai.Apply_action_context.inject context
+                   [ Ui_state.Input.File_picker_accept request ]));
+          let model, requests = Ui_state.take_content_requests model in
+          List.iter requests ~f:(fun request ->
+            Bonsai.Apply_action_context.schedule_event context
+              (match content_picker with
+               | Some host -> Effect.of_thunk (fun () -> host.consume request)
+               | None -> Bonsai.Apply_action_context.inject context
+                   [ Ui_state.Input.Content_picker_accept request ]));
+          if not !picker_turn_scheduled
+             && (line_needs_turn model || picker_needs_turn model
+                 || Ches_content_picker_host.Runtime.needs_turn content_runtime model)
+          then (
+            picker_turn_scheduled := true;
+            Bonsai.Apply_action_context.schedule_event context
+              (let%bind.Effect events = Effect.of_deferred_thunk (fun () ->
+                 if line_needs_turn model then (
+                   let generation = Ui_state.line_picker_generation model in
+                   Async.Deferred.map (Async.Scheduler.yield ()) ~f:(fun () ->
+                     [ Ui_state.Input.Line_picker_work generation ]))
+                 else if Ches_content_picker_host.Runtime.needs_turn content_runtime model then
+                   Ches_content_picker_host.Runtime.next content_runtime model
+                 else if picker_needs_turn model then
+                   Ches_file_picker_host.Runtime.next file_runtime model
+                 else Async.return []) in
+               picker_turn_scheduled := false;
+               (* Obsolete turns still wake replacements, without doing their work. *)
+               Bonsai.Apply_action_context.inject context events));
           (match status with
            | Exit when was_running ->
               Option.iter source ~f:Ches_source.Source.stop;
+              Ches_file_picker_host.Runtime.cancel file_runtime;
+              Ches_content_picker_host.Runtime.cancel content_runtime;
              Bonsai.Apply_action_context.schedule_event context (exit ())
            | Exit | Running -> ());
           model)
@@ -181,20 +205,18 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
        dimensions, write_to_tty)
       graph
   in
-  Option.iter file_picker ~f:(fun host ->
-    Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
-      ~on_deactivate:(Bonsai.return
-           (Effect.of_thunk (fun () ->
-             Option.iter !active_file_session ~f:(fun session ->
-               Ches_file_picker.Interaction.cancel session ~release:(fun () -> ()));
-             Ches_file_picker_host.Runtime.cancel host.runtime))) graph);
-  Option.iter content_picker ~f:(fun host ->
-    Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
-      ~on_deactivate:(Bonsai.return
-        (Effect.of_thunk (fun () ->
-          Option.iter !active_content_session ~f:(fun session ->
-            Ches_content_picker.Model.cancel session ~release:(fun () -> ()));
-          Ches_content_picker_host.Runtime.cancel host.runtime))) graph);
+  Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
+    ~on_deactivate:(Bonsai.return
+      (Effect.of_thunk (fun () ->
+        Option.iter !active_file_session ~f:(fun session ->
+          Ches_file_picker.Interaction.cancel session ~release:(fun () -> ()));
+        Ches_file_picker_host.Runtime.cancel file_runtime))) graph;
+  Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
+    ~on_deactivate:(Bonsai.return
+      (Effect.of_thunk (fun () ->
+        Option.iter !active_content_session ~f:(fun session ->
+          Ches_content_picker.Model.cancel session ~release:(fun () -> ()));
+        Ches_content_picker_host.Runtime.cancel content_runtime))) graph;
   Bonsai.Edge.lifecycle
     ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () ->
       Option.iter !active_line_session ~f:(fun session ->

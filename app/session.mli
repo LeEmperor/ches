@@ -37,7 +37,12 @@ val active_controller : t -> Controller.t option
      The replacement must belong to the same active buffer; resource reassociation
      is session-owned, not arbitrary controller replacement. *)
 val replace_active : t -> Controller.t -> t
-val open_or_activate : t -> string -> (t * Buffer_id.t) Or_error.t
+(** [must_exist] rejects missing new resources. Already retained buffers are
+     activated without rereading disk, including dirty or missing buffers.
+     Validation runs before activation/registration. Returned errors or exceptions
+     preserve session state and close a newly loaded controller. *)
+val open_or_activate : ?must_exist:bool -> ?validate:(Controller.t -> unit Or_error.t)
+  -> t -> string -> (t * Buffer_id.t) Or_error.t
 val activate : t -> Buffer_id.t -> t Or_error.t
 val close_buffer : t -> Buffer_id.t -> force:bool -> t * bool
 val close_current : t -> force:bool -> t * bool

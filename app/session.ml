@@ -269,18 +269,25 @@ let activate t id =
     Ok (replace_active t (Controller.cancel_pending (install t (Option.value_exn (find t id)))))
 ;;
 
-let open_or_activate t path =
+let open_or_activate ?(must_exist = false) ?(validate = fun _ -> Ok ()) t path =
+  (* Callback exceptions are rejection too: never leak a newly loaded controller. *)
+  let validate controller = Or_error.join (Or_error.try_with (fun () -> validate controller)) in
   let path = normalize t path in
-  if List.exists t.directories ~f:(fun d -> String.equal d.path path)
+  if t.exited then Or_error.error_string "Session has exited"
+  else if List.exists t.directories ~f:(fun d -> String.equal d.path path)
   then Or_error.error_string "Resource belongs to a directory buffer; navigate or refresh it instead"
   else match find_resource t path with
-  | Some (id, _) -> Or_error.map (activate t id) ~f:(fun t -> t, id)
+  | Some (id, controller) -> Or_error.bind (validate controller) ~f:(fun () ->
+      Or_error.map (activate t id) ~f:(fun t -> t, id))
   | None when t.exited -> Or_error.error_string "Session has exited"
   | None ->
-    Or_error.bind (Controller.open_file ~keymap_config:t.keymap_config ~cell_width:t.cell_width path) ~f:(fun controller ->
-      let id = Buffer_id.of_int t.next_id in
-      let t = { t with buffers = t.buffers @ [ { id; controller; generation = t.next_generation } ]; resources = Map.set t.resources ~key:path ~data:id; next_id = t.next_id + 1; next_generation = t.next_generation + 1 } in
-      Or_error.map (activate t id) ~f:(fun t -> t, id))
+    Or_error.bind (Controller.open_file ~must_exist ~keymap_config:t.keymap_config ~cell_width:t.cell_width path) ~f:(fun controller ->
+      match validate controller with
+      | Error error -> Controller.close controller; Error error
+      | Ok () ->
+         let id = Buffer_id.of_int t.next_id in
+         let t = { t with buffers = t.buffers @ [ { id; controller; generation = t.next_generation } ]; resources = Map.set t.resources ~key:path ~data:id; next_id = t.next_id + 1; next_generation = t.next_generation + 1 } in
+         Or_error.map (activate t id) ~f:(fun t -> t, id))
 ;;
 
 let show_directory ?select t path =

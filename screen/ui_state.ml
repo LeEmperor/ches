@@ -29,6 +29,8 @@ module Input = struct
     | Source of Ches_error.Source_event.t
     | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
     | File_picker_work of Ches_file_picker.Model.Discovery.request
+    | File_picker_accept of View_id.t Ches_file_picker.Model.Request.t
+    | Content_picker_accept of (View_id.t Ches_content_picker.Model.intent [@sexp.opaque])
     | Line_picker_work of int
     | Content_picker_snapshot of (Ches_content_picker.Model.snapshot [@sexp.opaque])
   [@@deriving sexp_of]
@@ -59,6 +61,8 @@ type t =
   ; file_picker_release : unit -> unit
   ; file_picker_return : View_id.t
   ; file_requests : View_id.t Ches_file_picker.Model.Request.t list
+  ; file_picker_activation : bool
+  ; content_picker_activation : bool
   ; line_picker : Line_picker_tile.t option
   ; line_generation : int
   ; line_picker_return : View_id.t
@@ -142,6 +146,8 @@ let create
   ; history = History_tile.empty
   ; palette = None
   ; file_picker = None
+  ; file_picker_activation = false
+  ; content_picker_activation = false
   ; file_picker_release = (fun () -> ())
   ; file_picker_return = document_id
   ; file_requests = []
@@ -846,7 +852,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Position_status _
   | Adjust_status_size _
   | Toggle_zen
-   | Open_palette | Open_line_picker -> prefs
+   | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -908,7 +914,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   | Kill_source ->
     Some (if t.source_attached then "Diagnostic source kill requested" else no_source)
   | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Close_tab | Force_close_tab | Recreate_missing_file -> None
-    | Open_palette | Open_line_picker -> Host.notice t.host
+     | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> Host.notice t.host
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
       else if Option.is_none (Workspace.minor (workspace t ~width ~height) Problems_tile.id)
@@ -1069,8 +1075,8 @@ let open_palette t ~width ~height =
     })
 ;;
 
-(* Explicit assembly/test boundary only: no keybinding or default opener. The
-   provider is owned by the caller; release cancels it on every close path. *)
+(* Provider assembly boundary. The frontend owns discovery; release cancels it
+   on every close path, before queued session acceptance. *)
 let can_open_file_picker t ~width ~height =
   not t.exited
   && Mode.equal (Editor.mode (Controller.editor t.controller)) Normal
@@ -1159,6 +1165,8 @@ let apply_view_command t ~width ~height (view : View_command.t) =
      | Some id -> fst (close_buffer_state t ~width ~height id ~force:(View_command.equal view Force_close_tab)))
   | Open_palette -> open_palette t ~width ~height
   | Open_line_picker -> open_line_picker t ~width ~height
+  | Open_file_picker -> { t with file_picker_activation = true }
+  | Open_content_picker -> { t with content_picker_activation = true }
   | Focus_problems ->
     toggle_focus t ~width ~height Problems_tile.id ~show:(fun t ->
       { t with problems_visible = true })
@@ -1625,6 +1633,53 @@ let rec apply t ~width ~height (input : Input.t) =
 
 and apply_running t ~width ~height (input : Input.t) =
   match input with
+  | Content_picker_accept request ->
+    let position = ref None in
+    let validate controller =
+      let editor = Controller.editor controller in
+      let text = Editor.text editor in
+      let index = request.line - 1 in
+      let invalid () = Or_error.error_string "Content result changed or invalid; reopen search (on disk)" in
+      if request.line <= 0 || index >= Ches_core.Text_buffer.line_count text
+      then invalid () else
+      let line = Ches_core.Text_buffer.line_text text index in
+      (* rg includes the final LF in raw lines; the editor's line API excludes it.
+         Unsupported CR/CRLF is rejected by file IO, never normalized. *)
+      let raw = line ^ (if Ches_core.Text_buffer.line_end text index < Ches_core.Text_buffer.length text
+        then "\n" else "") in
+      if not (String.equal raw request.expected_text)
+         || String.is_empty request.literal || request.byte_column < 0
+         || request.end_byte <= request.byte_column || request.end_byte > String.length line
+         || request.end_byte - request.byte_column <> String.length request.literal
+         || not (String.equal (String.sub line ~pos:request.byte_column
+              ~len:(request.end_byte - request.byte_column)) request.literal)
+      then invalid () else
+      let offset = Ches_core.Text_buffer.line_start text index in
+      Or_error.bind (Editor.display_position_of_offset editor (offset + request.end_byte)) ~f:(fun _ ->
+        Or_error.map (Editor.display_position_of_offset editor (offset + request.byte_column))
+          ~f:(fun p -> position := Some p)) in
+    let t = match Session.open_or_activate ~must_exist:true ~validate (session t) request.path with
+      | Ok (session, _) ->
+        let line, column = Option.value_exn !position in
+        let controller = Controller.jump (Option.value_exn (Session.active_controller session))
+          ~line ~column |> Or_error.ok_exn in
+        adopt_session_state (return_to_document t) (Session.replace_active session controller) ~width ~height
+      | Error error ->
+        let text = Ches_file_picker.Model.Candidate.display_text (Error.to_string_hum error) in
+        { t with host = Host.with_notice t.host text;
+          controller = Controller.update_feedback t.controller
+            (Notify { source = "content picker"; scope = path t; severity = Error; text; history = true }) } in
+    release_held t ~width ~height, Running
+  | File_picker_accept request ->
+    let t = match Session.open_or_activate ~must_exist:true (session t) request.path with
+      | Ok (session, _) -> adopt_session_state (return_to_document t) session ~width ~height
+      | Error error ->
+        let text = Ches_file_picker.Model.Candidate.display_text (Error.to_string_hum error) in
+        { t with host = Host.with_notice t.host text;
+          controller = Controller.update_feedback t.controller
+            (Notify { source = "file picker"; scope = path t; severity = Error;
+              text; history = true }) } in
+    release_held t ~width ~height, Running
   | Content_picker_snapshot snapshot ->
     Option.iter t.content_picker ~f:(fun picker ->
       if Content_picker_tile.install picker snapshot then
@@ -1659,7 +1714,7 @@ and apply_regular t ~width ~height (input : Input.t) =
   match input with
   | Resize -> t, Running
   | Source event -> receive_all t ~width ~height [ event ], Running
-   | File_picker_snapshot _ | File_picker_work _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
+    | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
   | Animation_tick now ->
     let dt =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
@@ -1695,7 +1750,7 @@ and apply_regular t ~width ~height (input : Input.t) =
         | Key key when not (has_document t) ->
           feed t ~width ~height (Key key)
         | Key key -> route ~width ~height t key
-       | Animation_tick _ | Resize | Source _ | File_picker_snapshot _ | File_picker_work _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
+       | Animation_tick _ | Resize | Source _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
     in
     let t = release_held t ~width ~height in
     let t = refit t ~width ~height in
@@ -1725,7 +1780,7 @@ and apply_regular t ~width ~height (input : Input.t) =
 
 (* Consecutive [Source] inputs, as a frontend delivers a batch of source events, are
    one step: the same result as applying them one by one, with one synchronization. *)
-let apply_all t ~width ~height inputs =
+let apply_all ?(after_step = Fn.id) t ~width ~height inputs =
   let steps =
     List.group inputs ~break:(fun (a : Input.t) (b : Input.t) ->
       match a, b with
@@ -1753,13 +1808,29 @@ let apply_all t ~width ~height inputs =
         | _ -> assert false
       in
       match result with
-      | t, Running -> Continue t
+       | t, Running -> Continue (after_step t)
       | t, Exit -> Stop (t, Controller.Status.Exit))
     ~finish:(fun t -> t, Running)
 ;;
 
 let adopt_session t session ~width ~height =
   release_held (adopt_session_state t session ~width ~height) ~width ~height
+;;
+
+let take_file_picker_activation t =
+  { t with file_picker_activation = false }, t.file_picker_activation
+;;
+
+let take_content_picker_activation t =
+  { t with content_picker_activation = false }, t.content_picker_activation
+;;
+
+let with_notice ?(source = "file picker") t text =
+  let text = Ches_file_picker.Model.Candidate.display_text text in
+  { t with host = Host.with_notice t.host text;
+    controller = Controller.update_feedback t.controller
+      (Notify { source; scope = path t; severity = Error;
+        text; history = true }) }
 ;;
 
 let open_file t ~width ~height path =
