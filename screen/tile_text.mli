@@ -21,5 +21,5 @@ val fill : rect:Geometry.Rect.t -> Span.t list list -> Span.t list list
     {!Ui_state.cursor_position}), not drawn here. *)
 val text_view : Ches_tile.Text_view.t -> width:int -> rows:int -> Span.t list list
 
-(** The footer for a text view: the visible row range, then its keys or Visual state. *)
-val text_footer : Ches_tile.Text_view.t -> width:int -> rows:int -> string
+(** The visible row range and Visual state, with optional key hints (default [false]). *)
+val text_footer : ?hotkey_hints:bool -> Ches_tile.Text_view.t -> width:int -> rows:int -> string

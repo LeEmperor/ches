@@ -14,7 +14,7 @@ let create ?(report = Report_tile.demo) () =
   let t =
     Helpers.ui ~path:"a" "first\nsecond\nthird"
     |> fun t ->
-    Ui_state.create ~report (Ui_state.controller t)
+    Ui_state.create ~tiles_visible:false ~report (Ui_state.controller t)
   in
   List.fold (List.range 0 4) ~init:t ~f:(fun t i ->
     Ui_state.update_feedback t ~width ~height
@@ -79,7 +79,7 @@ let%expect_test "document, status, problems, and an error-free report coexist" =
     │ warning [checker0] a:2:1: finding 0 │ │   DEMO REPORT 1/10: static row 1 ( > │|
     │ warning [checker1] a:2:1: finding 1 │ │   DEMO REPORT 2/10: static row 2 ( > │|
     │ warning [checker2] a:2:1: finding 2 │ │ > DEMO REPORT 3/10: static row 3 ( > │|
-    ╰─ +1 more | Space v e: all details ──╯ ╰─ 0 above, 7 below | j/k e yy Esc ────╯|
+    ╰─ +1 more ───────────────────────────╯ ╰─ 0 above, 7 below ───────────────────╯|
     cursor: none
     |}];
   (* Details open, scroll, and close through the shared escape precedence. *)
@@ -300,7 +300,7 @@ let%expect_test "status and minor views share the framed shell at a laptop size"
     │                                                    │ │   DEMO REPORT 6/10: static row 6 (界🙂 é)           │|
     │                                                    │ │   DEMO REPORT 7/10: static row 7 (界🙂 é)           │|
     │                                                    │ │   DEMO REPORT 8/10: static row 8 (界🙂 é)           │|
-    ╰─ Space v o: focus | Space v e: details ────────────╯ ╰─ 0 above, 2 below | j/k e yy Esc ───────────────────╯|
+    ╰────────────────────────────────────────────────────╯ ╰─ 0 above, 2 below ──────────────────────────────────╯|
     cursor: none
     Border Border Border_focused Border_focused
     |}];
@@ -358,7 +358,79 @@ let%expect_test "gaps stay backdrop; the tiles' borders separate them" =
     │ warning [checker0] a:2:1> │ │ DEMO REPORT 1/10: static > │|
     │ warning [checker1] a:2:1> │ │ DEMO REPORT 2/10: static > │|
     │ warning [checker2] a:2:1> │ │ DEMO REPORT 3/10: static > │|
-    ╰─ +1 more | Space v e: al> ╯ ╰─ Space v D: focus ─────────╯|
+    ╰─ +1 more ─────────────────╯ ╰────────────────────────────╯|
     cursor: 3,1 Block
     |}]
 ;;
+
+let%expect_test "tile hotkey hints default off and toggle from document and minor views" =
+  let width = 180 and height = 30 in
+  let run t keys = run ~width ~height t keys in
+  let screen t = screen ~width ~height t in
+  let check t label hints =
+    assert (Bool.equal (Ui_state.hotkey_hints t) hints);
+    let rendered = screen t in
+    List.iter [ "Space v o: focus"; "Space v D: focus"; "Space v M: focus" ]
+      ~f:(fun key -> assert (Bool.equal (String.is_substring rendered ~substring:key) hints));
+    print_endline label
+  in
+  let t = create () |> fun t -> run t " vb vd vm" in
+  let before = editor t in
+  check t "hidden by default" false;
+  let t = run t " v?" in
+  check t "shown from document" true;
+  let t = run t " vD v?" in
+  assert (String.equal (focused ~width ~height t) "demo-report");
+  assert (not (Ui_state.hotkey_hints t));
+  assert (not (String.is_substring (screen t) ~substring:"j/k e yy Esc"));
+  assert (String.is_substring (screen t) ~substring:"above,");
+  let t = run t "e" in
+  assert (String.is_substring (screen t) ~substring:"Details ");
+  assert (not (String.is_substring (screen t) ~substring:"e/Esc back"));
+  let t = run t "v" in
+  assert (String.is_substring (screen t) ~substring:"VISUAL");
+  assert (not (String.is_substring (screen t) ~substring:"Esc cancel"));
+  let t = run t " v?" in
+  assert (Ui_state.hotkey_hints t);
+  assert (String.is_substring (screen t) ~substring:"Esc cancel");
+  let t = run t " v?g" in
+  assert (String.equal (Option.value_exn (Ui_state.capture_pending t)) "g");
+  let t = run t "<Esc><Esc><Esc>i" in
+  assert (Option.is_some (Ui_state.capture_notice t));
+  assert (not (Ui_state.hotkey_hints t));
+  assert (String.equal (Text_buffer.to_string (Editor.text before)) (text t));
+  assert (Editor.revision before = Editor.revision (editor t));
+  print_endline "focused list/details toggle; counts, Visual, prefixes and notices preserved";
+  [%expect {|
+    hidden by default
+    shown from document
+    focused list/details toggle; counts, Visual, prefixes and notices preserved
+    |}]
+
+let%expect_test "startup shows all installed tiles, keeps editor focus and hides key hints" =
+  let width = 160 and height = 30 in
+  let controller = Ui_state.controller (Helpers.ui "startup") in
+  let t = Ui_state.create ~report:Report_tile.demo controller in
+  let workspace = Ui_state.workspace t ~width ~height in
+  assert (Option.is_some workspace.status);
+  List.iter [ Problems_tile.id; Report_tile.id; History_tile.id ] ~f:(fun id ->
+    assert (Option.is_some (Workspace.minor workspace id)));
+  assert (String.equal (focused ~width ~height t) "document");
+  assert (not (Ui_state.hotkey_hints t));
+  let t = run ~width ~height t " vb vd vm vt" in
+  assert (not (Ui_state.problems_visible t));
+  assert (not (Ui_state.report_visible t));
+  assert (not (Ui_state.history_visible t));
+  assert (not (Ui_state.workspace_prefs t).status_visible);
+  let t = run ~width ~height t " vb vd vm vt" in
+  assert (Ui_state.problems_visible t && Ui_state.report_visible t && Ui_state.history_visible t);
+  assert (Ui_state.workspace_prefs t).status_visible;
+  let t = Ui_state.create controller in
+  assert (not (Ui_state.report_visible t));
+  assert (Option.is_none (Ui_state.report t));
+  let small = Ui_state.workspace t ~width:15 ~height:4 in
+  assert (Option.is_none small.status && List.is_empty small.minors);
+  let restored = Ui_state.workspace t ~width ~height in
+  assert (Option.is_some restored.status && List.length restored.minors = 2);
+  print_endline "all installed tiles shown; editor focused; hints hidden; toggles and resize preserved";
+  [%expect {| all installed tiles shown; editor focused; hints hidden; toggles and resize preserved |}]

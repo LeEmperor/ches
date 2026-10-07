@@ -117,7 +117,7 @@ let%test_unit "multiline highlights overlap both viewport edges and retain overl
     let editor = Editor.create ~cell_width:Cell_map.width text in
     let editor, _ = Editor.dispatch editor
         (Search { query = Some query; forward = true; count = 1; whole_word = false }) in
-    let t = Ui_state.create (Ches_app.Controller.create editor)
+    let t = Ui_state.create ~tiles_visible:false (Ches_app.Controller.create editor)
             |> fun t -> run ~width:40 ~height:6 t (keys "3jzt") in
     let geometry = Ui_state.geometry t ~width:40 ~height:6 in
     let scroll = Ui_state.fitted_scroll t ~width:40 ~height:6 in
@@ -408,7 +408,7 @@ let%expect_test "the filename in the top border is cut from the left, then omitt
     |}];
   (* With no path, the border is unbroken. *)
   let no_path =
-    Ui_state.create (Ches_app.Controller.create (Ches_core.Editor.create ~cell_width:Cell_map.width Ches_core.Text_buffer.empty))
+    Ui_state.create ~tiles_visible:false (Ches_app.Controller.create (Ches_core.Editor.create ~cell_width:Cell_map.width Ches_core.Text_buffer.empty))
   in
   show ~width:30 ~height:6 no_path;
   [%expect {|

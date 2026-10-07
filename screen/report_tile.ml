@@ -128,7 +128,8 @@ let perform t ~rows ~width action =
     , None )
 ;;
 
-let render ?(focused = false) ?notice ?pending t ~width ~rows : Tile_shell.Content.t =
+let render ?(hotkey_hints = false) ?(focused = false) ?notice ?pending
+  t ~width ~rows : Tile_shell.Content.t =
   let count = List.length t.items in
   let rows = Int.max 0 rows in
   let empty = if rows > 0 then [ Tile_text.row Status "Empty report" ~width ] else [] in
@@ -158,17 +159,18 @@ let render ?(focused = false) ?notice ?pending t ~width ~rows : Tile_shell.Conte
     in
     let default =
       match t.details with
-      | Some view -> Tile_text.text_footer view ~width ~rows
+      | Some view -> Tile_text.text_footer ~hotkey_hints view ~width ~rows
       | None ->
         sprintf
-          "%d above, %d below | j/k e yy Esc"
+          "%d above, %d below%s"
           navigation.top
           (Int.max 0 (count - navigation.top - rows))
+          (if hotkey_hints then " | j/k e yy Esc" else "")
     in
     { title; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default); body })
   else
     { title = sprintf "Demo report (static): %d items" count
-    ; footer = Some (Tile_shell.Label.hint "Space v D: focus")
+    ; footer = Some (Tile_shell.Label.hint (if hotkey_hints then "Space v D: focus" else ""))
     ; body =
         (if count = 0
          then empty

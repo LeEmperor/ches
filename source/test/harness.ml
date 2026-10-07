@@ -30,7 +30,7 @@ let create ?(text = "let x = 1\n") ~source () =
   let time = create_time () in
   { time
   ; source = source ~time:(Time_source.read_only time) ~root:directory
-  ; ui = Ui_state.create ~source_attached:true controller
+  ; ui = Ui_state.create ~tiles_visible:false ~source_attached:true controller
   ; directory
   }
 ;;

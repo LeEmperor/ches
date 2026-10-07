@@ -12,7 +12,7 @@ let id i : Feedback.Identity.t = { source = sprintf "checker%d" i; kind = Save; 
 
 let create () =
   let t = Helpers.ui ~path:"a" "first\nsecond\nthird" in
-  let t = Ui_state.create ~report:Report_tile.demo (Ui_state.controller t) in
+  let t = Ui_state.create ~tiles_visible:false ~report:Report_tile.demo (Ui_state.controller t) in
   List.fold (List.range 0 3) ~init:t ~f:(fun t i ->
     Ui_state.update_feedback t ~width ~height
       (Report (id i, Warning, sprintf "finding %d" i, Some { line = 2; column = 1 })))
@@ -59,7 +59,7 @@ let%expect_test "report details: the text cursor reaches rows beyond the viewpor
     │ DEMO REPORT 10/10: static row 10 (界🙂 é): Static report item 10. This fixtu │|
     │ re has no source, file, or problem identity; selecting, scrolling, copying,  │|
     │ or hiding it changes nothing else. Long detail sentence 1: scroll with j/k o │|
-    ╰─ Details 1-3/11 | hjkl w b v V yy; e/Esc back ───────────────────────────────╯|
+    ╰─ Details 1-3/11 ─────────────────────────────────────────────────────────────╯|
     cursor: 2,12 Block
     |}];
   (* The terminal cursor follows the text cursor down past the visible rows. *)
@@ -71,7 +71,7 @@ let%expect_test "report details: the text cursor reaches rows beyond the viewpor
     │ re has no source, file, or problem identity; selecting, scrolling, copying,  │|
     │ or hiding it changes nothing else. Long detail sentence 1: scroll with j/k o │|
     │ r Ctrl-d/u. Long detail sentence 2: scroll with j/k or Ctrl-d/u. Long detail │|
-    ╰─ Details 2-4/11 | hjkl w b v V yy; e/Esc back ───────────────────────────────╯|
+    ╰─ Details 2-4/11 ─────────────────────────────────────────────────────────────╯|
     cursor: 6,14 Block
     |}];
   let t = run t "G" in

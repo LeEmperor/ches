@@ -218,7 +218,7 @@ let%expect_test "Normal pending input has precedence and pane workspace routing 
     ] |> Or_error.ok_exn in
   let controller = Controller.create
     ~keymap_config:{ Keymap.Config.default with normal = bindings } (editor (create ())) in
-  let t = Ui_state.create controller |> fun t -> run t "o vh" in
+  let t = Ui_state.create ~tiles_visible:false controller |> fun t -> run t "o vh" in
   assert (focused t && (Ui_state.workspace_prefs t).status_visible);
   let before = Editor.text (editor t) in
   let t = run t " x s" in

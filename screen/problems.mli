@@ -86,9 +86,12 @@ val count : Feedback.t -> int
     titled with filtered/total counts, its overflow counted in the footer; when focused,
     the selectable list or the selected row's open [details] (read-only text,
     see {!Tile_text.text_view}), with key hints or the
-    capture notice/pending prefix in the footer. *)
+    capture notice/pending prefix in the footer.
+    Hotkey hints are hidden unless [hotkey_hints] is [true]. Counts and
+    capture notices/pending prefixes remain visible. *)
 val render
-  : ?focused:bool
+  :  ?hotkey_hints:bool
+  -> ?focused:bool
   -> ?navigation:Key.t Ches_tile.Navigation.Selection.t
   -> ?details:Ches_tile.Text_view.t
   -> ?notice:string

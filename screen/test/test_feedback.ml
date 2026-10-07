@@ -120,7 +120,7 @@ let%expect_test "Escape precedence, selected acknowledgement, and transient comm
   let controller =
     Controller.update_feedback controller (Failed (reload, Error, "reload"))
   in
-  let t = Ui_state.create controller in
+  let t = Ui_state.create ~tiles_visible:false controller in
   let t = run t (keys "i<Esc>v<Esc>3<Esc>d<Esc>/<Esc>:<Esc> ") in
   assert (attention t = 2);
   let t = run t (keys "<Esc>") in
@@ -163,7 +163,7 @@ let%expect_test "idle Escape acknowledges attention and clears search highlighti
       controller
       (Failed ({ source = "file"; kind = Save; resource = "f.txt" }, Error, "save failed"))
   in
-  let t = run (Ui_state.create controller) (keys "<Esc>") in
+  let t = run (Ui_state.create ~tiles_visible:false controller) (keys "<Esc>") in
   assert (attention t = 0 && problem_count t = 1);
   assert (Option.is_none (Editor.search_state (Controller.editor (Ui_state.controller t))));
   print_endline "acknowledged; search highlights cleared; problem retained";

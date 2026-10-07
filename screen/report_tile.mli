@@ -63,9 +63,12 @@ val perform
   -> action
   -> t * Ches_tile.Text_view.Effect.t option
 
-(** Shell content for a [width] by [rows] content viewport. *)
+(** Shell content for a [width] by [rows] content viewport.
+    Hotkey hints are hidden unless [hotkey_hints] is [true]. Counts and
+    capture notices/pending prefixes remain visible. *)
 val render
-  :  ?focused:bool
+  :  ?hotkey_hints:bool
+  -> ?focused:bool
   -> ?notice:string
   -> ?pending:string
   -> t

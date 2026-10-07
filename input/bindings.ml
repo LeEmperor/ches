@@ -183,6 +183,7 @@ let default =
     ; view 'R' Restart_source
     ; view 'K' Kill_source
     ; view 't' Toggle_status
+    ; view '?' Toggle_hotkey_hints
     ; view 'z' Toggle_zen
     ; status 'h' (Position_status Left)
     ; status 'l' (Position_status Right)

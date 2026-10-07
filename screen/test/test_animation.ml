@@ -71,7 +71,7 @@ let%expect_test "Space v s enables the cursor effect without touching the editor
     |> Result.ok_or_failwith
   in
   let controller = Ches_app.Controller.create (Ches_core.Editor.create ~path:"f" ~cell_width:Cell_map.width text) in
-  let ui = Ui_state.create controller in
+  let ui = Ui_state.create ~tiles_visible:false controller in
   let ui, _ =
     Ui_state.apply_all
       ui

@@ -188,8 +188,8 @@ let perform t history ~rows ~width action : Outcome.t =
       }
 ;;
 
-let render ?(focused = false) ?notice ?pending t history ~width ~rows : Tile_shell.Content.t
-  =
+let render ?(hotkey_hints = false) ?(focused = false) ?notice ?pending
+  t history ~width ~rows : Tile_shell.Content.t =
   let entries = History.entries history in
   let count = List.length entries in
   let rows = Int.max 0 rows in
@@ -226,12 +226,13 @@ let render ?(focused = false) ?notice ?pending t history ~width ~rows : Tile_she
     in
     let default =
       match t.details with
-      | Some view -> Tile_text.text_footer view ~width ~rows
+      | Some view -> Tile_text.text_footer ~hotkey_hints view ~width ~rows
       | None ->
         sprintf
-          "%d above, %d below | j/k e yy X Esc"
+          "%d above, %d below%s"
           navigation.top
           (Int.max 0 (count - navigation.top - rows))
+          (if hotkey_hints then " | j/k e yy X Esc" else "")
     in
     { title; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default); body })
   else (
@@ -239,8 +240,9 @@ let render ?(focused = false) ?notice ?pending t history ~width ~rows : Tile_she
     let shown = List.drop entries (Int.max 0 (count - rows)) in
     let footer =
       if count > rows
-      then sprintf "+%d earlier | Space v M: focus" (count - rows)
-      else "Space v M: focus"
+      then sprintf "+%d earlier%s" (count - rows)
+        (if hotkey_hints then " | Space v M: focus" else "")
+      else if hotkey_hints then "Space v M: focus" else ""
     in
     { title = sprintf "History: %d entr%s%s" count (if count = 1 then "y" else "ies") dropped
     ; footer = Some (Tile_shell.Label.hint footer)

@@ -187,7 +187,7 @@ let style (row : Row.t) : Style.t =
   | _, Error -> Error
 ;;
 
-let render ?(focused = false) ?(navigation = Selection.empty)
+let render ?(hotkey_hints = false) ?(focused = false) ?(navigation = Selection.empty)
   ?details ?notice ?pending
   feedback ~current_document ~document ~width ~rows : Tile_shell.Content.t =
   let total = count feedback in
@@ -211,9 +211,10 @@ let render ?(focused = false) ?(navigation = Selection.empty)
       (if Option.is_some details then " details" else "") filter count total
       (if count = 0 then 0 else navigation.index + 1) count in
     let default = match details with
-      | Some view -> Tile_text.text_footer view ~width ~rows
-      | None -> sprintf "%d above, %d below | j/k e Enter a yy Esc"
-        navigation.top (Int.max 0 (count - navigation.top - rows)) in
+      | Some view -> Tile_text.text_footer ~hotkey_hints view ~width ~rows
+      | None -> sprintf "%d above, %d below%s"
+        navigation.top (Int.max 0 (count - navigation.top - rows))
+        (if hotkey_hints then " | j/k e Enter a yy Esc" else "") in
     { title
     ; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default)
     ; body = (if count = 0 then empty else body)
@@ -223,8 +224,10 @@ let render ?(focused = false) ?(navigation = Selection.empty)
     (* Overflow is counted in the footer, so it costs no content row. *)
     let footer : Tile_shell.Label.t =
       if count > rows
-      then { text = sprintf "+%d more | Space v e: all details" (count - rows); style = Warning }
-      else Tile_shell.Label.hint "Space v o: focus | Space v e: details"
+      then { text = sprintf "+%d more%s" (count - rows)
+        (if hotkey_hints then " | Space v e: all details" else ""); style = Warning }
+      else Tile_shell.Label.hint
+        (if hotkey_hints then "Space v o: focus | Space v e: details" else "")
     in
     { title = sprintf "Problems (%s): %d/%d" filter count total
     ; footer = Some footer

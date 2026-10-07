@@ -124,7 +124,7 @@ let%expect_test "errors and pending feedback survive workspace, compact, and zen
   let base = ui "hello" in
   let controller = Ches_app.Controller.update_feedback (Ui_state.controller base)
       (Ches_error.Error.Failed ({ source = "file"; kind = Save; resource = "f.txt" }, Error, "Failed to write f.txt")) in
-  let t = Ui_state.create controller in
+  let t = Ui_state.create ~tiles_visible:false controller in
   let error = Ui_state.message t in
   let t = run ~width:160 ~height:12 t (keys " vt") in
   assert ([%equal: Ui_state.Message.t option] error (Ui_state.message t));
@@ -193,7 +193,7 @@ let%expect_test "paste and Insert keys never become workspace actions; prefixes 
 ;;
 
 let%expect_test "size limits keep separate requests and layout changes cancel smear" =
-  let t = Ui_state.create ~smear_enabled:true (Ui_state.controller (ui "abcdef")) in
+  let t = Ui_state.create ~tiles_visible:false ~smear_enabled:true (Ui_state.controller (ui "abcdef")) in
   let t = run ~width:80 ~height:12 t (keys "l") in
   assert (Animation.active (Ui_state.animation t));
   let t = run ~width:80 ~height:12 t (keys " vph") in

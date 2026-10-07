@@ -44,6 +44,7 @@ type t =
   (** Flip the relative line-number switch (Vim's ['relativenumber']). *)
   | Toggle_smear (** Enable or disable the animated terminal cursor. *)
   | Toggle_status (** Show/hide the requested status cell, independent of zen. *)
+  | Toggle_hotkey_hints (** Show/hide tile hotkey hints; hidden by default. *)
   | Position_status of Status_position.t (** Place status and request visibility. *)
   | Adjust_status_size of int (** Adjust requested status cells along its split axis. *)
   | Inspect_problems (** Cycle retained problem details, without retrying. *)

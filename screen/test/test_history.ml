@@ -190,7 +190,7 @@ let%expect_test "history tile: follow, select, details, copy, rejection, clear" 
     │ warning [checker0] a:2:1: finding 0           │ │ #3 info [editor] a: event 1                    │|
     │ warning [checker1] a:2:1: finding 1           │ │ #4 info [editor] a: event 2                    │|
     │                                               │ │ #5 info [editor] a: event 3                    │|
-    ╰─ Space v o: focus | Space v e: details ───────╯ ╰─ +2 earlier | Space v M: focus ────────────────╯|
+    ╰───────────────────────────────────────────────╯ ╰─ +2 earlier ───────────────────────────────────╯|
     cursor: 3,1 Block
     |}];
   (* Focus follows the newest entry, also as entries arrive. *)
@@ -202,7 +202,7 @@ let%expect_test "history tile: follow, select, details, copy, rejection, clear" 
     │ warning [checker0] a:2:1: finding 0           │ │   #4 info [editor] a: event 2                  │|
     │ warning [checker1] a:2:1: finding 1           │ │   #5 info [editor] a: event 3                  │|
     │                                               │ │ > #6 info [editor] a: event 4                  │|
-    ╰─ Space v o: focus | Space v e: details ───────╯ ╰─ 3 above, 0 below | j/k e yy X Esc ────────────╯|
+    ╰───────────────────────────────────────────────╯ ╰─ 3 above, 0 below ─────────────────────────────╯|
     cursor: none
     |}];
   (* Once moved, the selection stays on its entry. *)
@@ -214,7 +214,7 @@ let%expect_test "history tile: follow, select, details, copy, rejection, clear" 
     │ warning [checker0] a:2:1: finding 0           │ │   #4 info [editor] a: event 2                  │|
     │ warning [checker1] a:2:1: finding 1           │ │ > #5 info [editor] a: event 3                  │|
     │                                               │ │   #6 info [editor] a: event 4                  │|
-    ╰─ Space v o: focus | Space v e: details ───────╯ ╰─ 3 above, 1 below | j/k e yy X Esc ────────────╯|
+    ╰───────────────────────────────────────────────╯ ╰─ 3 above, 1 below ─────────────────────────────╯|
     cursor: none
     |}];
   (* Details are read-only text: select and copy; edits and paste are rejected. *)
@@ -238,7 +238,7 @@ let%expect_test "history tile: follow, select, details, copy, rejection, clear" 
     │ warning [checker0] a:2:1: finding 0           │ │ #7 ×2 info [editor] a: event 5                 │|
     │ warning [checker1] a:2:1: finding 1           │ │                                                │|
     │                                               │ │                                                │|
-    ╰─ Space v o: focus | Space v e: details ───────╯ ╰─ Details updated ──────────────────────────────╯|
+    ╰───────────────────────────────────────────────╯ ╰─ Details updated ──────────────────────────────╯|
     cursor: 52,12 Block
     |}];
   (* Clearing empties history only. *)
@@ -251,7 +251,7 @@ let%expect_test "history tile: follow, select, details, copy, rejection, clear" 
     │ warning [checker0] a:2:1: finding 0           │ │ No history                                     │|
     │ warning [checker1] a:2:1: finding 1           │ │                                                │|
     │                                               │ │                                                │|
-    ╰─ Space v o: focus | Space v e: details ───────╯ ╰─ History cleared; active problems unchanged ───╯|
+    ╰───────────────────────────────────────────────╯ ╰─ History cleared; active problems unchanged ───╯|
     cursor: none
     |}];
   (* Tab returns; the document never changed. *)

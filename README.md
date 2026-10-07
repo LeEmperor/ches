@@ -118,7 +118,8 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
 | Normal | `Space v s` | Toggle the animated smear cursor (on by default) |
-| Normal | `Space v t` | Show/hide the status cell (hidden by default) |
+| Normal | `Space v ?` | Show/hide tile hotkey hints (hidden by default) |
+| Normal | `Space v t` | Show/hide the status cell (shown by default) |
 | Normal | `Space v p h/l/k/j` | Place status left/right/above/below and show it |
 | Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`) |
 | Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
@@ -146,6 +147,10 @@ selection started). Leaving Insert mode steps the cursor back one character,
 as in Vim. Motions never change the text, the undo history, or `[+]`.
 
 ### Workspace status
+
+All installed tiles are shown at startup: the document, Status, Problems, and
+History, plus the demo report when launched with `--demo-report`. Keyboard focus
+starts in the document. The existing show/hide keys still toggle each tile.
 
 Status can occupy a cell on any side of the document. It shows mode, file/dirty
 state, position, pending keys, and current feedback; it never takes keyboard focus.
@@ -179,7 +184,10 @@ See [`docs/workspace_tiles_design.md`](docs/workspace_tiles_design.md).
 ### Problems pane
 
 `Space v b` toggles a bottom preview; `Space v f` switches workspace/current-file
-filtering. `Space v o` shows and focuses the pane. It remains read-only:
+filtering. Tile hotkey hints are hidden by default; `Space v ?` toggles them in
+Problems, History, and the demo report, including focused lists and details.
+Overflow counts, detail positions, and action feedback remain visible.
+`Space v o` shows and focuses the pane. It remains read-only:
 
 | Pane keys | Action |
 | --- | --- |

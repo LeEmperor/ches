@@ -22,7 +22,7 @@ let%expect_test "demo startup is opt-in, bounded, valid for empty/Unicode files,
       let location = Option.value_exn p.location in
       let jumped = Controller.jump controller ~line:location.line ~column:location.column |> Or_error.ok_exn in
       assert (Editor.cursor_line (Controller.editor jumped) + 1 = location.line));
-    let t = Ui_state.create controller |> fun t -> run ~width:80 ~height:16 t (keys " voG<CR>") in
+    let t = Ui_state.create ~tiles_visible:false controller |> fun t -> run ~width:80 ~height:16 t (keys " voG<CR>") in
     assert (not (Ui_state.problems_focused t ~width:80 ~height:16));
     assert (Editor.cursor_line (Controller.editor (Ui_state.controller t)) =
       Text_buffer.line_count (Editor.text (Controller.editor original)) - 1);

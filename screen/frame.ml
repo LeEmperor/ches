@@ -85,6 +85,7 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
   (* Each minor pane's content comes from its adapter; only the focused view shows the
      host's capture notice and pending prefix. *)
   let focused_view = Ui_state.focused_view ui ~width ~height in
+  let hotkey_hints = Ui_state.hotkey_hints ui in
   let minor_tiles = List.filter_map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
     match pane.id with
     | Document | Status -> None
@@ -100,7 +101,7 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
         | _ when Ches_tile.View_id.equal id Problems_tile.id ->
           let tile = Ui_state.problems_tile ui in
           Problems.render
-            ~focused
+            ~hotkey_hints ~focused
             ~navigation:(Ui_state.problem_navigation ui ~width:screen_width ~height)
             ?details:(Problems_tile.text_view tile)
             ?notice ?pending
@@ -108,11 +109,11 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
             ~current_document:(Problems_tile.current_document tile)
             ~document:(Problems_tile.document tile editor) ~width ~rows
         | _ when Ches_tile.View_id.equal id History_tile.id ->
-          History_tile.render ~focused ?notice ?pending (Ui_state.history_tile ui)
+          History_tile.render ~hotkey_hints ~focused ?notice ?pending (Ui_state.history_tile ui)
             (Ches_error.Error.history (Controller.feedback (Ui_state.controller ui)))
             ~width ~rows
         | Some report when Ches_tile.View_id.equal id Report_tile.id ->
-          Report_tile.render ~focused ?notice ?pending report ~width ~rows
+          Report_tile.render ~hotkey_hints ~focused ?notice ?pending report ~width ~rows
         | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }
       in
       Some (layout.outer, Array.of_list (Tile_shell.render layout ~focused content))) in

@@ -58,15 +58,18 @@ let text_view view ~width ~rows =
   |> List.map ~f:(text_row ~width ~selected)
 ;;
 
-let text_footer view ~width ~rows =
+let text_footer ?(hotkey_hints = false) view ~width ~rows =
   let view = Ches_tile.Text_view.fit view ~width ~rows in
   let total = List.length (Ches_tile.Text_view.rows view ~width) in
   let top = Ches_tile.Text_view.top view in
   let range =
     sprintf "Details %d-%d/%d" (top + 1) (Int.min total (top + Int.max 1 rows)) total
   in
-  match Ches_tile.Text_view.visual view with
-  | None -> range ^ " | hjkl w b v V yy; e/Esc back"
-  | Some Characterwise -> range ^ " | VISUAL: y copy, o swap; Esc cancel"
-  | Some Linewise -> range ^ " | VISUAL LINE: y copy, o swap; Esc cancel"
+  let state, keys =
+    match Ches_tile.Text_view.visual view with
+    | None -> "", " | hjkl w b v V yy; e/Esc back"
+    | Some Characterwise -> " | VISUAL", ": y copy, o swap; Esc cancel"
+    | Some Linewise -> " | VISUAL LINE", ": y copy, o swap; Esc cancel"
+  in
+  range ^ state ^ (if hotkey_hints then keys else "")
 ;;

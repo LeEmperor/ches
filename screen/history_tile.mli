@@ -76,9 +76,12 @@ val perform
 val description : Feedback.History.Entry.t -> string
 
 (** Shell content for a [width] by [rows] content viewport. Unfocused, the newest
-    entries that fit, oldest first; focused, the selectable list or open details. *)
+    entries that fit, oldest first; focused, the selectable list or open details.
+    Hotkey hints are hidden unless [hotkey_hints] is [true]. Counts and
+    capture notices/pending prefixes remain visible. *)
 val render
-  :  ?focused:bool
+  :  ?hotkey_hints:bool
+  -> ?focused:bool
   -> ?notice:string
   -> ?pending:string
   -> t

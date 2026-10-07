@@ -35,6 +35,7 @@ type t =
   ; prefs : Geometry.Prefs.t
   ; workspace_prefs : Workspace.Prefs.t
   ; other_status_size : int (** Requested size for the inactive split axis. *)
+  ; hotkey_hints : bool
   ; zen : bool
   ; host : Host.t (** Focus, capture prefix/notice, and paste owner. *)
   ; problems_visible : bool
@@ -64,12 +65,18 @@ let status_id = View_id.of_string "status"
 
 let create
   ?(prefs = Geometry.Prefs.default)
-  ?(workspace_prefs = Workspace.Prefs.default)
+  ?workspace_prefs
+  ?(tiles_visible = true)
+  ?(hotkey_hints = false)
   ?(smear_enabled = false)
   ?report
   ?(source_attached = false)
   controller
   =
+  let workspace_prefs =
+    Option.value workspace_prefs
+      ~default:{ Workspace.Prefs.default with status_visible = tiles_visible }
+  in
   { controller
   ; prefs
   ; workspace_prefs
@@ -77,6 +84,7 @@ let create
       (match workspace_prefs.split.axis with
        | Horizontal -> 6
        | Vertical -> 28)
+  ; hotkey_hints
   ; zen = false
   ; host =
       Host.create
@@ -88,11 +96,11 @@ let create
         ; Report_tile.spec
         ; History_tile.spec
         ]
-  ; problems_visible = false
+  ; problems_visible = tiles_visible
   ; problems = Problems_tile.empty
   ; report = Option.map report ~f:Report_tile.create
-  ; report_visible = false
-  ; history_visible = false
+  ; report_visible = tiles_visible && Option.is_some report
+  ; history_visible = tiles_visible
   ; history = History_tile.empty
   ; scroll = Scroll.zero
   ; rows = None
@@ -109,6 +117,7 @@ let create
 let controller t = t.controller
 let prefs t = t.prefs
 let workspace_prefs t = t.workspace_prefs
+let hotkey_hints t = t.hotkey_hints
 let zen t = t.zen
 let problems_visible t = t.problems_visible
 let problems_current_document t = Problems_tile.current_document t.problems
@@ -471,6 +480,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Scroll _
   | Toggle_smear
   | Toggle_status
+  | Toggle_hotkey_hints
   | Position_status _
   | Adjust_status_size _
   | Toggle_zen -> prefs
@@ -531,6 +541,8 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
       (if Animation.enabled t.animation
        then "Smear cursor enabled"
        else "Smear cursor disabled")
+  | Toggle_hotkey_hints ->
+    Some (if t.hotkey_hints then "Hotkey hints shown" else "Hotkey hints hidden")
   | Toggle_zen -> Some (if t.zen then "Zen (status hidden)" else "Workspace restored")
   | Toggle_status | Position_status _ | Adjust_status_size _ ->
     let requested = t.workspace_prefs in
@@ -675,6 +687,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     { t with
       animation = Animation.set_enabled t.animation (not (Animation.enabled t.animation))
     }
+  | Toggle_hotkey_hints -> { t with hotkey_hints = not t.hotkey_hints }
   | Toggle_zen -> { t with zen = not t.zen }
   | Toggle_status ->
     { t with

@@ -34,6 +34,7 @@ type t =
   | Toggle_relative_numbers
   | Toggle_smear
   | Toggle_status
+  | Toggle_hotkey_hints
   | Position_status of Status_position.t
   | Adjust_status_size of int
   | Inspect_problems

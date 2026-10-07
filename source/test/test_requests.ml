@@ -51,7 +51,7 @@ let%expect_test "initial text, changes, saves (also unchanged), restart and kill
 
 let%expect_test "nothing is requested without a source, and the commands say so" =
   let t = H.create ~text:"ab\n" ~source:(recording (ref [])) () in
-  t.ui <- Ui_state.create (Ui_state.controller t.ui);
+  t.ui <- Ui_state.create ~tiles_visible:false (Ui_state.controller t.ui);
   H.keys t "x vR";
   let ui, requests = Ui_state.take_source_requests t.ui in
   t.ui <- ui;

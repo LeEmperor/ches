@@ -48,9 +48,14 @@ type t
 val create
   :  ?prefs:Geometry.Prefs.t
   -> ?workspace_prefs:Workspace.Prefs.t
+       (** Explicit status layout/visibility overrides [tiles_visible] for status. *)
+  -> ?tiles_visible:bool
+       (** Show all installed tiles initially; default [true]. [false] starts with
+           just the document and compact feedback. *)
+  -> ?hotkey_hints:bool (** Tile key hints; default [false]. *)
   -> ?smear_enabled:bool
   -> ?report:Report_tile.Item.t list
-       (** Installs the static demo report ([--demo-report]); hidden initially. *)
+       (** Installs the static demo report ([--demo-report]); shown initially. *)
   -> ?source_attached:bool
        (** A diagnostic source runs, so {!take_source_requests} reports to it.
            Default [false]. *)
@@ -65,6 +70,7 @@ val status_id : Ches_tile.View_id.t
 val controller : t -> Ches_app.Controller.t
 val prefs : t -> Geometry.Prefs.t
 val workspace_prefs : t -> Workspace.Prefs.t
+val hotkey_hints : t -> bool
 val zen : t -> bool
 val problems_visible : t -> bool
 val problems_current_document : t -> bool

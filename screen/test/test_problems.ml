@@ -44,27 +44,27 @@ let%expect_test "empty, multiple sources, location, acknowledgement, updates and
     │ No active problems                                       │
     │                                                          │
     │                                                          │
-    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╰──────────────────────────────────────────────────────────╯
     ╭─ Problems (workspace): 2/2 ──────────────────────────────╮
     │ error [file] a: cannot save                              │
     │ warning [checker] a:3:7: finding                         │
     │                                                          │
-    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╰──────────────────────────────────────────────────────────╯
     ╭─ Problems (workspace): 2/2 ──────────────────────────────╮
     │ error [file] a: retry failed                             │
     │ warning [checker] a:3:7: finding                         │
     │                                                          │
-    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╰──────────────────────────────────────────────────────────╯
     ╭─ Problems (workspace): 1/1 ──────────────────────────────╮
     │ warning [checker] a:3:7: finding                         │
     │                                                          │
     │                                                          │
-    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╰──────────────────────────────────────────────────────────╯
     ╭─ Problems (workspace): 0/0 ──────────────────────────────╮
     │ No active problems                                       │
     │                                                          │
     │                                                          │
-    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╰──────────────────────────────────────────────────────────╯
     |}]
 ;;
 
@@ -90,14 +90,13 @@ let%expect_test "filtering and bounded overflow leave every detail reachable" =
     │ error [file] a: problem 0                                │
     │ error [file] b1: problem 1                               │
     │ error [file] b2: problem 2                               │
-    ╰─ +5 more | Space v e: all details ───────────────────────╯
+    ╰─ +5 more ────────────────────────────────────────────────╯
     ╭─ Problems (document): 1/8 ───────────────────────────────╮
     │ error [file] a: problem 0                                │
     │                                                          │
     │                                                          │
-    ╰─ Space v o: focus | Space v e: details ──────────────────╯
+    ╰──────────────────────────────────────────────────────────╯
     Problems (document): 0/8
-    Space v o: focus | Space v e: details
     |}]
 ;;
 
@@ -109,7 +108,7 @@ let%expect_test "coexistence, requested visibility, zen, filtering and editor ow
   let controller = List.fold (Feedback.problems (fixture ()))
     ~init:(Controller.create editor) ~f:(fun c p ->
       Controller.update_feedback c (Failed (p.identity, p.severity, p.text))) in
-  let t = Ui_state.create controller |> fun t -> run ~width:80 ~height:16 t (keys " vt vb") in
+  let t = Ui_state.create ~tiles_visible:false controller |> fun t -> run ~width:80 ~height:16 t (keys " vt vb") in
   let w = Ui_state.workspace t ~width:80 ~height:16 in
   assert (Option.is_some w.status && Option.is_some (Workspace.minor w Problems_tile.id));
   assert Problems_tile.spec.focusable;
@@ -138,7 +137,7 @@ let%expect_test "all allocations, status positions, Unicode and control text sta
     |> fun c -> Controller.update_feedback c
       (Failed (identity "a", Error, "界🙂é\t\027\nlong problem")) in
   List.iter [ ""; " vph"; " vpl"; " vpk"; " vpj" ] ~f:(fun position ->
-    let t = run ~width:80 ~height:16 (Ui_state.create controller) (keys (" vb" ^ position)) in
+    let t = run ~width:80 ~height:16 (Ui_state.create ~tiles_visible:false controller) (keys (" vb" ^ position)) in
     List.iter (List.range 0 45) ~f:(fun width ->
       List.iter (List.range 0 18) ~f:(fun height ->
         let w = Ui_state.workspace t ~width ~height in

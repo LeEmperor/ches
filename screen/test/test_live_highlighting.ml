@@ -38,7 +38,7 @@ let%test_unit "frames, movement, scrolling, resizing, animation, search and sele
       (Text_buffer.of_string source
        |> Result.map_error ~f:Text_buffer.Invalid_text.to_string_hum
        |> Result.ok_or_failwith)) in
-  let base = Ui_state.create ~smear_enabled:true controller in
+  let base = Ui_state.create ~tiles_visible:false ~smear_enabled:true controller in
   let cached = snapshot base in
   let before = count base in
   let ui = run base (keys "jjll<C-e><C-y><C-d><C-u>50Gzzztzb/let<CR>nN<Esc>vll<Esc>Vj<Esc><C-v>j<Esc> v+ vs") in

@@ -141,18 +141,27 @@ shell() {
 # Turns on hybrid line numbers from none, the default.
 hybrid_numbers() {
   t send-keys -t "$session" Space v n Space v N
-  poll status_has "Line numbers: hybrid" || fail "hybrid line numbers did not turn on"
+  poll screen_has "Line numbers: hybrid" || fail "hybrid line numbers did not turn on"
 }
 
 # Starts ches with hybrid line numbers, which the checks here are written against.
 # $launch_env, when set, prefixes the command (env PATH=... for the language server).
 launch_env=""
+keep_startup_tiles=false
 launch() {
   shell "clear; stty -g > $work/stty.before"
   t send-keys -t "$session" -l "${launch_env:+$launch_env }$ches $*"
   t send-keys -t "$session" Enter
-  if poll alternate_is 1 && poll status_has "NORMAL"; then
+  if poll alternate_is 1 && poll screen_has "NORMAL"; then
     ok "launched ches $*"
+    # Most editing checks use a document-only fixture. Test the startup workspace
+    # separately, then explicitly hide companions for those existing scenarios.
+    if [ "$keep_startup_tiles" = false ]; then
+      keys Space v t Space v b Space v m
+      case " $* " in
+        *" --demo-report "*) keys Space v d ;;
+      esac
+    fi
     hybrid_numbers
   else
     fail "ches $* did not start"
@@ -205,6 +214,32 @@ t new-session -d -s "$session" -x 80 -y 24 \
 t set -g window-size manual
 t set -g default-terminal tmux-256color
 shell "cd $work"
+
+# ---------------------------------------------------------------------------
+section "all installed tiles are shown at startup"
+printf 'startup workspace\n' > "$work/startup.txt"
+resize 160 30
+keep_startup_tiles=true
+launch --demo-report startup.txt
+expect_screen "╭─ Status ─"
+expect_screen "Problems (workspace): 0/0"
+expect_screen "Demo report (static): 10 items"
+expect_screen "History:"
+expect_no_screen "Space v o: focus"
+expect_no_screen "Space v D: focus"
+expect_no_screen "Space v M: focus"
+keys i X Escape
+expect_cursor_row "Xstartup workspace"
+keys Space v b
+expect_no_screen "Problems ("
+keys Space v b
+expect_screen "Problems (workspace): 0/0"
+keys Space q
+expect_screen "Unsaved changes:"
+keys Space Q
+expect_exit 0
+keep_startup_tiles=false
+resize 80 24
 
 # ---------------------------------------------------------------------------
 section "edit, save, quit, reopen"
@@ -1259,7 +1294,11 @@ keys Space v d
 expect_screen "Demo report (static): 10 items"
 # Phase 7B: the shared shell frames the view, with its labels set into the borders.
 expect_screen "╭─ Demo report (static): 10 items ─"
+expect_no_screen "Space v D: focus"
+keys Space v '?'
 expect_screen "╰─ Space v D: focus ─"
+keys Space v '?'
+expect_no_screen "Space v D: focus"
 keys Space v D
 expect_screen "Demo report* (static): [1/10]"
 if poll pane_cursor_hidden; then ok "report capture hides terminal cursor"; else fail "report cursor visible"; fi
@@ -1317,6 +1356,8 @@ expect_screen "Demo report* (static): [1/10]"
 if poll pane_cursor_hidden; then ok "no terminal cursor in the list"; else fail "list cursor visible"; fi
 keys e
 expect_screen "Demo report* details (static): [1/10]"
+expect_no_screen "hjkl w b v V yy; e/Esc back"
+keys Space v '?'
 expect_screen "hjkl w b v V yy; e/Esc back"
 if poll cursor_flag_is 1; then ok "details show the text cursor"; else fail "details cursor hidden: $(cursor)"; fi
 # "REPORT " from the item's text: w to it, select through the blank after it.
@@ -1357,7 +1398,11 @@ keys l Escape Space v c Space v c
 keys Space v m
 expect_screen "╭─ History: 1 entry ─"
 expect_screen "error problem [file save]"
+expect_no_screen "Space v M: focus"
+keys Space v '?'
 expect_screen "╰─ Space v M: focus ─"
+keys Space v '?'
+expect_no_screen "Space v M: focus"
 keys Space v b
 expect_screen "Problems (workspace): 1/1"
 expect_screen "╮ ╭─ History: 1 entry ─"
