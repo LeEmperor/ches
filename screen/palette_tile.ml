@@ -4,7 +4,7 @@ open Ches_palette
 module Selection = Ches_tile.Navigation.Selection
 
 let id = Ches_tile.View_id.of_string "palette"
-let spec = Ches_tile.Spec.text_input id ~title:"Commands"
+let spec = Ches_tile.Spec.result_picker id ~title:"Commands"
 
 type t =
   { palette : (Ches_tile.View_id.t Palette.t[@sexp.opaque])
@@ -53,50 +53,27 @@ let interpret (keys : Key.t list) : action Ches_tile.Content_key.t =
   | [ Char c ] -> Action (Event (Insert c))
   | [ Backspace ] -> Action (Event Backspace)
   | [ Ctrl ('w' | 'h') ] -> Action (Event Delete_word)
-  | [ Ctrl 'n' ] -> Action (Event Next)
-  | [ Ctrl 'p' ] -> Action (Event Previous)
+  | [ Tab | Ctrl 'n' ] -> Action (Event Next)
+  | [ Shift_tab | Ctrl 'p' ] -> Action (Event Previous)
   | [ Enter ] -> Action Accept
   | _ -> Unbound
 ;;
 
-let hint = "Type to search; Ctrl-w deletes a word, Ctrl-n/p select, Enter runs"
+let hint = "Type to search; Ctrl-w deletes a word, Tab/Shift-Tab or Ctrl-n/p select, Enter runs"
 let update t ~rows event = fit { t with palette = Palette.update t.palette event } ~rows
-let prompt = "> "
+let prompt = Picker_text.prompt
 
 (* The prompt and as much of the query's end as leaves a cell for the cursor. *)
 let query_row t ~width =
-  let prompt = Span.of_text prompt ~style:Pending ~special:Status_special in
-  let room = Int.max 0 (width - Span.total_width prompt - 1) in
-  let query =
-    Span.of_text (Palette.query t.palette) ~style:Status ~special:Status_special
-    |> Span.keep_right ~n:room ~marker_style:Status_special
-  in
-  Span.keep_left (prompt @ query) ~n:(Int.max 0 width) ~marker_style:Status_special
+  Picker_text.query_row (Palette.query t.palette) ~width
 ;;
 
 let cursor t ~width =
-  { Ches_tile.Cursor.row = 0
-  ; column = Int.min (Span.total_width (query_row t ~width)) (Int.max 0 (width - 1))
-  ; shape = Bar
-  }
+  Picker_text.cursor (Palette.query t.palette) ~width
 ;;
 
 (* [title] with the code points starting at [positions] in [Pending]. *)
-let title_spans title ~positions =
-  let rec go pos acc =
-    if pos >= String.length title
-    then List.rev acc
-    else (
-      let length = Stdlib.Uchar.utf_decode_length (Stdlib.String.get_utf_8_uchar title pos) in
-      let style : Style.t = if List.mem positions pos ~equal:Int.equal then Pending else Status in
-      go (pos + length) ((style, String.sub title ~pos ~len:length) :: acc))
-  in
-  go 0 []
-  |> List.group ~break:(fun (a, _) (b, _) -> not (Style.equal a b))
-  |> List.concat_map ~f:(fun group ->
-    let style = fst (List.hd_exn group) in
-    Span.of_text (String.concat (List.map group ~f:snd)) ~style ~special:Status_special)
-;;
+let title_spans = Picker_text.matched_text
 
 (* A result: the selection marker, the title, and the shortcut flush right when the
    title leaves room for it. *)
@@ -134,7 +111,7 @@ let result_row t (result : Catalog.result) ~selected ~width =
   |> Span.merge
 ;;
 
-let render ?notice t ~width ~rows : Tile_shell.Content.t =
+let render ?(hotkey_hints = false) ?notice t ~width ~rows : Tile_shell.Content.t =
   let t = fit t ~rows in
   let results = Palette.results t.palette in
   let count = List.length results in
@@ -162,9 +139,10 @@ let render ?notice t ~width ~rows : Tile_shell.Content.t =
            ~pending:None
            ~default:
              (sprintf
-                "%d/%d | Enter run, Ctrl-n/p, Esc"
+                "%d/%d%s"
                 (if count = 0 then 0 else t.view.index + 1)
-                count))
+                count
+                (if hotkey_hints then " | Enter run, Tab/Shift-Tab, Ctrl-n/p, Esc" else "")))
   ; body
   }
 ;;

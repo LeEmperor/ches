@@ -1,0 +1,4 @@
+(executable
+ (name fake_rg)
+ (libraries core core_unix yojson base64)
+ (preprocess (pps ppx_jane)))

@@ -42,8 +42,8 @@ type action =
 
 (** Characters, including Space and [j]/[k], edit the query; Backspace deletes a
     character, and Ctrl-w or Ctrl-h (most terminals' Ctrl-Backspace) a word;
-    Ctrl-n and Ctrl-p select the next and previous result; Enter accepts. Escape, Tab,
-    and Ctrl-c are the host's ({!Ches_tile.Host.key}). *)
+    Tab/Ctrl-n and Shift-Tab/Ctrl-p select the next and previous result; Enter
+    accepts. Escape and Ctrl-c are the host's ({!Ches_tile.Host.key}). *)
 val interpret : Key.t list -> action Ches_tile.Content_key.t
 
 val hint : string
@@ -55,5 +55,6 @@ val update : t -> rows:int -> Palette.Event.t -> t
     area: a bar, always within the area when [width > 0]. *)
 val cursor : t -> width:int -> Ches_tile.Cursor.t
 
-(** Shell content for a [width] by [rows] content viewport. *)
-val render : ?notice:string -> t -> width:int -> rows:int -> Tile_shell.Content.t
+(** Shell content for a [width] by [rows] content viewport. Control hints default
+    to hidden; counts and notices remain visible. *)
+val render : ?hotkey_hints:bool -> ?notice:string -> t -> width:int -> rows:int -> Tile_shell.Content.t

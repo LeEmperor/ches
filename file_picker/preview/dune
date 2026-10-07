@@ -1,0 +1,4 @@
+(library
+ (name ches_file_preview)
+ (libraries ches_file_preview_model ches_file_picker ches_core ches_app core core_unix async)
+ (preprocess (pps ppx_jane)))

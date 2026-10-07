@@ -107,6 +107,34 @@ let%test_unit "side Insert Tab edits text; Normal Tab returns focus" =
     Session.dispose (Ui_state.session ui))
 ;;
 
+let%test_unit "floating palette and directory-line picker cover the side pane and restore its focus" =
+  fixture (fun root ->
+    let initial = create root |> fun ui -> run ui " ds<CR> df" in
+    let before = Frame.render initial ~width ~height in
+    let opened = run initial " cc" in
+    assert (Ches_tile.View_id.equal (focused opened) Palette_tile.id);
+    let layout = Ui_state.palette_layout opened ~width ~height |> Option.value_exn in
+    let palette = Ui_state.palette opened |> Option.value_exn in
+    let layer = Tile_shell.render layout ~focused:true
+      (Palette_tile.render palette ~width:layout.content.width ~rows:layout.content.height) in
+    let frame = Frame.render opened ~width ~height in
+    List.iteri layer ~f:(fun i row ->
+      let expected = Span.overlay (List.nth_exn frame.rows (layout.outer.y + i))
+        ~x:layout.outer.x ~width:layout.outer.width row |> Span.merge in
+      assert (Poly.equal expected (List.nth_exn frame.rows (layout.outer.y + i))));
+    let closed = run opened "<Esc>" in
+    assert (Ches_tile.View_id.equal (focused closed) Ui_state.directory_id);
+    assert (String.equal (Frame.to_string before) (Frame.to_string (Frame.render closed ~width ~height)));
+    let lines = run closed " fl" in
+    assert (Ches_tile.View_id.equal (focused lines) Line_picker_tile.id);
+    let picker = Ui_state.line_picker lines |> Option.value_exn in
+    assert_frame lines ~width ~height;
+    assert (Line_picker_tile.validate picker (Ui_state.controller lines));
+    let closed = run lines "<Esc>" in
+    assert (Ches_tile.View_id.equal (focused closed) Ui_state.directory_id);
+    Session.dispose (Ui_state.session closed))
+;;
+
 let%test_unit "placement and hiding retain controller, selection, scroll and marks" =
   fixture (fun root ->
     let ui = create root |> fun ui -> run ui "<CR> o25j mmVj" in

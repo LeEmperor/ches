@@ -27,6 +27,13 @@ module Input = struct
     | Animation_tick of Time_ns.t
     | Resize
     | Source of Ches_error.Source_event.t
+    | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
+    | File_preview of Ches_file_preview_model.Model.snapshot
+    | File_picker_work of Ches_file_picker.Model.Discovery.request
+    | File_picker_accept of View_id.t Ches_file_picker.Model.Request.t
+    | Content_picker_accept of (View_id.t Ches_content_picker.Model.intent [@sexp.opaque])
+    | Line_picker_work of int
+    | Content_picker_snapshot of (Ches_content_picker.Model.snapshot [@sexp.opaque])
   [@@deriving sexp_of]
 end
 
@@ -51,6 +58,19 @@ type t =
   ; history_visible : bool
   ; history : History_tile.t
   ; palette : Palette_tile.t option (** Open, and then focused, or closed. *)
+  ; file_picker : View_id.t File_picker_tile.t option
+  ; file_picker_release : unit -> unit
+  ; file_picker_return : View_id.t
+  ; file_requests : View_id.t Ches_file_picker.Model.Request.t list
+  ; file_picker_activation : bool
+  ; content_picker_activation : bool
+  ; line_picker : Line_picker_tile.t option
+  ; line_generation : int
+  ; line_picker_return : View_id.t
+  ; content_picker : View_id.t Content_picker_tile.t option
+  ; content_picker_release : unit -> unit
+  ; content_picker_return : View_id.t
+  ; content_requests : View_id.t Ches_content_picker.Model.intent list
   ; scroll : Scroll.t
   ; rows : int option
   (** Text rows the scroll was last fitted for: when they change, the fit fills the
@@ -114,6 +134,9 @@ let create
         ; Report_tile.spec
         ; History_tile.spec
         ; Palette_tile.spec
+        ; File_picker_tile.spec
+         ; Line_picker_tile.spec
+         ; Content_picker_tile.spec
         ; Ches_tile.Spec.read_only_text directory_id ~title:"Directory"
         ]
   ; problems_visible = tiles_visible
@@ -123,6 +146,19 @@ let create
   ; history_visible = tiles_visible
   ; history = History_tile.empty
   ; palette = None
+  ; file_picker = None
+  ; file_picker_activation = false
+  ; content_picker_activation = false
+  ; file_picker_release = (fun () -> ())
+  ; file_picker_return = document_id
+  ; file_requests = []
+  ; line_picker = None
+  ; line_generation = 0
+  ; line_picker_return = document_id
+  ; content_picker = None
+  ; content_picker_release = (fun () -> ())
+  ; content_picker_return = document_id
+  ; content_requests = []
   ; scroll = Scroll.zero
   ; rows = None
   ; animation = Animation.create ~enabled:smear_enabled
@@ -151,6 +187,14 @@ let report_visible t = t.report_visible
 let history_visible t = t.history_visible
 let history_tile t = t.history
 let palette t = t.palette
+let file_picker t = t.file_picker
+let content_picker t = t.content_picker
+let take_content_requests t = { t with content_requests = [] }, List.rev t.content_requests
+let line_picker t = t.line_picker
+let line_picker_generation t = t.line_generation
+
+let take_file_requests t = { t with file_requests = [] }, List.rev t.file_requests
+;;
 let scroll t = t.scroll
 
 let message t =
@@ -308,11 +352,45 @@ let palette_layout t ~width ~height =
   Option.bind t.palette ~f:(fun _ -> palette_placement ~width ~height)
 ;;
 
+let picker_placement ~width ~height =
+  Floating.layout
+    ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
+    ~preferred:{ width = 80; height = 14 }
+    ~minimum:{ width = 14; height = 5 }
+    ~policy:{ Tile_shell.Policy.minor with min_content_height = 3 }
+;;
+
+let file_picker_layout t ~width ~height =
+  Option.bind t.file_picker ~f:(fun _ ->
+    Floating.place
+      ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
+      ~preferred:{ width = (if width >= 104 then 175 else 80); height = 40 }
+      ~minimum:{ width = 14; height = 5 }
+    |> Option.map ~f:(fun rect ->
+      let top_margin = if height - rect.height >= 2 then 1 else 0 in
+      let rect = { rect with y = Int.max top_margin (rect.y - 2) } in
+      Tile_shell.layout { Tile_shell.Policy.minor with min_content_height = 3 } rect))
+;;
+
+let line_picker_layout t ~width ~height =
+  Option.bind t.line_picker ~f:(fun _ -> picker_placement ~width ~height)
+;;
+
+let content_picker_layout t ~width ~height =
+  Option.bind t.content_picker ~f:(fun _ -> picker_placement ~width ~height)
+;;
+
 let effective_floating floating t ~width ~height =
   match floating with
   | Some _ -> floating
-  | None -> Option.map t.palette ~f:(fun _ ->
-    Palette_tile.id, palette_layout t ~width ~height)
+  | None ->
+    (match t.content_picker with
+     | Some _ -> Some (Content_picker_tile.id, content_picker_layout t ~width ~height)
+     | None -> match t.line_picker, t.file_picker with
+      | Some _, _ -> Some (Line_picker_tile.id, line_picker_layout t ~width ~height)
+      | None, Some _ -> Some (File_picker_tile.id, file_picker_layout t ~width ~height)
+      | None, None -> Option.map t.palette ~f:(fun _ ->
+       Palette_tile.id, palette_layout t ~width ~height))
 ;;
 
 (* A supplied floating identity overrides its tiled placement, including when
@@ -428,6 +506,12 @@ let text_view t id =
 let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option =
   if View_id.equal id Palette_tile.id
   then Option.map t.palette ~f:(Palette_tile.cursor ~width:content.width)
+  else if View_id.equal id File_picker_tile.id
+  then Option.map t.file_picker ~f:(File_picker_tile.cursor ~width:content.width)
+  else if View_id.equal id Line_picker_tile.id
+  then Option.map t.line_picker ~f:(Line_picker_tile.cursor ~width:content.width)
+  else if View_id.equal id Content_picker_tile.id
+  then Option.map t.content_picker ~f:(Content_picker_tile.cursor ~width:content.width)
   else
     Option.map (text_view t id) ~f:(fun view ->
       let view = Ches_tile.Text_view.fit view ~width:content.width ~rows:content.height in
@@ -460,6 +544,7 @@ let capture_pending t =
 
 (* Close a view's capture-local state (details) when it stops being focused. *)
 let leave t id =
+  let t = { t with host = Host.invalidate_paste t.host id } in
   if View_id.equal id Problems_tile.id
   then { t with problems = Problems_tile.leave t.problems }
   else if View_id.equal id Report_tile.id
@@ -469,10 +554,48 @@ let leave t id =
   else if View_id.equal id Palette_tile.id
   then (* Leaving closes the palette and discards its query; nothing runs. *)
     { t with palette = None }
+  else if View_id.equal id File_picker_tile.id
+  then (
+    Option.iter t.file_picker ~f:(fun picker ->
+      File_picker_tile.cancel picker ~release:t.file_picker_release);
+    { t with file_picker = None; file_picker_release = (fun () -> ()) })
+  else if View_id.equal id Line_picker_tile.id
+  then (
+    Option.iter t.line_picker ~f:(fun picker -> Line_picker_tile.cancel picker ~release:(fun () -> ()));
+    { t with line_picker = None })
+  else if View_id.equal id Content_picker_tile.id
+  then (
+    Option.iter t.content_picker ~f:(fun picker ->
+      Content_picker_tile.cancel picker ~release:t.content_picker_release);
+    { t with content_picker = None; content_picker_release = (fun () -> ()) })
   else t
 ;;
 
-let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id; Palette_tile.id ]
+let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id ]
+
+let close_content_picker t ~width ~height =
+  let previous = t.content_picker_return in
+  let t = leave t Content_picker_tile.id in
+  let host = Host.return t.host in
+  let host = if available t ~width ~height previous then Host.focus host previous else host in
+  { t with host; controller = Controller.cancel_pending t.controller }
+;;
+
+let close_file_picker t ~width ~height =
+  let previous = t.file_picker_return in
+  let t = leave t File_picker_tile.id in
+  let host = Host.return t.host in
+  let host = if available t ~width ~height previous then Host.focus host previous else host in
+  { t with host; controller = Controller.cancel_pending t.controller }
+;;
+
+let close_line_picker t ~width ~height =
+  let previous = t.line_picker_return in
+  let t = leave t Line_picker_tile.id in
+  let host = Host.return t.host in
+  let host = if available t ~width ~height previous then Host.focus host previous else host in
+  { t with host; controller = Controller.cancel_pending t.controller }
+;;
 
 let return_to_document t =
   let t = List.fold minor_ids ~init:t ~f:leave in
@@ -490,6 +613,26 @@ let return_to_document t =
 (* Fit each minor view's state to its viewport and source. When the source changes
    the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
+  let t =
+    if Option.is_some t.content_picker && Option.is_none (content_picker_layout t ~width ~height)
+    then close_content_picker t ~width ~height else t in
+  Option.iter t.content_picker ~f:(fun picker ->
+    Content_picker_tile.fit picker ~rows:(minor_rows t ~width ~height Content_picker_tile.id));
+  Option.iter t.line_picker ~f:(fun picker ->
+    ignore (Line_picker_tile.validate picker t.controller : bool));
+  let t =
+    if Option.is_some t.line_picker && Option.is_none (line_picker_layout t ~width ~height)
+    then close_line_picker t ~width ~height else t
+  in
+  Option.iter t.line_picker ~f:(fun picker ->
+    Line_picker_tile.fit picker ~rows:(minor_rows t ~width ~height Line_picker_tile.id));
+  let t =
+    if Option.is_some t.file_picker && Option.is_none (file_picker_layout t ~width ~height)
+    then close_file_picker t ~width ~height
+    else t
+  in
+  Option.iter t.file_picker ~f:(fun picker ->
+    File_picker_tile.fit picker ~rows:(minor_rows t ~width ~height File_picker_tile.id));
   (* Suppressed side placement keeps its request/buffer, but must never retain
      invisible input focus. With no files, the directory remains the major surface. *)
   let t = if Option.is_some (Session.input_directory t.session)
@@ -588,7 +731,9 @@ let adopt_session_state t session ~width ~height =
       ; animation = Animation.create ~enabled:(Animation.enabled t.animation) } in
   let t = synchronize t ~width ~height in
   if Option.is_some (Session.input_directory t.session) && Option.is_some (side_layout t ~width ~height)
-     && Option.is_none t.palette
+      && Option.is_none t.palette
+      && Option.is_none t.file_picker && Option.is_none t.line_picker
+      && Option.is_none t.content_picker
   then { t with host = Host.focus t.host directory_id }
   else t
 ;;
@@ -717,7 +862,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Position_status _
   | Adjust_status_size _
   | Toggle_zen
-  | Open_palette -> prefs
+   | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -778,8 +923,8 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
     Some (if t.source_attached then "Diagnostic source restart requested" else no_source)
   | Kill_source ->
     Some (if t.source_attached then "Diagnostic source kill requested" else no_source)
-   | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Close_tab | Force_close_tab | Recreate_missing_file -> None
-  | Open_palette -> Host.notice t.host
+  | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Close_tab | Force_close_tab | Recreate_missing_file -> None
+     | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> Host.notice t.host
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
       else if Option.is_none (Workspace.minor (workspace t ~width ~height) Problems_tile.id)
@@ -940,6 +1085,66 @@ let open_palette t ~width ~height =
     })
 ;;
 
+(* Provider assembly boundary. The frontend owns discovery; release cancels it
+   on every close path, before queued session acceptance. *)
+let can_open_file_picker t ~width ~height =
+  not t.exited
+  && Mode.equal (Editor.mode (Controller.editor t.controller)) Normal
+   && Option.is_some (picker_placement ~width ~height)
+  && not (Host.pasting t.host)
+;;
+
+let open_file_picker t ~width ~height ~discovery ~release =
+  if not (can_open_file_picker t ~width ~height)
+  then (
+    release ();
+    { t with host = Host.with_notice t.host
+        "Files unavailable: finish paste, leave Insert/Visual, and allow at least 14 columns and 5 rows" })
+  else (
+    let previous = match t.file_picker with
+      | Some _ -> t.file_picker_return
+      | None -> focused_view t ~width ~height in
+    let t = leave t (focused_view t ~width ~height) in
+    let picker = File_picker_tile.create ~token:document_id ~discovery in
+    let t = { t with file_picker = Some picker; file_picker_release = release
+      ; file_picker_return = previous; controller = Controller.cancel_pending t.controller
+      ; host = Host.focus t.host File_picker_tile.id } in
+    File_picker_tile.fit picker ~rows:(minor_rows t ~width ~height File_picker_tile.id);
+    t)
+;;
+
+let open_line_picker t ~width ~height =
+  if not (can_open_file_picker t ~width ~height)
+  then { t with host = Host.with_notice t.host
+    "Document lines unavailable: finish paste, leave Insert/Visual, and allow at least 14 columns and 5 rows" }
+  else (
+    let previous = match t.line_picker with
+      | Some _ -> t.line_picker_return
+      | None -> focused_view t ~width ~height in
+    let t = leave t (focused_view t ~width ~height) in
+    let picker = Line_picker_tile.create t.controller in
+    let t = { t with line_picker = Some picker; line_generation = t.line_generation + 1
+      ; line_picker_return = previous; controller = Controller.cancel_pending t.controller
+      ; host = Host.focus t.host Line_picker_tile.id } in
+    Line_picker_tile.fit picker ~rows:(minor_rows t ~width ~height Line_picker_tile.id);
+    t)
+;;
+
+let open_content_picker t ~width ~height ~snapshot ~release =
+  if not (can_open_file_picker t ~width ~height) then (release (); t)
+  else (
+    let previous = match t.content_picker with
+      | Some _ -> t.content_picker_return
+      | None -> focused_view t ~width ~height in
+    let t = leave t (focused_view t ~width ~height) in
+    let picker = Content_picker_tile.create ~token:document_id ~snapshot in
+    let t = { t with content_picker = Some picker; content_picker_release = release
+      ; content_picker_return = previous; controller = Controller.cancel_pending t.controller
+      ; host = Host.focus t.host Content_picker_tile.id } in
+    Content_picker_tile.fit picker ~rows:(minor_rows t ~width ~height Content_picker_tile.id);
+    t)
+;;
+
 let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
   | Present_buffers buffer_presentation ->
@@ -969,6 +1174,9 @@ let apply_view_command t ~width ~height (view : View_command.t) =
      | None -> t
      | Some id -> fst (close_buffer_state t ~width ~height id ~force:(View_command.equal view Force_close_tab)))
   | Open_palette -> open_palette t ~width ~height
+  | Open_line_picker -> open_line_picker t ~width ~height
+  | Open_file_picker -> { t with file_picker_activation = true }
+  | Open_content_picker -> { t with content_picker_activation = true }
   | Focus_problems ->
     toggle_focus t ~width ~height Problems_tile.id ~show:(fun t ->
       { t with problems_visible = true })
@@ -1197,6 +1405,18 @@ let paste_capture t ~width ~height id text =
   then pane_notice t ~source:id (sprintf "%s closed; paste dropped" title)
   else (
     match t.palette with
+    | _ when View_id.equal id Content_picker_tile.id ->
+      Option.iter t.content_picker ~f:(fun picker ->
+        Content_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text));
+      t
+    | _ when View_id.equal id Line_picker_tile.id ->
+      Option.iter t.line_picker ~f:(fun picker ->
+        Line_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text));
+      t
+    | _ when View_id.equal id File_picker_tile.id ->
+      Option.iter t.file_picker ~f:(fun picker ->
+        File_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text));
+      t
     | Some palette when View_id.equal id Palette_tile.id ->
       { t with
         palette =
@@ -1240,7 +1460,7 @@ let accept_palette t ~width ~height palette =
 ;;
 
 (* A key typed into the open palette. Every character is query text (it accepts text),
-   so only Escape, Tab, and Ctrl-c are the host's. *)
+   so only Escape and Ctrl-c are the host's; Tab/Shift-Tab reach result navigation. *)
 let feed_palette t ~width ~height palette key =
   let host, (decision : _ Host.Decision.t) =
     Host.key
@@ -1272,6 +1492,52 @@ let feed_palette t ~width ~height palette key =
 
 let route t ~width ~height key =
   match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id when View_id.equal id Content_picker_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Content_picker_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    let t = match decision, t.content_picker with
+      | Return, _ -> close_content_picker t ~width ~height
+      | Content Accept, Some picker ->
+        let updated = ref t in
+        Content_picker_tile.accept picker
+          ~release:(fun () ->
+            t.content_picker_release ();
+            updated := close_content_picker t ~width ~height)
+          ~consume:(fun request ->
+            updated := { !updated with content_requests = request :: !updated.content_requests });
+        !updated
+      | Content (Event event), Some picker ->
+        Content_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) event; t
+      | Notice text, _ -> { t with host = Host.with_notice t.host text }
+      | Workspace view, _ -> apply_view_command t ~width ~height view
+      | Handled, _ | Content _, None -> t in
+    t, Controller.Status.Running
+  | Some id when View_id.equal id Line_picker_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Line_picker_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    let t = match decision, t.line_picker with
+      | Return, _ -> close_line_picker t ~width ~height
+      | Content Accept, Some picker ->
+        let updated = ref t in
+        let result = Line_picker_tile.accept picker
+          ~current:(fun () -> !updated.controller)
+          ~release:(fun () -> updated := close_line_picker !updated ~width ~height) in
+        (match result with
+         | Ok None -> !updated
+         | Ok (Some controller) -> { !updated with controller }
+         | Error error -> pane_notice (close_line_picker !updated ~width ~height)
+             ~source:id (Error.to_string_hum error))
+      | Content (Event event), Some picker ->
+        Line_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) event; t
+      | Notice text, _ -> { t with host = Host.with_notice t.host text }
+      | Workspace view, _ -> apply_view_command t ~width ~height view
+      | Handled, _ | Content _, None -> t
+    in
+    t, Controller.Status.Running
   | Some id when View_id.equal id directory_id ->
     (* A directory is a modal document, not a details/palette capture. In
        particular Space, Visual Enter, search and mark bindings use its keymap. *)
@@ -1282,6 +1548,29 @@ let route t ~width ~height key =
     (match t.palette with
      | Some palette -> feed_palette t ~width ~height palette key
      | None -> return_to_document t, Controller.Status.Running)
+  | Some id when View_id.equal id File_picker_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:File_picker_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    let t = match decision, t.file_picker with
+      | Return, _ -> close_file_picker t ~width ~height
+      | Content Accept, Some picker ->
+        let updated = ref t in
+        File_picker_tile.accept picker
+          ~release:(fun () ->
+            t.file_picker_release ();
+            updated := close_file_picker t ~width ~height)
+          ~consume:(fun request ->
+            updated := { !updated with file_requests = request :: !updated.file_requests });
+        !updated
+      | Content (Event event), Some picker ->
+        File_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) event; t
+      | Notice text, _ -> { t with host = Host.with_notice t.host text }
+      | Workspace view, _ -> apply_view_command t ~width ~height view
+      | Handled, _ | Content _, None -> t
+    in
+    t, Controller.Status.Running
   | Some id -> feed_capture t ~width ~height id key, Controller.Status.Running
   | None -> feed t ~width ~height (Key key)
 ;;
@@ -1353,13 +1642,95 @@ let rec apply t ~width ~height (input : Input.t) =
   if t.exited then t, Controller.Status.Exit else apply_running t ~width ~height input
 
 and apply_running t ~width ~height (input : Input.t) =
+  match input with
+  | Content_picker_accept request ->
+    let position = ref None in
+    let validate controller =
+      let editor = Controller.editor controller in
+      let text = Editor.text editor in
+      let index = request.line - 1 in
+      let invalid () = Or_error.error_string "Content result changed or invalid; reopen search (on disk)" in
+      if request.line <= 0 || index >= Ches_core.Text_buffer.line_count text
+      then invalid () else
+      let line = Ches_core.Text_buffer.line_text text index in
+      (* rg includes the final LF in raw lines; the editor's line API excludes it.
+         Unsupported CR/CRLF is rejected by file IO, never normalized. *)
+      let raw = line ^ (if Ches_core.Text_buffer.line_end text index < Ches_core.Text_buffer.length text
+        then "\n" else "") in
+      if not (String.equal raw request.expected_text)
+         || String.is_empty request.literal || request.byte_column < 0
+         || request.end_byte <= request.byte_column || request.end_byte > String.length line
+         || request.end_byte - request.byte_column <> String.length request.literal
+         || not (String.equal (String.sub line ~pos:request.byte_column
+              ~len:(request.end_byte - request.byte_column)) request.literal)
+      then invalid () else
+      let offset = Ches_core.Text_buffer.line_start text index in
+      Or_error.bind (Editor.display_position_of_offset editor (offset + request.end_byte)) ~f:(fun _ ->
+        Or_error.map (Editor.display_position_of_offset editor (offset + request.byte_column))
+          ~f:(fun p -> position := Some p)) in
+    let t = match Session.open_or_activate ~must_exist:true ~validate (session t) request.path with
+      | Ok (session, _) ->
+        let line, column = Option.value_exn !position in
+        let controller = Controller.jump (Option.value_exn (Session.active_controller session))
+          ~line ~column |> Or_error.ok_exn in
+        adopt_session_state (return_to_document t) (Session.replace_active session controller) ~width ~height
+      | Error error ->
+        let text = Ches_file_picker.Model.Candidate.display_text (Error.to_string_hum error) in
+        { t with host = Host.with_notice t.host text;
+          controller = Controller.update_feedback t.controller
+            (Notify { source = "content picker"; scope = path t; severity = Error; text; history = true }) } in
+    release_held t ~width ~height, Running
+  | File_picker_accept request ->
+    let t = match Session.open_or_activate ~must_exist:true (session t) request.path with
+      | Ok (session, _) -> adopt_session_state (return_to_document t) session ~width ~height
+      | Error error ->
+        let text = Ches_file_picker.Model.Candidate.display_text (Error.to_string_hum error) in
+        { t with host = Host.with_notice t.host text;
+          controller = Controller.update_feedback t.controller
+            (Notify { source = "file picker"; scope = path t; severity = Error;
+              text; history = true }) } in
+    release_held t ~width ~height, Running
+  | Content_picker_snapshot snapshot ->
+    Option.iter t.content_picker ~f:(fun picker ->
+      if Content_picker_tile.install picker snapshot then
+        Content_picker_tile.fit picker ~rows:(minor_rows t ~width ~height Content_picker_tile.id));
+    t, Running
+  | Line_picker_work generation ->
+    Option.iter t.line_picker ~f:(fun picker ->
+      if generation = t.line_generation && Line_picker_tile.validate picker t.controller then (
+        Line_picker_tile.work picker ~budget:128;
+        if not (Ches_line_picker.Lines.busy (Line_picker_tile.session picker))
+        then Line_picker_tile.fit picker ~rows:(minor_rows t ~width ~height Line_picker_tile.id)));
+    t, Running
+  | File_picker_snapshot snapshot ->
+    Option.iter t.file_picker ~f:(fun picker -> ignore (File_picker_tile.install picker snapshot : bool));
+    t, Running
+  | File_preview snapshot ->
+    Option.iter t.file_picker ~f:(fun picker ->
+      ignore (File_picker_tile.install_preview picker snapshot : bool));
+    t, Running
+  | File_picker_work request ->
+    Option.iter t.file_picker ~f:(fun picker ->
+      let current = (Ches_file_picker.Model.discovery
+        (Ches_file_picker.Interaction.model (File_picker_tile.session picker))).request in
+      if Ches_file_picker.Model.Discovery.equal_request current request then (
+        File_picker_tile.work picker ~budget:128;
+        if not (Ches_file_picker.Interaction.busy (File_picker_tile.session picker))
+        then File_picker_tile.fit picker ~rows:(minor_rows t ~width ~height File_picker_tile.id)));
+    t, Running
+  | _ -> apply_regular t ~width ~height input
+
+and apply_regular t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = match input with
-    | Resize -> synchronize t ~width ~height
+    | Resize ->
+      Option.iter t.file_picker ~f:File_picker_tile.clear_preview;
+      synchronize t ~width ~height
     | _ -> refit t ~width ~height in
   match input with
   | Resize -> t, Running
   | Source event -> receive_all t ~width ~height [ event ], Running
+     | File_preview _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
   | Animation_tick now ->
     let dt =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
@@ -1392,10 +1763,10 @@ and apply_running t ~width ~height (input : Input.t) =
            paste_capture { t with host } ~width ~height owner text, Running
          | host, `Reject (owner, text) -> pane_notice { t with host } ~source:owner text, Running)
       | Key key when Host.pasting t.host -> { t with host = Host.paste_key t.host key }, Running
-       | Key key when not (has_document t) ->
-         feed t ~width ~height (Key key)
-       | Key key -> route ~width ~height t key
-      | Animation_tick _ | Resize | Source _ -> assert false
+        | Key key when not (has_document t) ->
+          feed t ~width ~height (Key key)
+        | Key key -> route ~width ~height t key
+       | Animation_tick _ | Resize | Source _ | File_preview _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
     in
     let t = release_held t ~width ~height in
     let t = refit t ~width ~height in
@@ -1425,7 +1796,7 @@ and apply_running t ~width ~height (input : Input.t) =
 
 (* Consecutive [Source] inputs, as a frontend delivers a batch of source events, are
    one step: the same result as applying them one by one, with one synchronization. *)
-let apply_all t ~width ~height inputs =
+let apply_all ?(after_step = Fn.id) t ~width ~height inputs =
   let steps =
     List.group inputs ~break:(fun (a : Input.t) (b : Input.t) ->
       match a, b with
@@ -1453,13 +1824,29 @@ let apply_all t ~width ~height inputs =
         | _ -> assert false
       in
       match result with
-      | t, Running -> Continue t
+       | t, Running -> Continue (after_step t)
       | t, Exit -> Stop (t, Controller.Status.Exit))
     ~finish:(fun t -> t, Running)
 ;;
 
 let adopt_session t session ~width ~height =
   release_held (adopt_session_state t session ~width ~height) ~width ~height
+;;
+
+let take_file_picker_activation t =
+  { t with file_picker_activation = false }, t.file_picker_activation
+;;
+
+let take_content_picker_activation t =
+  { t with content_picker_activation = false }, t.content_picker_activation
+;;
+
+let with_notice ?(source = "file picker") t text =
+  let text = Ches_file_picker.Model.Candidate.display_text text in
+  { t with host = Host.with_notice t.host text;
+    controller = Controller.update_feedback t.controller
+      (Notify { source; scope = path t; severity = Error;
+        text; history = true }) }
 ;;
 
 let open_file t ~width ~height path =

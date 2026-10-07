@@ -15,6 +15,7 @@ type t =
   ; accepts_paste : bool
   ; owns_cursor : bool
   ; accepts_text : bool
+  ; accepts_tab : bool
   }
 [@@deriving sexp_of]
 
@@ -22,6 +23,7 @@ let primary id ~title =
   { id; title; role = Major; focusable = true; accepts_paste = true
   ; owns_cursor = true
   ; accepts_text = false
+  ; accepts_tab = false
   }
 ;;
 
@@ -33,6 +35,7 @@ let read_only id ~title =
   ; accepts_paste = false
   ; owns_cursor = false
   ; accepts_text = false
+  ; accepts_tab = false
   }
 ;;
 
@@ -46,6 +49,7 @@ let companion id ~title =
   ; accepts_paste = false
   ; owns_cursor = false
   ; accepts_text = false
+  ; accepts_tab = false
   }
 ;;
 
@@ -57,5 +61,8 @@ let text_input id ~title =
   ; accepts_paste = true
   ; owns_cursor = true
   ; accepts_text = true
+  ; accepts_tab = false
   }
 ;;
+
+let result_picker id ~title = { (text_input id ~title) with accepts_tab = true }

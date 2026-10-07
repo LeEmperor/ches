@@ -1,0 +1,8 @@
+(library
+ (name ches_file_picker_test)
+ (libraries ches_file_picker ches_palette core expect_test_helpers_core)
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

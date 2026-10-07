@@ -1,0 +1,4 @@
+(executable
+ (name fake_rg)
+ (libraries core core_unix)
+ (preprocess (pps ppx_jane)))

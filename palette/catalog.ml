@@ -155,6 +155,11 @@ let default =
         ~keywords:[ "statusline"; "info"; "panel" ]
         Toggle_status
     ; view
+        ~id:"workspace.toggle-hotkey-hints"
+        ~title:"Toggle tile hotkey hints"
+        ~keywords:[ "keys"; "controls"; "help"; "show"; "hide" ]
+        Toggle_hotkey_hints
+    ; view
         ~id:"buffers.top"
         ~title:"Show open buffers in top strip"
         ~keywords:[ "file tabs"; "presentation"; "horizontal" ]
@@ -243,7 +248,16 @@ let default =
         ~id:"source.restart"
         ~title:"Restart diagnostic source"
         ~keywords:[ "checker"; "lsp"; "diagnostics" ]
-         Restart_source
+        Restart_source
+    ; view
+        ~id:"document.lines"
+        ~title:"Search current document lines"
+        ~keywords:[ "fuzzy"; "unsaved"; "jump" ]
+        Open_line_picker
+    ; view ~id:"project.contents" ~title:"Search project contents"
+        ~keywords:[ "grep"; "literal"; "disk" ] Open_content_picker
+    ; view ~id:"project.files" ~title:"Find project files"
+        ~keywords:[ "fuzzy"; "open"; "picker" ] Open_file_picker
      ; view ~id:"directory.toggle-mark" ~title:"Toggle directory entry mark" Toggle_entry_mark
      ; view ~id:"directory.mark-selection" ~title:"Mark directory selection" Mark_selection
      ; view ~id:"directory.unmark-selection" ~title:"Unmark directory selection" Unmark_selection

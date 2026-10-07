@@ -1,0 +1,4 @@
+(executable
+ (name latency)
+ (libraries ches_line_picker ches_app ches_core core core_unix)
+ (preprocess (pps ppx_jane)))

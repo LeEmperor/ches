@@ -36,7 +36,7 @@ let is_count_start key =
 let is_reserved (key : Key.t) =
   match key with
   | Escape | Ctrl 'c' -> true
-  | Char _ | Ctrl _ | Enter | Tab | Backspace | Delete -> false
+  | Char _ | Ctrl _ | Enter | Tab | Shift_tab | Backspace | Delete -> false
 ;;
 
 let problems_of_sequence keys =
@@ -216,6 +216,9 @@ let default =
     ; status '=' (Adjust_status_size 2)
     ; view 'r' Reset
     ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
+    ; [ leader; Key.char 'f'; Key.char 'l' ], View Open_line_picker
+    ; [ leader; Key.char 'f'; Key.char 'f' ], View Open_file_picker
+    ; [ leader; Key.char 'f'; Key.char 'g' ], View Open_content_picker
     ]
   |> Or_error.ok_exn
 ;;

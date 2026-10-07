@@ -42,12 +42,23 @@ val mark_missing : t -> t
 val recreate : t -> t Or_error.t
 val save_as : t -> string -> t Or_error.t
 
+(** Runtime identity, distinct even for independently opened documents with the
+    same path/text/revision. Preserved by ordinary transitions; successful reload
+    starts a new identity. *)
+module Document_id : sig
+  type t
+  val equal : t -> t -> bool
+end
+
+val document_id : t -> Document_id.t
+
 (** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing exists
     there. IO uses lexical absolute normalization against the current working directory;
     the original spelling is retained for display. The error says which path could not be opened, and why. [cell_width] is passed
     to [Editor.create]. *)
 val open_file
-  :  ?keymap_config:Keymap.Config.t
+  :  ?must_exist:bool
+  -> ?keymap_config:Keymap.Config.t
   -> cell_width:Cell_layout.Width.t
   -> string
   -> t Or_error.t

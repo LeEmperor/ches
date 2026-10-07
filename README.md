@@ -36,6 +36,15 @@ for general distribution.
 Ches retains multiple files and visited directories per session. Files accept UTF-8 text with LF line endings
 and preserves the file's contents, including whether it ends with a newline.
 
+`Space f l` opens fuzzy current-document lines, including unsaved edits, in the
+shared float. The file picker opens files through `Space f f` / Find project
+files, retaining dirty session buffers. Wide file floats show a read-only selected
+file prefix (up to 64 KiB/100 lines), using unsaved retained text when available;
+narrow terminals hide the preview, and only Enter opens a file.
+`Space f g` / Search project contents searches on-disk literals and validates the
+current target text before opening and jumping. See
+[picker status and setup](docs/pickers.md) for behavior, limits and integration status.
+
 ## Usage
 
 The local shell command points to the built executable at
@@ -69,6 +78,9 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space q` | Quit if all buffers are clean and no files are marked missing |
 | `Space Q` | Quit and discard unsaved changes |
 | `Space c c` | Open the command palette |
+| `Space f l` | Fuzzy search current-document lines; Enter jumps to the selected match |
+| `Space f f` | Find project files; Enter opens or activates a retained buffer |
+| `Space f g` | Search project contents on disk literally; Enter validates and jumps |
 | `Space v o` | Focus the problems view or return to the document |
 | `Space v M` | Show and focus notification history |
 
@@ -78,7 +90,8 @@ editing semantics, workspace controls, and diagnostic-source behavior.
 
 The command palette prefers an 80×14 framed window, clamped to the terminal with
 a one-cell margin where possible. Filtering keeps its size fixed and scrolls results
-inside it. `Escape` or `Tab` cancels; `Enter` runs the selection once. It requires at
+inside it. `Tab` / `Shift-Tab` (or `Ctrl-n` / `Ctrl-p`) select next / previous;
+`Escape` cancels; `Enter` runs the selection once. It requires at
 least 14 columns and 4 rows: opening below that size reports why, and shrinking an
 open palette below it closes without execution. Closing discards the query and
 restores the covered workspace; an interrupted palette paste is dropped, never
@@ -111,6 +124,9 @@ those frames.
 | `source/` | Asynchronous diagnostic sources and language-server client |
 | `tile/` | Shared tile host, focus, and input routing |
 | `palette/` | Command catalog and fuzzy matching |
+| `file_picker/` | Project file discovery/matching and Async floating-picker runtime |
+| `line_picker/` | Bounded fuzzy search over current in-memory document lines |
+| `content_picker/` | On-disk literal search provider and Async floating-picker runtime |
 | `screen/` | Screen geometry, workspace state, and frame rendering |
 | `ui/` | Bonsai_term frontend, event adapter, and theme |
 | `bin/` | Command-line entry point |
@@ -126,6 +142,9 @@ Development uses the OxCaml opam switch `5.2.0+ox` and Jane Street
 `v0.18~preview` packages. The project declares Dune language version 3.17 and
 pins `tree-sitter` to 0.1.0. The bundled SystemVerilog parser also requires a C
 compiler and `gzip` at build time.
+Picker libraries additionally use Async, Yojson and Base64 (declared in
+`dune-project`). File/content provider tests and probes require `rg` on `PATH`;
+neither `fzf` nor ripgrep is needed for ordinary editing or the command palette.
 
 With the local switch active:
 
@@ -134,9 +153,10 @@ dune build
 dune runtest
 dune exec ches -- PATH
 scripts/smoke.sh
-python3 scripts/directory_workspace_smoke.py
 # Just the floating palette's terminal scenarios:
 scripts/smoke.sh --palette-only
+python3 scripts/directory_workspace_smoke.py
+python3 scripts/picker_smoke.py
 ```
 
 `ches.opam` is generated from `dune-project`; package metadata changes belong in
@@ -147,6 +167,11 @@ and frontend behavior. The separate terminal smoke test uses tmux, bash, and a
 UTF-8 locale to check the built editor's screen output, saved bytes, and terminal
 restoration. Visual checks and the `ppx_expect` source-path workaround are
 documented in the [editor reference](docs/editor_reference.md#terminal-smoke-test).
+The [current phase-9 check record](FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete)
+records passing build/full tests and real file/content, directory and existing
+terminal checks. All three pickers ship binding/catalog activation (54 catalog
+commands). Human visual review, owner ranking examples and agreed live performance
+acceptance remain separate and unperformed.
 
 ## Current limitations
 

@@ -1,0 +1,4 @@
+(library
+ (name ches_content_picker)
+ (libraries ches_file_picker ches_palette core yojson base64)
+ (preprocess (pps ppx_jane)))

@@ -154,9 +154,11 @@ let%test_unit "Visual line delete removes an empty protected final row with zero
 
 let%test_unit "protected row pastes next to an empty final identity keep both owners separate" =
   List.iter [ false; true ] ~f:(fun before ->
-    let cut = run (editor ()) [ Delete_lines 1 ] in
-    let register = Editor.unnamed_register cut |> Option.value_exn in
-    let e = run cut [ Delete_chars_forward 4 ] |> fun e -> Editor.set_unnamed_register e register in
+    let e = run (editor ()) [ Delete_lines 1 ] in
+    let row = Editor.unnamed_register e |> Option.value_exn in
+    (* Clearing the remaining name replaces the unnamed register. Restore the
+       protected linewise row whose paste this test is intended to exercise. *)
+    let e = run e [ Delete_chars_forward 4 ] |> fun e -> Editor.set_unnamed_register e row in
     let e = run e [ Paste { before; count = 1 } ] in
     let text = Editor.text e in
     assert (Result.is_error (D.parse baseline text));

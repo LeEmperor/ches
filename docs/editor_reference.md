@@ -68,6 +68,9 @@ checks for [Ches](../README.md).
 | Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
 | Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
+| Normal | `Space f l` | Fuzzy search current-document lines (including unsaved edits) |
+| Normal | `Space f f` | Find project files; open/activate retained buffers |
+| Normal | `Space f g` | Search project contents on disk; validate and jump |
 | Normal | `Escape` | Cancel pending input; when idle, clear search highlights and acknowledge the presented problem |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
@@ -137,15 +140,17 @@ command's name, or a related word: `rel num`, `rln`, and `gutter relative` all f
 *Toggle relative line numbers*. Matching is fuzzy and in-process (no `fzf` needed):
 each space-separated word must match, in order, in the title, the command's ID, or
 one of its keywords, and matched title letters are highlighted.
+The current default catalog contains **55 commands**, including all three pickers
+and **Toggle tile hotkey hints**.
 
 | Palette keys | Action |
 | --- | --- |
 | text, including Space and `j`/`k` | Edit the query (a paste goes into it too) |
 | `Backspace` | Delete the last character |
 | `Ctrl-Backspace` or `Ctrl-w` | Delete the last word (most terminals send Ctrl-Backspace as `Ctrl-h`, which works too) |
-| `Ctrl-n` / `Ctrl-p` | Select the next / previous command |
+| `Tab` / `Shift-Tab` or `Ctrl-n` / `Ctrl-p` | Select the next / previous command |
 | `Enter` | Close the palette and run the selected command once, on the document |
-| `Escape` or `Tab` | Close it without running anything |
+| `Escape` | Close it without running anything |
 | `Ctrl-c` | Show the host's reminder to use Escape; keep the palette open |
 
 A command run from the palette behaves exactly as its key binding: an ordinary quit
@@ -171,6 +176,30 @@ To add a command, add an entry (ID, title, keywords, and the existing editor or 
 action) to `Catalog.default` in `palette/catalog.ml`. Its shortcut is derived from the
 bindings, so it needs no label and no execution code of its own.
 
+### File, document-line and project-content pickers
+
+`Space f l` (Normal) or **Search current document lines** in the command palette
+opens numbered in-memory lines in the shared float. Type loose subsequences;
+Tab/Shift-Tab or Ctrl-n/p selects, Enter jumps to the earliest matched character and reveals it.
+Backspace/Ctrl-w edit the query; paste is sanitized like the palette. Escape
+cancels without moving the document; Ctrl-c shows a reminder, not cancellation.
+Filtering/no-match Enter is inert. Document changes invalidate results; reopen to
+refresh. Minimum 14×5, including zen; undersized resize closes safely.
+
+`Space f f` / **Find project files** opens or activates retained buffers without
+reloading unsaved text. Its file-only float prefers 175×40 (80×40 below 104 terminal
+columns), centered and clamped with a one-cell margin where possible. At terminal
+widths of 104 cells or more, its wider float
+shows results left and a read-only numbered preview right (first 64 KiB/100 lines,
+current unsaved buffer text if retained). Narrow terminals hide preview; it never
+takes focus, opens tabs or changes Enter behavior. Loading/errors/truncation are
+labelled. `Space f g` / **Search project contents** searches on-disk
+case-sensitive literals, then validates the current target's entire raw line and
+literal byte range before activating and revealing it. Dirty matching lines are
+allowed; stale lines and missing new files fail visibly without changing tabs.
+See [picker status and setup](pickers.md) for scope, limits, coordinates and ripgrep
+dependencies. Existing `/` and `?` search is unchanged.
+
 Workspace commands include **Save buffer**, **Next/Previous file tab**,
 **Close file tab** (and its explicit discard variant), **Recreate missing path**,
 directory navigation, all five mark actions, and major/side/hide/focus/width actions.
@@ -191,8 +220,10 @@ applies edits directly, without a confirmation dialog or filesystem undo.**
 
 `Space v b` toggles a bottom preview; `Space v f` switches workspace/current-file
 filtering. Tile hotkey hints are hidden by default; `Space v ?` toggles them in
-Problems, History, and the demo report, including focused lists and details.
-Overflow counts, detail positions, and action feedback remain visible.
+Problems, History, and the demo report, including focused lists and details, and
+in all picker/palette control footers. For text-input floats, toggle before opening
+or use **Toggle tile hotkey hints** in the palette; captured keys still edit queries.
+Overflow counts, detail positions, picker status, errors and action feedback remain visible.
 `Space v o` shows and focuses the pane. It remains read-only:
 
 | Pane keys | Action |
@@ -909,9 +940,11 @@ It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
 ```sh
 dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe
 scripts/smoke.sh path/to/ches                # or another binary
-python3 scripts/directory_workspace_smoke.py # directory/tab integration PTY scenarios
 scripts/smoke.sh --palette-only             # only floating-palette scenarios
+scripts/smoke.sh --line-picker-only          # live line binding/jump/zen/paste/resize
 scripts/smoke.sh --palette-only path/to/ches
+python3 scripts/directory_workspace_smoke.py # directory/tab integration PTY scenarios
+python3 scripts/picker_smoke.py              # real file/content opening and stale/dirty navigation
 ```
 
 It prints `ok` or `FAIL` for each check, with a screen dump after each failure,
@@ -921,6 +954,15 @@ of review screens (Normal, Insert and dirty, pending `Space` and `Space v`, a
 moved tile, relative and no line numbers, and a save error at 80x24 and
 160x48, plus tiny sizes and floating-palette open/close/resize/zen screens) and prints
 their directory (`cat` a file to view it).
+
+`picker_smoke.py` uses its own tmux socket and `/tmp/opencode` fixture, retaining
+text/colored captures under the printed fixture's hidden `.captures` directory.
+It covers file/content binding and palette activation, query/select/cancel/accept,
+dirty retained text/undo, missing/stale failures, Unicode/TAB location reveal, zen
+restoration, minimum/tiny/resize and interrupted paste, disk bytes and tty modes.
+It also checks native Tab/Shift-Tab file/palette selected acceptance, dirty/missing/
+large/empty/binary previews, safe controls, narrow/wide resize and close/reopen.
+These are automated checks, not human visual or ranking/performance acceptance.
 
 Cursor assertions poll for a visible cursor at the expected position within five
 seconds, rather than sampling hidden cursor coordinates during smear. This fixed
@@ -945,10 +987,16 @@ The smoke script cannot check these, so check them in a real terminal:
 - Floating palette acceptance: open `Space c c` with all docked tiles visible, and
   again in zen, at about 80×24 and 120×40. Check its centering, preferred/clamped
   size, readable title/query/results/footer, and a single bar cursor with no
-  document smear. Filter until results scroll; cancel with Escape/Tab and confirm
+  document smear. Filter until results scroll; navigate with Tab/Shift-Tab,
+  accept with Enter or cancel with Escape, and confirm
   the covered workspace returns without a viewport jump. Resize through 14×4 and
   below the minimum, then grow again; review the saved `palette-*.ansi` captures.
   Record a human visual review separately from automated smoke/headless results.
+- File-preview acceptance: review the results/preview split at 104, 140 and 160
+  columns, then hide it at narrow widths. Check readable labels, numbered dirty
+  text, safe control/wide-character clipping, selection visibility, Enter behavior,
+  close/reopen and rapid navigation. Judge flicker and responsiveness separately;
+  automated captures are not visual or measured-performance acceptance.
 - Pasting from the terminal's own clipboard inserts text literally in Insert mode.
   This depends on the terminal; the script pastes through tmux.
 - Syntax acceptance: open `highlight_tree_sitter/provider.ml`, `core/text_buffer.mli`

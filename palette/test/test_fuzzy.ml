@@ -163,3 +163,36 @@ let%expect_test "malformed UTF-8 is safe" =
   rank "a\xe2" [ "a\xe2\x82"; "ab" ];
   [%expect {| [a�] |}]
 ;;
+
+let%expect_test "loose policy is opt-in, accepts even negative-score subsequences" =
+  let text = "a" ^ String.make 100 'x' ^ "b" ^ String.make 100 'y' ^ "c" in
+  let candidates = [ text, [ field text ] ] in
+  assert (List.is_empty (Fuzzy.rank ~query:"abc" candidates));
+  let loose = Fuzzy.rank ~policy:Loose_subsequence ~query:"abc" candidates in
+  let matched = List.hd_exn loose in
+  assert (matched.score < 0);
+  assert (List.equal Int.equal (snd (List.hd_exn matched.positions)) [ 0; 101; 202 ]);
+  assert (List.is_empty (Fuzzy.rank ~policy:Loose_subsequence ~query:"acb" candidates));
+  assert (List.is_empty (Fuzzy.rank ~query:"abc" candidates));
+  print_endline "command default unchanged";
+  [%expect {| command default unchanged |}]
+;;
+
+let%expect_test "prepared and uncached ranking agree under both policies" =
+  let candidates =
+    [ "one", [ field ~weight:150 "caféFile"; field "src/caféFile.ml" ]
+    ; "two", [ field "a-long/b-scattered/c.ml" ]
+    ; "three", [ field "a-long/b-scattered/c.ml" ]
+    ; "bad", [ field "a\xffb" ]
+    ]
+  in
+  let prepared = List.map candidates ~f:Fuzzy.Prepared.create in
+  List.iter [ Fuzzy.Policy.Command; Loose_subsequence ] ~f:(fun policy ->
+    List.iter [ ""; " \t"; "cf"; "café ml"; "abc"; "not-found"; "�" ] ~f:(fun query ->
+      let uncached = Fuzzy.rank ~policy ~query candidates in
+      let cached = Fuzzy.rank_prepared ~policy ~query prepared in
+      assert (Sexp.equal ([%sexp_of: (string, string) Fuzzy.Match.t list] uncached)
+        ([%sexp_of: (string, string) Fuzzy.Match.t list] cached))));
+  print_endline "prepared equivalence passed";
+  [%expect {| prepared equivalence passed |}]
+;;

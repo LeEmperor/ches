@@ -32,6 +32,63 @@ let send handle keys =
 
 let chars s = List.map (String.to_list s) ~f:(fun c -> Event.Key.ASCII c, [])
 
+let%expect_test "frontend Tab and terminal Shift-Tab navigate palette, not focus; Enter runs selection" =
+  let handle = handle ~width:60 ~height:10 "first\nsecond\nthird" in
+  send handle (chars " ccgutter" @ [ Tab, []; Tab, [ Event.Modifier.Shift ] ]);
+  Handle.show handle;
+  [%expect {|
+    (cursor (((position ((x 11) (y 2))) (kind Bar))))
+    ┌────────────────────────────────────────────────────────────┐
+    │╭─ f.txt ──────────────────────────────────────────────────╮│
+    ││╭─ Commands ─────────────────────────────────────────────╮││
+    │││ > gutter                                               │││
+    │││ > Toggle absolute line numbers               Space v n │││
+    │││   Toggle relative line numbers               Space v N │││
+    │││                                                        │││
+    │││                                                        │││
+    │││                                                        │││
+    │╰╰─ 1/2 ──────────────────────────────────────────────────╯╯│
+    │ NORMAL  f.txt                                          1:1 │
+    └────────────────────────────────────────────────────────────┘
+    |}];
+  (* Back at the first result after Shift-Tab; refine without changing selection,
+     then navigate to the second result and accept it through the frontend. *)
+  send handle (chars " " @ [ Backspace, []; Tab, []; Enter, [] ]);
+  Handle.show handle;
+  [%expect {|
+    (cursor (((position ((x 7) (y 1))) (kind Block))))
+    ┌────────────────────────────────────────────────────────────┐
+    │╭─ f.txt ──────────────────────────────────────────────────╮│
+    ││    0 first                                               ││
+    ││    1 second                                              ││
+    ││    2 third                                               ││
+    ││                                                          ││
+    ││                                                          ││
+    ││                                                          ││
+    ││                                                          ││
+    │╰──────────────────────────────────────────────────────────╯│
+    │ NORMAL  f.txt Line numbers: relative                   1:1 │
+    └────────────────────────────────────────────────────────────┘
+    |}];
+  send handle (chars " ccgutter" @ [ Tab, []; Escape, [] ]);
+  Handle.show handle;
+  [%expect {|
+    (cursor (((position ((x 7) (y 1))) (kind Block))))
+    ┌────────────────────────────────────────────────────────────┐
+    │╭─ f.txt ──────────────────────────────────────────────────╮│
+    ││    0 first                                               ││
+    ││    1 second                                              ││
+    ││    2 third                                               ││
+    ││                                                          ││
+    ││                                                          ││
+    ││                                                          ││
+    ││                                                          ││
+    │╰──────────────────────────────────────────────────────────╯│
+    │ NORMAL  f.txt Line numbers: relative                   1:1 │
+    └────────────────────────────────────────────────────────────┘
+    |}]
+;;
+
 let%expect_test "startup shows the installed workspace companions" =
   let handle = handle ~document_only:false "hello\nworld\n" in
   Handle.show handle;

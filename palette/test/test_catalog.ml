@@ -83,6 +83,7 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     view.narrow-tile-10            Narrow document tile by 10 columns     Space v -
     view.widen-tile-10             Widen document tile by 10 columns      Space v +, Space v =
     workspace.toggle-status        Toggle status tile
+    workspace.toggle-hotkey-hints  Toggle tile hotkey hints
     buffers.top                    Show open buffers in top strip
     buffers.status-rows            Show open buffers as status rows
     workspace.status-left          Move status tile left
@@ -101,6 +102,9 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     report.toggle                  Toggle demo report
     report.focus                   Focus demo report
     source.restart                 Restart diagnostic source
+    document.lines                 Search current document lines
+    project.contents               Search project contents
+    project.files                  Find project files
     directory.toggle-mark          Toggle directory entry mark
     directory.mark-selection       Mark directory selection
     directory.unmark-selection     Unmark directory selection

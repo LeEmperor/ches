@@ -37,17 +37,50 @@ type t =
   }
 [@@deriving sexp_of]
 
-(* The live palette's floating shell, when open and the screen can fit it. *)
-let palette_layer ui ~width ~height =
-  Option.bind (Ui_state.palette_layout ui ~width ~height) ~f:(fun layout ->
-    Option.map (Ui_state.palette ui) ~f:(fun palette ->
-      let content = layout.content in
-      { Floating_layer.id = Palette_tile.id
-      ; layout
-      ; content = Palette_tile.render ?notice:(Ui_state.capture_notice ui)
-          palette ~width:content.width ~rows:content.height
-      ; cursor = Some (Palette_tile.cursor palette ~width:content.width)
-      }))
+let floating_layer ?allocation ?floating ui ~width ~height =
+    let hotkey_hints = Ui_state.hotkey_hints ui in
+    match floating with
+    | Some _ -> floating
+    | None when Option.is_some allocation -> None
+    | None when Option.is_some (Ui_state.content_picker ui) ->
+      Option.bind (Ui_state.content_picker_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.content_picker ui) ~f:(fun picker ->
+          let content = layout.content in
+          { Floating_layer.id = Content_picker_tile.id; layout
+           ; content = Content_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+              picker ~width:content.width ~rows:content.height
+          ; cursor = Some (Content_picker_tile.cursor picker ~width:content.width) }))
+    | None when Option.is_some (Ui_state.line_picker ui) ->
+      Option.bind (Ui_state.line_picker_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.line_picker ui) ~f:(fun picker ->
+          ignore (Line_picker_tile.validate picker (Ui_state.controller ui) : bool);
+          let content = layout.content in
+          { Floating_layer.id = Line_picker_tile.id
+          ; layout
+           ; content = Line_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+              picker ~width:content.width ~rows:content.height
+          ; cursor = Some (Line_picker_tile.cursor picker ~width:content.width)
+          }))
+     | None when Option.is_some (Ui_state.file_picker ui) ->
+       Option.bind (Ui_state.file_picker_layout ui ~width ~height) ~f:(fun layout ->
+         Option.map (Ui_state.file_picker ui) ~f:(fun picker ->
+           let content = layout.content in
+           { Floating_layer.id = File_picker_tile.id
+           ; layout
+           ; content = File_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+               picker ~width:content.width ~rows:content.height
+           ; cursor = Some (File_picker_tile.cursor picker ~width:content.width)
+           }))
+     | None ->
+      Option.bind (Ui_state.palette_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.palette ui) ~f:(fun palette ->
+          let content = layout.content in
+          { Floating_layer.id = Palette_tile.id
+          ; layout
+           ; content = Palette_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+              palette ~width:content.width ~rows:content.height
+          ; cursor = Some (Palette_tile.cursor palette ~width:content.width)
+          }))
 ;;
 
 let overlay_floating rows (layer : Floating_layer.t) ~focused =
@@ -63,19 +96,17 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
   let width = Int.max 0 width
   and height = Int.max 0 height in
   let screen_width = width in
-  let explicit_allocation = Option.is_some allocation in
-  let floating =
-    match floating with
-    | Some _ -> floating
-    | None when explicit_allocation -> None
-    | None -> palette_layer ui ~width ~height
-  in
+  let floating = floating_layer ?allocation ?floating ui ~width ~height in
   let floating_view =
     match floating with
     | Some layer -> Some (layer.id, Some layer.layout)
-    | None when explicit_allocation -> Some (Palette_tile.id, None)
+     | None when Option.is_some allocation ->
+         Some ((if Option.is_some (Ui_state.content_picker ui) then Content_picker_tile.id
+           else if Option.is_some (Ui_state.line_picker ui) then Line_picker_tile.id
+          else if Option.is_some (Ui_state.file_picker ui) then File_picker_tile.id else Palette_tile.id), None)
     | None -> None
   in
+  let explicit_allocation = Option.is_some allocation in
   let workspace = Ui_state.workspace ui ~width ~height in
   let buffers_in_status = not explicit_allocation && Ui_state.buffers_in_status ui ~width ~height in
   let pane_relative = Option.is_some allocation || Option.is_some workspace.status
@@ -501,7 +532,7 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
   if Ui_state.has_document ui then
     match allocation, Ui_state.side_layout ui ~width ~height with
     | None, Some layout ->
-      let floating = match floating with Some _ -> floating | None -> palette_layer ui ~width ~height in
+      let floating = floating_layer ?floating ui ~width ~height in
       let file = render_document ?highlights ?floating (Ui_state.surface ui ~directory:false) ~width ~height in
       let dir = render_document (Ui_state.surface ui ~directory:true)
         ~allocation:{ Geometry.Rect.x = 0; y = 0; width = layout.content.width; height = layout.content.height }
@@ -516,11 +547,11 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
         | span :: rest when n >= span.Span.width -> drop_backdrop rest (n - span.width)
         | span :: rest when n > 0 -> Span.blank span.style (span.width - n) :: rest
         | _ -> spans in
-      let rows = List.mapi file.rows ~f:(fun y row ->
+       let rows = List.mapi file.rows ~f:(fun y row ->
         if y < layout.outer.y || y >= layout.outer.y + layout.outer.height then row else
         let tail = drop_backdrop row (layout.outer.x + layout.outer.width) in
-        Span.merge (Span.take row ~n:layout.outer.x @ List.nth_exn side (y - layout.outer.y) @ tail)) in
-      (* The floating layer stays above the side pane. *)
+         Span.merge (Span.take row ~n:layout.outer.x @ List.nth_exn side (y - layout.outer.y) @ tail)) in
+      (* Floats cover the entire workspace, including the directory side pane. *)
       let rows = Option.fold floating ~init:rows ~f:(fun rows layer ->
         let focused_view = Ui_state.focused_view ~floating:(layer.id, Some layer.layout) ui ~width ~height in
         overlay_floating rows layer ~focused:(Ches_tile.View_id.equal focused_view layer.id)) in

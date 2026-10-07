@@ -10,7 +10,7 @@
     in order, not necessarily next to each other: [rln] matches
     ["Toggle relative line numbers"]. Misspellings do not match.
 
-    A match must also be good enough: its score (see below) must be at least half
+    By default a match must also be good enough: its score (see below) must be at least half
     that of the token appearing contiguously at a word boundary. This keeps word
     initials such as [rln] and contiguous runs inside words such as [save] in
     ["unsaved"], but drops letters scattered through unrelated words, such as [abs]
@@ -61,7 +61,32 @@ module Match : sig
   [@@deriving sexp_of]
 end
 
+module Policy : sig
+  type t =
+    | Command (** Existing 50-percent quality threshold; the default. *)
+    | Loose_subsequence (** Accept every ordered subsequence, even negative scores. *)
+  [@@deriving sexp_of, equal]
+end
+
+module Prepared : sig
+  (** Immutable decoded fields, reusable across queries. Keep only the current
+      collection; preparation adds three integer arrays per field. *)
+  type ('item, 'tag) t
+
+  val create : 'item * 'tag Field.t list -> ('item, 'tag) t
+end
+
+val rank_prepared
+  :  ?policy:Policy.t
+  -> query:string
+  -> ('item, 'tag) Prepared.t list
+  -> ('item, 'tag) Match.t list
+
 (** [rank ~query candidates] are the candidates that match [query], best first, with
     ties in the order of [candidates]. A query with no tokens (empty or all
     whitespace) matches every candidate, in order, with score 0. *)
-val rank : query:string -> ('item * 'tag Field.t list) list -> ('item, 'tag) Match.t list
+val rank
+  :  ?policy:Policy.t
+  -> query:string
+  -> ('item * 'tag Field.t list) list
+  -> ('item, 'tag) Match.t list

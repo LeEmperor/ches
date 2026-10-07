@@ -1,0 +1,4 @@
+(library
+ (name ches_line_picker)
+ (libraries ches_core ches_app ches_palette core)
+ (preprocess (pps ppx_jane)))

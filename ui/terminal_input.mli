@@ -5,6 +5,7 @@
     - Ctrl plus a letter becomes [Ctrl] of the lowercase letter. Ctrl-H, which some
       terminals send for Backspace, is [Backspace].
     - Enter, Tab, Backspace, Delete, and Escape map to themselves.
+    - Tab with Shift becomes [Shift_tab] for previous-result navigation.
     - A terminal sends Alt-x as Escape followed by x, and an Escape typed quickly
       before another key arrives the same way, so a Meta key becomes [Escape] and then
       the key without Meta. Dropping it would lose the Escape.

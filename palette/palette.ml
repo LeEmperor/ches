@@ -48,11 +48,10 @@ let result_ids t =
 
 let refresh t =
   let t = { t with results = Catalog.search t.catalog t.context ~query:t.query } in
-  let ids = result_ids t in
   let selected =
-    match t.selected with
-    | Some id when List.mem ids id ~equal:Catalog.Id.equal -> Some id
-    | _ -> List.hd ids
+    Selection.preserve t.selected t.results
+      ~id:(fun (result : Catalog.result) -> Catalog.Entry.id result.item)
+      ~equal:Catalog.Id.equal
   in
   { t with selected }
 ;;
@@ -61,30 +60,7 @@ let create catalog context ~token =
   refresh { catalog; context; token; query = ""; results = []; selected = None }
 ;;
 
-let is_control scalar = scalar <= 0x1F || (scalar >= 0x7F && scalar <= 0x9F)
-
-(* [s] as single-line query text; see the interface. *)
-let sanitize s =
-  let buffer = Buffer.create (String.length s) in
-  let rec loop pos =
-    if pos < String.length s
-    then
-      if String.is_substring_at s ~pos ~substring:"\r\n"
-      then (
-        Buffer.add_char buffer ' ';
-        loop (pos + 2))
-      else (
-        let decoded = Stdlib.String.get_utf_8_uchar s pos in
-        let u = Stdlib.Uchar.utf_decode_uchar decoded in
-        (match Uchar.to_scalar u with
-         | 0x0A | 0x0D | 0x09 -> Buffer.add_char buffer ' '
-         | scalar when is_control scalar -> ()
-         | _ -> Stdlib.Buffer.add_utf_8_uchar buffer u);
-        loop (pos + Stdlib.Uchar.utf_decode_length decoded))
-  in
-  loop 0;
-  Buffer.contents buffer
-;;
+let sanitize = Query.sanitize
 
 let append t text =
   match sanitize text with
@@ -95,18 +71,16 @@ let append t text =
 (* The query is valid UTF-8, so the last code point starts at the last byte that is
    not a continuation byte. *)
 let backspace t =
-  match String.rfindi t.query ~f:(fun _ c -> Char.to_int c land 0xC0 <> 0x80) with
-  | None -> t
-  | Some start -> refresh { t with query = String.prefix t.query start }
+  let query = Query.backspace t.query in
+  if String.equal query t.query then t else refresh { t with query }
 ;;
 
 (* Trailing spaces, then the word before them, as readline's Ctrl-w does. Space is the
    only whitespace a query holds, and it is ASCII, so cutting next to one keeps the
    query valid UTF-8. *)
 let delete_word t =
-  let query = String.rstrip t.query ~drop:(Char.equal ' ') in
-  let keep = Option.value_map (String.rindex query ' ') ~default:0 ~f:(fun i -> i + 1) in
-  if String.is_empty t.query then t else refresh { t with query = String.prefix query keep }
+  let query = Query.delete_word t.query in
+  if String.equal query t.query then t else refresh { t with query }
 ;;
 
 let move t ~by =

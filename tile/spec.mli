@@ -19,7 +19,10 @@ type t =
   ; owns_cursor : bool (** Supplies the terminal cursor while focused. *)
   ; accepts_text : bool
     (** Typed text, including the leader key, goes to the content: the view has an
-        input field, so the leader cannot start a workspace sequence there. *)
+         input field, so the leader cannot start a workspace sequence there. *)
+  ; accepts_tab : bool
+    (** Tab and Shift-Tab reach the content for result navigation instead of the
+        host's Tab focus-return behavior. Independent of text/paste capabilities. *)
   }
 [@@deriving sexp_of]
 
@@ -40,3 +43,6 @@ val companion : View_id.t -> title:string -> t
     with an input field, such as the command palette. Escape is its way back to the
     workspace (see {!Host.key}). *)
 val text_input : View_id.t -> title:string -> t
+
+(** {!text_input} with Tab/Shift-Tab delegated to the result-list consumer. *)
+val result_picker : View_id.t -> title:string -> t

@@ -40,7 +40,7 @@ let%expect_test "opening lists available commands and selects the first" =
       tabs.next
       tabs.previous
       tabs.close
-      ... 47 more
+      ... 51 more
     |}]
 ;;
 
@@ -50,6 +50,7 @@ let%expect_test "typing filters; ordinary letters such as j and k are query text
     {|
     query: "rel num"
     > view.toggle-relative-numbers
+      document.lines
       problems.toggle-filter
     |}];
   show (type_ (create ()) "jk");
@@ -145,7 +146,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 50 more
+      ... 54 more
     |}]
 ;;
 
@@ -212,6 +213,7 @@ let%expect_test "pasted and typed text is one line of valid UTF-8" =
     {|
     query: "rel num"
     > view.toggle-relative-numbers
+      document.lines
       problems.toggle-filter
     |}]
 ;;

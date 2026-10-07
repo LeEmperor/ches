@@ -60,7 +60,9 @@ end
 
     - Escape cancels a pending prefix; otherwise it takes [escape] (the content's
       own back action, e.g. closing details) if given; otherwise it returns.
-    - Ctrl-c gives a notice; Tab returns.
+    - Ctrl-c gives a notice; Tab returns unless the view explicitly delegates it
+      through {!Spec.t.accepts_tab}. Shift-Tab also reaches opted-in content;
+      otherwise it is ignored (as it was by the terminal adapter).
     - A sequence starting with the leader is looked up in [lookup] (the configured
       keymap). View commands run, except document scrolling. Editor commands and
       unbound sequences are rejected. In a view that accepts text
@@ -82,6 +84,10 @@ val key
 
 (** Whether a bracketed paste is being collected. *)
 val pasting : t -> bool
+
+(** Keep collecting an interrupted paste, but reject its completion even if a new
+    instance of the same view opens. Never redirect it to the new capture/document. *)
+val invalidate_paste : t -> View_id.t -> t
 
 (** Start collecting a paste owned by the effective focus. Ignored while collecting. *)
 val paste_start : t -> available:(View_id.t -> bool) -> t

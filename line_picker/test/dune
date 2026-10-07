@@ -1,0 +1,5 @@
+(library
+ (name ches_line_picker_test)
+ (libraries ches_line_picker ches_app ches_core ches_input ches_palette core)
+ (inline_tests (flags (:standard -source-tree-root .)))
+ (preprocess (pps ppx_jane)))

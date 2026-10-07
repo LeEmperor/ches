@@ -28,9 +28,10 @@ let bonus_consecutive = 4
 let first_char_multiplier = 2
 let bonus_exact = 2 * score_match
 
-(* A token's match in a field counts only if it scores at least this percentage of
-   [ideal_score]. *)
-let min_quality = 50
+(* Keep command quality filtering the default; file search opts into subsequences. *)
+module Policy = struct
+  type t = Command | Loose_subsequence [@@deriving sexp_of, equal]
+end
 
 (* The score of [length] contiguous code points starting at a word boundary. *)
 let ideal_score length =
@@ -105,14 +106,26 @@ let prepare text =
 
 let impossible = Int.min_value
 
+(* Avoid allocating/scoring a matrix for fields that cannot possibly match.
+   Especially important for loose file queries over tens of thousands of paths. *)
+let is_subsequence token chars =
+  let next = ref 0 in
+  let j = ref 0 in
+  while !next < Array.length token && !j < Array.length chars do
+    if token.(!next) = chars.(!j) then incr next;
+    incr j
+  done;
+  !next = Array.length token
+;;
+
 (* The best-scoring alignment of [token] in [field], as its score and the byte
    offsets of the matched code points. [score.(i).(j)] is the best score of
    [token.(0..i)] with [token.(i)] matched at [field.chars.(j)], and [from.(i).(j)]
    the column of [token.(i - 1)] in that alignment. *)
-let match_token token field =
+let match_token ~policy token field =
   let m = Array.length token
   and n = Array.length field.chars in
-  if m = 0 || m > n
+  if m = 0 || m > n || not (is_subsequence token field.chars)
   then None
   else (
     let score = Array.make_matrix ~dimx:m ~dimy:n impossible in
@@ -167,7 +180,9 @@ let match_token token field =
       let exact = if m = n then bonus_exact else 0 in
       let score = last.(j) + exact in
       Option.some_if
-        (score * 100 >= ideal_score m * min_quality)
+        (match policy with
+         | Policy.Command -> score * 100 >= ideal_score m * 50
+         | Loose_subsequence -> true)
         (score, positions (m - 1) j [])))
 ;;
 
@@ -179,7 +194,7 @@ let tokens query =
 
 (* The candidate's total score and, per token, the index of its best field and the
    offsets matched there, if every token matches. *)
-let match_candidate tokens fields =
+let match_candidate ~policy tokens fields =
   List.fold_until
     tokens
     ~init:(0, [])
@@ -187,7 +202,7 @@ let match_candidate tokens fields =
     ~f:(fun (total, matched) token ->
       let best =
         Array.foldi fields ~init:None ~f:(fun index best ((field : _ Field.t), prepared) ->
-          match match_token token prepared with
+          match match_token ~policy token prepared with
           | None -> best
           | Some (raw, offsets) ->
             let score = raw * field.weight / 100 in
@@ -200,16 +215,24 @@ let match_candidate tokens fields =
       | Some (score, index, offsets) -> Continue (total + score, (index, offsets) :: matched))
 ;;
 
-let rank ~query candidates =
+module Prepared = struct
+  type ('item, 'tag) t = 'item * ('tag Field.t * prepared) array
+
+  let fields fields =
+    Array.of_list_map fields ~f:(fun (field : _ Field.t) -> field, prepare field.text)
+  ;;
+
+  let create (item, raw_fields) = item, fields raw_fields
+end
+
+let rank_candidates ~policy ~query ~prepare_fields candidates =
   match tokens query with
   | [] ->
     List.map candidates ~f:(fun (item, _) -> { Match.item; score = 0; positions = [] })
   | tokens ->
     List.filter_map candidates ~f:(fun (item, fields) ->
-      let fields =
-        Array.of_list_map fields ~f:(fun (field : _ Field.t) -> field, prepare field.text)
-      in
-      Option.map (match_candidate tokens fields) ~f:(fun (score, matched) ->
+      let fields = prepare_fields fields in
+      Option.map (match_candidate ~policy tokens fields) ~f:(fun (score, matched) ->
         let positions =
           Array.to_list fields
           |> List.filter_mapi ~f:(fun index (field, _) ->
@@ -222,4 +245,14 @@ let rank ~query candidates =
         in
         { Match.item; score; positions }))
     |> List.stable_sort ~compare:(fun (a : _ Match.t) b -> Int.compare b.score a.score)
+;;
+
+let rank_prepared ?(policy = Policy.Command) ~query candidates =
+  rank_candidates ~policy ~query ~prepare_fields:Fn.id candidates
+;;
+
+let rank ?(policy = Policy.Command) ~query candidates =
+  (* Prepare one candidate at a time, as before; only explicit prepared callers
+     retain the decoded collection. Empty queries do not prepare any fields. *)
+  rank_candidates ~policy ~query ~prepare_fields:Prepared.fields candidates
 ;;

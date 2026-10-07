@@ -22,8 +22,14 @@ module Saved = struct
   [@@deriving sexp_of, equal]
 end
 
+module Document_id = struct
+  type t = unit ref
+  let equal = phys_equal
+end
+
 type t =
   { editor : Editor.t
+  ; document_id : Document_id.t
   ; feedback : Feedback.t
   ; keymap : Keymap.t
   ; dispatched : bool
@@ -38,6 +44,7 @@ type t =
 
 let create ?(keymap_config = Keymap.Config.default) ?(kind = Kind.File) editor =
   { editor
+  ; document_id = ref ()
   ; feedback = Feedback.empty
   ; keymap = Keymap.create keymap_config
   ; dispatched = false
@@ -52,20 +59,25 @@ let create ?(keymap_config = Keymap.Config.default) ?(kind = Kind.File) editor =
   }
 ;;
 
-let open_file ?keymap_config ~cell_width path =
+let open_file ?(must_exist = false) ?keymap_config ~cell_width path =
   let display_path = path in
   let path = Resource.normalize ~cwd:(Core_unix.getcwd ()) path in
   let create editor = { (create ?keymap_config editor) with display_path = Some display_path } in
   match File_io.read path with
   | Error error ->
-    Or_error.error_string (sprintf "Cannot open %s: %s" path (Error.to_string_hum error))
+    Or_error.error_string (if must_exist
+      then sprintf "%s: %s" (Error.to_string_hum error) path
+      else sprintf "Cannot open %s: %s" path (Error.to_string_hum error))
   | Ok (Existing text) ->
     Ok (create (Editor.create ~path ~cell_width text))
+  | Ok Missing when must_exist ->
+    Or_error.error_string (sprintf "file no longer exists: %s" path)
   | Ok Missing ->
     Ok (create (Editor.create ~path ~cell_width Text_buffer.empty))
 ;;
 
 let editor t = t.editor
+let document_id t = t.document_id
 let kind t = t.kind
 let is_missing t = t.missing
 let mark_missing t = { t with missing = true; had_backing = true }
@@ -271,7 +283,8 @@ let run t ~keymap ~feedback actions =
       ~reloaded:false
   in
   let highlighting = Highlighting.update t.highlighting editor ~reset:reloaded in
-   let t = { t with editor; feedback; keymap; dispatched; clipboard; saved; highlighting;
+  let document_id = if reloaded then ref () else t.document_id in
+   let t = { t with editor; document_id; feedback; keymap; dispatched; clipboard; saved; highlighting;
      had_backing = t.had_backing || Option.is_some saved } in
   (match status with
    | Exit -> close t
