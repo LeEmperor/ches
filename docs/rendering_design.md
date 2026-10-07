@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-This is the rendering companion to [the architecture brief](ches_editor_prototype_brief.md)
+This is the rendering companion to [the architecture brief](../ches_editor_prototype_brief.md)
 and the MVP0 phase plan (removed; see git history). The phase plan determines implementation
 order; this document records visual intent, concrete layout behavior, and future
 directions. The MVP0 requirements below belong to phase 6, not a restart of
@@ -21,7 +21,7 @@ MVP0 uses one document tile:
 - Thin, single-cell borders; filename in the top border when space permits.
 - Muted line-number gutter and a subtle current-line background. Since MVP1
   phase 4A the gutter has four styles (off by default, absolute, relative,
-  hybrid); see [`feature_expansion.md`](docs/archive/feature_expansion.md).
+  hybrid); see [`feature_expansion.md`](archive/feature_expansion.md).
 - Clear mode badge, dirty indicator, position, and predictable feedback area.
 - Block cursor in Normal and bar cursor in Insert where supported.
 - No special icon font requirement. Labels remain understandable without color.
@@ -275,7 +275,7 @@ cursor line and span, the text viewport size, and the line count:
   as little as possible to make the whole span visible. If the span is wider
   than the viewport, show its first cell.
 - No scroll margin (scrolloff). MVP1 phase 4B adds explicit scroll commands
-  (`Ctrl-e/y/d/u`, `zz/zt/zb`); see [`feature_expansion.md`](docs/archive/feature_expansion.md)
+  (`Ctrl-e/y/d/u`, `zz/zt/zb`); see [`feature_expansion.md`](archive/feature_expansion.md)
   and `Ui_state`.
 - With zero text rows or columns, keep the scroll unchanged and show no cursor
   (`set_cursor None`).
@@ -322,7 +322,7 @@ Do a bounded visual pass in checkpoint 6B, after 6A has the real editor
 working, with representative Normal, Insert, dirty, pending-prefix, and error
 states. Review at approximately 80×24 and 160×48 cells, plus pathological tiny
 dimensions for robustness. The phase 6 smoke script (`scripts/smoke.sh`; see
-[the README](README.md#terminal-smoke-test)) saves these screens with
+[the README](../README.md#terminal-smoke-test)) saves these screens with
 colors for review.
 
 Test layout geometry, clamp/restore behavior on resize, nudge/reset/toggle,

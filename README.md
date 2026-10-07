@@ -4,7 +4,7 @@ A small modal programmer's editor in OCaml, with a UI-independent editing core
 and a [Bonsai_term](https://github.com/janestreet/bonsai_term) terminal
 frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
 for the long-term direction and
-[`workspace_tiles_design.md`](workspace_tiles_design.md) for the current tile
+[`docs/workspace_tiles_design.md`](docs/workspace_tiles_design.md) for the current tile
 work. Finished phase plans are kept in [`docs/archive/`](docs/archive/): the MVP1
 editing plan ([`feature_expansion.md`](docs/archive/feature_expansion.md)) and the
 syntax-highlighting plan. The MVP0 plan was removed; it is in git history.
@@ -174,7 +174,7 @@ host, the phase 7B shared shell (rounded frames, padding, and spacing for status
 and supporting views), and phase 7C read-only text selection and copying in
 supporting views. The problems view and its navigation (phases 6 and 7) are
 human-accepted too, as is phase 8's notification history.
-See [`workspace_tiles_design.md`](workspace_tiles_design.md).
+See [`docs/workspace_tiles_design.md`](docs/workspace_tiles_design.md).
 
 ### Problems pane
 
