@@ -2,7 +2,7 @@
 
 A small modal programmer's editor in OCaml, with a UI-independent editing core
 and a [Bonsai_term](https://github.com/janestreet/bonsai_term) terminal
-frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
+frontend. See [`docs/ches_editor_prototype_brief.md`](docs/ches_editor_prototype_brief.md)
 for the long-term direction and
 [`docs/workspace_tiles_design.md`](docs/workspace_tiles_design.md) for the current tile
 work. Finished phase plans are kept in [`docs/archive/`](docs/archive/): the MVP1

@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-This is the rendering companion to [the architecture brief](../ches_editor_prototype_brief.md)
+This is the rendering companion to [the architecture brief](ches_editor_prototype_brief.md)
 and the MVP0 phase plan (removed; see git history). The phase plan determines implementation
 order; this document records visual intent, concrete layout behavior, and future
 directions. The MVP0 requirements below belong to phase 6, not a restart of
