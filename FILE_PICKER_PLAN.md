@@ -1,9 +1,20 @@
 # Fuzzy file picker
 
-Status: phases 1–4 implemented; phases 7–8 PARTIAL (independent headless portions);
-phases 5–6 blocked and phase 9 PARTIAL (achievable independent review/checks done;
+Status: phases 1–5 and 7 software-implemented (phase 5 uses an explicit test consumer);
+phase 8 PARTIAL (headless plus shared floating/runtime test integration);
+phase 6 blocked on buffers
+and phase 9 PARTIAL (final post-integration review/checks done;
 live release acceptance blocked). Phase-3 ranking remains
 provisional pending owner query examples; no live performance claim. Scoped on 2026-10-07.
+
+Current dependency update: the human merged the shared floating implementation.
+Earlier dated handoffs below describe their historical inspections, not current
+blockers. Shared compositor/palette migration are available; phase-5 integration
+and automated checks are now complete. Phase 7 now ships current-document lines on
+`Space f l` and through the command catalog. No file-opening binding/command is
+shipped, and no human picker terminal visual acceptance has been performed.
+Content search also has an injected-consumer Async/Bonsai assembly boundary, but
+no live activation or actual cross-file open-at-location adapter.
 
 ## Goal
 
@@ -529,6 +540,98 @@ can validate the entire floating interaction but is not a user-ready file opener
 **Done when:** the floating file picker is fully exercised through the host with
 an isolated acceptance boundary and unchanged underlying document state.
 
+### Phase 5 implementation and handoff (2026-10-07) — software complete
+
+- Initial read-only inspection found a clean working tree and the merged shared
+  `Floating.layout`, `Frame.Floating_layer` compositor, and floating palette in
+  `Ui_state`. No prior implementation/user work was reverted. Reused those APIs;
+  no second floating host, shell, geometry engine, or compositor was introduced.
+- `Ui_state` now registers the file adapter, exposes explicit `open_file_picker`
+  / `can_open_file_picker`, and resolves its layout/focus/cursor/paste through the
+  existing host. One transient float replaces the previous one. Preferred 80×14,
+  minimum 14×5 framed size provides three content rows; zen is supported. Fitting
+  resize retains query/selection; undersized resize cancels discovery and closes.
+  Cancellation/acceptance restores the preceding available supporting capture,
+  falling back to the document (a replaced palette is no longer available).
+  Workspace rectangles, document contents/cursor/scroll remain unchanged.
+- `Frame.render` assembles the file adapter through its existing floating layer,
+  including shell and bar cursor at the shared content origin; document smear is
+  suppressed. Explicit document-allocation rendering excludes both float types.
+  Host notices are included in the file footer; loading, partial, failure,
+  no-match/empty and truncation remain visible through actual host frames.
+- Added separate Async `Ches_file_picker_host.Runtime`: reuses one discovery
+  provider, explicit retained root, one batch per poll and 128-record work inputs.
+  Ranking turns yield via `Scheduler.yield`; idle discovery waits 2ms. Run/root
+  checks occur both before and after awaiting; stale queued snapshots/work cannot
+  affect replacement/closed sessions. Refusal preflights before replacing the
+  provider. Release callbacks are run-specific, so closing an old session cannot
+  cancel a newly started discovery. `finished` acknowledges cleanup/reaping.
+- `Editor_view.app ?file_picker` is an explicit assembly/test boundary carrying
+  an already opened UI, runtime and required consumer, **not a user keybinding or
+  default opener**. It chains yielded turns independently of redraw/animation
+  clocks, at most one scheduled turn, wakes replacements even after obsolete
+  empty turns, and restarts after edits. Deactivation cancels discovery. Headless
+  runtime callers can use `next` or the single-owner `pump` with current state.
+  Picker work/snapshots are dedicated inputs, never diagnostic messages.
+- Acceptance closes/releases the session/provider/capture first and queues one
+  raw-path intent. `take_file_requests` clears the queue; frontend consumption is
+  scheduled only after the returned UI is installed. Pending/no-match Enter is
+  inert and not queued; cancellation emits nothing. No real file was opened.
+- Fixed shared interrupted-paste isolation: `Host.invalidate_paste` preserves
+  collection but rejects completion after a text-input instance closes, even if
+  the same view identity reopens. Read-only rejection semantics remain unchanged.
+  Opening files during a pending paste is refused without replacing its owner.
+- **Changed files:** `file_picker/model.ml` / `.mli` (request equality);
+  `file_picker/host/dune`, `runtime.ml` / `.mli`, `test/dune`, `test/test_runtime.ml`,
+  `test/fake_rg/dune` (copies the existing directly spawned fake provider fixture);
+  `screen/ui_state.ml` / `.mli`, `frame.ml`, `file_picker_tile.ml` / `.mli`,
+  `screen/test/test_file_picker_host.ml`; `tile/host.ml` / `.mli`;
+  `ui/dune`, `editor_view.ml` / `.mli`, `ui/picker_test/dune`, `test_frontend.ml`;
+  this plan, `file_picker/README.md`, `docs/pickers.md`, and README status wording.
+- **New tests:** six pure shared-host tests cover zen/workspace preservation,
+  bounded initial work, query/selection/cursor/smear, exact screen restoration,
+  explicit document-only frames, raw-path once-only consumption, pending/no-match
+  Enter, prior focus, one float, 14×5/tiny/zero resize, interrupted paste/refusal,
+  loading/partial/errors/truncation, stale roots/runs, successful sanitized paste,
+  selection identity across discovery and reopened shared paste.
+  Three Async runtime tests cross actual subprocess discovery into Ui_state,
+  including bounded batches, cache reuse, errors/empty/caps, cooperative input,
+  cancellation/ECHILD reaping and queued-turn replacement. One Bonsai frontend
+  test uses real rg (300 files), waits for the actual scheduling chain, types a
+  query, verifies cache reuse/bar-to-block cursor ownership, and receives exactly
+  one intent after release. This is provider/frontend integration, not just an
+  isolated tile or manually drained matcher test.
+- **Checks** (sequential, `opam exec --switch=5.2.0+ox --`): `dune build` PASS;
+  forced `dune runtest file_picker line_picker/test content_picker palette/test
+  screen/test source/test ui/picker_test --force` PASS. Full `dune runtest --force` FAIL
+  only on the documented `ui/test/test_editor_view.ml` default-visible-tile
+  snapshots; no expectations promoted. Log:
+  `/tmp/opencode/file-picker-phase5-runtest.log`. `git diff --check` PASS.
+  Shared-palette terminal smoke (`TMPDIR=/tmp/opencode bash scripts/smoke.sh
+  --palette-only`) PASS; log `/tmp/opencode/file-picker-phase5-palette-smoke.log`,
+  colored captures `/tmp/opencode/ches-smoke-screens.aw9jb7`. File-picker-specific
+  terminal smoke/human visual review NOT RUN; the actual Bonsai frontend was
+  exercised headlessly with an explicit consumer, not as a shipped command.
+  Initial compile/assertion issues and a child-spawn timing race in a new test
+  were corrected before the final passing suites.
+- **Available buffer APIs / next stage:** `Controller` still owns one document.
+  Available: `create`, startup `open_file` (can create empty on missing paths),
+  document identity/revision access, current-document `jump`, dispatch, highlights
+  and diagnostics. **No open-existing/activate-buffer/tab API, buffer identity or
+  dirty-buffer retention API exists. Phase 6 remains blocked.** Human must land
+  that subsystem; the next stage should inspect its exact API, connect acceptance
+  after release, retain explicit project scope, define disappeared/unreadable-file
+  failures without losing dirty buffers, and only then ship `Space f f`/catalog
+  entry. Phase-7/8 headless work is preserved; their own host/navigation/open-at-
+  location integration remains later work and was not implemented here.
+  If buffers remain unavailable, a separately authorized next stage can finish
+  phase 7 using the now-available float plumbing, with controller-change
+  invalidation, real viewport reveal and a reviewed nonconflicting binding.
+- Record-count budgets are not hard time/RSS bounds; O(results) publication,
+  fitting/counting, long-path/query DP and GC tails remain. No new latency claim,
+  owner ranking validation or release acceptance. No subagents were spawned; no
+  mutative Git operations, GitHub mutation/publication or attribution occurred.
+
 ## Phase 6 — Connect tabs/buffers and ship `Space f f`
 
 **Possible without multiple buffers: NO — blocked on that feature's opening API.**
@@ -573,7 +676,7 @@ lines, Unicode coordinates, cancellation, and large-document responsiveness.
 **Done when:** fuzzy current-document line search works without filesystem
 traversal or cross-buffer opening.
 
-### Phase 7 implementation and handoff (2026-10-07) — PARTIAL
+### Phase 7 headless implementation and handoff (2026-10-07) — historical PARTIAL
 
 - Added `line_picker/dune`, `lines.ml` / `.mli`, `README.md`: a separate headless
   current-document snapshot/provider and session, with no IO/traversal. Reads
@@ -643,6 +746,85 @@ traversal or cross-buffer opening.
   do not implement phase 8 yet. Existing phases 1–4/unrelated work preserved;
   no mutative Git operations, GitHub mutation/publication or attribution performed.
 
+### Phase 7 live integration and handoff (2026-10-07) — software complete
+
+This supersedes the historical phase-7 remaining-work list above. The human-landed
+floating dependency is available; current-document navigation does not need phase 6.
+
+- Ships Normal **`Space f l`** and catalog **Search current document lines**
+  (`document.lines`, `View Open_line_picker`). Default binding inspection found no
+  conflict; `Space f f` remains reserved/unbound, not backed by a no-op opener.
+  Search uses the existing in-memory snapshot, including dirty text, with no disk
+  traversal or new buffer manager. Blank/final/duplicate lines retain line identity.
+- Registers the existing adapter in `Ui_state` and assembles it through the existing
+  `Frame.Floating_layer`, shell, layout and Host. Reuses file-picker placement and
+  preflight: preferred 80×14, minimum 14×5, three content rows, including zen.
+  One transient replaces the previous float; workspace allocation is unchanged.
+  Escape/Tab restores prior available focus; Ctrl-c gives the established reminder.
+  Fitting resize preserves query/selection; undersized resize closes/drops work.
+- Reuses the frontend's single scheduled picker-turn chain. Each line turn awaits
+  `Async.Scheduler.yield`, then injects at most 128 line/output records, independently
+  of animation/redraw clocks. Opening/input/rendering never drains matching.
+  Per-opening generations reject obsolete turns after reopen; obsolete completion
+  still wakes a replacement. The existing model coalesces changed-query jobs and
+  reuses prepared lines. Frontend deactivation cancels retained line work.
+- Validates identity/revision/immutable text during synchronization, before work,
+  before float rendering, and through the existing acceptance checks before/after
+  release. Mismatch permanently drops results/cache/text; explicit reopen refreshes.
+  Enter releases capture first, installs the validated current-document jump
+  synchronously, then normal scroll fitting reveals the target. Error restores
+  focus and surfaces a notice; pending/no-match Enter is inert and never queued.
+  Match bytes convert through the editor's width function, never as byte columns.
+  Existing shared paste invalidation drops a closed/reopened owner's late paste.
+- **Changed files (this stage only):** `input/bindings.ml`, `keymap.mli`,
+  `view_command.ml` / `.mli`; `palette/catalog.ml`, `palette/test/test_catalog.ml`,
+  `test_palette.ml`; `screen/ui_state.ml` / `.mli`, `frame.ml`,
+  `line_picker_tile.ml` / `.mli`, `screen/test/test_line_picker_host.ml`,
+  `test_palette_tile.ml`; `ui/editor_view.ml` / `.mli`, `ui/dune`, `ui/picker_test/dune`,
+  `test_line_frontend.ml`; `scripts/smoke.sh`; `line_picker/README.md`,
+  `docs/pickers.md`, `docs/editor_reference.md`, `README.md`, this plan.
+  Pre-existing phase-5/user changes were preserved. Catalog-related snapshot updates
+  are intentional count/new-result/shortcut changes only; baseline UI mismatches
+  were not promoted.
+- **New evidence:** four shared-host tests cover dirty Unicode/TAB jumps and actual
+  viewport reveal, bounded preparation, duplicates/final lines, zen/no-match/cancel,
+  exact screen restoration, real catalog dispatch, prior focus, one-float replacement,
+  fitting/tiny/zero resize, sanitized/interrupted paste, refusal during paste, stale
+  generation, invalidated acceptance and visible truncation. A real Bonsai frontend
+  test searches 5k lines with unsaved edits using the shipped binding, cancels/reopens
+  during pending work, waits for the actual Async chain (no manual matcher drain),
+  jumps/reveals the last line and opens again via catalog.
+- **Checks:** `opam exec --switch=5.2.0+ox -- dune build` PASS; forced
+  `dune runtest file_picker line_picker/test content_picker palette/test screen/test
+  source/test ui/picker_test --force` PASS (final repeat PASS), log
+  `/tmp/opencode/file-picker-phase7-focused.log`. Full `dune runtest --force` FAIL
+  only on the known `ui/test/test_editor_view.ml` default-visible-tile snapshots,
+  log `/tmp/opencode/file-picker-phase7-full.log`; no baseline expectations changed.
+  `git diff --check` and `bash -n scripts/smoke.sh` PASS. Initial compile/snapshot
+  adjustments were corrected; an initial test command named nonexistent `input/test`
+  and was rerun using actual suites.
+- **Terminal checks:** `TMPDIR=/tmp/opencode bash scripts/smoke.sh
+  --line-picker-only` PASS: 500-line dirty Unicode search, matched-cell cursor,
+  viewport reveal, exact zen cancellation, no-match Enter, catalog shortcut/dispatch,
+  14×5/undersized resize, interrupted paste, unchanged saved bytes and terminal
+  restoration. Log `/tmp/opencode/file-picker-phase7-line-smoke.log`, colored captures
+  `/tmp/opencode/ches-smoke-screens.nhc8XH`. The first smoke asserted a display-cell
+  column in the character-column status; corrected it to separately assert status
+  `500:16` and terminal cursor `30 27 1`. Shared palette regression smoke PASS,
+  log `/tmp/opencode/file-picker-phase7-palette-smoke.log`. **No human visual
+  acceptance**; automated terminal captures are not visual sign-off.
+- **Remaining limits / next stage:** phase 7's requested live behavior is software
+  implemented, not a latency/p99/RSS or owner-ranking acceptance claim. Existing
+  50k/8MiB/4KiB truncation and O(results) publication/fitting/navigation, per-record
+  DP/GC tails remain; no new performance numbers asserted. Phase 6 still lacks the
+  actual multi-buffer open/activate API; do not use startup `open_file` as a substitute.
+  Phase 8 headless work is unchanged and **must not be implemented live in this
+  stage**. Next session should reinspect dependencies and receive phase-8 scope
+  authorization before integration; real cross-file content acceptance still needs
+  buffer/open-at-location and opened-content validation. Phase 9 release acceptance
+  remains partial. No subagents, mutative Git operations, GitHub mutations,
+  publication or attribution were performed.
+
 ## Phase 8 — Project-wide content search
 
 **Possible without multiple buffers: PARTIAL.**
@@ -667,7 +849,7 @@ contents. A later mode may fuzzy-filter a bounded set of returned matches.
 **Done when:** independent provider/UI checks pass, and, once the dependency lands,
 selecting a match opens or activates the correct file and navigates correctly.
 
-### Phase 8 implementation and handoff (2026-10-07) — PARTIAL
+### Phase 8 independent implementation and handoff (2026-10-07) — historical PARTIAL
 
 - **Done (independent portion):** added pure `content_picker/model.ml` / `.mli`
   and `dune`, plus Async `content_picker/provider/provider.ml` / `.mli` and
@@ -751,6 +933,72 @@ selecting a match opens or activates the correct file and navigates correctly.
   mutation/publication/attribution occurred. Phase-7's historical “do not implement
   phase 8 yet” next-step note was superseded by the explicit phase-8 user request.
 
+### Phase 8 floating/runtime integration handoff (2026-10-07) — PARTIAL
+
+- **Newly unblocked work implemented:** content tile reuses the one-transient float,
+  shared placement/shell/compositor/Host and common frontend turn chain. Preferred
+  80×14, minimum 14×5 (query/status/result), zen, supporting-focus return, cursor
+  ownership/smear suppression, paste sanitization/isolation and fitting/closing
+  resize behavior follow shared conventions. Workspace/document/cursor/scroll stay
+  unchanged. Ctrl-c retains shared notice behavior; Escape/Tab close. Host notices
+  appear in the footer. No parallel float or provider framework was introduced.
+- Added `Ches_content_picker_host.Runtime`: retained explicit root, reused provider,
+  at most one batch per 2ms yielded poll, prompt query replacement with provider-owned
+  debounce/kill/reap before replacement spawn. Edits immediately disable stale
+  acceptance; current-query `expect`, exact run/root/query installation and opening
+  generation/closed checks reject stale awaited turns. Release belongs to the opening
+  session across query changes, so old close cannot cancel a reopened run. `finished`
+  includes preceding cleanup. Headless `pump` and frontend chain current-state turns.
+- `Editor_view.app ?content_picker` requires opened UI/runtime/typed consumer;
+  no default opening adapter, binding or catalog command. One optional initial
+  file/content host is permitted. Existing frontend turn scheduling drives content
+  independently of redraw clocks and wakes replacements after stale/empty turns.
+  Acceptance queues exactly one intent after releasing provider/capture; consumption
+  runs after installing returned UI. Deactivation cancels provider and closes model.
+- **Coordinates/semantics unchanged:** on-disk literal search excludes unsaved edits;
+  intents carry raw path, one-based line, zero-based byte range, expected raw text and
+  literal. No startup `open_file`, buffer replacement or byte-to-`jump` adapter. Future
+  consumer must open/activate existing files, preserve dirty buffers, validate searched
+  contents (dirty/encoding/line-ending policy), convert with the opened document's
+  coordinate API, and surface missing/changed-file errors without damaging buffers.
+- **Changed/added this stage:** `content_picker/host/` (library/runtime/interfaces,
+  five tests and copied direct-child fixture); `screen/ui_state.ml` / `.mli`,
+  `frame.ml`, `content_picker_tile.ml` / `.mli`,
+  `screen/test/test_content_picker_host.ml`; `ui/dune`, `editor_view.ml` / `.mli`,
+  `ui/picker_test/dune`, `test_content_frontend.ml`; this plan, `README.md`,
+  `docs/pickers.md`, `content_picker/{README.md,HANDOFF.md,RESULTS.md}`.
+  Existing phase-5/7 and other working-tree changes preserved.
+- **Tests:** five subprocess/runtime-host tests cover one-hit batches, unusual raw
+  filenames/Unicode byte offsets, released once-only intents, empty/pending Enter,
+  empty/error/missing-rg/capped frames, queued stale queries/reopens, interrupted
+  paste/refusal/undersized resize, ECHILD reaping on close and spawned-query
+  replacement, visible stalled-run timeout and debounced replacement/cancel.
+  Two pure host tests cover zen/exact screen/scroll/workspace restoration, cursor,
+  explicit-document rendering, focus, float replacement and paste/minimum-size.
+  Two actual Bonsai frontend tests use real rg: 300 files/600 Unicode occurrences,
+  query/no-match/backspace replacement, cursor/typed consumption; pending search
+  interrupted by paste/resize cancels without leaking text into the document.
+- **Checks:** `opam exec --switch=5.2.0+ox -- dune build` PASS; forced broader
+  `dune runtest content_picker file_picker line_picker/test palette/test screen/test
+  source/test ui/picker_test --force` PASS, log
+  `/tmp/opencode/content-picker-phase8-focused.log`. Full `dune runtest --force` FAIL
+  only on known `ui/test/test_editor_view.ml` default-visible-tile snapshots, log
+  `/tmp/opencode/content-picker-phase8-full.log`; none promoted. Shared line/palette
+  regression smokes PASS (`scripts/smoke.sh --line-picker-only` and `--palette-only`
+  with `TMPDIR=/tmp/opencode`), logs
+  `/tmp/opencode/content-picker-phase8-{line,palette}-smoke.log`.
+  Read-only `git diff --check` PASS.
+  Content terminal smoke/human visual acceptance NOT RUN: no shipped activation.
+  No latency/p99/RSS claim; record limits permit O(hits) reversal/selection/fitting,
+  bounded JSON decode and GC tails. Initial new compile/assertion issues corrected.
+- **Still blocked / next:** phase 6 lacks multi-buffer existing-file open/activate;
+  phase 8 lacks actual open-at-location/validation and live activation. Inspect the
+  landed buffer API when supplied by the human; do not invent buffer management or
+  no-op binding. Then review dirty/failure policy, select a binding/catalog entry,
+  verify actual open/navigation/reveal and terminal/human acceptance. **Phase 8
+  remains PARTIAL.** No subagents, mutative Git operations, GitHub mutations,
+  publication or attribution performed.
+
 ## Phase 9 — Release verification and documentation
 
 **Possible without multiple buffers: PARTIAL.**
@@ -769,6 +1017,10 @@ opening and project-search acceptance require the multi-buffer integration.
   target dataset and responsiveness budget before claiming performance is done.
 
 ### Phase 9 implementation and handoff (2026-10-07) — PARTIAL
+
+Historical independent-review scope below predates integrated phases 5, 7 and 8.
+For current implementation/check status, use the header and the final
+post-integration handoff below; phase 9 release acceptance still remains partial.
 
 **Achievable independent portion completed. Not a release/terminal acceptance.**
 Phases 1–4 remain implemented, phase-3 ranking provisional, phases 7–8 PARTIAL,
@@ -888,6 +1140,121 @@ was not extended or represented as picker acceptance.
   No claim that the file-picker release, line picker or project search is shipped.
   Human owns branch reconciliation and all Git/GitHub publication.
 
+### Phase 9 final post-integration review and handoff (2026-10-07) — PARTIAL
+
+**Currently achievable correctness review/software checks completed. Full release
+acceptance, human visual review and agreed performance acceptance remain pending.**
+This supersedes the historical phase-9 dependency/status statements above, without
+erasing their check or measurement history. Phases 5 and 7 are software complete;
+phase 8 has shared host/runtime/frontend test integration but remains PARTIAL.
+
+#### Review and material fix
+
+- Read the current plan, floating plan, phase-5/7/8 handoffs, runtime/frontend,
+  `Ui_state`/`Frame`/Host, provider/session implementations and relevant regression
+  tests. Confirmed one transient float uses the shared layout/shell/compositor;
+  replacement closes the old owner, Escape/Tab restores available prior supporting
+  focus (otherwise document), fitting resize preserves interaction, undersized
+  resize closes/releases, and interrupted paste cannot enter a reopened identity.
+- Checked run/root/query and opening-generation rejection before/after awaits and
+  at installation. File/content acceptance closes session/provider/capture before
+  once-only queued consumption after model installation. Pending/no-match Enter
+  emits nothing. Providers serialize replacement after preceding cleanup, cancel
+  during spawn/debounce/backpressure, close descriptors, kill/reap on interruption,
+  caps and timeout. Existing fake direct-child tests assert ECHILD. Ordinary quit
+  requires first leaving text-input capture (`Space q` there is query text, Ctrl-c
+  is a reminder); close cancels before quit, and frontend teardown also cancels.
+- **Fixed file frontend deactivation:** it previously cancelled discovery only,
+  retaining an open `Interaction` with cached candidates/results and possible work.
+  `ui/editor_view.ml` now tracks the current file session (including the initial
+  one), closes/drops it on deactivation, then cancels the runtime, matching line/
+  content lifecycle ownership. Owner still awaits `Runtime.finished` for reaping.
+- Added actual Bonsai activation/deactivation regression in
+  `ui/picker_test/test_frontend.ml`: real rg discovery and prepared results, query
+  edit with queued work, branch deactivation, empty retained results/candidates,
+  idle closed session, rejection of late snapshot/work/accept and zero consumption.
+  The compiled regression **failed at `Interaction.closed` before the fix** and
+  passes afterwards; initial test-harness compile/context issues were corrected,
+  not promoted as expectations. `ui/editor_view.mli` documents session cleanup.
+- Reviewed line identity/revision/immutable-text validation during synchronization,
+  work, render and acceptance before/after release; invalidation permanently drops
+  snapshot/cache/results. Actual navigation converts UTF-8 match bytes through
+  the editor width API, then calls validated current-document `Controller.jump`;
+  scroll fitting reveals the target. Tests cover dirty text, duplicate/final lines,
+  TAB/wide/control/combining glyphs, identity changes, edit/undo/revision collisions
+  and release-time changes. Content ranges remain one-based line, zero-based bytes
+  with exclusive end and raw expected text/literal, **not navigation columns**.
+- Reviewed idle/resource scheduling: one frontend picker turn may be outstanding;
+  ranking yields with 128-record work; idle file/content discovery polls wait 2ms;
+  empty obsolete turns wake replacements, and complete idle/closed sessions stop
+  requesting turns. Closing drops session caches/results; providers intentionally
+  retain one bounded final snapshot until refresh or owner disposal. This is not a
+  hard time/RSS bound: O(results) publication/selection/fitting, DP and GC remain.
+  No new latency/p99/RSS measurements or performance sign-off are claimed.
+
+#### Observed final checks
+
+Dune commands used `opam exec --switch=5.2.0+ox --`, sequentially. No baseline UI
+snapshots were edited/promoted and no mutative Git/GitHub operations occurred.
+
+| Check | Actual outcome |
+| --- | --- |
+| New frontend lifecycle regression before fix | Expected assertion FAIL at open retained session; `/tmp/opencode/file-picker-phase9-deactivation-before.log` |
+| `dune runtest ui/picker_test --force` after fix | PASS including file/content real-provider frontends and shipped line frontend; `/tmp/opencode/file-picker-phase9-deactivation-after.log` |
+| `dune build` | PASS; `/tmp/opencode/file-picker-phase9-final-build.log` |
+| One final `dune runtest --force` | FAIL only on the known seven expectation blocks across four `ui/test/test_editor_view.ml` tests; all other suites passed; `/tmp/opencode/file-picker-phase9-final-full.log` |
+| `TMPDIR=/tmp/opencode bash scripts/smoke.sh --line-picker-only` | PASS: live dirty Unicode match/jump/reveal, zen/exact cancellation, no-match Enter, catalog, minimum/tiny resize, late paste, saved bytes, quit and terminal restoration; `/tmp/opencode/file-picker-phase9-final-line-smoke.log`; captures `/tmp/opencode/ches-smoke-screens.f8tLfy` |
+| `bash -n scripts/smoke.sh`, read-only `git diff --check` | PASS |
+| Human visual validation | NOT PERFORMED; automated captures are not human acceptance |
+| Live file/content opening and content-specific terminal acceptance | BLOCKED / NOT RUN; injected-consumer headless frontend acceptance opens no files |
+
+The full-suite mismatch remains default-visible Status/Problems/History geometry
+and cursor changes in the four tests named in the historical check record. The
+compact 12×3 frame agrees. No fresh isolated-baseline comparison was made; this is
+the same documented mismatch category, not a new baseline attribution. The full
+suite was not needlessly repeated, and previous shared-palette smoke evidence is
+retained in the phase-5/7/8 handoffs rather than represented as file acceptance.
+
+#### Exact future integration checklist / blockers
+
+Code inspection confirms `app/controller.ml` and `.mli` still own **one editor**;
+`create`, startup `open_file`, identity/revision and current-document `jump` exist.
+There is no buffer registry/tab identity, open-existing/activate API, dirty-buffer
+retention or open-at-location operation. Startup opening creates empty text when
+a path is absent. **Phase 6 is genuinely missing; no alternate buffer system or
+startup-opening adapter was introduced.** Once the human lands the subsystem:
+
+1. Inspect its actual signatures, ownership/lifetime and path identity policy
+   (normalization/symlinks/already-open files), error contract, activation/focus and
+   project-root policy; retain each picker's explicit root during an opening.
+2. Connect a real **open-existing-or-activate** consumer after capture release and
+   UI installation, exactly once. Preserve dirty buffers, undo/redo/session state;
+   test revisiting an already-open dirty file without reload or save-before-switch.
+3. Require missing/unreadable/unsupported files to fail visibly, never silently
+   create empty documents or destroy the current/dirty buffer. Define focus return
+   and recovery on failure, including a file disappearing after enumeration.
+4. Verify buffer activation updates document identity, highlight/diagnostic source
+   lifetimes and keys; reject late events from the previous active document. Test
+   cross-project activation without silently retargeting retained search scope.
+5. For content acceptance, inspect real open-at-location/document coordinate APIs.
+   Validate the opened/current dirty text against raw `expected_text`, literal and
+   byte range; explicitly decide dirty-buffer, encoding, CRLF/newline and changed-
+   disk policies. Convert bytes with the **opened document's** coordinate API and
+   reveal the validated location; never pass a raw byte column to `jump`.
+6. Only after real consumers are ready ship `Space f f` plus catalog entry, and
+   separately choose a nonconflicting content binding/catalog command. `Space f l`
+   already works live for unsaved in-memory lines and requires no buffer subsystem.
+7. Extend real terminal scenarios to file open/type/select/cancel/accept, dirty
+   revisits, failed opens, content validation/navigation, zen/tiny/resize and late
+   paste/events; record human visual acceptance separately. Agree owner ranking
+   examples, target dataset and responsiveness budget before live latency/p99/RSS
+   release claims. Prior headless probes are not live performance acceptance.
+
+**Changed in this final stage only:** `ui/editor_view.ml` / `.mli`,
+`ui/picker_test/test_frontend.ml`, this plan, `docs/pickers.md` and `README.md`. Existing user
+and phase-5/7/8 working-tree work was preserved. No further subagents were spawned;
+no Git/index/history/ref changes, GitHub mutation/publication or attribution.
+
 ## Scheduling summary
 
 | Work | Can finish before multiple buffers? |
@@ -896,7 +1263,7 @@ was not extended or represented as picker acceptance.
 | Phase 2: scope and discovery | Yes |
 | Phase 3: matching | Yes |
 | Phase 4: picker model and tile | Yes |
-| Phase 5: floating integration | Yes, after floating work; test acceptance only |
+| Phase 5: floating integration | Yes; software complete with test acceptance only |
 | Phase 6: real file opening | No |
 | Phase 7: current-document fuzzy lines | Yes |
 | Phase 8: project content search | Provider/UI yes; cross-file acceptance no |

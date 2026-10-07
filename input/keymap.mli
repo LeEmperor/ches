@@ -56,6 +56,7 @@
       Normal  Space v z              View Toggle_zen
       Normal  Space v r              View Reset
       Normal  Space c c              View Open_palette
+      Normal  Space f l              View Open_line_picker
       Normal  Escape                 Cancel a pending count or sequence
       Both    Ctrl-c                 No command: cancel, and hint at Space q
       Insert  characters, Space      Insert_text (literal)

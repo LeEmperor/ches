@@ -83,6 +83,10 @@ val key
 (** Whether a bracketed paste is being collected. *)
 val pasting : t -> bool
 
+(** Keep collecting an interrupted paste, but reject its completion even if a new
+    instance of the same view opens. Never redirect it to the new capture/document. *)
+val invalidate_paste : t -> View_id.t -> t
+
 (** Start collecting a paste owned by the effective focus. Ignored while collecting. *)
 val paste_start : t -> available:(View_id.t -> bool) -> t
 

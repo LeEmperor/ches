@@ -1,0 +1,4 @@
+(library
+ (name ches_content_picker_host)
+ (libraries core async ches_content_search ches_content_picker ches_screen)
+ (preprocess (pps ppx_jane)))

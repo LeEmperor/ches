@@ -1,4 +1,7 @@
-# Phase 8 handoff — PARTIAL (2026-10-07)
+# Phase 8 independent handoff — historical PARTIAL (2026-10-07)
+
+This historical handoff predates floating/runtime integration. Current handoff
+is appended below; buffer/coordinate obligations remain mandatory.
 
 ## Done
 
@@ -48,3 +51,25 @@ Phase 7 partial and phases 1–4 remain intact. Phase 9 independent review/check
 were subsequently completed; see `../FILE_PICKER_PLAN.md`'s phase-9 handoff and
 `../docs/pickers.md`. End-to-end release checks remain blocked by the dependencies
 above. Leave branch reconciliation/publication to the human.
+
+## Current floating/runtime handoff (2026-10-07) — PARTIAL
+
+- Shared float/focus/cursor/paste/resize and actual Async/Bonsai scheduling are
+  implemented. No live activation or real cross-file acceptance exists.
+- New `host/` runtime and five subprocess-host tests; two screen-host tests; two
+  real-rg frontend tests. One batch per yielded 2ms poll, prompt query replacement,
+  provider-owned debounce/kill/reap, exact run/root/query plus opening-generation
+  freshness. Release owns the opening session across query changes. Empty requests
+  do not launch rg; errors/truncation are visible through actual host frames.
+- Typed intent is queued after closing/releasing capture/provider and consumed
+  after UI installation. Raw path/expected line/literal and byte ranges unchanged.
+  Future opening validation contract above remains required, not implemented.
+- Changed files/exact checks: current phase-8 handoff in `../FILE_PICKER_PLAN.md`.
+  Build/broader forced suites pass; full suite only known frontend snapshot failures,
+  no promotion. Shared line/palette terminal smokes pass; no content visual sign-off.
+- Next: human lands actual multi-buffer existing-file activation/open-at-location.
+  Inspect exact API and dirty-buffer/encoding/failure policies before adapting;
+  only then ship activation and verify open/jump/reveal/failure recovery. Phase 6
+  and buffer management were not implemented. No performance/release claim.
+- Preserved existing work. No subagents, mutative Git operations, GitHub mutations,
+  publication or attribution.

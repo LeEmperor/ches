@@ -8,8 +8,33 @@
 open! Core
 open Bonsai_term
 
+module File_picker_host : sig
+  (** Explicit assembly/test boundary. The caller opens [initial_ui] through the
+      Async runtime and supplies a real/test consumer. No default opener, binding,
+      or command entry is installed. The frontend yields and chains bounded work
+      independently of redraws, and delivers intents only after capture release.
+      Deactivation closes the filtering session and cancels discovery; the owner
+      may await [Runtime.finished] at teardown. [initial_ui] must own the controller/source configuration supplied
+      to [app], rather than an unrelated document. *)
+  type t =
+    { initial_ui : Ches_screen.Ui_state.t
+    ; runtime : Ches_file_picker_host.Runtime.t
+    ; consume : Ches_tile.View_id.t Ches_file_picker.Model.Request.t -> unit
+    }
+end
+
+module Content_picker_host : sig
+  (** Test assembly only; no live activation or invented open-at-location adapter. *)
+  type t =
+    { initial_ui : Ches_screen.Ui_state.t
+    ; runtime : Ches_content_picker_host.Runtime.t
+    ; consume : Ches_tile.View_id.t Ches_content_picker.Model.intent -> unit
+    }
+end
+
 (** [font] gives the font styles of each part of the screen; the default is
-    {!Theme.Font.default}. *)
+    {!Theme.Font.default}. Current-document line work is always scheduled through
+    yielded bounded turns; [file_picker] is only the optional file-consumer boundary. *)
 val app
   :  ?smear_enabled:bool
   -> ?report:Ches_screen.Report_tile.Item.t list
@@ -18,7 +43,9 @@ val app
        (** A running diagnostic source: its events become [Source] inputs, and
            {!Ches_screen.Ui_state.take_source_requests} is sent to it after each
            transition. *)
-  -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+   -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+    -> ?file_picker:File_picker_host.t
+    -> ?content_picker:Content_picker_host.t
   -> Ches_app.Controller.t
   -> exit:(unit -> unit Effect.t)
   -> dimensions:Dimensions.t Bonsai.t

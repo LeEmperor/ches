@@ -31,10 +31,11 @@ for general distribution.
 Ches edits one document per session. It accepts UTF-8 text with LF line endings
 and preserves the file's contents, including whether it ends with a newline.
 
-File picking, fuzzy current-document lines, and project content search have
-**headless foundations only**, not live editor commands. `Space f f` is planned,
-not bound. See [picker status and setup](docs/pickers.md) for implemented behavior,
-ripgrep requirements, limits, and the missing floating/buffer integration.
+`Space f l` opens fuzzy current-document lines, including unsaved edits, in the
+shared float. File/content opening remains unshipped: the file host is tested with
+an injected consumer, as is the floating on-disk content runtime. Neither opens
+files; `Space f f` is not bound and content search has no live activation. See
+[picker status and setup](docs/pickers.md) for behavior, limits and buffer blockers.
 
 ## Usage
 
@@ -61,6 +62,7 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space q` | Quit if there are no unsaved changes |
 | `Space Q` | Quit and discard unsaved changes |
 | `Space c c` | Open the command palette |
+| `Space f l` | Fuzzy search current-document lines; Enter jumps to the selected match |
 | `Space v o` | Focus the problems view or return to the document |
 | `Space v M` | Show and focus notification history |
 
@@ -95,8 +97,8 @@ those frames.
 | `source/` | Asynchronous diagnostic sources and language-server client |
 | `tile/` | Shared tile host, focus, and input routing |
 | `palette/` | Command catalog and fuzzy matching |
-| `file_picker/` | Headless file model, bounded discovery, matching and interaction |
-| `line_picker/` | Headless fuzzy search over current in-memory document lines |
+| `file_picker/` | File model, bounded discovery/matching and explicit Async floating-host assembly |
+| `line_picker/` | Bounded fuzzy search over current in-memory document lines |
 | `content_picker/` | Headless on-disk literal search provider and acceptance intents |
 | `screen/` | Screen geometry, workspace state, and frame rendering |
 | `ui/` | Bonsai_term frontend, event adapter, and theme |
@@ -136,9 +138,10 @@ and frontend behavior. The separate terminal smoke test uses tmux, bash, and a
 UTF-8 locale to check the built editor's screen output, saved bytes, and terminal
 restoration. Visual checks and the `ppx_expect` source-path workaround are
 documented in the [editor reference](docs/editor_reference.md#terminal-smoke-test).
-The [phase-9 check record](FILE_PICKER_PLAN.md#phase-9-implementation-and-handoff-2026-10-07--partial)
-records passing headless picker checks and the observed, unpromoted UI snapshot
-mismatch. It does not establish live picker acceptance.
+The [final phase-9 check record](FILE_PICKER_PLAN.md#phase-9-final-post-integration-review-and-handoff-2026-10-07--partial)
+records passing headless/injected file/content checks, live `Space f l` terminal
+smoke, and the observed, unpromoted UI snapshot mismatch. Real file/content opening
+remains blocked on buffers; human visual validation is still unperformed.
 
 ## Current limitations
 

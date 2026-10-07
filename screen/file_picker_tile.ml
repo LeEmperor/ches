@@ -61,7 +61,7 @@ let result_row (result : Model.Query_result.t) ~selected ~width =
   |> fun spans -> Span.merge (spans @ [ Span.blank Status (Int.max 0 (width - Span.total_width spans)) ])
 ;;
 
-let render t ~width ~rows : Tile_shell.Content.t =
+let render ?notice t ~width ~rows : Tile_shell.Content.t =
   fit t ~rows;
   let model = Interaction.model t.session in
   let discovery = Model.discovery model in
@@ -87,8 +87,10 @@ let render t ~width ~rows : Tile_shell.Content.t =
   let query = Picker_text.query_row (Interaction.query t.session) ~width in
   let query = query @ [ Span.blank Status (Int.max 0 (width - Span.total_width query)) ] in
   { title = "Files | " ^ safe discovery.request.root
-  ; footer = Some (Tile_shell.Label.hint (sprintf "%d/%d matches | %d discovered | %s | Ctrl-n/p, Enter, Esc"
-      (if count = 0 then 0 else t.view.index + 1) count (List.length discovery.candidates) summary))
+  ; footer = Some (Tile_shell.Label.hint
+      (Option.value_map notice ~default:"" ~f:(fun text -> text ^ " | ")
+       ^ sprintf "%d/%d matches | %d discovered | %s | Ctrl-n/p, Enter, Esc"
+         (if count = 0 then 0 else t.view.index + 1) count (List.length discovery.candidates) summary))
   ; body = List.take (query :: Tile_text.row Stale summary ~width :: list) (Int.max 0 rows)
   }
 ;;

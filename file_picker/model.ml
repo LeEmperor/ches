@@ -108,7 +108,7 @@ module Discovery = struct
     { run_id : Run_id.t
     ; root : string
     }
-  [@@deriving sexp_of]
+   [@@deriving sexp_of, equal]
 
   type status =
     | Loading

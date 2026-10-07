@@ -8,7 +8,7 @@ type t =
   ; focus : View_id.t
   ; pending : Key.t list
   ; notice : string option
-  ; paste : (View_id.t * string list) option (** Owner, chunks newest first. *)
+   ; paste : (View_id.t * string list * bool) option (** Owner, chunks, invalidated. *)
   }
 [@@deriving sexp_of]
 
@@ -101,23 +101,32 @@ let key t (key : Key.t) ~lookup ~content ~escape ~hint : t * _ Decision.t =
 
 let pasting t = Option.is_some t.paste
 
+let invalidate_paste t id =
+  match t.paste with
+  | Some (owner, chunks, _) when View_id.equal owner id && (spec t owner).accepts_paste ->
+    { t with paste = Some (owner, chunks, true) }
+  | _ -> t
+;;
+
 let paste_start t ~available =
-  if pasting t then t else { t with paste = Some (focused t ~available, []) }
+   if pasting t then t else { t with paste = Some (focused t ~available, [], false) }
 ;;
 
 let paste_key t key =
   match t.paste, Key.text key with
-  | Some (owner, chunks), Some text -> { t with paste = Some (owner, text :: chunks) }
+   | Some (owner, chunks, invalid), Some text -> { t with paste = Some (owner, text :: chunks, invalid) }
   | Some _, None | None, _ -> t
 ;;
 
 let paste_end t =
   match t.paste with
   | None -> t, `Not_pasting
-  | Some (owner, chunks) ->
+   | Some (owner, chunks, invalid) ->
     let t = { t with paste = None } in
     let spec = spec t owner in
-    if spec.accepts_paste
+     if invalid
+     then t, `Reject (owner, sprintf "%s closed; paste dropped" spec.title)
+     else if spec.accepts_paste
     then t, `Deliver (owner, String.concat (List.rev chunks))
     else t, `Reject (owner, sprintf "%s: read-only; paste ignored" spec.title)
 ;;

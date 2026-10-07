@@ -40,6 +40,11 @@ module Input : sig
         Diagnostic lists that arrive during Insert are held (newest per source and
         resource) until Insert ends; started/stopped apply at once. Never reaches the
         editor. *)
+    | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
+    | File_picker_work of Ches_file_picker.Model.Discovery.request
+       (** One bounded ranking turn, rejected if its run/root no longer matches. *)
+    | Line_picker_work of int (** Bounded turn, rejected after close/reopen. *)
+    | Content_picker_snapshot of (Ches_content_picker.Model.snapshot [@sexp.opaque])
   [@@deriving sexp_of]
 end
 
@@ -82,6 +87,29 @@ val history_tile : t -> History_tile.t
 
 (** The command palette, while open (it is then focused). *)
 val palette : t -> Palette_tile.t option
+
+(** Explicit provider/consumer assembly boundary, not a live opening command.
+    Only one transient float exists. Refusal calls [release]; all closing paths
+    cancel discovery once. Returning restores the prior available capture. *)
+val open_file_picker
+  : t -> width:int -> height:int
+  -> discovery:Ches_file_picker.Model.Discovery.t
+  -> release:(unit -> unit) -> t
+val can_open_file_picker : t -> width:int -> height:int -> bool
+val file_picker : t -> Ches_tile.View_id.t File_picker_tile.t option
+val open_content_picker : t -> width:int -> height:int
+  -> snapshot:Ches_content_picker.Model.snapshot -> release:(unit -> unit) -> t
+val content_picker : t -> Ches_tile.View_id.t Content_picker_tile.t option
+val content_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+val take_content_requests : t -> t * Ches_tile.View_id.t Ches_content_picker.Model.intent list
+val file_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+val open_line_picker : t -> width:int -> height:int -> t
+val line_picker : t -> Line_picker_tile.t option
+val line_picker_generation : t -> int
+val line_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+(** Take after installing the returned UI state, then deliver to an injected
+    consumer. Capture/discovery are already released; intents are not retried. *)
+val take_file_requests : t -> t * Ches_tile.View_id.t Ches_file_picker.Model.Request.t list
 
 (** The open palette's centered floating shell; [None] when closed or when the
     terminal cannot fit its frame, query row, and one result row. *)

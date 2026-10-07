@@ -49,6 +49,7 @@ type t =
   | Kill_source
   | Toggle_zen
   | Open_palette
+  | Open_line_picker
   | Reset
   | Scroll of
       { scroll : Scroll.t

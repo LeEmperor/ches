@@ -53,7 +53,7 @@ module Discovery : sig
     { run_id : Run_id.t
     ; root : string (** Explicit absolute project root; policy belongs to the provider. *)
     }
-  [@@deriving sexp_of]
+   [@@deriving sexp_of, equal]
 
   type status =
     | Loading (** No candidates received yet. *)

@@ -1,9 +1,9 @@
 # Project on-disk literal search — phase 8 PARTIAL
 
-This is an independent, headless provider/model/tile, not a shipped editor search
-binding. Shared floating composition/host integration and real multi-buffer
-open-at-location are unavailable. No registry, compositor, buffer manager or
-no-op binding is added.
+The provider/model/tile now has shared floating host and Async/Bonsai integration
+through an explicit typed test-consumer boundary, not a shipped search binding.
+Real multi-buffer open-at-location and live activation remain unavailable.
+No parallel compositor, buffer manager, speculative opening adapter or no-op binding.
 
 ## Scope and semantics
 
@@ -59,11 +59,26 @@ selection or edited-but-not-requested query is inert, not queued. Partial matche
 may be accepted. Accept/cancel closes exactly once, drops retained hits, releases
 capture/provider, then delivers one typed intent to the injected consumer.
 
-Future live host owns floating placement (at least query/status/result: three
-content rows), focus/cursor, resize, cancellation, paste isolation and yielded
-polling/redraw. Errors/truncation are in status row **and** footer. Tiny headless
-allocations safely clip; a future host must enforce minimum geometry. No live host
-or terminal/human visual testing is claimed here.
+`Ches_content_picker_host.Runtime.open_picker` preflights the shared host before
+starting an empty request; `next` chains yielded 2ms turns and polls at most one
+batch. Changed literals promptly start new runs and call `expect`; provider owns
+debounce/serial kill/reap. Obsolete queries, closed sessions and replaced opening
+generations cannot install into newer sessions. `pump` is the single-owner headless
+equivalent. Do not poll concurrently or drive one turn per redraw. Release belongs
+to the opening generation across query changes, not to an obsolete query run.
+
+`Ui_state.open_content_picker` reuses the one-transient float/Host/shell: preferred
+80×14, minimum 14×5, zen and prior-focus return. Fitting resize retains state;
+undersized resize closes/cancels. Interrupted paste is dropped, not redirected to
+the document/new picker. Escape/Tab close; Ctrl-c uses shared notice behavior.
+Workspace/document stay unchanged. Errors/truncation appear in status and footer;
+host notices may temporarily replace the footer hint.
+
+`Editor_view.app ?content_picker` requires opened UI/runtime/typed consumer. It
+reuses the single frontend turn chain, consumes intents after installing returned
+UI, and cancels provider/closes model on deactivation. No default adapter/binding
+or catalog entry. Real rg/frontend interaction and interrupted paste/resize are
+tested; content terminal smoke/human visual acceptance has not been performed.
 
 ## Location contract — not a navigation implementation
 

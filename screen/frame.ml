@@ -45,7 +45,36 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
     match floating with
     | Some _ -> floating
     | None when Option.is_some allocation -> None
-    | None ->
+    | None when Option.is_some (Ui_state.content_picker ui) ->
+      Option.bind (Ui_state.content_picker_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.content_picker ui) ~f:(fun picker ->
+          let content = layout.content in
+          { Floating_layer.id = Content_picker_tile.id; layout
+          ; content = Content_picker_tile.render ?notice:(Ui_state.capture_notice ui)
+              picker ~width:content.width ~rows:content.height
+          ; cursor = Some (Content_picker_tile.cursor picker ~width:content.width) }))
+    | None when Option.is_some (Ui_state.line_picker ui) ->
+      Option.bind (Ui_state.line_picker_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.line_picker ui) ~f:(fun picker ->
+          ignore (Line_picker_tile.validate picker (Ui_state.controller ui) : bool);
+          let content = layout.content in
+          { Floating_layer.id = Line_picker_tile.id
+          ; layout
+          ; content = Line_picker_tile.render ?notice:(Ui_state.capture_notice ui)
+              picker ~width:content.width ~rows:content.height
+          ; cursor = Some (Line_picker_tile.cursor picker ~width:content.width)
+          }))
+     | None when Option.is_some (Ui_state.file_picker ui) ->
+       Option.bind (Ui_state.file_picker_layout ui ~width ~height) ~f:(fun layout ->
+         Option.map (Ui_state.file_picker ui) ~f:(fun picker ->
+           let content = layout.content in
+           { Floating_layer.id = File_picker_tile.id
+           ; layout
+           ; content = File_picker_tile.render ?notice:(Ui_state.capture_notice ui)
+               picker ~width:content.width ~rows:content.height
+           ; cursor = Some (File_picker_tile.cursor picker ~width:content.width)
+           }))
+     | None ->
       Option.bind (Ui_state.palette_layout ui ~width ~height) ~f:(fun layout ->
         Option.map (Ui_state.palette ui) ~f:(fun palette ->
           let content = layout.content in
@@ -59,7 +88,10 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
   let floating_view =
     match floating with
     | Some layer -> Some (layer.id, Some layer.layout)
-    | None when Option.is_some allocation -> Some (Palette_tile.id, None)
+     | None when Option.is_some allocation ->
+         Some ((if Option.is_some (Ui_state.content_picker ui) then Content_picker_tile.id
+           else if Option.is_some (Ui_state.line_picker ui) then Line_picker_tile.id
+          else if Option.is_some (Ui_state.file_picker ui) then File_picker_tile.id else Palette_tile.id), None)
     | None -> None
   in
   let workspace = Ui_state.workspace ui ~width ~height in

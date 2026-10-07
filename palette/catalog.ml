@@ -229,6 +229,11 @@ let default =
         ~title:"Restart diagnostic source"
         ~keywords:[ "checker"; "lsp"; "diagnostics" ]
         Restart_source
+    ; view
+        ~id:"document.lines"
+        ~title:"Search current document lines"
+        ~keywords:[ "fuzzy"; "unsaved"; "jump" ]
+        Open_line_picker
     ]
   |> Or_error.ok_exn
 ;;

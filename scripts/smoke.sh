@@ -3,7 +3,7 @@
 # reaches the screen, the cursor, the files written, and the terminal state left for
 # the shell. See README.md, "Terminal smoke test".
 #
-# Usage: scripts/smoke.sh [--palette-only] [PATH-TO-CHES]
+# Usage: scripts/smoke.sh [--palette-only|--line-picker-only] [PATH-TO-CHES]
 #        (default: _build/default/bin/ches.exe)
 #
 # Needs tmux (tested with 3.4) and a UTF-8 locale. Run `dune build` first. It uses a
@@ -17,8 +17,14 @@ set -u
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 palette_only=false
+line_only=false
 if [ "${1:-}" = --palette-only ]; then
   palette_only=true
+  shift
+fi
+if [ "${1:-}" = --line-picker-only ]; then
+  palette_only=true
+  line_only=true
   shift
 fi
 ches=${1:-$root/_build/default/bin/ches.exe}
@@ -1789,7 +1795,7 @@ expect_exit 0
 fi
 
 # ---------------------------------------------------------------------------
-section "floating command palette (Space c c)"
+if [ "$line_only" = false ]; then section "floating command palette (Space c c)"; fi
 # The shell's corner cells prove placement independently of document geometry.
 palette_is() {
   local x=$1 y=$2 width=$3 height=$4 top bottom
@@ -1811,6 +1817,7 @@ expect_restored() {
   if poll screen_matches "$1"; then ok "covered workspace restored exactly";
   else fail "workspace differs after closing the palette"; fi
 }
+if [ "$line_only" = false ]; then
 resize 80 24
 printf 'one\ntwo\nthree\n' > "$work/palette.txt"
 cp "$work/palette.txt" "$work/palette.expected"
@@ -1976,6 +1983,72 @@ expect_file "$work/palette.txt" "$work/palette.expected"
 keys Space q
 expect_exit 0
 keep_startup_tiles=false
+
+fi
+
+if [ "$palette_only" = false ] || [ "$line_only" = true ]; then
+section "current-document fuzzy lines (Space f l), unsaved Unicode jump"
+resize 100 30
+for i in $(seq 1 499); do printf 'row %d\n' "$i"; done > "$work/lines.txt"
+printf '\t界é tail' >> "$work/lines.txt"
+cp "$work/lines.txt" "$work/lines.expected"
+printf 'UNSAVEDneedle' >> "$work/lines.expected"
+launch lines.txt --no-lsp
+keys G A
+type_text 'UNSAVEDneedle'
+keys Escape g g
+expect_status "[+]"
+keys Space f l
+expect_screen "Document lines | in-memory"
+type_text 'needle'
+expect_screen '500  '
+expect_screen 'UNSAVEDneedle'
+if poll eval '! screen_has "Filtering..."'; then ok "yielded line search completed";
+else fail "line search did not complete"; fi
+save_screen "line-picker-unsaved-unicode"
+keys Enter
+expect_cursor_row 'UNSAVEDneedle'
+# Status reports character columns; navigation/rendering use display cells.
+# TAB + wide glyphs put the first matched n at screen x=30, not character 16.
+expect_status '500:16'
+expect_cursor '30 27 1'
+expect_no_screen 'Document lines | in-memory'
+keys Space v z
+expect_status 'Zen (status hidden)'
+save_screen 'line-picker-cancel-before'
+keys Space f l
+type_text 'zzzzzzzz'
+expect_screen 'No matching lines'
+keys Enter
+expect_screen 'Document lines | in-memory'
+keys Escape
+expect_restored "$screens/line-picker-cancel-before.ansi"
+keys Space c c
+type_text 'Search current document lines'
+expect_screen 'Space f l'
+keys Enter
+expect_screen 'Document lines | in-memory'
+resize 14 5
+sleep 0.2
+poll alternate_is 1 || fail 'exited at line picker minimum'
+save_screen 'line-picker-minimum'
+resize 100 30
+expect_screen 'Document lines | in-memory'
+# The closed owner must reject the rest of a bracketed paste after resizing.
+type_text $'\e[200~iOLD'
+sleep 0.1
+resize 13 5
+sleep 0.2
+resize 100 30
+type_text $'remaining\e[201~'
+expect_screen 'Document lines closed; paste dropped'
+expect_cursor_row 'UNSAVEDneedle'
+keys Space w
+expect_status 'Wrote lines.txt'
+expect_file "$work/lines.txt" "$work/lines.expected"
+keys Space q
+expect_exit 0
+fi
 
 echo
 echo "review screens (view with: cat FILE): $screens"

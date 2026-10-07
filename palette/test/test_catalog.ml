@@ -89,6 +89,7 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     report.toggle                  Toggle demo report
     report.focus                   Focus demo report
     source.restart                 Restart diagnostic source
+    document.lines                 Search current document lines
     |}]
 ;;
 

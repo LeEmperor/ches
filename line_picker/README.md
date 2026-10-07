@@ -1,9 +1,11 @@
-# Current-document fuzzy lines (phase 7 PARTIAL)
+# Current-document fuzzy lines (phase 7 software implemented)
 
 `Ches_line_picker.Lines` captures the controller's immutable **in-memory** text,
 including dirty edits. It performs no IO, project traversal or buffer opening.
-`Ches_screen.Line_picker_tile` is a headless text-input tile, not a live command.
-No binding is shipped while shared floating composition/migration is unavailable.
+`Ches_screen.Line_picker_tile` uses the shared transient floating host. In Normal
+mode, `Space f l` opens it; the catalog command is **Search current document lines**
+(`document.lines`). `Space f f` stays reserved/unbound until buffer opening exists.
+The line command requires no ripgrep, disk reads or buffer manager.
 
 ## Host contract
 
@@ -23,9 +25,14 @@ No binding is shipped while shared floating composition/migration is unavailable
   returned controller synchronously and reveal the cursor using normal host view
   policy. `current` is a read-only getter. Errors do not edit/jump; the host must
   surface errors and restore focus. Cancellation releases once and never jumps.
-- Host owns Escape/Tab/Ctrl-c, paste isolation, focus, resize and floating geometry.
-  Reserve at least three content rows. Pick a non-conflicting binding and palette
-  entry only when this actual live integration works; no no-op binding.
+- `Ui_state` owns Escape/Tab/Ctrl-c, paste isolation, prior-focus restoration, resize
+  and shared floating geometry. Preferred 80×14, minimum 14×5, including zen;
+  undersized resize closes and drops work. A fitting resize retains the query.
+- `Editor_view` reuses the file host's one-scheduled-turn chain, yields through
+  Async before each 128-record work input, and chains independently of redraws.
+  Per-opening generations reject old turns; query jobs coalesce in the model.
+  Closing/deactivation drops retained work. Successful acceptance installs the
+  validated controller synchronously and uses normal scroll fitting to reveal it.
 
 ## Coordinates and limits
 
@@ -61,5 +68,7 @@ or IO timing, no forced GC or repeated-percentile sampling. At 50k: initial blan
 174.238 ms total / 2.518 ms longest turn; `m` 46.586 / 2.019 ms; `model` 97.848 /
 1.354 ms; `let value` 139.959 / 1.415 ms; no-match `zzzz` 23.080 / 1.108 ms.
 Broad queries require 782 turns. Cache decode assertions stayed at 50k across
-queries. Longer lines/queries, actual host scheduling and input-to-screen latency
-still need measurement and an agreed target budget.
+queries. Actual Bonsai scheduling is now checked on 5k dirty lines and terminal
+smoke on 500 lines, without manually draining the matcher. Longer lines/queries,
+input-to-screen latency and an agreed target budget still need measurement.
+Automated terminal smoke is not human visual acceptance.

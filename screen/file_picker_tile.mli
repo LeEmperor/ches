@@ -1,7 +1,7 @@
 open! Core
 open Ches_file_picker
 
-(** Headless adapter only; not registered in Ui_state, bindings or a live host.
+(** Shared floating adapter, assembled explicitly through Ui_state (no binding).
     Host owns discovery polling, yielding work turns, capture and focus. Content
     reserves query/status rows, then results; root is in title and errors/limits
     also in footer. Tiny content areas may clip status (phase 5 must set minima). *)
@@ -21,4 +21,4 @@ val work : _ t -> budget:int -> unit
 val accept : 'token t -> release:(unit -> unit) -> consume:('token Model.Request.t -> unit) -> unit
 val cancel : _ t -> release:(unit -> unit) -> unit
 val cursor : _ t -> width:int -> Ches_tile.Cursor.t
-val render : _ t -> width:int -> rows:int -> Tile_shell.Content.t
+val render : ?notice:string -> _ t -> width:int -> rows:int -> Tile_shell.Content.t

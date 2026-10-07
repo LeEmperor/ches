@@ -1,0 +1,5 @@
+(library
+ (name ches_ui_picker_test)
+ (libraries core core_unix core_unix.filename_unix core_unix.sys_unix async bonsai bonsai_term bonsai_term_test bonsai_test ches_app ches_core ches_tile ches_screen ches_ui ches_file_picker ches_file_picker_host ches_line_picker ches_content_picker ches_content_search ches_content_picker_host)
+ (inline_tests (flags (:standard -source-tree-root .)))
+ (preprocess (pps ppx_jane bonsai.ppx_bonsai)))

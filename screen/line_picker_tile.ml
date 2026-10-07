@@ -28,7 +28,7 @@ let row (result : Lines.result) ~selected ~width =
       (if Set.mem positions glyph.pos then Pending else Status) glyph.text ~width:glyph.width) in
   let spans = Span.keep_left (prefix @ text) ~n:(Int.max 0 width) ~marker_style:Status_special in
   Span.merge (spans @ [ Span.blank Status (Int.max 0 (width - Span.total_width spans)) ])
-let render t ~width ~rows : Tile_shell.Content.t =
+let render ?notice t ~width ~rows : Tile_shell.Content.t =
   fit t ~rows;
   let session = t.session in
   let status =
@@ -48,6 +48,6 @@ let render t ~width ~rows : Tile_shell.Content.t =
   let query = Picker_text.query_row (Lines.query session) ~width in
   let query = query @ [ Span.blank Status (Int.max 0 (width - Span.total_width query)) ] in
   { title = "Document lines | in-memory"
-  ; footer = Some (Tile_shell.Label.hint (sprintf "%d matches / %d lines | %s | Ctrl-n/p, Enter, Esc"
-      (List.length results) (Lines.line_count session) status))
+   ; footer = Some (Tile_shell.Label.hint (Option.value notice ~default:(sprintf "%d matches / %d lines | %s | Ctrl-n/p, Enter, Esc"
+       (List.length results) (Lines.line_count session) status)))
   ; body = List.take (query :: Tile_text.row Stale status ~width :: list) (Int.max 0 rows) }

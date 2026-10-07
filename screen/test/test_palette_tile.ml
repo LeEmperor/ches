@@ -164,7 +164,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     ││ >                                                                          ││|
     ││ > Save file                                                        Space w ││|
     ││   Quit                                                             Space q ││|
-    ╰╰─ 1/33 | Enter run, Ctrl-n/p, Esc ──────────────────────────────────────────╯╯|
+    ╰╰─ 1/34 | Enter run, Ctrl-n/p, Esc ──────────────────────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;
@@ -178,6 +178,7 @@ let%expect_test "typed text, Space and j/k included, is query text; Enter runs t
     {|
     query: "rel num"
     > view.toggle-relative-numbers
+      document.lines
       problems.toggle-filter
     |}];
   band t;
@@ -185,8 +186,8 @@ let%expect_test "typed text, Space and j/k included, is query text; Enter runs t
     │╭─ Commands ─────────────────────────────────────────────────────────────────╮│|
     ││ > rel num                                                                  ││|
     ││ > Toggle relative line numbers                                   Space v N ││|
-    ││   Toggle problems filter (workspace / current document)          Space v f ││|
-    ╰╰─ 1/2 | Enter run, Ctrl-n/p, Esc ───────────────────────────────────────────╯╯|
+    ││   Search current document lines                                  Space f l ││|
+    ╰╰─ 1/3 | Enter run, Ctrl-n/p, Esc ───────────────────────────────────────────╯╯|
     cursor: 12,2 Bar
     |}];
   let t = run t "<CR>" in

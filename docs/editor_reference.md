@@ -57,6 +57,7 @@ checks for [Ches](../README.md).
 | Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
 | Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
+| Normal | `Space f l` | Fuzzy search current-document lines (including unsaved edits) |
 | Normal | `Escape` | Cancel pending input; when idle, clear search highlights and acknowledge the presented problem |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
@@ -149,14 +150,19 @@ To add a command, add an entry (ID, title, keywords, and the existing editor or 
 action) to `Catalog.default` in `palette/catalog.ml`. Its shortcut is derived from the
 bindings, so it needs no label and no execution code of its own.
 
-### Planned file, line, and content pickers — not live commands
+### Fuzzy document lines; planned file/content opening
 
-`Space f f` is **not bound** and there are no live line/content picker commands or
-palette entries. The implemented providers, models and screen adapters are
-headless foundations. The command palette above remains docked; floating
-composition/migration and multi-buffer opening are still missing. See
-[picker status and setup](pickers.md) for search semantics, ripgrep dependencies,
-resource limits and integration blockers. Existing `/` and `?` search is unchanged.
+`Space f l` (Normal) or **Search current document lines** in the command palette
+opens numbered in-memory lines in the shared float. Type loose subsequences;
+Ctrl-n/p selects, Enter jumps to the earliest matched character and reveals it.
+Backspace/Ctrl-w edit the query; paste is sanitized like the palette. Escape/Tab
+cancel without moving the document; Ctrl-c shows a reminder, not cancellation.
+Filtering/no-match Enter is inert. Document changes invalidate results; reopen to
+refresh. Minimum 14×5, including zen; undersized resize closes safely.
+
+`Space f f` remains **unbound**: file/content opening needs the absent multi-buffer
+API. See [picker status and setup](pickers.md) for resource limits, coordinates,
+ripgrep dependencies and blockers. Existing `/` and `?` search is unchanged.
 
 ### Problems pane
 
@@ -872,6 +878,7 @@ It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
 dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe
 scripts/smoke.sh path/to/ches                # or another binary
 scripts/smoke.sh --palette-only             # only floating-palette scenarios
+scripts/smoke.sh --line-picker-only          # live line binding/jump/zen/paste/resize
 scripts/smoke.sh --palette-only path/to/ches
 ```
 

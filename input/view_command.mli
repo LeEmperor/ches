@@ -59,6 +59,7 @@ type t =
   | Kill_source (** Crash the synthetic diagnostic source, to test the stopped state. *)
   | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)
   | Open_palette (** Open the command palette for the document. *)
+  | Open_line_picker (** Fuzzy search the current in-memory document's lines. *)
   | Reset (** Centered, at the default width and offset, with line numbers off. *)
   | Scroll of
       { scroll : Scroll.t
