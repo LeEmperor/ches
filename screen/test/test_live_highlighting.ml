@@ -13,6 +13,25 @@ let syntax_spans frame =
     match span.Span.style with Document d -> Some (span, d) | _ -> None)
 ;;
 
+let%test_unit "SystemVerilog syntax renders, edits incrementally, and restores on undo" =
+  List.iter [ "f.sv"; "f.svh"; "f.v"; "f.vh" ] ~f:(fun path ->
+    let ui = ui ~path "module top; logic q; endmodule\n" in
+    let original = Snapshot.ranges (snapshot ui) in
+    assert (List.exists (syntax_spans (render ui)) ~f:(fun (_, d) ->
+      Category.equal d.syntax Keyword));
+    assert (List.exists (syntax_spans (render ui)) ~f:(fun (_, d) ->
+      Category.equal d.syntax Type));
+    let before = count ui in
+    let ui = run ui (keys "i/*<Esc>A*/<Esc>") in
+    assert (List.exists (syntax_spans (render ui)) ~f:(fun (_, d) ->
+      Category.equal d.syntax Comment));
+    let ui = run ui (keys "uu") in
+    [%test_result: Snapshot.Range.t list] (Snapshot.ranges (snapshot ui)) ~expect:original;
+    assert (count ui > before);
+    assert (Controller.For_testing.highlight_incremental_count (Ui_state.controller ui) > 0);
+    Controller.close (Ui_state.controller ui))
+;;
+
 let%test_unit "frames, movement, scrolling, resizing, animation, search and selections reuse highlights" =
   let source = String.concat (List.init 100 ~f:(fun i -> sprintf "let item%d = \"é\"\n" i)) in
   let controller = Controller.create (Editor.create ~path:"f.ml" ~cell_width:Cell_map.width

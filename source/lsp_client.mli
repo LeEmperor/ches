@@ -44,6 +44,14 @@ module Config : sig
       [.git]), and a 1 s grace. *)
   val ocamllsp : t
 
+  (** [slang-server] with no arguments, for [.sv], [.svh], [.v], and [.vh] files.
+      SystemVerilog files use [systemverilog], Verilog files use [verilog]. The root
+      markers are [.slang] then [.git], with a 1 s shutdown grace. *)
+  val slang_server : t
+
+  (** Selects a built-in server for [path], or [None] for unsupported files. *)
+  val for_path : string -> t option
+
   (** The workspace root for [path]: by [root_markers], else [path]'s directory. *)
   val root : t -> string -> string
 end

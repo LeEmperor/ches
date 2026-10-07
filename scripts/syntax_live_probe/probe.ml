@@ -57,7 +57,7 @@ let measure path source =
 
 let () =
   List.iter (fun path -> measure path (read path))
-    [ "highlight_ocaml/provider.ml"; "core/editor.ml"; "core/text_buffer.mli" ];
+    [ "highlight_tree_sitter/provider.ml"; "core/editor.ml"; "core/text_buffer.mli" ];
   let line = "let f x = \"é\\n\" (* outer (* inner *) *)\n" in
   measure "generated-large.ml" (String.concat "" (List.init 5000 (fun _ -> line)))
 ;;

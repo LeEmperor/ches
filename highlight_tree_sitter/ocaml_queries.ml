@@ -45,6 +45,6 @@ let common =
 ;;
 
 let source = function
-  | Ches_highlight.Language.Plain -> None
+  | Ches_highlight.Language.Plain | Systemverilog -> None
   | Ocaml | Ocaml_interface -> Some common
 ;;

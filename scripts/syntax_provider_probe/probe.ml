@@ -2,7 +2,7 @@
    Forced GC is for this probe only; native allocations are not accounted for by
    the binding. RSS is Linux-specific and is not a leak-freedom assertion. *)
 open Ches_highlight
-open Ches_highlight_ocaml
+open Ches_highlight_tree_sitter
 
 let rss_kib () =
   let channel = open_in "/proc/self/status" in
