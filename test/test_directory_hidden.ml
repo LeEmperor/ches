@@ -154,7 +154,10 @@ let%test_unit "Visual line delete removes an empty protected final row with zero
 
 let%test_unit "protected row pastes next to an empty final identity keep both owners separate" =
   List.iter [ false; true ] ~f:(fun before ->
-    let e = run (editor ()) [ Delete_lines 1; Delete_chars_forward 4; Paste { before; count = 1 } ] in
+    let cut = run (editor ()) [ Delete_lines 1 ] in
+    let register = Editor.unnamed_register cut |> Option.value_exn in
+    let e = run cut [ Delete_chars_forward 4 ] |> fun e -> Editor.set_unnamed_register e register in
+    let e = run e [ Paste { before; count = 1 } ] in
     let text = Editor.text e in
     assert (Result.is_error (D.parse baseline text));
     let old = List.find_map_exn (B.identities text) ~f:(fun (offset, token) ->
