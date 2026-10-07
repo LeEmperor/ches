@@ -21,7 +21,12 @@ let bindings =
   ; [ Ctrl 'r' ], Editor Redo
   ; editor " w" Save
   ; editor " q" Quit
-  ; editor " Q" Force_quit
+   ; editor " Q" Force_quit
+   ; keys " bn", View Next_tab
+   ; keys " bp", View Previous_tab
+   ; keys " bc", View Close_tab
+   ; keys " bC", View Force_close_tab
+   ; keys " br", View Recreate_missing_file
   ; view 'c' Toggle_centered
   ; view 'h' (Shift (-2))
   ; view 'l' (Shift 2)
@@ -56,7 +61,12 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
       (shortcuts (Catalog.Entry.action entry)));
   [%expect
     {|
-    file.save                      Save file                              Space w
+    file.save                      Save buffer                            Space w
+    tabs.next                      Next file tab                          Space b n
+    tabs.previous                  Previous file tab                      Space b p
+    tabs.close                     Close file tab                         Space b c
+    tabs.close-discarding-changes  Close file tab, discarding unsaved changes Space b C
+    file.recreate-missing          Recreate missing path                  Space b r
     app.quit                       Quit                                   Space q
     app.quit-discarding-changes    Quit, discarding unsaved changes       Space Q
     edit.undo                      Undo                                   u
@@ -73,6 +83,8 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     view.narrow-tile-10            Narrow document tile by 10 columns     Space v -
     view.widen-tile-10             Widen document tile by 10 columns      Space v +, Space v =
     workspace.toggle-status        Toggle status tile
+    buffers.top                    Show open buffers in top strip
+    buffers.status-rows            Show open buffers as status rows
     workspace.status-left          Move status tile left
     workspace.status-right         Move status tile right
     workspace.status-above         Move status tile above
@@ -90,6 +102,17 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     report.focus                   Focus demo report
     source.restart                 Restart diagnostic source
     document.lines                 Search current document lines
+    directory.toggle-mark          Toggle directory entry mark
+    directory.mark-selection       Mark directory selection
+    directory.unmark-selection     Unmark directory selection
+    directory.clear-marks          Clear directory marks
+    directory.open-marked          Open marked files
+    directory.major                Show directory in main area
+    directory.side                 Show directory in sidebar
+    directory.hide                 Hide directory browser
+    directory.focus                Focus directory browser or editor
+    directory.grow                 Grow directory sidebar
+    directory.shrink               Shrink directory sidebar
     |}]
 ;;
 
@@ -137,7 +160,7 @@ let%expect_test "keyword and ID matches" =
   search ~limit:1 "rnu";
   [%expect {| view.toggle-relative-numbers   Toggle relative line numbers |}];
   search ~limit:1 "write";
-  [%expect {| file.save                      Save file |}];
+  [%expect {| file.save                      Save buffer |}];
   search ~limit:2 "smear";
   [%expect {| view.toggle-smear              Toggle animated [smear] cursor |}]
 ;;
@@ -145,9 +168,9 @@ let%expect_test "keyword and ID matches" =
 let%expect_test "realistic queries" =
   search "save";
   [%expect {|
-    file.save                      [Save] file
+    file.save                      [Save] buffer
+    tabs.close-discarding-changes  Close file tab, discarding un[save]d changes
     app.quit-discarding-changes    Quit, discarding un[save]d changes
-    workspace.status-above         Move [s]tatus tile [a]bo[ve]
     |}];
   search "quit";
   [%expect
@@ -172,10 +195,10 @@ let%expect_test "empty query lists available commands in catalog order" =
   search ~limit:4 "";
   [%expect
     {|
-    file.save                      Save file
-    app.quit                       Quit
-    app.quit-discarding-changes    Quit, discarding unsaved changes
-    edit.undo                      Undo
+    file.save                      Save buffer
+    tabs.next                      Next file tab
+    tabs.previous                  Previous file tab
+    tabs.close                     Close file tab
     |}]
 ;;
 

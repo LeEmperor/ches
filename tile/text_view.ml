@@ -55,9 +55,9 @@ module Effect = struct
   ;;
 
   let describe_copy : Register.t -> string = function
-    | Text { text; kind = Characterwise } -> plural (characters text) "character"
-    | Text { text; kind = Linewise } -> plural (String.count text ~f:(Char.equal '\n')) "line"
-    | Block { rows; width = _ } -> plural (List.length rows) "line"
+    | Protected_text { text; kind = Characterwise; _ } | Text { text; kind = Characterwise } -> plural (characters text) "character"
+    | Protected_text { text; kind = Linewise; _ } | Text { text; kind = Linewise } -> plural (String.count text ~f:(Char.equal '\n')) "line"
+    | Protected_block { rows; width = _ } | Block { rows; width = _ } -> plural (List.length rows) "line"
   ;;
 end
 

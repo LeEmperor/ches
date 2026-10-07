@@ -13,7 +13,7 @@ type t =
   { current_document : bool
   ; selection : Problems.Key.t Selection.t
   ; details : Text_view.t option (** The selected row's description, while open. *)
-  ; anchor_texts : (Text_buffer.t[@sexp.opaque]) String.Map.t
+  ; anchor_texts : ((string * string) * (Text_buffer.t[@sexp.opaque])) list
   (** Per source, the open document's text when its list for it was applied. *)
   }
 [@@deriving sexp_of]
@@ -22,15 +22,21 @@ let empty =
   { current_document = false
   ; selection = Selection.empty
   ; details = None
-  ; anchor_texts = String.Map.empty
+  ; anchor_texts = []
   }
 ;;
 
-let applied t ~source ~text =
-  { t with anchor_texts = Map.set t.anchor_texts ~key:source ~data:text }
+let applied t ~source ~resource ~text =
+  { t with anchor_texts = List.Assoc.add t.anchor_texts ~equal:[%equal: string * string] (source, resource) text }
+;;
+let forget_resource t resource =
+  { t with anchor_texts = List.filter t.anchor_texts ~f:(fun ((_, r), _) -> not (Problems.Document.same_resource r resource)) }
 ;;
 
-let document t editor = Problems.Document.of_editor editor ~anchor_text:(Map.find t.anchor_texts)
+let document t editor = Problems.Document.of_editor editor ~anchor_text:(fun source ->
+  Option.bind (Editor.path editor) ~f:(fun resource ->
+    List.find_map t.anchor_texts ~f:(fun ((s, r), text) ->
+      Option.some_if (String.equal s source && Problems.Document.same_resource r resource) text)))
 let current_document t = t.current_document
 let toggle_filter t = { t with current_document = not t.current_document }
 let selection t = t.selection
@@ -169,7 +175,7 @@ let perform t controller ~rows ~width action : Outcome.t =
       ~controller:(Controller.update_feedback controller (Acknowledge_identity problem.identity))
       ~notice:(`Show "Acknowledged; problem remains active")
   | Jump, Some problem ->
-    if not (Option.value_map path ~default:false ~f:(String.equal problem.resource))
+    if not (Option.value_map path ~default:false ~f:(Problems.Document.same_resource problem.resource))
     then post "Cross-file jump unavailable; current document kept"
     else (
       match problem.location with

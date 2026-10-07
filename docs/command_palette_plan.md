@@ -6,8 +6,18 @@ milestone, not current behavior. See [Floating tiles plan](../FLOATING_TILES_PLA
 for implementation/validation status and the
 [command palette reference](editor_reference.md#command-palette) for current usage.
 
-Original milestone status: stages 1–5 software-complete (docked presentation).
-Human feedback on the terminal UI is pending. Stage 3, the host extensions,
+Current directory-workspace integration (2026-10-07): the default catalog now has
+52 entries, including document-line search, tabs, directory navigation/marks/placement and missing-path
+recreation. **Save buffer** targets the invoking file or directory via Session;
+directory save applies filesystem edits directly, including permanent deletion.
+The palette remains Normal-only and floating. Commands derive configured shortcuts;
+there is no save-all, open-path or interactive save-as action. Current user behavior
+is documented in [editor reference](editor_reference.md#command-palette) and
+[directory workspace reference](directory_workspace.md). Historical stage counts
+and single-document observations below describe their implementation milestones.
+
+Status: stages 1–5 software-complete (docked milestone; floating presentation is later
+work). Human feedback on the terminal UI is pending. Stage 3, the host extensions,
 stage 4, and the word-delete follow-up are uncommitted.
 The tiling system (7A–7C, 8, diagnostic sources) is merged into `oxcaml` (`ef77f9a`)
 and this branch (`4ccde73`). See

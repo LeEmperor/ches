@@ -4,6 +4,7 @@
 
 (library
  (name ches_app)
+ (foreign_stubs (language c) (names directory_fs_stubs))
  (libraries ches_error ches_core ches_input ches_highlight ches_highlight_tree_sitter core core_unix)
  (preprocess
   (pps ppx_jane)))

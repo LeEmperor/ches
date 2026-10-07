@@ -37,6 +37,7 @@ end
     yielded bounded turns; [file_picker] is only the optional file-consumer boundary. *)
 val app
   :  ?smear_enabled:bool
+  -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t
   -> ?report:Ches_screen.Report_tile.Item.t list
        (** Installs a static report view (see {!Ches_screen.Ui_state.create}). *)
   -> ?source:Ches_source.Source.t
@@ -61,6 +62,7 @@ val draw : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame
     terminal. *)
 val run
   :  ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+  -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t
   -> ?report:Ches_screen.Report_tile.Item.t list
   -> ?source:Ches_source.Source.t
   -> Ches_app.Controller.t

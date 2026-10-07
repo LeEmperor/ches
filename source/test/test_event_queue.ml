@@ -11,6 +11,7 @@ let show queue =
   List.iter events ~f:(fun event ->
     print_s
       (match event with
+       | Owned _ -> [%message "owned"]
        | Diagnostics { source; resource; revision; _ } ->
          [%message "diagnostics" source resource (revision : int option)]
        | Started { source; _ } -> [%message "started" source]

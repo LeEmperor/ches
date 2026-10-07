@@ -33,6 +33,14 @@ module Saved : sig
 end
 
 type t
+module Kind : sig
+  type t = File | Directory [@@deriving sexp_of, equal]
+end
+val kind : t -> Kind.t
+val is_missing : t -> bool
+val mark_missing : t -> t
+val recreate : t -> t Or_error.t
+val save_as : t -> string -> t Or_error.t
 
 (** Runtime identity, distinct even for independently opened documents with the
     same path/text/revision. Preserved by ordinary transitions; successful reload
@@ -45,7 +53,8 @@ end
 val document_id : t -> Document_id.t
 
 (** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing exists
-    there. The error says which path could not be opened, and why. [cell_width] is passed
+    there. IO uses lexical absolute normalization against the current working directory;
+    the original spelling is retained for display. The error says which path could not be opened, and why. [cell_width] is passed
     to [Editor.create]. *)
 val open_file
   :  ?keymap_config:Keymap.Config.t
@@ -54,9 +63,13 @@ val open_file
   -> t Or_error.t
 
 (** Default [keymap_config] is [Keymap.Config.default]. *)
-val create : ?keymap_config:Keymap.Config.t -> Editor.t -> t
+val create : ?keymap_config:Keymap.Config.t -> ?kind:Kind.t -> Editor.t -> t
 
 val editor : t -> Editor.t
+val reassociate : t -> string -> t
+val rebase_text : t -> saved:Text_buffer.t -> text:Text_buffer.t -> t
+(** Original user-facing spelling; normalized IO identity is [Editor.path]. *)
+val display_path : t -> string option
 val keymap : t -> Keymap.t
 
 (** Immutable current highlight key/snapshot, updated only at document transitions.
@@ -122,11 +135,17 @@ val feedback : t -> Ches_error.Error.t
 val update_feedback : t -> Ches_error.Error.update -> t
 
 val cancel_pending : t -> t
+val with_feedback : t -> Ches_error.Error.t -> t
+val with_path : t -> string -> t
+val with_register : t -> Register.t option -> t
+(** Feed without executing effects, for session-owned quit decisions. *)
+val feed_input : t -> Keymap.Input.t -> t * Keymap.Action.t list
 
 (** Validated current-document navigation only. No IO, edits, or feedback resolution. *)
 val jump : t -> line:int -> column:int -> t Or_error.t
 
 module For_testing : sig
+  val has_live_highlight_provider : t -> bool
   val with_highlight_language : t -> Ches_highlight.Language.t -> t
   val fail_next_highlight : t -> unit
   val highlight_incremental_count : t -> int

@@ -75,7 +75,7 @@ module Content_picker_host = struct
     }
 end
 
-let app ?(smear_enabled = false) ?report ?source ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   let picker_turn_scheduled = ref false in
   let active_file_session = ref (Option.bind file_picker ~f:(fun host ->
@@ -106,8 +106,8 @@ let app ?(smear_enabled = false) ?report ?source ?font ?file_picker ?content_pic
           | Some _, Some _ -> invalid_arg "Only one initial picker host is allowed"
           | Some host, None -> host.Content_picker_host.initial_ui
           | None, Some host -> host.File_picker_host.initial_ui
-          | None, None -> Ui_state.create ~smear_enabled ?report
-             ~source_attached:(Option.is_some source) controller)
+           | None, None -> Ui_state.create ~smear_enabled ?buffer_presentation ?report
+              ~source_attached:(Option.is_some source) controller)
       ~apply_action:(fun context input model inputs ->
         match input with
         | Inactive -> model
@@ -172,6 +172,7 @@ let app ?(smear_enabled = false) ?report ?source ?font ?file_picker ?content_pic
                 Bonsai.Apply_action_context.inject context events));
           (match status with
            | Exit when was_running ->
+              Option.iter source ~f:Ches_source.Source.stop;
              Bonsai.Apply_action_context.schedule_event context (exit ())
            | Exit | Running -> ());
           model)
@@ -200,8 +201,13 @@ let app ?(smear_enabled = false) ?report ?source ?font ?file_picker ?content_pic
         Ches_line_picker.Lines.cancel session ~release:(fun () -> ()))))) graph;
   (* Source events enter like keys, as inputs of their own transition, one bounded batch
      at a time, so keys typed during a burst are handled between batches. *)
-  Option.iter source ~f:(fun source ->
-    Bonsai.Edge.lifecycle
+   Bonsai.Edge.lifecycle
+     ~on_deactivate:(let%arr model in
+       Effect.of_thunk (fun () -> Ches_app.Session.dispose (Ui_state.session model)))
+     graph;
+   Option.iter source ~f:(fun source ->
+     Bonsai.Edge.lifecycle
+        ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Ches_source.Source.stop source)))
       ~on_activate:
         (let%arr inject in
          let rec pump () =
@@ -260,7 +266,7 @@ let app ?(smear_enabled = false) ?report ?source ?font ?file_picker ?content_pic
   ~view, ~handler
 ;;
 
-let run ?font ?report ?source controller =
+let run ?font ?buffer_presentation ?report ?source controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
@@ -272,7 +278,7 @@ let run ?font ?report ?source controller =
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-       (app ~smear_enabled:true ?report ?source ?font controller))
+       (app ~smear_enabled:true ?buffer_presentation ?report ?source ?font controller))
     ~f:(fun result ->
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;

@@ -487,6 +487,7 @@ let%expect_test "unbound Normal-mode keys and a lone Escape do nothing" =
   [%expect
     {|
     Clear_search_highlight
+    (View Open_directory_entry)
     Redo
     NORMAL 0:0 (Info"Already at newest change")
     > |abc
@@ -1156,7 +1157,7 @@ let%expect_test "an invalid continuation cancels the count with a notice" =
     |}];
   let t = run t (keys "3<CR>") in
   show_position t;
-  [%expect {| NORMAL 1:0 notice="3 Enter is not bound" |}];
+  [%expect {| NORMAL 1:0 notice="Enter does not take a count" |}];
   let t = run t (keys "3 z") in
   show_position t;
   [%expect {| NORMAL 1:0 notice="3 Space z is not bound" |}];

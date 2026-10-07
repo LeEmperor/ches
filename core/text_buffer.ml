@@ -55,10 +55,14 @@ let validate s : (unit, Invalid_text.t) Result.t =
 type t =
   { text : string
   ; line_starts : int array
+  ; identity_scope : string option
+  ; identities : (int * string) list
   }
 
 let sexp_of_t t = [%sexp (t.text : string)]
 let equal t1 t2 = String.equal t1.text t2.text
+  && Option.equal String.equal t1.identity_scope t2.identity_scope
+  && [%equal: (int * string) list] t1.identities t2.identities
 
 let compute_line_starts text =
   let line_starts = Array.create ~len:(1 + String.count text ~f:(Char.equal '\n')) 0 in
@@ -72,7 +76,25 @@ let compute_line_starts text =
 ;;
 
 (* Only for text already known to be valid. *)
-let of_valid_string text = { text; line_starts = compute_line_starts text }
+let of_valid_string text = { text; line_starts = compute_line_starts text; identity_scope = None; identities = [] }
+let normalize_identities t =
+  let line_start offset =
+    let rec search lo hi =
+      if lo = hi then t.line_starts.(lo)
+      else
+        let mid = (lo + hi + 1) / 2 in
+        if t.line_starts.(mid) <= offset then search mid hi else search lo (mid - 1)
+    in
+    search 0 (Array.length t.line_starts - 1)
+  in
+  let identities = List.map t.identities ~f:(fun (offset, token) -> line_start offset, token)
+    |> List.sort ~compare:(fun (offset, token) (offset', token') ->
+      match Int.compare offset offset' with 0 -> String.compare token token' | order -> order) in
+  { t with identities }
+;;
+let identity_scope t = t.identity_scope
+let identities t = t.identities
+let with_identities t ~scope identities = normalize_identities { t with identity_scope = Some scope; identities }
 let empty = of_valid_string ""
 let of_string text = Result.map (validate text) ~f:(fun () -> of_valid_string text)
 let to_string t = t.text
@@ -110,23 +132,37 @@ let check_range t ~fn ~pos ~len =
   check_boundary t ~fn (pos + len)
 ;;
 
-let insert t ~at s =
+let insert ?(identities = []) ?(anchor_affinity = `Right) t ~at s =
   check_boundary t ~fn:"insert" at;
   Result.map (validate s) ~f:(fun () ->
     if String.is_empty s
     then t
     else
-      of_valid_string
-        (String.concat
-           [ String.prefix t.text at; s; String.drop_prefix t.text at ]))
+      let result = of_valid_string
+        (String.concat [ String.prefix t.text at; s; String.drop_prefix t.text at ]) in
+      let crosses_line = String.contains s '\n' in
+      { result with identity_scope = t.identity_scope
+        ; identities = List.map t.identities ~f:(fun (pos, token) ->
+             (if pos > at || (pos = at && crosses_line && Poly.equal anchor_affinity `Right)
+              then pos + String.length s else pos), token)
+            @ List.map identities ~f:(fun (pos, token) -> at + pos, token) }
+      |> normalize_identities)
 ;;
 
-let delete t ~pos ~len =
+let delete ?(linewise = false) ?(preserve_identities = false) t ~pos ~len =
   check_range t ~fn:"delete" ~pos ~len;
   if len = 0
-  then t
+  then if linewise then { t with identities = List.filter t.identities ~f:(fun (anchor, _) -> anchor <> pos) } else t
   else
-    of_valid_string (String.prefix t.text pos ^ String.drop_prefix t.text (pos + len))
+    let result = of_valid_string (String.prefix t.text pos ^ String.drop_prefix t.text (pos + len)) in
+    let stop = pos + len in
+    { result with identity_scope = t.identity_scope
+      ; identities = List.filter_map t.identities ~f:(fun (anchor, token) ->
+          let line_end = String.index_from t.text anchor '\n' |> Option.value ~default:(length t) in
+          if not preserve_identities && anchor >= pos && anchor < stop && (linewise || line_end < stop)
+          then None
+          else Some ((if anchor >= stop then anchor - len else if anchor >= pos then pos else anchor), token)) }
+    |> normalize_identities
 ;;
 
 let slice t ~pos ~len =

@@ -40,8 +40,19 @@ checks for [Ches](../README.md).
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
 | Normal | `zz` / `zt` / `zb` | Put the cursor line at the middle / top / bottom of the view |
 | Normal | `u` / `Ctrl-r` | Undo / redo |
-| Normal | `Space w` | Save |
-| Normal | `Space q` | Quit; refused while there are unsaved changes |
+| Normal | `Space w` | Save focused file / apply focused directory edits |
+| Normal | `Space o` | Show file's parent / return to file |
+| Normal | `Enter` / `-` / `Space r` (directory) | Open cursor entry / parent / refresh clean listing |
+| Normal | `Space b n` / `Space b p` | Next / previous file tab (wraps) |
+| Normal | `Space b c` / `Space b C` | Close tab / force-close and discard retained text |
+| Normal | `Space b r` | Recreate missing file exclusively from retained text |
+| Normal | `Space b t` / `Space b s` | Show file buffers in the top strip / as passive status rows |
+| Normal/Visual | `Space m m/s/u/c/o` (directory) | Toggle mark / mark / unmark selection / clear marks / open marked files |
+| Normal/Visual | `Space d m/s/h/f` | Major / side / hide / focus browser or editor |
+| Normal/Visual | `Space d +` / `Space d -` | Grow / shrink side width by four columns |
+| Normal/Visual | `Tab` (side directory) | Return focus to editor (Insert Tab edits normally) |
+| Visual | `Enter` (directory) | Open files in intersected rows |
+| Normal | `Space q` | Quit; refused for dirty/missing files and hidden dirty directories |
 | Normal | `Space Q` | Quit, discarding unsaved changes |
 | Normal | `Space v c` | Toggle the centered tile / full width |
 | Normal | `Space v h` / `Space v l` | Move the tile 2 cells left / right |
@@ -81,6 +92,17 @@ selection started). Leaving Insert mode steps the cursor back one character,
 as in Vim. Motions never change the text, the undo history, or `[+]`.
 
 ### Workspace status
+
+File buffers default to a top strip when more than one file is open. Start with
+`--buffers status` for rows inside the status tile, or switch using `Space b s`
+(**Show open buffers as status rows** in the palette). `Space b t` or
+`--buffers top` restores the strip. Status placement and size use the existing
+workspace controls; if status is hidden or cannot fit, buffers fall back to the
+strip. Zen hides both without changing the preference. Rows remain passive:
+`Space b n/p` switches files through the same session lifecycle. Both presentations
+disambiguate filenames and mark modified files with `*` and missing files with `!`
+(rows also show `[missing]`). A constrained list follows the active file and marks
+hidden neighbors with `^`/`v` where space permits.
 
 All installed tiles are shown at startup: the document, Status, Problems, and
 History, plus the demo report when launched with `--demo-report`. Keyboard focus
@@ -160,9 +182,25 @@ cancel without moving the document; Ctrl-c shows a reminder, not cancellation.
 Filtering/no-match Enter is inert. Document changes invalidate results; reopen to
 refresh. Minimum 14×5, including zen; undersized resize closes safely.
 
-`Space f f` remains **unbound**: file/content opening needs the absent multi-buffer
-API. See [picker status and setup](pickers.md) for resource limits, coordinates,
+`Space f f` remains **unbound**: file/content opening is not yet wired to the new
+session/buffer APIs. See [picker status and setup](pickers.md) for resource limits, coordinates,
 ripgrep dependencies and blockers. Existing `/` and `?` search is unchanged.
+
+Workspace commands include **Save buffer**, **Next/Previous file tab**,
+**Close file tab** (and its explicit discard variant), **Recreate missing path**,
+directory navigation, all five mark actions, and major/side/hide/focus/width actions.
+Save targets the owner from which the palette opened, including a side browser;
+it can permanently delete entries. Undo/Redo affect text only, not disk.
+There is no interactive open-path/save-as prompt; save-all is an application API,
+not a default binding or palette action.
+
+## Directory workspace
+
+See the [directory workspace reference](directory_workspace.md) for persistent tabs,
+placement/focus, visual and marked opening, identity tokens and filename escapes,
+copy/destination syntax, permanent empty-only deletion, missing-file recovery,
+cross-device limits, partial apply/retry and text-undo boundaries. **Directory Save
+applies edits directly, without a confirmation dialog or filesystem undo.**
 
 ### Problems pane
 
@@ -263,6 +301,13 @@ its own. On quit ches asks the server to shut down and waits up to 1 s.
 `--synthetic-checker` replaces it. To check the client against the installed server
 without the UI: `dune exec source/bench/lsp_probe.exe -- -build`.
 
+Each open file uses a separate diagnostic runtime (potentially one server process).
+Switching tabs retains it; actual close, resource reassociation and session shutdown
+stop the old runtime. Events are addressed to the owning buffer/revision, including
+inactive files. `Space v R/K` addresses all managed runtimes, not just the active tab.
+Source names carry `#generation` lifetime suffixes (for example `ocamllsp#1`) to
+keep closed/reassociated resources separate. Directories do not start diagnostic drivers.
+
 For SystemVerilog (`.sv`, `.svh`) and Verilog (`.v`, `.vh`), ches starts
 `slang-server` from PATH with no arguments, using the same diagnostic and lifecycle
 handling. Its root is the nearest ancestor containing `.slang`; if none, the nearest
@@ -305,7 +350,7 @@ dim while you type ahead of it. As with dune, a build finding stays until you sa
 (`synthetic stopped: … (Space v R to restart)`), gone at the next command but kept in
 history; nothing takes attention. Its last findings stay listed, dimmed and marked
 `stopped`. `Space v R` restarts it; kept findings stay dimmed until the restarted
-checker replaces them. There is no automatic restart. Without this flag, `Space v R` restarts the active language server, if present;
+checker replaces them. There is no automatic restart. Without this flag, `Space v R` restarts all managed language servers, if present;
 `Space v K` is available only for the synthetic checker.
 
 ### Demo report (tile-system fixture)
@@ -770,7 +815,7 @@ One key press goes through these steps:
 1. **`ui/`** (Bonsai_term) receives a terminal event. `Terminal_input` turns it
    into a terminal-independent `Key.t`, or into the start or end of a paste.
 2. **`screen/Ui_state`** collects any paste and passes the input to the
-   controller.
+   session's focused file/directory controller, retaining buffer/context paste ownership.
 3. **`app/Controller`** feeds it to **`input/Keymap`**. The keymap tracks pending
    counts, `Space` sequences, and the `j k` escape, looks Normal-mode sequences up
    in its **`input/Bindings`** table, and returns *actions*. An action is either an
@@ -782,8 +827,10 @@ One key press goes through these steps:
     saved, not whatever is current when it finishes. After the final text revision
     change, `app/Highlighting` updates the immutable highlight snapshot using its
     privately owned provider; no parsing happens in frame drawing or Bonsai rendering.
-5. View commands (`Space v`) come back to `Ui_state`, which changes its layout
-   preferences. They never touch the editor.
+5. **`app/Session`** coordinates buffer lifetime, navigation, shared registers,
+   guarded quit and filesystem apply. Directory Save uses its validated planner and
+   executor, never a listing-text write. Layout view commands come back to `Ui_state`;
+   buffer/directory commands are session-owned.
 6. **`screen/Frame`** draws the editor, keymap, and UI state as rows of styled
    spans plus a cursor, as plain data. `ui/` turns the spans into Bonsai_term
    views with `ui/theme.ml`'s colors.
@@ -834,7 +881,7 @@ columns in editing semantics and on screen cannot disagree.
 (`tmux -S "$work/tmux.sock"`), on copies of fixtures in a temporary directory, and
 checks the screen text, cursor position and visibility, the alternate screen,
 saved file bytes, exit statuses, and that `stty` settings and the cursor are
-restored after every exit. It goes through every binding in the [Keys](#keys)
+restored after every exit. It exercises the file-editing and layout bindings in the [Keys](#keys)
 table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
 `Space` key. It also covers:
 
@@ -880,6 +927,7 @@ scripts/smoke.sh path/to/ches                # or another binary
 scripts/smoke.sh --palette-only             # only floating-palette scenarios
 scripts/smoke.sh --line-picker-only          # live line binding/jump/zen/paste/resize
 scripts/smoke.sh --palette-only path/to/ches
+python3 scripts/directory_workspace_smoke.py # directory/tab integration PTY scenarios
 ```
 
 It prints `ok` or `FAIL` for each check, with a screen dump after each failure,
@@ -958,7 +1006,7 @@ and changes made to the file by other programs are not detected.
   character is drawn as itself; after a TAB, an escape form, or the left edge
   of the view it is not drawn.
 - No soft wrapping: long lines scroll horizontally.
-- One document at a time. The only `:` command is `:e!`; there is no general Ex
+- One editor group and one directory presentation. The only `:` command is `:e!`; there is no general Ex
   prompt. Search and local OCaml/Verilog/SystemVerilog syntax highlighting are supported; semantic tokens,
   other languages and language-server features beyond diagnostics are not. Word motions use the
   simple character classes above, not Unicode word properties.
@@ -967,6 +1015,8 @@ and changes made to the file by other programs are not detected.
   parsing still runs a full-document query and normalization after each text change.
 - No configuration file: tab width, the `j k` escape, and key bindings are set in
   code, and layout preferences are not saved between runs.
+- Directory buffers have no eviction or background watcher. Filesystem operations
+  have no rollback/undo or persisted recovery journal; see the directory reference.
 
 ## Known toolchain quirk: ppx_expect source path
 

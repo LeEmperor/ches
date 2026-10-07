@@ -3,9 +3,25 @@ open! Async
 
 let command =
   Command.async
-    ~summary:"Edit a UTF-8, LF text file"
+    ~summary:"Edit UTF-8, LF files and directory workspaces"
     ~readme:(fun () ->
-      "Opens PATH, or starts an empty document if nothing exists there; saving \
+       "Directory PATH opens an editable directory buffer (including ches .): Enter opens, \
+         - goes to the parent, Space o toggles file/directory, Space r refreshes.\n\
+         Files stay open in tabs: Space b n/p switches, b c closes, b C discards.\n\
+         Space b t/s shows buffers in the top strip/status rows (also --buffers top/status).\n\
+         Visual Enter opens selected files; Space m m/s/u/c/o toggles/marks/unmarks/clears/opens marks.\n\
+         Space d m/s/h/f selects major/side/hide/focus; d +/- sizes the side browser.\n\
+         Edit only names after @ches[ID] and its TAB. Bare rows create files; final / creates directories.\n\
+         Explicit @copy[ID]<TAB>destination copies disk contents; duplicate @ches IDs are invalid.\n\
+         Existing/copy rows accept relative or absolute destinations with existing parents.\n\
+         Space w applies directory edits directly: omitted rows PERMANENTLY DELETE files/links\n\
+         or EMPTY directories. No trash, recursive delete, filesystem undo, or confirmation dialog.\n\
+         Directory save may partially succeed: actual paths and remaining intent are retained; save retries.\n\
+         Linux no-overwrite renames are required; cross-device moves are refused (copies may cross devices).\n\
+         Deleted open files retain text; routine save refuses. Space b r recreates a missing path exclusively.\n\
+         Quit checks hidden dirty directories and missing files too; Space Q discards only memory intent.\n\
+         See docs/editor_reference.md for byte escapes, identity, copy metadata, and race limits.\n\
+        File PATH opens, or starts an empty document if nothing exists there; saving \
        creates it.\n\
        Normal mode: h/j/k/l move, w/b/e and W/B/E move by words, 0/^/$ to the\n\
        line start/first non-blank/end, _/g_ to the first/last non-blank,\n\
@@ -28,7 +44,7 @@ let command =
          --demo-report installs a static report: Space v d shows it, Space v D focuses it.\n\
          --demo-diagnostics seeds static synthetic checker findings (two sources, another\n\
          file, one stopped source) to review the problems view; edits leave them dimmed.\n\
-         --synthetic-checker runs a synthetic checker, one source like ocamllsp: about\n\
+          --synthetic-checker runs a per-file synthetic checker like ocamllsp: about\n\
          0.4s after an edit, lines containing ERROR/TODO are errors/warnings; about 0.8s\n\
          after a save, ERROR lines again plus a finding in another file, merged into the\n\
          same lists. Space v K crashes it; Space v R restarts it. It replaces the LSP.\n\
@@ -38,7 +54,7 @@ let command =
          problems view. It never runs dune: errors needing a build need your own\n\
          `dune build --watch`. For .sv, .svh, .v, or .vh, ches runs slang-server\n\
          from PATH, rooted at .slang, then .git, else PATH's directory. Configure it\n\
-         in .slang/server.json. Space v R restarts the server; --no-lsp turns it off.")
+          in .slang/server.json. Space v R restarts all managed servers; --no-lsp disables them.")
     (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)
      and demo_problems = flag "--demo-problems" no_arg
        ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"
@@ -49,8 +65,15 @@ let command =
      and no_lsp = flag "--no-lsp" no_arg
        ~doc:" Do not run a language server (ocamllsp or slang-server)"
      and demo_report = flag "--demo-report" no_arg
-       ~doc:" Install a static, error-free report view for manual tile testing" in
-     fun () ->
+       ~doc:" Install a static, error-free report view for manual tile testing"
+     and buffer_presentation = flag "--buffers"
+       (optional_with_default Ches_input.View_command.Buffer_presentation.Top
+          (Command.Arg_type.create (function
+            | "top" -> Ches_input.View_command.Buffer_presentation.Top
+            | "status" -> Status_rows
+            | _ -> failwith "expected top or status")))
+       ~doc:"top|status File buffers in the top strip (default) or status rows" in
+      fun () ->
        let fail error =
          eprintf "ches: %s\n" (Error.to_string_hum error);
          exit 1
@@ -61,7 +84,7 @@ let command =
        then fail (Error.of_string "standard input is not a terminal")
        else (
          match
-           Ches_app.Controller.open_file ~cell_width:Ches_screen.Cell_map.width path
+            Ches_app.Startup.open_path ~cell_width:Ches_screen.Cell_map.width path
          with
          | Error error -> fail error
           | Ok controller ->
@@ -72,24 +95,17 @@ let command =
            let report =
              Option.some_if demo_report Ches_screen.Report_tile.demo in
            (* One source: the synthetic checker, a test flag, replaces the server. *)
-           let source =
-             if synthetic_checker
-             then
-               Some
-                 (Ches_source.Synthetic.start
-                    ~root:(Ches_source.Workspace_root.find path)
-                    ())
-             else if no_lsp
-             then None
-             else
-               Option.map (Ches_source.Lsp_client.Config.for_path path) ~f:(fun lsp ->
-                 Ches_source.Lsp_client.start
-                   ~config:lsp
-                   ~cell_width:Ches_screen.Cell_map.width
-                   ~root:(Ches_source.Lsp_client.Config.root lsp path)
-                   ())
+            let source =
+              if no_lsp && not synthetic_checker
+              then None
+              else
+                Some (Ches_source.Workspace.start ~create:(fun path ->
+                  if synthetic_checker then Some (Ches_source.Synthetic.start ~root:(Ches_source.Workspace_root.find path) ())
+                  else Option.map (Ches_source.Lsp_client.Config.for_path path) ~f:(fun lsp ->
+                    Ches_source.Lsp_client.start ~config:lsp ~cell_width:Ches_screen.Cell_map.width
+                      ~root:(Ches_source.Lsp_client.Config.root lsp path) ())) ())
            in
-           (match%bind Ches_ui.Editor_view.run ?report ?source controller with
+           (match%bind Ches_ui.Editor_view.run ~buffer_presentation ?report ?source controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

@@ -5,6 +5,10 @@
 open! Core
 
 type t =
+  | Document_opened of { resource : string; generation : int }
+  (** Allocate a document-owned runtime; generation is the session buffer ID. *)
+  | Document_closed of { resource : string }
+  (** Actual close, not deactivation. Stop/release its diagnostic runtime. *)
   | Document_changed of
       { resource : string
       ; text : string (** The open document's whole, possibly unsaved, text. *)

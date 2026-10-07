@@ -219,3 +219,6 @@ val notification : t -> Notification.t option
 
 val history : t -> History.t
 val diagnostics : t -> Diagnostics.t
+(** Actual document close: forget diagnostic snapshots and their revision guards,
+    without erasing operation feedback or history. *)
+val forget_resource : t -> string -> t

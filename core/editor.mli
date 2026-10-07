@@ -185,6 +185,12 @@ val create
 
 val text : t -> Text_buffer.t
 val path : t -> string option
+val with_path : t -> string -> t
+(* Reconcile an externally applied directory snapshot; reset text undo, retain register. *)
+val rebase_text : t -> saved:Text_buffer.t -> text:Text_buffer.t -> t
+(** Application-owned save, independent of modal command availability. Commits an
+    Insert transaction but preserves mode, cursor, and selection. No IO here. *)
+val request_save : t -> t * Effect.t list
 val mode : t -> Mode.t
 val revision : t -> int
 val is_dirty : t -> bool

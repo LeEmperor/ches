@@ -26,7 +26,31 @@ module Status_position = struct
   [@@deriving sexp_of, equal]
 end
 
+module Buffer_presentation = struct
+  type t = Top | Status_rows [@@deriving sexp_of, equal]
+end
+
 type t =
+  | Toggle_directory
+  | Directory_major
+  | Directory_side
+  | Hide_directory
+  | Focus_directory
+  | Adjust_directory_size of int
+  | Open_directory_entry
+  | Directory_parent
+  | Refresh_directory
+  | Toggle_entry_mark
+  | Mark_selection
+  | Unmark_selection
+  | Clear_directory_marks
+  | Open_marked_files
+  | Next_tab
+  | Previous_tab
+  | Present_buffers of Buffer_presentation.t
+  | Close_tab
+  | Force_close_tab
+  | Recreate_missing_file
   | Toggle_centered
   | Shift of int
   | Adjust_width of int

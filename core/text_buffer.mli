@@ -52,7 +52,7 @@ val validate : string -> (unit, Invalid_text.t) Result.t
 
 type t [@@deriving sexp_of]
 
-(** Equal iff the texts are byte-for-byte equal. *)
+(** Equality includes protected identity metadata, when present. *)
 val equal : t -> t -> bool
 
 val empty : t
@@ -61,18 +61,30 @@ val of_string : string -> (t, Invalid_text.t) Result.t
 (** The exact bytes of the text. *)
 val to_string : t -> string
 
+(** Protected row anchors carried by immutable snapshots, never by visible text.
+    Tokens are opaque to the text engine; duplicate anchors remain detectable. *)
+val identity_scope : t -> string option
+val identities : t -> (int * string) list
+val with_identities : t -> scope:string -> (int * string) list -> t
+
 (** Length in bytes. *)
 val length : t -> int
 
 (** {2 Editing} *)
 
 (** [insert t ~at s] inserts [s] at boundary [at]. Returns [Error] if [s] is not
-    accepted by {!validate}. Raises if [at] is not a boundary. *)
-val insert : t -> at:int -> string -> (t, Invalid_text.t) Result.t
+    accepted by {!validate}. Raises if [at] is not a boundary. When inserting LF
+    at a protected anchor, [anchor_affinity] specifies whether its existing row
+    stays left of the inserted text or moves right (default [`Right]). Row-opening
+    and linewise-paste operations choose affinity explicitly. *)
+val insert : ?identities:(int * string) list -> ?anchor_affinity:[ `Left | `Right ] -> t -> at:int -> string -> (t, Invalid_text.t) Result.t
 
 (** [delete t ~pos ~len] removes bytes [\[pos, pos + len)]. Both ends must be
-    boundaries and [len >= 0]. *)
-val delete : t -> pos:int -> len:int -> t
+    boundaries and [len >= 0]. Whole covered rows lose their identity; deleting
+    name bytes alone retains it. [linewise] also removes the final unterminated
+    row's identity. [preserve_identities] keeps selected anchors for a change
+    operation, leaving multiple joined identities detectable by validation. *)
+val delete : ?linewise:bool -> ?preserve_identities:bool -> t -> pos:int -> len:int -> t
 
 (** [slice t ~pos ~len] is bytes [\[pos, pos + len)]. Same requirements as
     {!delete}. *)

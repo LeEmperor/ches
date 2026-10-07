@@ -37,10 +37,10 @@ let%expect_test "opening lists available commands and selects the first" =
     {|
     query: ""
     > file.save
-      app.quit
-      app.quit-discarding-changes
-      edit.undo
-      ... 30 more
+      tabs.next
+      tabs.previous
+      tabs.close
+      ... 48 more
     |}]
 ;;
 
@@ -146,7 +146,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 33 more
+      ... 51 more
     |}]
 ;;
 
