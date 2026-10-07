@@ -32,6 +32,10 @@ module Status_position : sig
   [@@deriving sexp_of, equal]
 end
 
+module Buffer_presentation : sig
+  type t = Top | Status_rows [@@deriving sexp_of, equal]
+end
+
 type t =
   | Toggle_directory
   | Directory_major
@@ -49,6 +53,9 @@ type t =
   | Open_marked_files
   | Next_tab (** Activate the next file tab, wrapping in open order. *)
   | Previous_tab (** Activate the previous file tab, wrapping in open order. *)
+  | Present_buffers of Buffer_presentation.t
+  (** Requested file-buffer presentation. Status rows fall back to the top strip
+      when status is hidden/unavailable; zen suppresses both. *)
   | Close_tab (** Close the current file; refuse unsaved changes. *)
   | Force_close_tab (** Explicitly discard the current file's unsaved changes. *)
   | Recreate_missing_file (** Exclusive explicit recovery; ordinary save refuses. *)

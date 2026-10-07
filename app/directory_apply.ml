@@ -252,14 +252,21 @@ let apply ?(reserved_paths = []) ?(before_mutation = fun _ -> ())
   if !completed = 0 && Option.is_some error then { buffer = d; moves; deleted = !deleted; affected = !affected; completed = 0; applied = []; error }
   else
     let baseline = Directory_identity.create d.entries |> Or_error.ok_exn in
-    let saved = Directory_identity.text baseline in
+    let scope = if Directory_buffer.Config.equal d.config Hidden then Some d.identity_scope else None in
+    let saved = Directory_identity.text ?scope baseline in
     let text = if Option.is_none error then saved else
       let desired = List.map !rows ~f:(fun row ->
         let prefix = match row.Directory_identity.Row.identity with
           | Existing id -> sprintf "@ches[%d]\t" id | Copy id -> sprintf "@copy[%d]\t" id | Fresh -> "" in
-        prefix ^ (String.split row.name ~on:'/' |> List.map ~f:Directory_identity.encode_name |> String.concat ~sep:"/") ^
+        (if Option.is_some scope then "" else prefix) ^ (String.split row.name ~on:'/' |> List.map ~f:Directory_identity.encode_name |> String.concat ~sep:"/") ^
           (if Directory_identity.Kind.equal row.kind Directory then "/" else "")) in
-      Text_buffer.of_string (String.concat ~sep:"\n" desired) |> Result.ok |> Option.value_exn in
+      let text = Text_buffer.of_string (String.concat ~sep:"\n" desired) |> Result.ok |> Option.value_exn in
+      match scope with None -> text | Some scope ->
+        Text_buffer.with_identities text ~scope
+          (List.filter_mapi !rows ~f:(fun line row -> match row.Directory_identity.Row.identity with
+            | Fresh -> None
+            | Existing id -> Some (Text_buffer.line_start text line, sprintf "@ches[%d]" id)
+            | Copy id -> Some (Text_buffer.line_start text line, sprintf "@copy[%d]" id))) in
     let selected = List.find !rows ~f:(fun row ->
       row.Directory_identity.Row.line = Editor.cursor_line (Controller.editor original.controller)) in
     let line = if Option.is_some error then

@@ -12,6 +12,7 @@ type t =
   ; startup_directory : string
   ; cell_width : Cell_layout.Width.t
   ; keymap_config : Keymap.Config.t
+  ; directory_config : Directory_buffer.Config.t
   ; buffers : buffer list
   ; resources : Buffer_id.t String.Map.t
   ; active : Buffer_id.t option
@@ -59,16 +60,16 @@ let find_resource_buffer t resource =
   | None -> Option.map (List.find t.directories ~f:(fun d -> String.equal d.path (normalize t resource))) ~f:(fun d -> Directory_buffer d)
 ;;
 
-let create ?(cwd = Core_unix.getcwd ()) ?keymap_config ~cell_width controller =
+let create ?(cwd = Core_unix.getcwd ()) ?keymap_config ?(directory_config = Directory_buffer.Config.default) ~cell_width controller =
   let keymap_config = Option.value keymap_config ~default:(Keymap.config (Controller.keymap controller)) in
   let path = Editor.path (Controller.editor controller) in
   let controller = Option.value_map path ~default:controller ~f:(fun p -> Controller.with_path controller (Resource.normalize ~cwd p)) in
   let directory_start = Controller.Kind.equal (Controller.kind controller) Directory in
   let startup_directory = Option.value_map path ~default:cwd ~f:(fun p -> if directory_start then Resource.normalize ~cwd p else Filename.dirname (Resource.normalize ~cwd p)) in
-  let directories = if directory_start then [ Directory_buffer.load ~id:(Buffer_id.of_int 1) ~path:startup_directory ~cell_width ~keymap_config () |> Or_error.ok_exn ] else [] in
+  let directories = if directory_start then [ Directory_buffer.load ~config:directory_config ~id:(Buffer_id.of_int 1) ~path:startup_directory ~cell_width ~keymap_config () |> Or_error.ok_exn ] else [] in
   if directory_start then Controller.close controller;
   { cwd; startup_directory
-   ; cell_width; keymap_config; buffers = (if directory_start then [] else [ { id = Buffer_id.of_int 1; controller; generation = 1 } ])
+   ; cell_width; keymap_config; directory_config; buffers = (if directory_start then [] else [ { id = Buffer_id.of_int 1; controller; generation = 1 } ])
   ; resources = (if directory_start then String.Map.empty else Option.value_map path ~default:String.Map.empty ~f:(fun p -> String.Map.singleton (Resource.normalize ~cwd p) (Buffer_id.of_int 1)))
    ; active = (if directory_start then None else Some (Buffer_id.of_int 1)); next_id = 2; next_generation = 2; feedback = Controller.feedback controller
   ; register = Editor.unnamed_register (Controller.editor controller); clipboard = None
@@ -288,7 +289,7 @@ let show_directory ?select t path =
   let cached = List.find t.directories ~f:(fun d -> String.equal d.path path) in
   let loaded = if Map.mem t.resources path then Or_error.error_string "Resource belongs to an open file buffer; close it before browsing a replacement directory"
     else match cached with Some d -> Ok d | None ->
-    Directory_buffer.load ~id:(Buffer_id.of_int t.next_id) ~path ~cell_width:t.cell_width ~keymap_config:t.keymap_config () in
+    Directory_buffer.load ~config:t.directory_config ~id:(Buffer_id.of_int t.next_id) ~path ~cell_width:t.cell_width ~keymap_config:t.keymap_config () in
   Or_error.map loaded ~f:(fun d ->
     let t = finish_context t in
     let d = if Option.is_none cached then d else

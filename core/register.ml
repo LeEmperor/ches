@@ -8,6 +8,16 @@ module Kind = struct
 end
 
 type t =
+  | Protected_block of
+      { rows : string list
+      ; width : int
+      }
+  | Protected_text of
+      { text : string
+      ; kind : Kind.t
+      ; scope : string
+      ; identities : (int * string) list
+      }
   | Text of
       { text : string
       ; kind : Kind.t
@@ -19,10 +29,10 @@ type t =
 [@@deriving sexp_of, equal]
 
 let to_string = function
-  | Text { text; kind = Characterwise } -> text
+   | Protected_text { text; kind = Characterwise; _ } | Text { text; kind = Characterwise } -> text
   (* The last line of a file without a final newline yanks without one; on the
      clipboard every line ends with one, as in Vim. *)
-  | Text { text; kind = Linewise } ->
+   | Protected_text { text; kind = Linewise; _ } | Text { text; kind = Linewise } ->
     if String.is_suffix text ~suffix:"\n" then text else text ^ "\n"
-  | Block { rows; width = _ } -> String.concat ~sep:"\n" rows
+   | Protected_block { rows; width = _ } | Block { rows; width = _ } -> String.concat ~sep:"\n" rows
 ;;

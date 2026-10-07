@@ -41,7 +41,7 @@ def main():
     try:
         pump(1)
         send(b" vt vb\riEDIT\x1b o")
-        send(b"ggo\x1b[200~@copy[1]\tcopy\x1b[201~\x1b")
+        send(b"ggyypVc@copy copy\x1b")  # Protected copied row; no ID needs exposing.
         assert not (root / "copy").exists()
         send(b" w")
         assert (root / "copy").read_text() == "original\n"  # Backing text, not dirty tab.

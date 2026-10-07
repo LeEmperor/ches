@@ -18,7 +18,7 @@ let fixture f =
 ;;
 let write root name text = Out_channel.write_all (child root name) ~data:text
 let read root name = In_channel.read_all (child root name)
-let load root = Directory_buffer.load ~id:(Buffer_id.of_int 1) ~path:root ~cell_width:width
+let load root = Directory_buffer.load ~config:Exposed ~id:(Buffer_id.of_int 1) ~path:root ~cell_width:width
   ~keymap_config:Ches_input.Keymap.Config.default () |> Or_error.ok_exn
 let edit (d : Directory_buffer.t) renames fresh =
   let entries = List.map d.entries ~f:(fun e ->
@@ -363,6 +363,29 @@ let%test_unit "exclusive create, directory create, cycles, symlink and successfu
     assert (Text_buffer.equal (Editor.text (Controller.editor controller)) (Directory_identity.text result.buffer.baseline));
     assert (not (Array.exists (Stdlib.Sys.readdir root) ~f:(String.is_prefix ~prefix:".ches-stage-")));
     Controller.close controller)
+;;
+
+let%test_unit "hidden partial apply rebases protected names and safely retries pending creation" =
+  fixture (fun root ->
+    write root "a" "contents";
+    let d = Directory_buffer.load ~id:(Buffer_id.of_int 1) ~path:root ~cell_width:width
+      ~keymap_config:Ches_input.Keymap.Config.default () |> Or_error.ok_exn in
+    let actions = List.map [ Command.Enter_insert Line_end; Insert_text ".renamed"; Exit_insert
+                           ; Open_line_below; Insert_text "fresh"; Exit_insert ]
+      ~f:(fun command -> Ches_input.Keymap.Action.Editor command) in
+    let controller, _, _ = Controller.dispatch d.controller actions in
+    let result = Directory_apply.apply ~before_mutation:(fun n -> if n = 3 then failwith "injected") { d with controller } in
+    assert (Option.is_some result.error && result.completed = 2);
+    assert (String.equal (read root "a.renamed") "contents");
+    let text = Editor.text (Controller.editor result.buffer.controller) in
+    assert (Option.is_some (Text_buffer.identity_scope text));
+    assert (String.equal (Text_buffer.to_string text) "a.renamed\nfresh");
+    assert (List.length (Directory_buffer.plan result.buffer |> Or_error.ok_exn) = 1);
+    let retry = Directory_apply.apply result.buffer in
+    assert (Option.is_none retry.error && not (Directory_buffer.is_dirty retry.buffer));
+    assert (String.equal (read root "fresh") "");
+    assert (Option.is_some (Text_buffer.identity_scope (Editor.text (Controller.editor retry.buffer.controller))));
+    Controller.close retry.buffer.controller)
 ;;
 
 let%test_unit "preflight rejects replacements, changed contents, occupied and dangling destinations with zero mutations" =

@@ -72,7 +72,7 @@ let%test_unit "side opens keep browser and target group; tabs and editor input s
     let rendered = Frame.to_string (Frame.render ui ~width ~height) in
     assert (String.is_substring rendered ~substring:"Directory");
     assert (String.is_substring rendered ~substring:"0 marked");
-    assert (String.is_substring rendered ~substring:"@ches[");
+    assert (not (String.is_substring rendered ~substring:"@ches["));
     assert (String.is_substring rendered ~substring:"one");
     let frame = Frame.render ui ~width ~height in
     List.iter frame.rows ~f:(fun row ->
@@ -204,7 +204,7 @@ let%test_unit "side modal prefix, search, yank, paste ownership, palette and las
     let ui = Helpers.run ~width ~height ui [ Paste_end ] in
     assert (String.equal before (Text_buffer.to_string (Editor.text (editor ui))));
     let ui = run ui "<Tab>P" in
-    assert (String.is_prefix (Text_buffer.to_string (Editor.text (editor ui))) ~prefix:"@ches[");
+    assert (String.is_prefix (Text_buffer.to_string (Editor.text (editor ui))) ~prefix:"b.txt\n");
     let ui = run ui "u ccShow directory in main area<CR>" in
     assert (Poly.equal (presentation ui).placement Major);
     let ui = run ui " ccShow directory in sidebar<CR>" in

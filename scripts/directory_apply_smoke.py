@@ -63,7 +63,7 @@ def main():
         assert (root / "dir.moved/nested.ml").read_text() == "let x = 1\n"
         send(b" o w")
         assert (root / "dir.moved/nested.ml").read_text() == "NESTEDlet x = 1\n"
-        send(b" o-gg0x w")  # Malformed identity, not the now-supported cross-path syntax.
+        send(b" o-gg0i@\x1b w")  # Noncanonical name: protected IDs cannot be edited.
         assert b"Invalid directory plan" in capture
         assert sorted(p.name for p in root.iterdir()) == ["a.txt.renamed", "dir.moved", "fresh", "newdir"]
         send(b"u q")

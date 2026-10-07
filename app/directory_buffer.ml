@@ -1,6 +1,17 @@
 open! Core
 open Ches_core
 
+module Config = struct
+  type t = Hidden | Exposed [@@deriving sexp_of, equal]
+  let default = Hidden
+end
+
+let next_scope = ref 0
+let new_scope path =
+  incr next_scope;
+  path ^ ":" ^ Int.to_string !next_scope
+;;
+
 type fingerprint = int * int * Core_unix.file_kind * int64 * float * float
 let fingerprint path =
   let s = Core_unix.lstat path in
@@ -20,13 +31,15 @@ type t =
   ; fingerprints : fingerprint String.Map.t
   ; parent_identity : int * int
   ; marks : Int.Set.t
+  ; config : Config.t
+  ; identity_scope : string
   }
 
 let is_directory path =
   try Poly.equal (Core_unix.stat path).st_kind Core_unix.S_DIR with _ -> false
 ;;
 
-let load ?previous ~id ~path ~cell_width ~keymap_config () =
+let load ?previous ?(config = Config.default) ~id ~path ~cell_width ~keymap_config () =
   Or_error.try_with (fun () ->
     if Option.exists previous ~f:(fun t -> Editor.is_dirty (Controller.editor t.controller))
     then failwith "Directory has unsaved edits; save/retry or undo them before refreshing; explicit force-close discards remaining intent";
@@ -50,8 +63,10 @@ let load ?previous ~id ~path ~cell_width ~keymap_config () =
       let entry_id = if entry_id > 0 then entry_id else (let n = !next in incr next; n) in
       { Directory_identity.Entry.id = entry_id; name; kind }) in
     let baseline = Directory_identity.create entries |> Or_error.ok_exn in
+    let config = Option.value_map previous ~default:config ~f:(fun t -> t.config) in
+    let identity_scope = match previous with Some t -> t.identity_scope | None -> new_scope path in
     let controller = Controller.create ~keymap_config ~kind:Directory
-      (Editor.create ~path ~cell_width (Directory_identity.text baseline)) in
+      (Editor.create ~path ~cell_width (Directory_identity.text ?scope:(if Config.equal config Hidden then Some identity_scope else None) baseline)) in
     let controller = match previous with
       | None -> controller
       | Some old ->
@@ -66,7 +81,7 @@ let load ?previous ~id ~path ~cell_width ~keymap_config () =
       Set.filter t.marks ~f:(fun id -> List.exists entries ~f:(fun e -> e.id = id))) in
     let parent = Core_unix.stat path in
     { id; path; entries; baseline; controller; next_entry = !next; fingerprints = !fingerprints; marks
-      ; parent_identity = parent.st_dev, parent.st_ino })
+       ; parent_identity = parent.st_dev, parent.st_ino; config; identity_scope })
 ;;
 
 let rows t = Directory_identity.parse t.baseline (Editor.text (Controller.editor t.controller))

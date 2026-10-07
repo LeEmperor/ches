@@ -34,9 +34,10 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
   let screen_width = width in
   let explicit_allocation = Option.is_some allocation in
   let workspace = Ui_state.workspace ui ~width ~height in
+  let buffers_in_status = not explicit_allocation && Ui_state.buffers_in_status ui ~width ~height in
   let pane_relative = Option.is_some allocation || Option.is_some workspace.status
     || not (List.is_empty workspace.minors)
-    || Option.is_some (Ui_state.tab_rect ui ~allocation:workspace.document.rect) in
+    || Option.is_some (Ui_state.tab_rect ~buffers_in_status ui ~allocation:workspace.document.rect) in
   let minor_panes = if Option.is_some allocation then [] else workspace.minors in
   let allocation, default_reservation, status_pane =
     match allocation with
@@ -61,8 +62,8 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
   in
   let line_count = Text_buffer.line_count text in
   let cursor_line = Editor.cursor_line editor in
-  let geometry = Ui_state.geometry_in ui ~allocation ~reserve_status_row in
-  let scroll = Ui_state.fitted_scroll_in ui ~allocation ~reserve_status_row in
+  let geometry = Ui_state.geometry_in ~buffers_in_status ui ~allocation ~reserve_status_row in
+  let scroll = Ui_state.fitted_scroll_in ~buffers_in_status ui ~allocation ~reserve_status_row in
   let { Geometry.tile
       ; border
       ; padding
@@ -77,10 +78,11 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
     geometry
   in
   let fields = Status.fields ui in
-  let tab_row = Option.map (Ui_state.tab_rect ui ~allocation) ~f:(fun rect ->
-    rect, File_tabs.render (File_tabs.tabs (Ui_state.session ui)) ~width:rect.width) in
+  let buffers = Open_buffers.of_session (Ui_state.session ui) in
+  let tab_row = Option.map (Ui_state.tab_rect ~buffers_in_status ui ~allocation) ~f:(fun rect ->
+    rect, File_tabs.render buffers ~width:rect.width) in
   let directory = Session.input_directory (Ui_state.session ui) in
-  let header = Option.map (Ui_state.directory_rect ui ~allocation) ~f:(fun rect ->
+  let header = Option.map (Ui_state.directory_rect ~buffers_in_status ui ~allocation) ~f:(fun rect ->
     let d = Option.value_exn directory in
     let pending = if not (Ches_app.Directory_buffer.is_dirty d) then "" else
       match Ches_app.Directory_buffer.plan d with
@@ -93,7 +95,8 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
   (* Status and minor views share the tile shell; adapters fill its content area. *)
   let status_tile = Option.map status_pane ~f:(fun pane ->
     let layout = Tile_shell.layout Tile_shell.Policy.status pane.Workspace.Pane.rect in
-    let body = (Status.vertical ~rect:layout.content fields).rows in
+    let body = Status_tile.body ~rect:layout.content fields
+      (if buffers_in_status then buffers else []) in
     layout.outer,
     Array.of_list (Tile_shell.render layout ~focused:false { title = "Status"; footer = None; body }))
   in
@@ -410,7 +413,7 @@ let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~heigh
     else if Animation.active animation || not (List.is_empty insert_points)
     then None
     else
-       Option.map (Ui_state.cursor_position_in ui ~allocation ~reserve_status_row) ~f:(fun (x, y) ->
+       Option.map (Ui_state.cursor_position_in ~buffers_in_status ui ~allocation ~reserve_status_row) ~f:(fun (x, y) ->
         { Cursor.x = x
         ; y
         ; shape =

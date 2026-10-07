@@ -1,5 +1,5 @@
-(* Phase-0 spike: pure directory row identity/byte-name codec, not an operation
-   planner or filesystem executor. Tokens travel in ordinary editor text/undo. *)
+(** Pure directory row identity/byte-name codec. Optional scoped serialization
+    stores protected IDs in text metadata rather than editable prefixes. *)
 open! Core
 
 module Kind : sig
@@ -53,7 +53,9 @@ val decode_destination : string -> string Or_error.t
     Explicit copies use [@copy[ID]] with a distinct destination. Existing/copy
     destinations accept slash-separated encoded components, including [..].
     Header, kind icons and marks are not part of the editable text. *)
-val text : t -> Text_buffer.t
+(** With [scope], emit names only and attach protected directory-local anchors.
+    Without it, emit legacy exposed tokens for pure codec/backend callers. *)
+val text : ?scope:string -> t -> Text_buffer.t
 
 (** Validate the entire snapshot, rejecting malformed/unknown/duplicate tokens,
     noncanonical escaping, invalid destinations, and existing type changes.

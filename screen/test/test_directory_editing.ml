@@ -16,7 +16,7 @@ let rec remove_fixture path =
     Core_unix.rmdir path)
   else Core_unix.unlink path
 ;;
-let fixture f =
+let fixture ?directory_config f =
   let root = Core_unix.mkdtemp "/tmp/opencode/ches-edit-directory-" in
   let a = Filename.concat root "a.txt" in
   let b = Filename.concat root "b.txt" in
@@ -24,7 +24,7 @@ let fixture f =
   Out_channel.write_all b ~data:"b contents";
   Core_unix.mkdir (Filename.concat root "child");
   Exn.protect ~f:(fun () ->
-    let ui = Ui_state.create ~tiles_visible:false (Startup.open_path ~cell_width:Cell_map.width root |> Or_error.ok_exn) in
+    let ui = Ui_state.create ?directory_config ~tiles_visible:false (Startup.open_path ~cell_width:Cell_map.width root |> Or_error.ok_exn) in
     f root a b ui)
     ~finally:(fun () -> remove_fixture root)
 ;;
@@ -67,6 +67,31 @@ let%test_unit "modal rename, undo, safe save, backing-path open and hidden dirty
     Session.dispose (Ui_state.session ui))
 ;;
 
+let%test_unit "default IDs never appear on active Insert or Visual rows in either placement" =
+  fixture (fun _ _ _ ui ->
+    let check ui =
+      let text = Editor.text (Controller.editor (directory ui).controller) |> Text_buffer.to_string in
+      let frame = Frame.to_string (Frame.render ui ~width ~height) in
+      assert (not (String.is_substring text ~substring:"@ches["));
+      assert (not (String.is_substring frame ~substring:"@ches[")) in
+    check ui;
+    let ui = run ui "iNEW" in check ui;
+    let ui = run ui "<Esc>uVj" in check ui;
+    let ui = run ui "<Esc><CR> df ds df" in check ui;
+    let ui = run ui "iSIDE" in check ui;
+    let ui = run ui "<Esc>uVj" in check ui;
+    Session.dispose (Ui_state.session ui))
+;;
+
+let%test_unit "exposed backend setting is explicit and survives refresh and navigation" =
+  fixture ~directory_config:Directory_buffer.Config.Exposed (fun _ _ _ ui ->
+    let visible ui = Text_buffer.to_string (Editor.text (Controller.editor (directory ui).controller)) in
+    assert (String.is_prefix (visible ui) ~prefix:"@ches[");
+    let ui = run ui " rG<CR>-" in
+    assert (String.is_prefix (visible ui) ~prefix:"@ches[");
+    Session.dispose (Ui_state.session ui))
+;;
+
 let%test_unit "current rows reconcile blanks, reorder, dormant deleted marks, copy and invalid tokens" =
   fixture (fun _ _ _ ui ->
     let ui = run ui " mmdd" in
@@ -82,7 +107,7 @@ let%test_unit "current rows reconcile blanks, reorder, dormant deleted marks, co
     let ui = run ui "yyp w" in message ui "copying existing rows is unsupported";
     let ui = run ui "<CR>" in
     assert (List.is_empty (Session.buffers (Ui_state.session ui)));
-    let ui = run ui "ux w" in message ui "Invalid directory plan";
+    let ui = run ui "u0i@<Esc> w" in message ui "Invalid directory plan";
     let ui = run ui "<CR>" in
     assert (List.is_empty (Session.buffers (Ui_state.session ui)));
     let ui = run ui "uo<Esc>" in

@@ -54,6 +54,10 @@ val create
        (** Show all installed tiles initially; default [true]. [false] starts with
            just the document and compact feedback. *)
   -> ?hotkey_hints:bool (** Tile key hints; default [false]. *)
+  -> ?buffer_presentation:View_command.Buffer_presentation.t
+        (** Default [Top]; [Status_rows] uses passive status rows when available. *)
+  -> ?directory_config:Ches_app.Directory_buffer.Config.t
+       (** Protected hidden row identities by default; [Exposed] uses legacy tokens. *)
   -> ?smear_enabled:bool
   -> ?report:Report_tile.Item.t list
        (** Installs the static demo report ([--demo-report]); shown initially. *)
@@ -88,6 +92,9 @@ val quit_session : t -> width:int -> height:int -> force:bool -> t * Ches_app.Co
 val prefs : t -> Geometry.Prefs.t
 val workspace_prefs : t -> Workspace.Prefs.t
 val hotkey_hints : t -> bool
+val buffer_presentation : t -> View_command.Buffer_presentation.t
+(** Effective placement: false in zen or when status cannot fit/is hidden. *)
+val buffers_in_status : t -> width:int -> height:int -> bool
 val zen : t -> bool
 val problems_visible : t -> bool
 val problems_current_document : t -> bool
@@ -328,19 +335,23 @@ val fitted_scroll : t -> width:int -> height:int -> Scroll.t
     same allocation and explicit status policy; scroll positions remain document
     coordinates and cursor positions are terminal coordinates. These queries do not change
     the model or editor. *)
-(** File strip above the document; single-file, zen and tiny allocations hide it. *)
-val tab_rect : t -> allocation:Geometry.Rect.t -> Geometry.Rect.t option
-val directory_rect : t -> allocation:Geometry.Rect.t -> Geometry.Rect.t option
-val geometry_in : t -> allocation:Geometry.Rect.t -> reserve_status_row:bool -> Geometry.t
+(** File strip above the document; single-file, zen and tiny allocations hide it.
+    Explicit allocations have no status tile by default. Assembly passes the same
+    effective [buffers_in_status] to all queries when a status tile is present. *)
+val tab_rect : ?buffers_in_status:bool -> t -> allocation:Geometry.Rect.t -> Geometry.Rect.t option
+val directory_rect : ?buffers_in_status:bool -> t -> allocation:Geometry.Rect.t -> Geometry.Rect.t option
+val geometry_in : ?buffers_in_status:bool -> t -> allocation:Geometry.Rect.t -> reserve_status_row:bool -> Geometry.t
 
 val fitted_scroll_in
-  :  t
+  :  ?buffers_in_status:bool
+  -> t
   -> allocation:Geometry.Rect.t
   -> reserve_status_row:bool
   -> Scroll.t
 
 val cursor_position_in
-  :  t
+  :  ?buffers_in_status:bool
+  -> t
   -> allocation:Geometry.Rect.t
   -> reserve_status_row:bool
   -> (int * int) option

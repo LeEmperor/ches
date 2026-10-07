@@ -107,7 +107,7 @@ let create entries =
   else Ok entries
 ;;
 
-let text entries =
+let text ?scope entries =
   List.map entries ~f:(fun (entry : Entry.t) ->
     sprintf "@ches[%d]\t%s%s" entry.id (encode_name entry.name)
       (if Kind.equal entry.kind Directory then "/" else ""))
@@ -115,6 +115,14 @@ let text entries =
   |> Text_buffer.of_string
   |> Result.map_error ~f:Text_buffer.Invalid_text.to_string_hum
   |> Result.ok_or_failwith
+  |> fun text -> match scope with
+    | None -> text
+    | Some scope ->
+      let names = List.map entries ~f:(fun (entry : Entry.t) ->
+        encode_name entry.name ^ (if Kind.equal entry.kind Directory then "/" else "")) in
+      let visible = Text_buffer.of_string (String.concat ~sep:"\n" names) |> Result.ok |> Option.value_exn in
+      Text_buffer.with_identities visible ~scope
+        (List.mapi entries ~f:(fun line entry -> Text_buffer.line_start visible line, sprintf "@ches[%d]" entry.id))
 ;;
 
 let missing_ids entries rows =
@@ -126,8 +134,22 @@ let missing_ids entries rows =
 let parse entries text =
   let open Or_error.Let_syntax in
   let parse_line line raw =
+    let%bind raw = match Text_buffer.identity_scope text with
+      | None -> Ok raw
+      | Some _ ->
+        let tokens = List.filter_map (Text_buffer.identities text) ~f:(fun (offset, token) ->
+          if Text_buffer.line_of_offset text offset = line then Some token else None) in
+        (match tokens with
+         | [] -> Ok raw
+         | [ token ] ->
+           if String.is_prefix raw ~prefix:"@copy " && String.is_prefix token ~prefix:"@ches["
+           then Ok ("@copy[" ^ String.drop_prefix token 6 ^ "\t" ^ String.drop_prefix raw 6)
+           else Ok (token ^ "\t" ^ raw)
+         | _ -> Or_error.error_string "joined protected identities; undo the join or delete whole rows") in
     let%bind identity, encoded =
-      if String.is_prefix raw ~prefix:"@ches[" || String.is_prefix raw ~prefix:"@copy["
+      if (Option.is_none (Text_buffer.identity_scope text)
+          || List.exists (Text_buffer.identities text) ~f:(fun (offset, _) -> Text_buffer.line_of_offset text offset = line))
+         && (String.is_prefix raw ~prefix:"@ches[" || String.is_prefix raw ~prefix:"@copy[")
       then (
         match String.lsplit2 raw ~on:'\t' with
         | Some (token, name) ->
@@ -158,7 +180,7 @@ let parse entries text =
   let%bind rows =
     List.init (Text_buffer.line_count text) ~f:(fun line ->
       let raw = Text_buffer.line_text text line in
-      if String.is_empty raw then Ok None
+       if String.is_empty raw && not (List.exists (Text_buffer.identities text) ~f:(fun (offset, _) -> Text_buffer.line_of_offset text offset = line)) then Ok None
       else (
         parse_line line raw
         |> Or_error.tag ~tag:(sprintf "row %d" (line + 1))

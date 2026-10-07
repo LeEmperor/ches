@@ -39,6 +39,7 @@ type t =
   ; workspace_prefs : Workspace.Prefs.t
   ; other_status_size : int (** Requested size for the inactive split axis. *)
   ; hotkey_hints : bool
+  ; buffer_presentation : View_command.Buffer_presentation.t
   ; zen : bool
   ; directory_size : int
   ; hide_tabs : bool (** Rendering-only directory surface snapshot. *)
@@ -75,6 +76,8 @@ let create
   ?workspace_prefs
   ?(tiles_visible = true)
   ?(hotkey_hints = false)
+  ?(buffer_presentation = View_command.Buffer_presentation.Top)
+  ?directory_config
   ?(smear_enabled = false)
   ?report
   ?(source_attached = false)
@@ -84,7 +87,7 @@ let create
     Option.value workspace_prefs
       ~default:{ Workspace.Prefs.default with status_visible = tiles_visible }
   in
-  let session = Session.create ~cell_width:Cell_map.width controller in
+  let session = Session.create ?directory_config ~cell_width:Cell_map.width controller in
   let controller = Option.value_exn (Session.active_controller session) in
   { controller
   ; session
@@ -97,6 +100,7 @@ let create
        | Horizontal -> 6
        | Vertical -> 28)
   ; hotkey_hints
+  ; buffer_presentation
   ; zen = false
   ; directory_size = 32
   ; hide_tabs = false
@@ -137,6 +141,7 @@ let has_document t = Option.is_some (Session.context_id t.session)
 let prefs t = t.prefs
 let workspace_prefs t = t.workspace_prefs
 let hotkey_hints t = t.hotkey_hints
+let buffer_presentation t = t.buffer_presentation
 let zen t = t.zen
 let problems_visible t = t.problems_visible
 let problems_current_document t = Problems_tile.current_document t.problems
@@ -228,8 +233,8 @@ let take_source_requests t =
 let exited t = t.exited
 let animation t = t.animation
 
-let tab_rect t ~(allocation : Geometry.Rect.t) =
-  if not t.hide_tabs
+let tab_rect ?(buffers_in_status = false) t ~(allocation : Geometry.Rect.t) =
+  if not buffers_in_status && not t.hide_tabs
      && not (Option.is_some (Session.input_directory t.session)
        && Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side))
      && List.length (Session.buffers t.session) > 1
@@ -238,16 +243,16 @@ let tab_rect t ~(allocation : Geometry.Rect.t) =
   else None
 ;;
 
-let directory_rect t ~(allocation : Geometry.Rect.t) =
-  let allocation = match tab_rect t ~allocation with None -> allocation | Some _ ->
+let directory_rect ?(buffers_in_status = false) t ~(allocation : Geometry.Rect.t) =
+  let allocation = match tab_rect ~buffers_in_status t ~allocation with None -> allocation | Some _ ->
     { allocation with y = allocation.y + 1; height = allocation.height - 1 } in
   if Option.is_some (Session.input_directory t.session) && allocation.height >= 2 && allocation.width > 0
   then Some { allocation with height = 1 } else None
 ;;
 
-let geometry_in t ~allocation ~reserve_status_row =
-  let header = directory_rect t ~allocation in
-  let allocation = match tab_rect t ~allocation with
+let geometry_in ?(buffers_in_status = false) t ~allocation ~reserve_status_row =
+  let header = directory_rect ~buffers_in_status t ~allocation in
+  let allocation = match tab_rect ~buffers_in_status t ~allocation with
     | None -> allocation
     | Some _ -> { allocation with y = allocation.y + 1; height = allocation.height - 1 } in
   let allocation = match header with None -> allocation | Some _ ->
@@ -284,6 +289,13 @@ let workspace t ~width ~height =
         (directory_id, t.directory_size)))
     (if t.zen then { prefs with status_visible = false } else prefs)
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
+;;
+
+let buffers_in_status t ~width ~height =
+  View_command.Buffer_presentation.equal t.buffer_presentation Status_rows
+  && Option.exists (workspace t ~width ~height).status ~f:(fun pane ->
+    let content = (Tile_shell.layout Tile_shell.Policy.status pane.rect).content in
+    content.width > 0 && content.height > 0)
 ;;
 
 (* A supplied floating identity overrides its tiled placement, including when
@@ -518,7 +530,7 @@ let update_feedback t ~width ~height update =
 
 let geometry t ~width ~height =
   let allocation, reserve_status_row = input_allocation t ~width ~height in
-  geometry_in t ~allocation ~reserve_status_row
+  geometry_in ~buffers_in_status:(buffers_in_status t ~width ~height) t ~allocation ~reserve_status_row
 ;;
 
 (* All tab paths share lifetime, viewport, prefix and paste reconciliation. Held
@@ -602,11 +614,11 @@ let cursor_cells editor =
            | Normal | Visual _ -> false) )
 ;;
 
-let fitted_scroll_in t ~allocation ~reserve_status_row =
+let fitted_scroll_in ?(buffers_in_status = false) t ~allocation ~reserve_status_row =
   let editor = Controller.editor t.controller in
   let text = Editor.text editor in
   let line, span = cursor_cells editor in
-  let { Geometry.text = viewport; _ } = geometry_in t ~allocation ~reserve_status_row in
+  let { Geometry.text = viewport; _ } = geometry_in ~buffers_in_status t ~allocation ~reserve_status_row in
   Scroll.fit
     t.scroll
     ~fill:(not ([%equal: int option] t.rows (Some viewport.height)))
@@ -617,11 +629,11 @@ let fitted_scroll_in t ~allocation ~reserve_status_row =
     ~line_count:(Text_buffer.line_count text)
 ;;
 
-let cursor_position_in t ~allocation ~reserve_status_row =
+let cursor_position_in ?(buffers_in_status = false) t ~allocation ~reserve_status_row =
   if not (has_document t) then None else
   let cursor_line, (start, _) = cursor_cells (Controller.editor t.controller) in
-  let scroll = fitted_scroll_in t ~allocation ~reserve_status_row in
-  let { Geometry.text = viewport; _ } = geometry_in t ~allocation ~reserve_status_row in
+  let scroll = fitted_scroll_in ~buffers_in_status t ~allocation ~reserve_status_row in
+  let { Geometry.text = viewport; _ } = geometry_in ~buffers_in_status t ~allocation ~reserve_status_row in
   let x = start - scroll.left
   and y = cursor_line - scroll.top in
   if x >= 0 && x < viewport.width && y >= 0 && y < viewport.height
@@ -632,6 +644,7 @@ let cursor_position_in t ~allocation ~reserve_status_row =
 let fitted_scroll t ~width ~height =
   let allocation, reserve_status_row = input_allocation t ~width ~height in
   fitted_scroll_in
+    ~buffers_in_status:(buffers_in_status t ~width ~height)
     t
     ~allocation
     ~reserve_status_row
@@ -640,6 +653,7 @@ let fitted_scroll t ~width ~height =
 let cursor_position t ~width ~height =
   let allocation, reserve_status_row = input_allocation t ~width ~height in
   cursor_position_in
+    ~buffers_in_status:(buffers_in_status t ~width ~height)
     t
     ~allocation
     ~reserve_status_row
@@ -664,7 +678,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
-   | Next_tab | Previous_tab | Close_tab | Force_close_tab | Recreate_missing_file
+   | Next_tab | Previous_tab | Present_buffers _ | Close_tab | Force_close_tab | Recreate_missing_file
   | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files
   | Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory
   | Directory_major | Directory_side | Hide_directory | Focus_directory | Adjust_directory_size _
@@ -711,6 +725,12 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
+  | Present_buffers presentation -> Some
+      (match presentation with
+       | Top -> "Open buffers in top strip"
+       | Status_rows -> if t.zen then "Buffer rows saved for workspace; zen"
+         else if buffers_in_status t ~width ~height then "Open buffers in status rows"
+         else "Status rows requested (top strip fallback)")
   | Focus_problems | Focus_demo_report | Focus_history ->
     let focused = Host.spec t.host (focused_view t ~width ~height) in
     Some (Option.value (Host.notice t.host) ~default:(focused.title ^ " focused"))
@@ -912,6 +932,9 @@ let open_palette t ~width ~height =
 
 let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
+  | Present_buffers buffer_presentation ->
+    { t with buffer_presentation; rows = None
+      ; animation = Animation.create ~enabled:(Animation.enabled t.animation) }
   | Directory_major | Directory_side ->
     adopt_session_state t (Session.set_directory_placement (session t)
       (if View_command.equal view Directory_major then Major else Side)) ~width ~height

@@ -1,8 +1,13 @@
 open! Core
 open Ches_core
 
+module Config : sig
+  type t = Hidden | Exposed [@@deriving sexp_of, equal]
+  val default : t
+end
+
 (** Session-retained buffer, independent of placement or target editor group.
-    Identity text is the actual editor text; headers/kind hints are decorations. *)
+    Hidden identities live in text snapshots; headers/kind hints are decorations. *)
 type fingerprint = int * int * Core_unix.file_kind * int64 * float * float
 val fingerprint : string -> fingerprint
 val same_identity : fingerprint -> fingerprint -> bool
@@ -16,9 +21,11 @@ type t =
   ; fingerprints : fingerprint String.Map.t
   ; parent_identity : int * int
   ; marks : Int.Set.t
+  ; config : Config.t
+  ; identity_scope : string
   }
 val is_directory : string -> bool
-val load : ?previous:t -> id:Buffer_id.t -> path:string -> cell_width:Cell_layout.Width.t -> keymap_config:Ches_input.Keymap.Config.t -> unit -> t Or_error.t
+val load : ?previous:t -> ?config:Config.t -> id:Buffer_id.t -> path:string -> cell_width:Cell_layout.Width.t -> keymap_config:Ches_input.Keymap.Config.t -> unit -> t Or_error.t
 val select : t -> string -> t
 (** Current validated row resolved to its baseline backing entry, never the
     proposed destination. Invalid snapshots/fresh/blank rows resolve to None. *)

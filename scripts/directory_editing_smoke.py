@@ -39,8 +39,13 @@ def main():
 
     try:
         pump(1)
+        assert b"@ches[" not in capture
         send(b" vt vb")  # Leave history wide enough for actionable feedback.
         send(b" mmA.renamed\x1b")
+        assert b"@ches[" not in capture  # Active/edited rows never reveal IDs.
+        send(b"0iPREFIX")
+        assert b"@ches[" not in capture  # Including while still in Insert mode.
+        send(b"\x1bu")
         assert b"1 pending" in capture
         assert not (root / "a.txt.renamed").exists()
         send(b" r")
@@ -61,6 +66,7 @@ def main():
         send(b"u q")  # Text undo cannot undo the committed directory creation.
         assert proc.wait(timeout=5) == 0
         assert sorted(p.name for p in root.iterdir()) == ["a.txt", "fresh"]
+        assert b"@ches[" not in capture
         print("PASS: pending edits/undo, dirty refresh refusal, backing-path open,")
         print("      hidden dirty quit guard, fresh-row refusal, apply/undo boundary")
         print("Fixture:", root)

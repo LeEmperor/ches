@@ -66,7 +66,7 @@ let%expect_test "Space c c opens a focused palette in the bottom band, with a ba
     │ >                                                                            │|
     │ > Save buffer                                                        Space w │|
     │   Next file tab                                                    Space b n │|
-    ╰─ 1/49 | Enter run, Ctrl-n/p, Esc ────────────────────────────────────────────╯|
+    ╰─ 1/51 | Enter run, Ctrl-n/p, Esc ────────────────────────────────────────────╯|
     cursor: 4,12 Bar
     |}]
 ;;

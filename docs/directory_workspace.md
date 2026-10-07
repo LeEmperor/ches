@@ -49,7 +49,8 @@ Enter ignores unrelated marks. Marks are directory-local entry-ID decorations,
 outside text/undo/dirty state. Removing a row leaves its mark dormant until undo
 or commit. Invalid identity text refuses row actions. Fresh/copy rows require save
 before opening/marking; renamed rows open their original backing path until apply.
-Opening never implicitly saves. Yanking includes tokens, not headers/gutters/marks.
+Opening never implicitly saves. The clipboard contains names only in the default
+hidden mode, never protected IDs, headers/gutters/marks.
 
 Resource identity is lexical, absolute, case-sensitive path normalization: repeated
 slashes, `.` and `..` collapse, without realpath/inode deduplication. `link/..` thus
@@ -80,21 +81,50 @@ and one directory presentation, not simultaneous views.
 
 ## Identity editing and byte names
 
-Existing editable rows look like this (the notation `<TAB>` means an actual TAB):
+IDs are **always hidden by default**, including selected rows and Insert/Visual
+editing, in both major and side presentations. Existing editable rows look like:
 
 ```text
-@ches[1]<TAB>main.ml
-@ches[2]<TAB>src/
+main.ml
+src/
 ```
 
-Change **only the name** to rename, retaining ID, separator and existing directory
-`/` suffix. IDs belong to this directory's baseline, not row numbers. Whole-row
+Edit the name as ordinary text to rename, retaining the existing directory `/`
+suffix. Identity is protected metadata in immutable text/undo snapshots, not an
+editable prefix or a row-number guess. Replacing an entire name (including Visual
+line change) retains identity; an empty existing name is invalid until filled or
+its whole row deleted with `dd`/Visual line delete. IDs belong to this directory's
+baseline, not row numbers. Whole-row
 reordering has no disk effect. Bare rows create empty immediate-child files; a
 bare name ending in `/` creates a directory. Parents are never implicitly created.
-Blank rows are ignored. Existing kinds cannot change; FIFO/socket/device entries
+Fresh blank rows are ignored. Existing kinds cannot change; FIFO/socket/device entries
 are visible but read-only. Malformed, unknown or duplicate IDs invalidate the whole
-snapshot. Insert-mode Tab inserts spaces; retain/yank the existing TAB separator,
-or use bracketed paste to insert a literal TAB.
+snapshot. Linewise yank/delete/paste carries protected identity within the same
+directory; `ddp` reorders without disk changes. Whole-name characterwise yanks also
+retain identity internally. Pasting protected rows into another directory is
+refused; pasting into a file or the system clipboard inserts names only. Pasted
+text from the system clipboard has no identity and proposes fresh entries.
+Block yanks covering complete protected names cannot be pasted into directory
+buffers: use linewise operations instead. Partial block/characterwise fragments
+remain ordinary name text, not filesystem-copy instructions.
+
+Inserting a newline inside a name keeps identity on the left fragment and creates
+a fresh right row; inserting a whole line at column zero keeps the original
+identity with the original row on the right. Joining protected existing rows, or
+replacing several protected rows with one name, is ambiguous and refuses the whole
+plan: undo and use whole-row operations instead. Undo/redo restores text and IDs
+together. Editing never auto-reveals IDs.
+
+### Backend configuration
+
+There is no runtime configuration-file system. Code callers can explicitly select
+legacy exposed tokens with `Session.create ~directory_config:Directory_buffer.Config.Exposed`,
+or `Ui_state.create ~directory_config:Directory_buffer.Config.Exposed`; direct loads
+accept `Directory_buffer.load ~config:Directory_buffer.Config.Exposed`. The default
+is `Directory_buffer.Config.Hidden`, retained across navigation, refresh and apply.
+In exposed mode rows are `@ches[ID]<TAB>NAME` (literal TAB), and IDs/separators are
+editable legacy text. Keep them intact to rename; Insert-mode Tab inserts spaces,
+so use bracketed paste for a literal TAB. This backend option is not a CLI flag.
 
 Names use lossless printable ASCII byte encoding, even for Unicode/invalid UTF-8
 names. Bytes below 32 or at least 127, backslash, `@`, and leading/trailing spaces
@@ -104,7 +134,7 @@ Internal spaces stay literal. No trimming, shell quoting, glob, `~` or variable
 expansion occurs. Empty names, NUL, encoded slash and final `.`/`..` are invalid.
 All legal Unix filename bytes round-trip; file *contents* still require UTF-8/LF.
 
-Tokens are protected **by validation, not by blocking edits**. Removing a whole
+In exposed mode tokens are protected **by validation, not by blocking edits**. Removing a whole
 token can mean deletion of the original plus creation of a fresh entry, not rename.
 Exchanging valid tokens changes which identity is renamed. An invalid snapshot
 executes zero operations; a valid but destructive edit is not inferred away.
@@ -116,8 +146,21 @@ of its **empty** directory on Save. Nonempty deletion refuses the entire preflig
 including other operations. There is no recursive delete or trash fallback. A
 directory symlink is unlinked without touching its target.
 
-Duplicated `@ches[ID]` rows are invalid. To copy, yank/paste a row, change the
-copied token to `@copy[ID]`, and choose a distinct destination, retaining TAB/kind:
+Duplicated existing rows are invalid, not empty-file creation requests. In hidden
+mode, yank/paste a whole row, prefix its visible name with `@copy ` (one space),
+and choose a distinct destination, retaining the kind suffix:
+
+```text
+main.ml
+@copy ../backup/main.ml
+```
+
+The copy marker uses the pasted row's protected source identity; typing it on a
+fresh row is invalid. Prefixing the only original row converts it to a copy and
+requests deletion of the source as well, so normally keep the original row.
+After a partial apply, pending copies may carry the copy identity behind the
+scenes without the marker. In exposed mode, change the copied token to
+`@copy[ID]`, retaining TAB/kind (the notation `<TAB>` means a literal TAB):
 
 ```text
 @ches[1]<TAB>main.ml

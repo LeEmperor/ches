@@ -6,7 +6,7 @@ type placement = Major | Side
 type directory_presentation =
   { buffer : Buffer_id.t; placement : placement; target_group : Group_id.t; return_target : Buffer_id.t option }
 val directory_presentation : t -> directory_presentation option
-val create : ?cwd:string -> ?keymap_config:Keymap.Config.t -> cell_width:Cell_layout.Width.t -> Controller.t -> t
+val create : ?cwd:string -> ?keymap_config:Keymap.Config.t -> ?directory_config:Directory_buffer.Config.t -> cell_width:Cell_layout.Width.t -> Controller.t -> t
 val buffers : t -> (Buffer_id.t * Controller.t) list
 (** Active file tab underneath any major directory presentation. *)
 val active_id : t -> Buffer_id.t option

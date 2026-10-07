@@ -155,6 +155,16 @@ let default =
         ~keywords:[ "statusline"; "info"; "panel" ]
         Toggle_status
     ; view
+        ~id:"buffers.top"
+        ~title:"Show open buffers in top strip"
+        ~keywords:[ "file tabs"; "presentation"; "horizontal" ]
+        (Present_buffers Top)
+    ; view
+        ~id:"buffers.status-rows"
+        ~title:"Show open buffers as status rows"
+        ~keywords:[ "file tabs"; "presentation"; "vertical" ]
+        (Present_buffers Status_rows)
+    ; view
         ~id:"workspace.status-left"
         ~title:"Move status tile left"
         ~keywords:[ "position"; "dock" ]

@@ -59,13 +59,14 @@ let cursor (frame : Frame.t) : Cursor.t option =
     })
 ;;
 
-let app ?(smear_enabled = false) ?report ?source ?font controller ~exit ~dimensions (local_ graph)
+let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font controller ~exit ~dimensions (local_ graph)
   =
   let model, inject =
     Bonsai.state_machine_with_input
       ~default_model:
         (Ui_state.create
            ~smear_enabled
+           ?buffer_presentation
            ?report
            ~source_attached:(Option.is_some source)
            controller)
@@ -166,7 +167,7 @@ let app ?(smear_enabled = false) ?report ?source ?font controller ~exit ~dimensi
   ~view, ~handler
 ;;
 
-let run ?font ?report ?source controller =
+let run ?font ?buffer_presentation ?report ?source controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
@@ -178,7 +179,7 @@ let run ?font ?report ?source controller =
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-       (app ~smear_enabled:true ?report ?source ?font controller))
+       (app ~smear_enabled:true ?buffer_presentation ?report ?source ?font controller))
     ~f:(fun result ->
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;

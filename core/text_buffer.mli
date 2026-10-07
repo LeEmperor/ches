@@ -52,7 +52,7 @@ val validate : string -> (unit, Invalid_text.t) Result.t
 
 type t [@@deriving sexp_of]
 
-(** Equal iff the texts are byte-for-byte equal. *)
+(** Equality includes protected identity metadata, when present. *)
 val equal : t -> t -> bool
 
 val empty : t
@@ -61,6 +61,12 @@ val of_string : string -> (t, Invalid_text.t) Result.t
 (** The exact bytes of the text. *)
 val to_string : t -> string
 
+(** Protected row anchors carried by immutable snapshots, never by visible text.
+    Tokens are opaque to the text engine; duplicate anchors remain detectable. *)
+val identity_scope : t -> string option
+val identities : t -> (int * string) list
+val with_identities : t -> scope:string -> (int * string) list -> t
+
 (** Length in bytes. *)
 val length : t -> int
 
@@ -68,11 +74,11 @@ val length : t -> int
 
 (** [insert t ~at s] inserts [s] at boundary [at]. Returns [Error] if [s] is not
     accepted by {!validate}. Raises if [at] is not a boundary. *)
-val insert : t -> at:int -> string -> (t, Invalid_text.t) Result.t
+val insert : ?identities:(int * string) list -> t -> at:int -> string -> (t, Invalid_text.t) Result.t
 
 (** [delete t ~pos ~len] removes bytes [\[pos, pos + len)]. Both ends must be
     boundaries and [len >= 0]. *)
-val delete : t -> pos:int -> len:int -> t
+val delete : ?linewise:bool -> ?preserve_identities:bool -> t -> pos:int -> len:int -> t
 
 (** [slice t ~pos ~len] is bytes [\[pos, pos + len)]. Same requirements as
     {!delete}. *)

@@ -275,6 +275,11 @@ let block_register t block =
   let rows, width = Block.contents t.text ~cell_width:t.cell_width block in
   if List.for_all rows ~f:String.is_empty
   then t.unnamed_register
+  else if Option.is_some (B.identity_scope t.text)
+    && List.exists (Block.rows t.text ~cell_width:t.cell_width block) ~f:(fun row ->
+      List.exists (B.identities t.text) ~f:(fun (offset, _) ->
+        row.start <= offset && row.stop >= B.line_end t.text (B.line_of_offset t.text offset)))
+  then Some (Register.Protected_block { rows; width })
   else Some (Register.Block { rows; width })
 ;;
 
@@ -302,6 +307,17 @@ let leave_visual t ~cursor =
   set_cursor { t with mode = Normal; selection = None } cursor
 ;;
 
+let range_register t (range : Range.t) text =
+  match B.identity_scope t.text, range.kind with
+  | Some scope, kind ->
+    Register.Protected_text { text; scope; kind
+      ; identities = List.filter_map (B.identities t.text) ~f:(fun (offset, token) ->
+          if offset >= range.start && (offset < range.stop || (Register.Kind.equal kind Linewise && range.start = range.stop && offset = range.start))
+             && (Register.Kind.equal kind Linewise || B.line_end t.text (B.line_of_offset t.text offset) <= range.stop)
+          then Some (offset - range.start, token) else None) }
+  | _ -> Register.Text { text; kind = range.kind }
+;;
+
 let visual_yank t =
   match t.selection with
   | None -> t
@@ -315,7 +331,7 @@ let visual_yank t =
     let t =
       if String.is_empty selected && Register.Kind.equal range.kind Characterwise
       then t
-      else { t with unnamed_register = Some (Register.Text { text = selected; kind = range.kind }) }
+      else { t with unnamed_register = Some (range_register t range selected) }
     in
     leave_visual t ~cursor:(Int.min selection.anchor selection.active)
 ;;
@@ -353,9 +369,13 @@ let visual_delete t ~change =
     then leave_visual t ~cursor:range.start
     else (
       let deleted = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
-      let text = B.delete t.text ~pos:range.start ~len:(range.stop - range.start) in
+      let protected_change = change && Option.is_some (B.identity_scope t.text) in
+      let len = range.stop - range.start in
+      let len = if protected_change && len > 0 && String.is_suffix deleted ~suffix:"\n" then len - 1 else len in
+      let text = B.delete ~preserve_identities:protected_change
+        ~linewise:(Register.Kind.equal range.kind Linewise && not change) t.text ~pos:range.start ~len in
       let mode = if change then Mode.Insert else Mode.Normal in
-      let t = edit { t with mode; selection = None; unnamed_register = Some (Register.Text { text = deleted; kind = range.kind }) } ~text ~cursor:range.start in
+      let t = edit { t with mode; selection = None; unnamed_register = Some (range_register t range deleted) } ~text ~cursor:range.start in
       if change then t else commit t)
 ;;
 
@@ -678,15 +698,16 @@ let block_insert_points t =
 (* Normal mode: the cursor is on a code point other than LF unless its line is
    empty, in which case it sits on the LF (or end of text). *)
 let delete_range t (range : Range.t) =
-  if range.start = range.stop
+  if range.start = range.stop && not (Register.Kind.equal range.kind Linewise && Option.is_some (B.identity_scope t.text))
   then t
   else (
-    let deleted = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
-    let text = B.delete t.text ~pos:range.start ~len:(range.stop - range.start) in
+     let deleted = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
+     let register = range_register t range deleted in
+     let text = B.delete ~linewise:(Register.Kind.equal range.kind Linewise) t.text ~pos:range.start ~len:(range.stop - range.start) in
     let t = edit t ~text ~cursor:range.start in
     commit
       { t with
-        unnamed_register = Some (Register.Text { text = deleted; kind = range.kind })
+        unnamed_register = Some register
       })
 ;;
 
@@ -755,7 +776,7 @@ let yank_range t (range : Range.t) =
   let text = B.slice t.text ~pos:range.start ~len:(range.stop - range.start) in
   if String.is_empty text && Register.Kind.equal range.kind Characterwise
   then t
-  else { t with unnamed_register = Some (Register.Text { text; kind = range.kind }) }
+  else { t with unnamed_register = Some (range_register t range text) }
 ;;
 
 let yank_motion t motion ~count =
@@ -954,8 +975,15 @@ let paste t ~before ~count =
   check_count count;
   match t.unnamed_register with
   | None -> { t with message = Some (Error "Nothing in register") }
-  | Some (Block { rows; width }) -> paste_block t ~before ~count ~rows ~width
-  | Some (Text { text; kind = Characterwise }) ->
+   | Some (Protected_block _) when Option.is_some (B.identity_scope t.text) ->
+     { t with message = Some (Error "Use linewise yank/paste for protected directory rows, not a block") }
+   | Some (Protected_block { rows; width }) | Some (Block { rows; width }) -> paste_block t ~before ~count ~rows ~width
+   | Some (Protected_text { scope; identities = _ :: _; _ }) when Option.exists (B.identity_scope t.text) ~f:(fun current -> not (String.equal scope current)) ->
+     { t with message = Some (Error "Cannot paste protected rows into another directory; use an explicit fresh name instead") }
+   | Some (Protected_text { text; kind = Characterwise; _ }) | Some (Text { text; kind = Characterwise }) ->
+     let identities = match t.unnamed_register, B.identity_scope t.text with
+       | Some (Protected_text { identities; _ }), Some _ -> identities
+       | _ -> [] in
     (match repeat_text t text count with
      | Error message -> { t with message = Some (Error message) }
      | Ok inserted when String.is_empty inserted -> t
@@ -967,13 +995,17 @@ let paste t ~before ~count =
          else Option.value_exn (B.next_boundary t.text t.cursor)
        in
        let text =
-         B.insert t.text ~at inserted
+          B.insert ~identities:(List.concat (List.init count ~f:(fun i ->
+            List.map identities ~f:(fun (offset, token) -> i * String.length text + offset, token)))) t.text ~at inserted
          |> Result.map_error ~f:B.Invalid_text.to_string_hum
          |> Result.ok_or_failwith
        in
        let cursor = Option.value_exn (B.prev_boundary text (at + String.length inserted)) in
        commit (edit t ~text ~cursor))
-  | Some (Text { text; kind = Linewise }) ->
+   | Some (Protected_text { text; kind = Linewise; _ }) | Some (Text { text; kind = Linewise }) ->
+     let identities = match t.unnamed_register, B.identity_scope t.text with
+       | Some (Protected_text { identities; _ }), Some _ -> identities
+       | _ -> [] in
     let one = if String.is_suffix text ~suffix:"\n" then text else text ^ "\n" in
     (match repeat_text t one count with
      | Error message -> { t with message = Some (Error message) }
@@ -996,7 +1028,8 @@ let paste t ~before ~count =
        then { t with message = Some (Error "Paste is too large") }
        else (
          let text =
-           B.insert t.text ~at inserted
+            B.insert ~identities:(List.concat (List.init count ~f:(fun i ->
+              List.map identities ~f:(fun (offset, token) -> String.length separator + i * String.length one + offset, token)))) t.text ~at inserted
            |> Result.map_error ~f:B.Invalid_text.to_string_hum
            |> Result.ok_or_failwith
          in

@@ -181,6 +181,8 @@ let default =
     ; [ leader; Key.char 'b'; Key.char 'c' ], View Close_tab
     ; [ leader; Key.char 'b'; Key.char 'C' ], View Force_close_tab
     ; [ leader; Key.char 'b'; Key.char 'r' ], View Recreate_missing_file
+    ; [ leader; Key.char 'b'; Key.char 't' ], View (Present_buffers Top)
+    ; [ leader; Key.char 'b'; Key.char 's' ], View (Present_buffers Status_rows)
     ; view 'c' Toggle_centered
     ; view 'h' (Shift (-2))
     ; view 'l' (Shift 2)

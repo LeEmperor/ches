@@ -46,6 +46,7 @@ checks for [Ches](../README.md).
 | Normal | `Space b n` / `Space b p` | Next / previous file tab (wraps) |
 | Normal | `Space b c` / `Space b C` | Close tab / force-close and discard retained text |
 | Normal | `Space b r` | Recreate missing file exclusively from retained text |
+| Normal | `Space b t` / `Space b s` | Show file buffers in the top strip / as passive status rows |
 | Normal/Visual | `Space m m/s/u/c/o` (directory) | Toggle mark / mark / unmark selection / clear marks / open marked files |
 | Normal/Visual | `Space d m/s/h/f` | Major / side / hide / focus browser or editor |
 | Normal/Visual | `Space d +` / `Space d -` | Grow / shrink side width by four columns |
@@ -90,6 +91,17 @@ selection started). Leaving Insert mode steps the cursor back one character,
 as in Vim. Motions never change the text, the undo history, or `[+]`.
 
 ### Workspace status
+
+File buffers default to a top strip when more than one file is open. Start with
+`--buffers status` for rows inside the status tile, or switch using `Space b s`
+(**Show open buffers as status rows** in the palette). `Space b t` or
+`--buffers top` restores the strip. Status placement and size use the existing
+workspace controls; if status is hidden or cannot fit, buffers fall back to the
+strip. Zen hides both without changing the preference. Rows remain passive:
+`Space b n/p` switches files through the same session lifecycle. Both presentations
+disambiguate filenames and mark modified files with `*` and missing files with `!`
+(rows also show `[missing]`). A constrained list follows the active file and marks
+hidden neighbors with `^`/`v` where space permits.
 
 All installed tiles are shown at startup: the document, Status, Problems, and
 History, plus the demo report when launched with `--demo-report`. Keyboard focus

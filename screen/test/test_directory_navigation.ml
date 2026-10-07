@@ -71,7 +71,7 @@ let%test_unit "visual Enter batches all selection kinds, retains marks, and shar
       assert (Mode.equal (Editor.mode (Controller.editor (Ui_state.controller ui))) Normal);
       let before = text ui in
       let ui = run ui "Vjy oP" in
-      assert (String.is_prefix (text ui) ~prefix:"@ches[");
+      assert (String.is_prefix (text ui) ~prefix:"a.txt\nb.txt\n");
       let ui = run ui " o" in
       assert (String.equal before (text ui));
       Session.dispose (Ui_state.session ui)))
@@ -278,6 +278,6 @@ let%test_unit "typed lexical resource ownership and symlink-directory navigation
     (match Session.find_resource_buffer (Ui_state.session ui) (root ^ "/child/..") with
      | Some (Session.Directory_buffer d) -> assert (Buffer_id.equal d.id root_id)
      | _ -> assert false);
-    assert (List.is_empty (File_tabs.tabs (Ui_state.session ui)));
+    assert (List.is_empty (Open_buffers.of_session (Ui_state.session ui)));
     Session.dispose (Ui_state.session ui))
 ;;

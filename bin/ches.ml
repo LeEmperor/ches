@@ -8,6 +8,7 @@ let command =
        "Directory PATH opens an editable directory buffer (including ches .): Enter opens, \
          - goes to the parent, Space o toggles file/directory, Space r refreshes.\n\
          Files stay open in tabs: Space b n/p switches, b c closes, b C discards.\n\
+         Space b t/s shows buffers in the top strip/status rows (also --buffers top/status).\n\
          Visual Enter opens selected files; Space m m/s/u/c/o toggles/marks/unmarks/clears/opens marks.\n\
          Space d m/s/h/f selects major/side/hide/focus; d +/- sizes the side browser.\n\
          Edit only names after @ches[ID] and its TAB. Bare rows create files; final / creates directories.\n\
@@ -64,7 +65,14 @@ let command =
      and no_lsp = flag "--no-lsp" no_arg
        ~doc:" Do not run a language server (ocamllsp or slang-server)"
      and demo_report = flag "--demo-report" no_arg
-       ~doc:" Install a static, error-free report view for manual tile testing" in
+       ~doc:" Install a static, error-free report view for manual tile testing"
+     and buffer_presentation = flag "--buffers"
+       (optional_with_default Ches_input.View_command.Buffer_presentation.Top
+          (Command.Arg_type.create (function
+            | "top" -> Ches_input.View_command.Buffer_presentation.Top
+            | "status" -> Status_rows
+            | _ -> failwith "expected top or status")))
+       ~doc:"top|status File buffers in the top strip (default) or status rows" in
       fun () ->
        let fail error =
          eprintf "ches: %s\n" (Error.to_string_hum error);
@@ -97,7 +105,7 @@ let command =
                     Ches_source.Lsp_client.start ~config:lsp ~cell_width:Ches_screen.Cell_map.width
                       ~root:(Ches_source.Lsp_client.Config.root lsp path) ())) ())
            in
-           (match%bind Ches_ui.Editor_view.run ?report ?source controller with
+           (match%bind Ches_ui.Editor_view.run ~buffer_presentation ?report ?source controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;
