@@ -926,6 +926,22 @@ let%expect_test "Backspace deletes a whole soft tab" =
     |}]
 ;;
 
+let%expect_test "Ctrl-h (most terminals' Ctrl-Backspace) backspaces like Backspace" =
+  let t = run (create "") (keys "i<Tab>x<C-h><C-h><Esc>/ab<C-h><CR>") in
+  show t;
+  [%expect {|
+    (Enter_insert Before_cursor)
+    (Insert_soft_tab 2)
+    (Insert_text x)
+    (Delete_soft_tab_backward 2)
+    (Delete_soft_tab_backward 2)
+    Exit_insert
+    (Search(query a)(forward true)(count 1)(whole_word false))
+    NORMAL 0:0 (Error"Pattern not found: a")
+    > |
+    |}]
+;;
+
 let%expect_test "Space v layout bindings produce view actions, shown tagged" =
   let t = run (create "abc") (keys " v") in
   show t;

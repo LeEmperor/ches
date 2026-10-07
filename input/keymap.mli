@@ -55,12 +55,13 @@
       Normal  Space v p - / + / =    View Adjust_status_size -2 / 2 / 2
       Normal  Space v z              View Toggle_zen
       Normal  Space v r              View Reset
+      Normal  Space c c              View Open_palette
       Normal  Escape                 Cancel a pending count or sequence
       Both    Ctrl-c                 No command: cancel, and hint at Space q
       Insert  characters, Space      Insert_text (literal)
       Insert  Enter                  Insert_newline (autoindents)
       Insert  Tab                    Insert_soft_tab or Insert_text "\t" ({!Config.tab})
-      Insert  Backspace              Delete_soft_tab_backward or Delete_backward
+      Insert  Backspace, Ctrl-h      Delete_soft_tab_backward or Delete_backward
       Insert  Delete                 Delete_forward
       Insert  Escape                 Exit_insert
       Insert  j k                    Exit_insert ({!Config.insert_escape})
@@ -180,6 +181,9 @@ val reset : t -> t
 (** Look up configured Normal bindings without feeding editor input. Used for
     workspace-only routing while a companion pane owns input. *)
 val lookup : t -> Key.t list -> Bindings.lookup
+
+(** The configured Normal bindings ({!Config.t.normal}). *)
+val bindings : t -> Bindings.t
 
 (** [feed t ~mode input] interprets [input] in [mode] and returns the actions to
     perform, in order. *)

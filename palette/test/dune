@@ -1,0 +1,12 @@
+; Headless tests of the command palette backend. Like ches_palette, must not depend
+; on bonsai, bonsai_term, or any terminal library.
+
+(library
+ (name ches_palette_test)
+ (libraries ches_core ches_input ches_palette core expect_test_helpers_core)
+ ; See core/dune for why this flag is needed.
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

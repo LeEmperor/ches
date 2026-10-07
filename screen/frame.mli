@@ -40,8 +40,8 @@ type t =
 (** Compose the effective workspace's document, optional status tile, and minor views
     (each in the shared {!Tile_shell}, its content from its adapter) against a
     screen-sized backdrop. Only the cursor owner draws a terminal cursor: the document
-    (with its smear) when focused, or a focused minor view's open read-only text (see
-    {!Ui_state.text_cursor}). Scrolling and cursor placement share its document geometry.
+    (with its smear) when focused, or a focused minor view in the shape it asks for (see
+    {!Ui_state.minor_cursor}). Scrolling and cursor placement share its document geometry.
     Compact/zen layouts retain bottom-row feedback. An explicit [allocation] instead
     renders only the document there, clipped to screen bounds, reserving a status row
     by default. [reserve_status_row] overrides either policy for headless callers.

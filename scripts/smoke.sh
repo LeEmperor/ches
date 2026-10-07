@@ -1734,6 +1734,67 @@ expect_status "2:1"
 keys Space q
 expect_exit 0
 
+# ---------------------------------------------------------------------------
+section "command palette (Space c c)"
+resize 80 24
+printf 'one\ntwo\nthree\n' > "$work/palette.txt"
+cp "$work/palette.txt" "$work/palette.expected"
+launch palette.txt
+expect_status "1:1"
+keys Space c c
+expect_screen "╭─ Commands ─"
+expect_screen "> Save file"
+expect_screen "Space w"
+# Space and j/k are query text, never document input.
+type_text "gutter rel nmu"
+expect_screen "│ > gutter rel nmu"
+# Ctrl-w, and ^H (what most terminals send for Ctrl-Backspace; tmux's own C-BSpace
+# key name sends something else), each delete a word of the query.
+keys C-w
+expect_screen "│ > gutter rel  "
+keys C-h
+if poll eval '! screen_has "│ > gutter rel"'; then ok "^H deleted a word"; else fail "^H did not delete a word"; fi
+expect_screen "│ > gutter  "
+keys C-w
+type_text "rel num"
+expect_screen "│ > rel num"
+expect_screen "> Toggle relative line numbers"
+expect_screen "Space v N"
+save_screen "palette-open"
+keys Enter
+# From the default hybrid numbers, toggling relative ones off leaves absolute.
+expect_status "Line numbers: absolute"
+expect_no_screen "╭─ Commands ─"
+expect_cursor_row "1 one"
+# Escape cancels without running anything or reaching the document.
+keys Space c c
+expect_screen "╭─ Commands ─"
+type_text "jjdd"
+keys Escape
+if poll eval '! screen_has "╭─ Commands ─"'; then ok "Escape closed the palette"; else fail "palette still open after Escape"; fi
+expect_no_screen "[+]"
+expect_status "1:1"
+# A bracketed paste goes into the query.
+keys Space c c
+t set-buffer -b smoke 'undo'
+t paste-buffer -p -b smoke -t "$session"
+expect_screen "│ > undo"
+expect_screen "> Undo"
+keys Escape
+# Running a command from the palette shares its key binding's effects.
+keys x
+expect_status "[+]"
+keys Space c c
+type_text "undo"
+keys Enter
+expect_cursor_row "1 one"
+expect_no_screen "[+]"
+keys Space c c
+type_text "quit"
+keys Enter
+expect_exit 0
+expect_file "$work/palette.txt" "$work/palette.expected"
+
 echo
 echo "review screens (view with: cat FILE): $screens"
 if [ "$failures" -gt 0 ]; then

@@ -43,6 +43,7 @@ type t =
   ; report_visible : bool
   ; history_visible : bool
   ; history : History_tile.t
+  ; palette : Palette_tile.t option (** Open, and then focused, or closed. *)
   ; scroll : Scroll.t
   ; rows : int option
   (** Text rows the scroll was last fitted for: when they change, the fit fills the
@@ -87,6 +88,7 @@ let create
         ; Problems_tile.spec
         ; Report_tile.spec
         ; History_tile.spec
+        ; Palette_tile.spec
         ]
   ; problems_visible = false
   ; problems = Problems_tile.empty
@@ -94,6 +96,7 @@ let create
   ; report_visible = false
   ; history_visible = false
   ; history = History_tile.empty
+  ; palette = None
   ; scroll = Scroll.zero
   ; rows = None
   ; animation = Animation.create ~enabled:smear_enabled
@@ -117,6 +120,7 @@ let report t = t.report
 let report_visible t = t.report_visible
 let history_visible t = t.history_visible
 let history_tile t = t.history
+let palette t = t.palette
 let scroll t = t.scroll
 
 let message t =
@@ -214,7 +218,9 @@ let workspace t ~width ~height =
     then []
     else
       List.filter_opt
-        [ Option.some_if t.problems_visible Problems_tile.id
+        [ (* First, so that opening never fails for width while the band has room. *)
+          Option.some_if (Option.is_some t.palette) Palette_tile.id
+        ; Option.some_if t.problems_visible Problems_tile.id
         ; Option.some_if (t.report_visible && Option.is_some t.report) Report_tile.id
         ; Option.some_if t.history_visible History_tile.id
         ]
@@ -285,22 +291,30 @@ let text_view t id =
   else None
 ;;
 
-let text_cursor t ~width ~height =
+(* Where minor view [id]'s adapter wants the cursor in its [content] area. The palette
+   puts a bar after its query; a view with open read-only text puts a block on its text
+   cursor; others want none. *)
+let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option =
+  if View_id.equal id Palette_tile.id
+  then Option.map t.palette ~f:(Palette_tile.cursor ~width:content.width)
+  else
+    Option.map (text_view t id) ~f:(fun view ->
+      let view = Ches_tile.Text_view.fit view ~width:content.width ~rows:content.height in
+      let row, column = Ches_tile.Text_view.cursor_cell view ~width:content.width in
+      { Ches_tile.Cursor.row = row - Ches_tile.Text_view.top view; column; shape = Block })
+;;
+
+let minor_cursor t ~width ~height =
   match Host.cursor_owner t.host ~available:(available t ~width ~height) with
   | None -> None
   | Some id when View_id.equal id document_id -> None
   | Some id ->
-    Option.both (minor_layout t ~width ~height id) (text_view t id)
-    |> Option.bind ~f:(fun ((layout : Tile_shell.Layout.t), view) ->
+    Option.bind (minor_layout t ~width ~height id) ~f:(fun (layout : Tile_shell.Layout.t) ->
       let content = layout.content in
-      let view =
-        Ches_tile.Text_view.fit view ~width:content.width ~rows:content.height
-      in
-      let row, col = Ches_tile.Text_view.cursor_cell view ~width:content.width in
-      let y = row - Ches_tile.Text_view.top view in
-      Option.some_if
-        (col < content.width && y >= 0 && y < content.height)
-        (content.x + col, content.y + y))
+      Option.bind (cursor_intent t id ~content) ~f:(fun { row; column; shape } ->
+        Option.some_if
+          (column >= 0 && column < content.width && row >= 0 && row < content.height)
+          (content.x + column, content.y + row, shape)))
 ;;
 
 let problem_details t = Problems_tile.details t.problems
@@ -321,10 +335,13 @@ let leave t id =
   then { t with report = Option.map t.report ~f:Report_tile.leave }
   else if View_id.equal id History_tile.id
   then { t with history = History_tile.leave t.history }
+  else if View_id.equal id Palette_tile.id
+  then (* Leaving closes the palette and discards its query; nothing runs. *)
+    { t with palette = None }
   else t
 ;;
 
-let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id ]
+let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id; Palette_tile.id ]
 
 let return_to_document t =
   let t = List.fold minor_ids ~init:t ~f:leave in
@@ -351,6 +368,9 @@ let synchronize t ~width ~height =
           (Ches_error.Error.history (Controller.feedback t.controller))
           ~rows:(minor_rows t ~width ~height History_tile.id)
           ~width:(minor_width t ~width ~height History_tile.id)
+    ; palette =
+        Option.map t.palette
+          ~f:(Palette_tile.fit ~rows:(minor_rows t ~width ~height Palette_tile.id))
     }
   in
   let after = List.map minor_ids ~f:(text_view t) in
@@ -473,7 +493,8 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_status
   | Position_status _
   | Adjust_status_size _
-  | Toggle_zen -> prefs
+  | Toggle_zen
+  | Open_palette -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -520,6 +541,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   | Kill_source ->
     Some (if t.source_attached then "Diagnostic source kill requested" else no_source)
   | Inspect_problems | Scroll _ -> None
+  | Open_palette -> Host.notice t.host
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
       else if Option.is_none (Workspace.minor (workspace t ~width ~height) Problems_tile.id)
@@ -644,8 +666,50 @@ let toggle_focus t ~width ~height id ~show =
       { t with host = Host.focus t.host id }))
 ;;
 
+let palette_title = "Command palette"
+
+(* Open the palette for the document, focused. It opens only in Normal mode, and needs
+   room in the bottom band (it goes first there, so only a compact layout or zen leaves
+   none). From another minor view it leaves that view: the document is the target. *)
+let open_palette t ~width ~height =
+  let notice text = { t with host = Host.with_notice t.host text } in
+  let editor = Controller.editor t.controller in
+  if not (Mode.equal (Editor.mode editor) Normal)
+  then notice "Leave Insert/Visual mode before opening the command palette"
+  else if t.zen
+  then notice "Command palette unavailable in zen; Space v z restores the workspace"
+  else (
+    let palette =
+      Palette_tile.create
+        Ches_palette.Catalog.default
+        { mode = Editor.mode editor }
+        ~token:document_id
+        ~bindings:(Bindings.to_list (Keymap.bindings (Controller.keymap t.controller)))
+    in
+    let current = focused_view t ~width ~height in
+    let t =
+      { (leave t current) with
+        controller = Controller.cancel_pending t.controller
+      ; palette = Some palette
+      }
+    in
+    if not (available t ~width ~height Palette_tile.id)
+    then
+      { t with
+        palette = None
+      ; host = Host.with_notice (Host.return t.host) (palette_title ^ " cannot fit in compact layout")
+      }
+    else
+      { t with
+        host = Host.focus t.host Palette_tile.id
+      ; palette =
+          Some (Palette_tile.fit palette ~rows:(minor_rows t ~width ~height Palette_tile.id))
+      })
+;;
+
 let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
+  | Open_palette -> open_palette t ~width ~height
   | Focus_problems ->
     toggle_focus t ~width ~height Problems_tile.id ~show:(fun t ->
       { t with problems_visible = true })
@@ -718,14 +782,16 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Reset -> { t with prefs = apply_view t.prefs view }
 ;;
 
-let feed t ~width ~height (input : Keymap.Input.t) =
-  let controller, views, status = Controller.handle_input t.controller input in
+(* What follows a controller step, whether keyed or dispatched: its view commands in
+   order, then at most one notification. A keymap notice, which only a keyed step has,
+   wins over layout feedback for the last view command. *)
+let finish_step t ~width ~height ~controller ~views ~keymap_notice =
   let t =
     List.fold views ~init:{ t with controller } ~f:(fun t view ->
       apply_view_command t ~width ~height view)
   in
   let notification =
-    match Keymap.notice (Controller.keymap controller), List.last views with
+    match keymap_notice, List.last views with
     | Some text, _ -> Some (Ches_error.Error.Severity.Warning, "keymap", text, true)
     | None, Some view ->
       (* Layout feedback is transient chatter; history keeps keymap notices only. *)
@@ -733,15 +799,27 @@ let feed t ~width ~height (input : Keymap.Input.t) =
         Ches_error.Error.Severity.Info, "workspace", text, false)
     | None, None -> None
   in
-  let controller =
-    match notification with
-    | None -> t.controller
-    | Some (severity, source, text, history) ->
-      Controller.update_feedback
-        t.controller
-        (Notify { source; scope = None; severity; text; history })
-  in
-  { t with controller }, status
+  match notification with
+  | None -> t
+  | Some (severity, source, text, history) ->
+    { t with
+      controller =
+        Controller.update_feedback
+          t.controller
+          (Notify { source; scope = None; severity; text; history })
+    }
+;;
+
+let feed t ~width ~height (input : Keymap.Input.t) =
+  let controller, views, status = Controller.handle_input t.controller input in
+  ( finish_step
+      t
+      ~width
+      ~height
+      ~controller
+      ~views
+      ~keymap_notice:(Keymap.notice (Controller.keymap controller))
+  , status )
 ;;
 
 (* A capture notice in the focused view's footer, also reported as feedback from it. *)
@@ -847,8 +925,93 @@ let feed_capture t ~width ~height id key =
     | Some _ | None -> return_to_document t)
 ;;
 
+(* A finished paste for minor view [id], which started it and accepts paste. It is never
+   redirected: if [id] is no longer allocated it is dropped with a notice. Each
+   adapter that accepts paste takes the text here, beside its keys in {!feed_capture},
+   and sanitizes it itself. *)
+let paste_capture t ~width ~height id text =
+  let title = (Host.spec t.host id).title in
+  if not (available t ~width ~height id)
+  then pane_notice t ~source:id (sprintf "%s closed; paste dropped" title)
+  else (
+    match t.palette with
+    | Some palette when View_id.equal id Palette_tile.id ->
+      { t with
+        palette =
+          Some
+            (Palette_tile.update
+               palette
+               ~rows:(minor_rows t ~width ~height id)
+               (Paste text))
+      }
+    | Some _ | None -> pane_notice t ~source:id (sprintf "%s: paste unsupported" title))
+;;
+
+(* Accepting the palette: close it and return to the document, then dispatch the
+   command once through the controller's shared route, as its key binding would. A
+   refusal closes it too and says why; nothing runs on another target. *)
+let accept_palette t ~width ~height palette =
+  let editor = Controller.editor t.controller in
+  let context : Ches_palette.Catalog.Context.t option =
+    Option.some_if
+      (View_id.equal (Ches_palette.Palette.token palette) document_id)
+      { Ches_palette.Catalog.Context.mode = Editor.mode editor }
+  in
+  let refuse text = pane_notice (return_to_document t) ~source:Palette_tile.id text in
+  match Ches_palette.Palette.accept palette ~context with
+  | No_selection -> { t with host = Host.with_notice t.host "No matching command" }, Controller.Status.Running
+  | Target_gone _ -> refuse "The palette's document is gone; nothing ran", Running
+  | Unavailable { id; _ } ->
+    let title =
+      Option.value_map
+        (Ches_palette.Catalog.find Ches_palette.Catalog.default id)
+        ~default:(Ches_palette.Catalog.Id.to_string id)
+        ~f:Ches_palette.Catalog.Entry.title
+    in
+    refuse (sprintf "%s is unavailable here; nothing ran" title), Running
+  | Execute { action; _ } ->
+    let t = return_to_document t in
+    let controller, views, status = Controller.dispatch t.controller [ action ] in
+    finish_step t ~width ~height ~controller ~views ~keymap_notice:None, status
+;;
+
+(* A key typed into the open palette. Every character is query text (it accepts text),
+   so only Escape, Tab, and Ctrl-c are the host's. *)
+let feed_palette t ~width ~height palette key =
+  let host, (decision : _ Host.Decision.t) =
+    Host.key
+      t.host
+      key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Palette_tile.interpret
+      ~escape:None
+      ~hint:Palette_tile.hint
+  in
+  let t = { t with host } in
+  match decision with
+  | Handled -> t, Controller.Status.Running
+  | Return -> return_to_document t, Running
+  | Notice text -> { t with host = Host.with_notice t.host text }, Running
+  | Workspace view -> apply_view_command t ~width ~height view, Running
+  | Content (Event event) ->
+    ( { t with
+        palette =
+          Some
+            (Palette_tile.update
+               palette
+               ~rows:(minor_rows t ~width ~height Palette_tile.id)
+               event)
+      }
+    , Running )
+  | Content Accept -> accept_palette t ~width ~height (Palette_tile.palette palette)
+;;
+
 let route t ~width ~height key =
   match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id when View_id.equal id Palette_tile.id ->
+    (match t.palette with
+     | Some palette -> feed_palette t ~width ~height palette key
+     | None -> return_to_document t, Controller.Status.Running)
   | Some id -> feed_capture t ~width ~height id key, Controller.Status.Running
   | None -> feed t ~width ~height (Key key)
 ;;
@@ -947,8 +1110,8 @@ and apply_running t ~width ~height (input : Input.t) =
          | host, `Not_pasting -> { t with host }, Running
          | host, `Deliver (owner, text) when View_id.equal owner document_id ->
            feed ~width ~height { t with host } (Paste text)
-         | host, `Deliver (owner, _) ->
-           pane_notice { t with host } ~source:owner "Paste is unsupported here", Running
+         | host, `Deliver (owner, text) ->
+           paste_capture { t with host } ~width ~height owner text, Running
          | host, `Reject (owner, text) -> pane_notice { t with host } ~source:owner text, Running)
       | Key key when Host.pasting t.host -> { t with host = Host.paste_key t.host key }, Running
       | Key key -> route ~width ~height t key

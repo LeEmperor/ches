@@ -187,7 +187,7 @@ let%expect_test "focused list/details remain bounded in every status position an
              details the text cursor, always inside the pane's content area. *)
           if Ui_state.problems_focused t ~width ~height then (
             let cursor = Option.map frame.cursor ~f:(fun c -> c.x, c.y) in
-            assert ([%equal: (int * int) option] cursor (Ui_state.text_cursor t ~width ~height));
+            assert ([%equal: (int * int) option] cursor (Option.map (Ui_state.minor_cursor t ~width ~height) ~f:(fun (x, y, _) -> x, y)));
             assert (Option.is_none cursor || Ui_state.problem_details t);
             Option.iter cursor ~f:(fun (x, y) ->
               let content =

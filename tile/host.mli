@@ -63,7 +63,9 @@ end
     - Ctrl-c gives a notice; Tab returns.
     - A sequence starting with the leader is looked up in [lookup] (the configured
       keymap). View commands run, except document scrolling. Editor commands and
-      unbound sequences are rejected.
+      unbound sequences are rejected. In a view that accepts text
+      ({!Spec.t.accepts_text}) the leader is text like any other key: Escape returns
+      first, and the leader then works from the primary view.
     - Other keys go to [content]. An unbound key gives [hint], or cancels a pending
       content prefix.
 

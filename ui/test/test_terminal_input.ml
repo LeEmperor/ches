@@ -50,7 +50,7 @@ let%expect_test "terminal events become normalized keys" =
     ((Key_press (key Tab)) -> ((Key Tab)))
     ((Key_press (key Tab) (mods (Shift))) -> ())
     ((Key_press (key Backspace)) -> ((Key Backspace)))
-    ((Key_press (key Backspace) (mods (Ctrl))) -> ((Key Backspace)))
+    ((Key_press (key Backspace) (mods (Ctrl))) -> ((Key (Ctrl h))))
     ((Key_press (key Delete)) -> ((Key Delete)))
     ((Key_press (key Escape)) -> ((Key Escape)))
     ((Key_press (key (ASCII x)) (mods (Meta))) ->
