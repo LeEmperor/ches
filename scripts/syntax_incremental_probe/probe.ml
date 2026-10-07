@@ -2,7 +2,7 @@
    Automatic GC is included; forced GC only separates benchmark modes. *)
 open! Core
 open Ches_highlight
-module Provider = Ches_highlight_ocaml.Provider
+module Provider = Ches_highlight_tree_sitter.Provider
 
 let measure ~incremental ~language source =
   let provider = Provider.create ~language in

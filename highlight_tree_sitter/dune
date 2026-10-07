@@ -1,0 +1,5 @@
+(library
+ (name ches_highlight_tree_sitter)
+ (private_modules ocaml_queries systemverilog_queries)
+ (libraries ches_highlight core tree-sitter tree-sitter.ocaml ches_tree_sitter_systemverilog)
+ (preprocess (pps ppx_jane)))

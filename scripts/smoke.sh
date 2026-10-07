@@ -1546,6 +1546,24 @@ expect_screen "slang-server unavailable: slang-server not found"
 keys Space q
 expect_exit 0
 
+section "SystemVerilog syntax colors without a language server"
+printf 'module top;\n  logic q;\nendmodule\n' > "$work/syntax.sv"
+launch syntax.sv --no-lsp
+keys j
+expect_screen "module top;"
+expect_screen "logic q;"
+systemverilog_colors_present() {
+  colored_row_has "module" && colored_row_has "top" && ! colored_row_has "module top;"
+}
+if poll systemverilog_colors_present; then
+  ok "module keyword and name have distinct syntax styles"
+else
+  fail "SystemVerilog syntax styles missing"
+fi
+save_screen "systemverilog-syntax"
+keys Space q
+expect_exit 0
+
 section "no language server: other files, none on PATH, --no-lsp"
 resize 80 24
 printf 'ERROR\n' > "$work/lspproj/notes.txt"

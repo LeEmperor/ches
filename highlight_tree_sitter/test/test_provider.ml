@@ -1,6 +1,6 @@
 open! Core
 open Ches_highlight
-open Ches_highlight_ocaml
+open Ches_highlight_tree_sitter
 
 let make_key provider ?(revision = 0) () =
   Provider.key provider ~document:(Snapshot.Document_id.create ()) ~revision
@@ -155,7 +155,7 @@ let%test_unit "numeric forms, multiline strings, escaped characters and Unicode 
 let%test_unit "unfinished strings/comments and syntax errors remain ordinary editing states" =
   List.iter [ Language.Ocaml; Ocaml_interface ] ~f:(fun language ->
     let provider = Provider.create ~language in
-    let header = match language with Ocaml -> "let x =" | Ocaml_interface -> "val x :" | Plain -> assert false in
+    let header = match language with Ocaml -> "let x =" | Ocaml_interface -> "val x :" | Plain | Systemverilog -> assert false in
     List.iter [ header ^ " )"; "(* outer\n (* unfinished"; header ^ " \"unfinished" ] ~f:(fun source ->
       let result = run provider source in
       assert (match result.status with Highlighted _ -> true | Plain _ -> false));
@@ -264,7 +264,7 @@ let%test_unit "reused sessions equal fresh providers across unrelated documents 
       match language with
       | Ocaml -> [ "let f x = \"é\\n\"\n"; "(* a\n (* b *) *)\nlet x = 42"; "let x ="; "" ]
       | Ocaml_interface -> [ "val f : int -> string\n"; "(* a\n (* b *) *)\nval x : int"; "val x :"; "" ]
-      | Plain -> assert false
+      | Plain | Systemverilog -> assert false
     in
     for i = 0 to 39 do
       let source = List.nth_exn sources (i mod List.length sources) in

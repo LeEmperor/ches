@@ -2,7 +2,7 @@ open! Core
 open Ches_core
 open Ches_app
 open Ches_highlight
-module Provider = Ches_highlight_ocaml.Provider
+module Provider = Ches_highlight_tree_sitter.Provider
 
 let text source =
   Text_buffer.of_string source
@@ -66,9 +66,17 @@ let%test_unit "case-sensitive detection, initial highlights and per-document ide
     [ None, Language.Plain; Some "f", Plain; Some "f.txt", Plain
     ; Some "f.ML", Plain; Some "f.Mli", Plain; Some "f.ml.bak", Plain
     ; Some "f.ml", Ocaml; Some "f.mli", Ocaml_interface
+    ; Some "f.sv", Systemverilog; Some "f.svh", Systemverilog
+    ; Some "f.v", Systemverilog; Some "f.vh", Systemverilog
+    ; Some "f.SV", Plain; Some "f.sv.bak", Plain
     ] ~f:(fun (path, language) ->
       assert (Language.equal (Language.of_path path) language);
-      let t = create ?path (if Language.equal language Ocaml_interface then "val f : int -> int\n" else "let f x = x\n") in
+      let initial = match language with
+        | Ocaml_interface -> "val f : int -> int\n"
+        | Systemverilog -> "module top; logic q; endmodule\n"
+        | Ocaml | Plain -> "let f x = x\n"
+      in
+      let t = create ?path initial in
       assert (count t = if Language.equal language Plain then 0 else 1);
       current t;
       Controller.close t);

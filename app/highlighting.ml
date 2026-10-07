@@ -2,7 +2,7 @@ open! Core
 open Ches_core
 open Ches_highlight
 
-module Provider = Ches_highlight_ocaml.Provider
+module Provider = Ches_highlight_tree_sitter.Provider
 
 type runtime =
   { mutable provider : Provider.t option
@@ -32,7 +32,7 @@ let update t editor ~reset =
   in
   let key =
     Snapshot.Key.create ~document:t.document ~revision:(Editor.revision editor)
-      ~language ~configuration:Provider.configuration
+      ~language ~configuration:(Provider.configuration_for_language language)
   in
   if not reset && Snapshot.Key.equal t.key key then t
   else if Language.equal language Plain then (

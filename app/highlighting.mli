@@ -10,7 +10,7 @@ type t
 val create : Editor.t -> t
 val update : t -> Editor.t -> reset:bool -> t
 val snapshot : t -> Snapshot.Key.t * Snapshot.t
-val status : t -> Ches_highlight_ocaml.Provider.Status.t option
+val status : t -> Ches_highlight_tree_sitter.Provider.Status.t option
 val parse_count : t -> int
 val close : t -> unit
 

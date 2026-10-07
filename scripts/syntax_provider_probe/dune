@@ -1,3 +1,3 @@
 (executable
  (name probe)
- (libraries ches_highlight ches_highlight_ocaml unix))
+ (libraries ches_highlight ches_highlight_tree_sitter unix))

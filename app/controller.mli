@@ -55,7 +55,7 @@ val highlights : t -> Ches_highlight.Snapshot.Key.t * Ches_highlight.Snapshot.t
 
 (** None for plain-text files; failures are cached silently, without altering editor
     feedback. A changed key or successful reload retries a failed provider. *)
-val highlight_status : t -> Ches_highlight_ocaml.Provider.Status.t option
+val highlight_status : t -> Ches_highlight_tree_sitter.Provider.Status.t option
 
 (** Cumulative actual parse attempts for this document's shared runtime; diagnostic
     only, not a snapshot/history counter. Reading it does no provider work. *)

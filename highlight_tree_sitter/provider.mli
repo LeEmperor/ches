@@ -1,7 +1,7 @@
 open! Core
 open Ches_highlight
 
-(** Synchronous, privately owned OCaml parser/query session. Never put it in editor
+(** Synchronous, privately owned Tree-sitter parser/query session. Never put it in editor
     history or render state. Not safe for concurrent calls. Native trees remain
     private; only immutable normalized snapshots escape. *)
 type t
@@ -25,15 +25,17 @@ end
 
 type result = { snapshot : Snapshot.t; status : Status.t }
 
-(** Pinned provider/query version; include it in highlight freshness keys. *)
+(** OCaml provider/query version, retained for OCaml callers. *)
 val configuration : string
+(** Pinned grammar/query version for the selected language; include it in freshness keys. *)
+val configuration_for_language : Language.t -> string
 val create : language:Language.t -> t
 
 (** Constructs the provider's language/configuration key. The caller supplies
     authoritative identity and revision for the source it will pass to highlight. *)
 val key : t -> document:Snapshot.Document_id.t -> revision:int -> Snapshot.Key.t
 
-(** Malformed OCaml is queried normally and may produce useful highlights.
+(** Malformed source is queried normally and may produce useful highlights.
     Provider/input/key failure returns an empty CURRENT snapshot and a status,
     never a previous result. Expected binding exceptions are caught; process-fatal
     exceptions such as out-of-memory are not hidden. A parse/query failure disables

@@ -585,11 +585,12 @@ changes, after restoring the terminal.
 
 ## Syntax highlighting
 
-Ches highlights OCaml implementation (`.ml`) and interface (`.mli`) files locally
-with Tree-sitter. Suffix detection is case-sensitive: `.ML`, extensionless files,
-other languages, and buffers without an associated path stay plain text. No
-language server, network access, external query files, or Neovim installation is
-needed at runtime. Syntax highlighting does not change editing, `%`, saved bytes,
+Ches highlights OCaml implementation (`.ml`) and interface (`.mli`) files, plus
+SystemVerilog (`.sv`, `.svh`) and Verilog (`.v`, `.vh`), locally with Tree-sitter.
+Verilog uses the SystemVerilog grammar. Suffix detection is case-sensitive: `.ML`,
+`.SV`, extensionless files, unsupported languages, and buffers without a path stay
+plain text. No language server, network access, external query files, or Neovim
+installation is needed at runtime. Syntax highlighting does not change editing, `%`, saved bytes,
 registers, dirty state, or undo/redo.
 
 Keywords, strings/escapes, numbers, nested comments and structural type/function/
@@ -622,11 +623,14 @@ is independent, and blank padding is not syntax-colored. No theme/config engine
 or extra font styles are required.
 
 The pinned **`tree-sitter.0.1.0`** opam package supplies the compiled-in runtime and
-both grammars (`tree-sitter` and `tree-sitter.ocaml` Dune libraries). Building it
-needs a C compiler, not Node, a Tree-sitter CLI or grammar regeneration. The queries
-are Ches-owned, predicate-free strings in `highlight_ocaml/queries.ml`. Packaging,
+the OCaml grammars (`tree-sitter` and `tree-sitter.ocaml` Dune libraries). The
+SystemVerilog grammar is pinned and bundled in `highlight_tree_sitter/grammar`; its
+generated C parser is stored compressed and expanded by `gzip` during the build.
+Building needs a C compiler and gzip, not Node, a Tree-sitter CLI or grammar
+regeneration. Queries are Ches-owned, predicate-free strings in
+`highlight_tree_sitter/ocaml_queries.ml` and `systemverilog_queries.ml`. Packaging,
 ownership and unresolved bundled-asset provenance/license-notice findings are
-recorded in [`highlight_ocaml/ASSETS.md`](highlight_ocaml/ASSETS.md); technical
+recorded in [`highlight_tree_sitter/ASSETS.md`](highlight_tree_sitter/ASSETS.md); technical
 verification is not a license-compliance finding.
 
 Regression tests run with `dune runtest`; explicit performance probes are separate:
@@ -806,13 +810,13 @@ input/         ches_input: terminal-independent keys and modal keymap
 app/           ches_app: file loading/saving, input controller and highlight cache
 highlight/     ches_highlight: provider-independent byte ranges, categories,
                snapshot keys, normalization/lookup and incremental edit descriptions
-highlight_ocaml/ ches_highlight_ocaml: privately owned Tree-sitter provider and queries
+highlight_tree_sitter/ ches_highlight_tree_sitter: privately owned Tree-sitter provider and queries
 screen/        ches_screen: Bonsai-free screen model: cell mapping, geometry,
                scrolling, UI state and transition, status fields and their
                layouts, rendered frames
 ui/            ches_ui: Bonsai_term frontend (event adapter, theme, app)
 test/          core, input, and app tests (expect tests, Quickcheck, temp-dir file tests)
-highlight/test/, highlight_ocaml/test/  range/edit and fresh/incremental provider tests
+highlight/test/, highlight_tree_sitter/test/  range/edit and fresh/incremental provider tests
 screen/test/   headless screen-model tests, including live syntax/overlay geometry
 ui/test/       event adapter tests and Bonsai_term_test tests of the app
 scripts/       smoke.sh plus explicitly invoked syntax feasibility/performance probes
@@ -906,7 +910,7 @@ The smoke script cannot check these, so check them in a real terminal:
 - Nothing flickers while typing fast, scrolling, or resizing.
 - Pasting from the terminal's own clipboard inserts text literally in Insert mode.
   This depends on the terminal; the script pastes through tmux.
-- Syntax acceptance: open `highlight_ocaml/provider.ml`, `core/text_buffer.mli`
+- Syntax acceptance: open `highlight_tree_sitter/provider.ml`, `core/text_buffer.mli`
   and `README.md` to compare `.ml`, `.mli` and plain-text fallback. Check readability
   under `/` search/current matches, character/line/block selections and block-insert
   points, then clear overlays and confirm syntax returns. Insert a multiline comment
@@ -946,7 +950,7 @@ and changes made to the file by other programs are not detected.
   of the view it is not drawn.
 - No soft wrapping: long lines scroll horizontally.
 - One document at a time. The only `:` command is `:e!`; there is no general Ex
-  prompt. Search and local OCaml syntax highlighting are supported; semantic tokens,
+  prompt. Search and local OCaml/Verilog/SystemVerilog syntax highlighting are supported; semantic tokens,
   other languages and language-server features are not. Word motions use the
   simple character classes above, not Unicode word properties.
 - Large files are slow to edit and undo history grows without limit; see

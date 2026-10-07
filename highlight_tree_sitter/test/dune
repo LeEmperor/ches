@@ -1,0 +1,5 @@
+(library
+ (name ches_highlight_tree_sitter_test)
+ (libraries ches_highlight ches_highlight_tree_sitter core expect_test_helpers_core)
+ (inline_tests (flags (:standard -source-tree-root .)))
+ (preprocess (pps ppx_jane)))

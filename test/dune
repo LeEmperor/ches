@@ -7,7 +7,7 @@
   ches_core
    ches_input
    ches_highlight
-   ches_highlight_ocaml
+   ches_highlight_tree_sitter
   core
   core_unix
   expect_test_helpers_core)

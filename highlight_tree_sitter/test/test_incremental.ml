@@ -1,6 +1,6 @@
 open! Core
 open Ches_highlight
-open Ches_highlight_ocaml
+open Ches_highlight_tree_sitter
 
 let compare_result (actual : Provider.result) (expected : Provider.result) =
   assert (Provider.Status.equal actual.status expected.status);
