@@ -83,6 +83,15 @@ let floating_layer ?allocation ?floating ui ~width ~height =
           }))
 ;;
 
+let overlay_floating rows (layer : Floating_layer.t) ~focused =
+  let outer = layer.layout.outer in
+  let layer_rows = Array.of_list (Tile_shell.render layer.layout ~focused layer.content) in
+  List.mapi rows ~f:(fun y row ->
+    if y < outer.y || y >= outer.y + outer.height
+    then row
+    else Span.overlay row ~x:outer.x ~width:outer.width layer_rows.(y - outer.y))
+;;
+
 let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
@@ -452,13 +461,7 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
     match floating with
     | None -> rows
     | Some layer ->
-      let outer = layer.layout.outer in
-      let layer_rows = Array.of_list (Tile_shell.render layer.layout
-        ~focused:(Ches_tile.View_id.equal focused_view layer.id) layer.content) in
-      List.mapi rows ~f:(fun y row ->
-        if y < outer.y || y >= outer.y + outer.height
-        then row
-        else Span.overlay row ~x:outer.x ~width:outer.width layer_rows.(y - outer.y))
+      overlay_floating rows layer ~focused:(Ches_tile.View_id.equal focused_view layer.id)
   in
   let animation = Ui_state.animation ui in
   let document_cursor =
@@ -549,16 +552,9 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
         let tail = drop_backdrop row (layout.outer.x + layout.outer.width) in
          Span.merge (Span.take row ~n:layout.outer.x @ List.nth_exn side (y - layout.outer.y) @ tail)) in
       (* Floats cover the entire workspace, including the directory side pane. *)
-      let rows = match floating with
-        | None -> rows
-        | Some layer ->
-          let outer = layer.layout.outer in
-          let layer_rows = Array.of_list (Tile_shell.render layer.layout
-            ~focused:(Ches_tile.View_id.equal (Ui_state.focused_view ui ~width ~height) layer.id)
-            layer.content) in
-          List.mapi rows ~f:(fun y row ->
-            if y < outer.y || y >= outer.y + outer.height then row
-            else Span.overlay row ~x:outer.x ~width:outer.width layer_rows.(y - outer.y)) in
+      let rows = Option.fold floating ~init:rows ~f:(fun rows layer ->
+        let focused_view = Ui_state.focused_view ~floating:(layer.id, Some layer.layout) ui ~width ~height in
+        overlay_floating rows layer ~focused:(Ches_tile.View_id.equal focused_view layer.id)) in
       let cursor = if focused then Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) -> { Cursor.x; y; shape = Block }) else file.cursor in
       { file with rows; cursor; smear = (if focused then [] else file.smear) }
     | _ -> render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height

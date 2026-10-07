@@ -333,6 +333,13 @@ let workspace t ~width ~height =
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
 ;;
 
+let buffers_in_status t ~width ~height =
+  View_command.Buffer_presentation.equal t.buffer_presentation Status_rows
+  && Option.exists (workspace t ~width ~height).status ~f:(fun pane ->
+    let content = (Tile_shell.layout Tile_shell.Policy.status pane.rect).content in
+    content.width > 0 && content.height > 0)
+;;
+
 let palette_placement ~width ~height =
   Floating.layout
     ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
@@ -386,13 +393,6 @@ let effective_floating floating t ~width ~height =
        Palette_tile.id, palette_layout t ~width ~height))
 ;;
 
-let buffers_in_status t ~width ~height =
-  View_command.Buffer_presentation.equal t.buffer_presentation Status_rows
-  && Option.exists (workspace t ~width ~height).status ~f:(fun pane ->
-    let content = (Tile_shell.layout Tile_shell.Policy.status pane.rect).content in
-    content.width > 0 && content.height > 0)
-;;
-
 (* A supplied floating identity overrides its tiled placement, including when
    resize makes its layout unavailable. Otherwise resolve the live palette. *)
 let view_layout_in ?floating (workspace : Workspace.t) id =
@@ -432,7 +432,8 @@ let input_allocation t ~width ~height =
   | _ -> let w = workspace t ~width ~height in w.document.rect, w.reserve_status_row
 ;;
 
-let focused_view ?floating t ~width ~height = Host.focused t.host ~available:(view_available ?floating t ~width ~height)
+let focused_view ?floating t ~width ~height =
+  Host.focused t.host ~available:(view_available ?floating t ~width ~height)
 
 let cursor_owner ?floating t ~width ~height =
   Option.filter (Host.cursor_owner t.host ~available:(view_available ?floating t ~width ~height))

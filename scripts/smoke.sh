@@ -1929,13 +1929,13 @@ save_screen "palette-workspace-after"
 keys Space c c
 type_text 'tile'
 keys Tab Tab Tab Tab BTab
-expect_screen "4/18 | Enter run"
+expect_screen "4/19 ─"
 expect_palette 20 13 80 14
 resize 50 12
 expect_palette 1 1 48 10
 expect_cursor "9 2 1"
 expect_screen "│ > tile"
-expect_screen "4/18 | Enter run"
+expect_screen "4/19 ─"
 save_screen "palette-resize-clamped"
 resize 14 4
 expect_palette 0 0 14 4
@@ -1943,7 +1943,7 @@ expect_cursor "7 1 1"
 save_screen "palette-minimum"
 resize 120 40
 expect_palette 20 13 80 14
-expect_screen "4/18 | Enter run"
+expect_screen "4/19 ─"
 expect_screen "│ > tile"
 save_screen "palette-resize-restored"
 resize 120 3

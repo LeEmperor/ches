@@ -19,8 +19,8 @@ Follow-up navigation now uses Tab/Shift-Tab (or Ctrl-n/p) to select results;
 Escape cancels and Enter runs the selected command. Historical Tab-closes claims
 below describe earlier milestones, superseded by phases 10–13 of `FILE_PICKER_PLAN.md`.
 
-Status: stages 1–5 software-complete (docked milestone; floating presentation is later
-work). Human feedback on the terminal UI is pending. Stage 3, the host extensions,
+Original milestone status: stages 1–5 software-complete (docked presentation).
+Human feedback on the terminal UI is pending. Stage 3, the host extensions,
 stage 4, and the word-delete follow-up are uncommitted.
 The tiling system (7A–7C, 8, diagnostic sources) is merged into `oxcaml` (`ef77f9a`)
 and this branch (`4ccde73`). See
