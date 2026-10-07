@@ -76,7 +76,12 @@ let default =
   in
   let numbers = [ "gutter"; "numbering"; "line numbers" ] in
   create
-    [ editor ~id:"file.save" ~title:"Save file" ~keywords:[ "write"; "w" ] Save
+     [ editor ~id:"file.save" ~title:"Save buffer" ~keywords:[ "write"; "w"; "file"; "directory"; "apply"; "permanent delete" ] Save
+    ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab
+    ; view ~id:"tabs.previous" ~title:"Previous file tab" ~keywords:[ "buffer"; "switch" ] Previous_tab
+    ; view ~id:"tabs.close" ~title:"Close file tab" ~keywords:[ "buffer" ] Close_tab
+    ; view ~id:"tabs.close-discarding-changes" ~title:"Close file tab, discarding unsaved changes" ~keywords:[ "buffer"; "force close" ] Force_close_tab
+    ; view ~id:"file.recreate-missing" ~title:"Recreate missing path" ~keywords:[ "deleted"; "recover" ] Recreate_missing_file
     ; editor
         ~id:"app.quit"
         ~title:"Quit"
@@ -149,6 +154,16 @@ let default =
         ~title:"Toggle status tile"
         ~keywords:[ "statusline"; "info"; "panel" ]
         Toggle_status
+    ; view
+        ~id:"buffers.top"
+        ~title:"Show open buffers in top strip"
+        ~keywords:[ "file tabs"; "presentation"; "horizontal" ]
+        (Present_buffers Top)
+    ; view
+        ~id:"buffers.status-rows"
+        ~title:"Show open buffers as status rows"
+        ~keywords:[ "file tabs"; "presentation"; "vertical" ]
+        (Present_buffers Status_rows)
     ; view
         ~id:"workspace.status-left"
         ~title:"Move status tile left"
@@ -228,7 +243,18 @@ let default =
         ~id:"source.restart"
         ~title:"Restart diagnostic source"
         ~keywords:[ "checker"; "lsp"; "diagnostics" ]
-        Restart_source
+         Restart_source
+     ; view ~id:"directory.toggle-mark" ~title:"Toggle directory entry mark" Toggle_entry_mark
+     ; view ~id:"directory.mark-selection" ~title:"Mark directory selection" Mark_selection
+     ; view ~id:"directory.unmark-selection" ~title:"Unmark directory selection" Unmark_selection
+     ; view ~id:"directory.clear-marks" ~title:"Clear directory marks" Clear_directory_marks
+      ; view ~id:"directory.open-marked" ~title:"Open marked files" Open_marked_files
+      ; view ~id:"directory.major" ~title:"Show directory in main area" Directory_major
+      ; view ~id:"directory.side" ~title:"Show directory in sidebar" Directory_side
+      ; view ~id:"directory.hide" ~title:"Hide directory browser" Hide_directory
+      ; view ~id:"directory.focus" ~title:"Focus directory browser or editor" Focus_directory
+      ; view ~id:"directory.grow" ~title:"Grow directory sidebar" (Adjust_directory_size 4)
+      ; view ~id:"directory.shrink" ~title:"Shrink directory sidebar" (Adjust_directory_size (-4))
     ]
   |> Or_error.ok_exn
 ;;

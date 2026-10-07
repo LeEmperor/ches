@@ -88,6 +88,7 @@ let status t = t.status
 let parse_count t = t.runtime.parse_count
 
 module For_testing = struct
+  let has_live_provider t = Option.is_some t.runtime.provider
   let incremental_count t = t.runtime.incremental_count
   let with_language t editor language =
     update { t with language_override = Some language } editor ~reset:true

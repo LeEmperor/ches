@@ -202,7 +202,7 @@ let%expect_test "current UI fields include insert mode, dirty state, pending com
     Status[f.txt ] Dirty[[+]] Status[                       ]
     Status[1:1                             ]
     Pending[Space] Status[                           ]
-    Error[Unsaved changes: save them or f>]
+    Error[Unsaved changes: f.txt; save th>]
     7,4 16x4
     INSERT          |
     f.txt [+]       |

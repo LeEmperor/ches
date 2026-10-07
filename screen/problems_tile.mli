@@ -34,7 +34,8 @@ val detail_top : t -> int
 val text_view : t -> Ches_tile.Text_view.t option
 
 (** Record that [source]'s list for the open document was applied against [text]. *)
-val applied : t -> source:string -> text:Ches_core.Text_buffer.t -> t
+val applied : t -> source:string -> resource:string -> text:Ches_core.Text_buffer.t -> t
+val forget_resource : t -> string -> t
 
 (** The open document as this view matches findings in it. *)
 val document : t -> Ches_core.Editor.t -> Problems.Document.t

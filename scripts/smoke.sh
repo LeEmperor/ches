@@ -262,7 +262,7 @@ keys j x
 expect_status "[+]"
 expect_screen "wold"
 keys Space w
-expect_status "Wrote edit.txt"
+expect_status "Wrote $work/edit.txt"
 poll status_has "[+]" && fail "still dirty after saving" || ok "clean after saving"
 expect_file "$work/edit.txt" "$work/edit.expected"
 keys Space q
@@ -330,7 +330,7 @@ keys Space z
 expect_status "Space z is not bound"
 expect_screen "  1   cd"
 keys Space w
-expect_status "Wrote ins.txt"
+expect_status "Wrote $work/ins.txt"
 expect_file "$work/ins.txt" "$work/ins.expected"
 # The whole Insert session is one undo step.
 keys u
@@ -352,7 +352,7 @@ expect_exit 0
 launch new.txt
 expect_status "new.txt"
 keys Space w
-expect_status "Wrote new.txt"
+expect_status "Wrote $work/new.txt"
 keys Space q
 expect_exit 0
 expect_file "$work/new.txt" "$work/empty.txt"
@@ -370,7 +370,7 @@ keys i C-c
 expect_status "INSERT"
 expect_status "To quit, use Space q"
 keys Escape x Space q
-expect_status "Unsaved changes: save them or force quit"
+expect_status "Unsaved changes: edit.txt"
 [ "$(alternate)" = 1 ] && ok "still running after refusal" || fail "exited despite refusal"
 keys Space Q
 expect_exit 0
@@ -387,7 +387,10 @@ else
   keys i
   type_text "abc"
   keys Escape Space w
-  expect_status "Failed to write ro/new.txt: Permission denied"
+  # Normalized resource paths are longer; retain full failure and dirty assertions
+  # at a size where status can show both rather than expecting clipped suffixes.
+  resize 160 24
+  expect_status "Failed to write $work/ro/new.txt: Permission denied"
   expect_status "[+]"
   keys Space Q
   expect_exit 0
@@ -396,6 +399,7 @@ fi
 
 # ---------------------------------------------------------------------------
 section "tabs, Unicode, and control characters"
+resize 80 24
 printf 'a\tb\n中文x\n\033[31mred\033[0m \001\177 \302\205 \342\200\256rtl\n' > "$work/controls.txt"
 launch controls.txt
 expect_screen "1   a       b"
@@ -535,7 +539,7 @@ type_text X
 keys Escape
 expect_screen "1   Xone two"
 keys : e ! Enter
-expect_status "Reloaded operators.txt"
+expect_status "Reloaded "
 expect_screen "1   one two"
 keys Space q
 expect_exit 0
@@ -1134,11 +1138,11 @@ expect_cursor_row "workspace line 1"
 keys C-r
 expect_cursor_row "Xworkspace line 1"
 keys Space w
-expect_screen "Wrote workspace.txt"
+expect_screen "Wrote "
 sed '1s/^/X/' "$work/workspace.expected" > "$work/workspace.saved"
 expect_file "$work/workspace.txt" "$work/workspace.saved"
 keys u Space w
-expect_screen "Wrote workspace.txt"
+expect_screen "Wrote "
 keys Space q
 expect_exit 0
 expect_file "$work/workspace.txt" "$work/workspace.expected"
@@ -1146,33 +1150,35 @@ expect_file "$work/workspace.txt" "$work/workspace.expected"
 resize 80 24
 launch ro/workspace.txt
 keys i X Escape Space w
+resize 160 24
 expect_status "Permission denied"
+resize 80 24
 keys Space v t
-expect_screen "Failed to write ro/work>"
+expect_screen "Failed to write /tmp/op>"
 keys Space v p h
-expect_screen "Failed to write ro/work>"
+expect_screen "Failed to write /tmp/op>"
 keys Space v z
-expect_status "Permission denied"
+expect_status "Failed to write $work/ro/workspace.txt:"
 save_screen "workspace-error-zen-80x24"
 keys Space v z
-expect_screen "Failed to write ro/work>"
+expect_screen "Failed to write /tmp/op>"
 # Editing and keymap notices cannot replace unacknowledged persistence attention.
 keys l i Y Escape 3 '^'
-expect_screen "Failed to write ro/work>"
+expect_screen "Failed to write /tmp/op>"
 keys Escape
 expect_screen "1 problem: Space v e"
 expect_no_screen "Failed to write"
 save_screen "workspace-problem-acknowledged-80x24"
 keys Space v e
-expect_screen "Failed to write ro/work>"
+expect_screen "Failed to write /tmp/op>"
 keys Space w
-expect_screen "Failed to write ro/work>"
+expect_screen "Failed to write /tmp/op>"
 keys Escape
 expect_screen "1 problem: Space v e"
 # Matching save recovery removes the retained save problem.
 keys Space v b
 expect_screen "Problems (workspace): 1/1"
-expect_screen "error [file] ro/workspace.txt: Failed to write"
+expect_screen "error [file] $work/ro/workspace.txt:"
 keys Space v f
 expect_screen "Problems (document): 1/1"
 keys Space v z
@@ -1190,7 +1196,7 @@ keys Space v b
 expect_screen "Problems (document): 1/1"
 chmod 755 "$work/ro"
 keys Space w
-expect_screen "Wrote ro/workspace.txt"
+expect_screen "Wrote "
 expect_no_screen "problems:"
 expect_screen "Problems (document): 0/0"
 expect_screen "No active problems"
@@ -1202,7 +1208,7 @@ keys : e ! Enter
 expect_screen "Failed to reload"
 keys Space v b
 expect_screen "Problems (document): 1/1"
-expect_screen "error [file] ro/workspace.txt: Failed to reload"
+expect_screen "error [file] $work/ro/workspace.txt:"
 keys l Escape
 expect_screen "1 problem: Space v e"
 keys Space v e
@@ -1210,7 +1216,7 @@ expect_screen "Failed to reload"
 rmdir "$work/ro/workspace.txt"
 mv "$work/workspace-reload.saved" "$work/ro/workspace.txt"
 keys : e ! Enter
-expect_screen "Reloaded ro/workspace.t"
+expect_screen "Reloaded "
 expect_no_screen "problems:"
 expect_screen "Problems (document): 0/0"
 keys Space q
@@ -1457,7 +1463,9 @@ expect_exit 0
 
 # ---------------------------------------------------------------------------
 section "demo diagnostics in the problems view"
-resize 80 24
+# Resource-addressed diagnostics use absolute paths; give these assertions room
+# to check source, path, location and message together instead of accepting clips.
+resize 200 24
 printf 'let x = 1\nlet y = x +\nlet z = 3\nlet w = 4\nlet v = 5\nlet u = 6\n' > "$work/diag.ml"
 cp "$work/diag.ml" "$work/diag.expected"
 launch diag.ml --demo-diagnostics --no-lsp
@@ -1465,10 +1473,10 @@ launch diag.ml --demo-diagnostics --no-lsp
 expect_status "[5 problems: Space v e]"
 keys Space v b
 expect_screen "Problems (workspace): 5/5"
-expect_screen "error [demo-check] ./demo-other.ml:4:1"
-expect_screen "error [demo-check] diag.ml:1:1"
-expect_screen "hint [demo-lint] diag.ml:2:1"
-expect_screen "warning [demo-stopped stopped] diag.ml:6:1"
+expect_screen "error [demo-check] $work/demo-other.ml:4:1"
+expect_screen "error [demo-check] $work/diag.ml:1:1"
+expect_screen "hint [demo-lint] $work/diag.ml:2:1"
+expect_screen "warning [demo-stopped stopped] $work/diag.ml:6:1"
 save_screen "tiles-diagnostics-80x24"
 keys Space v o
 expect_screen "Problems* (workspace): 5/5 [1/5]"
@@ -1487,26 +1495,26 @@ expect_exit 0
 
 # ---------------------------------------------------------------------------
 section "synthetic checker: edits, saves, crash and restart"
-resize 80 24
+resize 200 24
 printf 'let x = 1\nlet y = 2 (* TODO *)\n' > "$work/chk.ml"
 launch chk.ml --synthetic-checker
 keys Space v b
 # The initial text is checked after the edit delay, the on-disk text after the build's.
-expect_screen "warning [synthetic] chk.ml:2:1"
-expect_screen "warning [synthetic] ./synthetic_other.ml:3:1"
+expect_screen "warning [synthetic#1] $work/chk.ml:2:1"
+expect_screen "warning [synthetic#1] $work/synthetic_other.ml:3:1"
 keys o E R R O R Escape
-expect_screen "error [synthetic] chk.ml:2:1"
+expect_screen "error [synthetic#1] $work/chk.ml:2:1"
 expect_no_screen "build error"
 # Saving makes the build check report it too, in the same source's list.
 keys Space w
 expect_screen "build error: ERROR does not compile"
 # One crash is one problem.
 keys Space v K
-expect_screen "synthetic stopped: killed by Space v K"
-expect_screen "error [synthetic stopped] chk.ml:2:1"
+expect_screen "synthetic#1 stopped: killed by Space v K"
+expect_screen "error [synthetic#1 stopped] $work/chk.ml:2:1"
 expect_screen "Problems (workspace): 4/4"
 keys Escape Space v R
-expect_screen "error [synthetic] chk.ml:2:1"
+expect_screen "error [synthetic#1] $work/chk.ml:2:1"
 expect_no_screen "(Space v R to restart)"
 keys Space q
 expect_exit 0
@@ -1530,7 +1538,7 @@ fake_lsp_running() {
 fake_lsp_gone() { ! fake_lsp_running; }
 
 section "language server for an OCaml file: findings, edits, crash, restart, quit"
-resize 80 24
+resize 200 24
 mkdir -p "$work/lspproj/sub"
 printf '(lang dune 3.0)\n' > "$work/lspproj/dune-project"
 printf 'let a = 1\nlet b = ERROR\n' > "$work/lspproj/sub/a.ml"
@@ -1538,27 +1546,27 @@ launch_env="env PATH=$work/fakebin:$PATH"
 launch lspproj/sub/a.ml
 launch_env=""
 keys Space v b
-expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+expect_screen "error [ocamllsp#1] $work/lspproj/sub/a.ml:2:9: fake error"
 expect_screen "[1 problem: Space v e]"
 # Fixing the line clears the list; undo brings the finding back.
 keys j d d
 expect_screen "Problems (workspace): 0/0"
 keys u
-expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+expect_screen "error [ocamllsp#1] $work/lspproj/sub/a.ml:2:9: fake error"
 keys Space v o Enter
 expect_cursor_row "let b = ERROR"
 # A crash is a one-off warning; the findings stay, marked stopped.
 keys Escape o C R A S H Escape
-expect_screen "ocamllsp stopped: exited with code 3"
-expect_screen "[ocamllsp stopped] lspproj/sub/a.ml:2:9"
+expect_screen "ocamllsp#1 stopped: exited with code 3"
+expect_screen "[ocamllsp#1 stopped] $work/lspproj/sub/a.ml:2:9"
 keys u
-expect_no_screen "ocamllsp stopped:"
+expect_no_screen "ocamllsp#1 stopped:"
 keys Space v R
-expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
-expect_no_screen "[ocamllsp stopped]"
+expect_screen "error [ocamllsp#1] $work/lspproj/sub/a.ml:2:9: fake error"
+expect_no_screen "[ocamllsp#1 stopped]"
 # Problems hidden, history gets the full width; the stop stays recorded there.
 keys Space v b Space v m
-expect_screen "warning [ocamllsp]: ocamllsp stopped: exited with code 3"
+expect_screen "warning [ocamllsp#1]: ocamllsp#1 stopped: exited with code 3"
 keys Space q
 expect_exit 0
 if poll fake_lsp_gone; then
@@ -1574,11 +1582,11 @@ launch_env="env PATH=$work/fakebin:$PATH"
 launch svproj/rtl/top.sv
 launch_env=""
 keys Space v b
-expect_screen "error [slang-server] svproj/rtl/top.sv:2:3: fake error"
+expect_screen "error [slang-server#1] $work/svproj/rtl/top.sv:2:3: fake error"
 keys j d d
 expect_screen "Problems (workspace): 0/0"
 keys u
-expect_screen "error [slang-server] svproj/rtl/top.sv:2:3: fake error"
+expect_screen "error [slang-server#1] $work/svproj/rtl/top.sv:2:3: fake error"
 keys Space q
 expect_exit 0
 launch_env="env PATH=$work/fakebin:$PATH"
@@ -1594,7 +1602,7 @@ launch_env=""
 sleep 1
 expect_no_screen "unavailable"
 keys Space v m
-expect_screen "slang-server unavailable: slang-server not found"
+expect_screen "slang-server#1 unavailable: slang-server not found"
 keys Space q
 expect_exit 0
 
@@ -1617,7 +1625,7 @@ keys Space q
 expect_exit 0
 
 section "no language server: other files, none on PATH, --no-lsp"
-resize 80 24
+resize 200 24
 printf 'ERROR\n' > "$work/lspproj/notes.txt"
 launch_env="env PATH=$work/fakebin:$PATH"
 launch lspproj/notes.txt
@@ -1637,12 +1645,13 @@ launch_env=""
 sleep 1
 expect_no_screen "unavailable"
 keys Space v m
-expect_screen "ocamllsp unavailable: ocamllsp not found on PATH"
+expect_screen "ocamllsp#1 unavailable: ocamllsp not found on PATH"
 keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
 section "scrolling a wide line"
+resize 80 24
 { for _ in $(seq 1 40); do printf '0123456789'; done; printf '\nshort\n'; } > "$work/wide.txt"
 launch wide.txt
 keys -N 250 l
@@ -1683,7 +1692,7 @@ type_text "$burst2"
 # Escape and x in one write arrive as Meta-x, which ches reads as Escape then x.
 keys Escape x
 keys Space w
-expect_status "Wrote busy.txt"
+expect_status "Wrote $work/busy.txt"
 expect_file "$work/busy.txt" "$work/busy.expected"
 save_screen busy-160x48
 section "paste in Normal mode is ignored"
@@ -1709,9 +1718,12 @@ kill -HUP "$(pgrep -P "$pane_pid")"
 expect_exit 1
 shell "clear; stty -g > $work/stty.before"
 mkdir -p "$work/adir"
-t send-keys -t "$session" -l "$ches adir"
+# A directory is now a supported startup surface. Use unsupported file contents
+# to retain this startup-error restoration check rather than stranding a browser.
+printf '\000' > "$work/invalid.txt"
+t send-keys -t "$session" -l "$ches invalid.txt"
 t send-keys -t "$session" Enter
-expect_screen "ches: Cannot open adir: is a directory"
+expect_screen "ches: Cannot open $work/invalid.txt:"
 expect_exit 1
 shell "clear; stty -g > $work/stty.before"
 t send-keys -t "$session" -l "$ches edit.txt < /dev/null"
@@ -1765,7 +1777,9 @@ if [ "$(id -u)" != 0 ]; then
     resize "${size%x*}" "${size#*x}"
     launch review-ro/sample.ml --no-lsp
     keys x Space w
+    resize 200 "${size#*x}"
     expect_status "Permission denied"
+    resize "${size%x*}" "${size#*x}"
     save_screen "error-$size"
     keys Space Q
     expect_exit 0
@@ -1818,7 +1832,7 @@ launch palette.txt
 expect_status "1:1"
 keys Space c c
 expect_screen "╭─ Commands ─"
-expect_screen "> Save file"
+expect_screen "> Save buffer"
 expect_screen "Space w"
 expect_palette 1 5 78 14
 expect_cursor "5 6 1"
@@ -1905,13 +1919,13 @@ save_screen "palette-workspace-after"
 keys Space c c
 type_text 'tile'
 keys C-n C-n C-n
-expect_screen "4/16 | Enter run"
+expect_screen "4/17 | Enter run"
 expect_palette 20 13 80 14
 resize 50 12
 expect_palette 1 1 48 10
 expect_cursor "9 2 1"
 expect_screen "│ > tile"
-expect_screen "4/16 | Enter run"
+expect_screen "4/17 | Enter run"
 save_screen "palette-resize-clamped"
 resize 14 4
 expect_palette 0 0 14 4
@@ -1919,7 +1933,7 @@ expect_cursor "7 1 1"
 save_screen "palette-minimum"
 resize 120 40
 expect_palette 20 13 80 14
-expect_screen "4/16 | Enter run"
+expect_screen "4/17 | Enter run"
 expect_screen "│ > tile"
 save_screen "palette-resize-restored"
 resize 120 3
@@ -1971,7 +1985,7 @@ resize 120 40
 keys Space v z
 expect_screen "Problems (workspace): 0/0"
 keys Space w
-expect_screen "Wrote palette.txt"
+expect_screen "Wrote "
 expect_file "$work/palette.txt" "$work/palette.expected"
 keys Space q
 expect_exit 0

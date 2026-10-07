@@ -4,6 +4,9 @@ module Feedback := Error
 open! Core
 
 type t =
+  | Owned of { resource : string; generation : int; event : t }
+  (** Event from a document-owned runtime. The UI drops it unless the resource still
+      belongs to this session buffer generation, including after close/reopen. *)
   | Diagnostics of
       { source : string
       ; resource : string

@@ -8,6 +8,7 @@ module Feedback = Ches_error.Error
 (** What the view knows about the open document: which resource it is, its revision
     (for dimming findings that are behind), and its lines (for matching findings). *)
 module Document : sig
+  val same_resource : string -> string -> bool
   type t
 
   (** [anchor_text source] is the document text [source]'s current list was applied
@@ -42,6 +43,7 @@ module Key : sig
     | Problem of Feedback.Identity.t
     | Finding of
         { source : string
+        ; resource : string
         ; severity : Feedback.Severity.t
         ; message : string
         ; anchor : anchor

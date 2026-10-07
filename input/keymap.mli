@@ -184,6 +184,7 @@ val lookup : t -> Key.t list -> Bindings.lookup
 
 (** The configured Normal bindings ({!Config.t.normal}). *)
 val bindings : t -> Bindings.t
+val config : t -> Config.t
 
 (** [feed t ~mode input] interprets [input] in [mode] and returns the actions to
     perform, in order. *)

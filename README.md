@@ -22,13 +22,18 @@ for general distribution.
 - **Command palette:** centered floating fuzzy search over Normal-mode commands,
   with shortcuts derived from the active bindings; works in zen without resizing
   the document or docked tiles.
+- **Persistent file tabs:** independent text, undo, cursor and scroll, with a shared
+  unnamed register and resource-addressed diagnostics.
+- **Directory workspace:** editable listings in the main editor or a left side tile;
+  visual/marked batch opening, explicit-save creation, rename, copy, cross-directory
+  move and permanent deletion of files or empty directories.
 - **Syntax highlighting:** local Tree-sitter highlighting for OCaml, Verilog,
   and SystemVerilog, including incremental parsing.
 - **Diagnostics:** `ocamllsp` for OCaml and `slang-server` for Verilog and
   SystemVerilog, with a problems view, freshness tracking, and explicit restart
   controls.
 
-Ches edits one document per session. It accepts UTF-8 text with LF line endings
+Ches retains multiple files and visited directories per session. Files accept UTF-8 text with LF line endings
 and preserves the file's contents, including whether it ends with a newline.
 
 ## Usage
@@ -41,7 +46,8 @@ ches PATH
 ```
 
 An existing file is opened for editing; a nonexistent path starts an empty
-document that is created on save. Directories, special files, invalid UTF-8,
+document that is created on save. A directory (including `ches .`) opens a listing
+with no file tabs initially. Special files, invalid UTF-8 file contents,
 CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 
 | Keys | Action |
@@ -52,8 +58,15 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `v` / `V` / `Ctrl-v` | Start characterwise / linewise / blockwise selection |
 | `u` / `Ctrl-r` | Undo / redo |
 | `/` / `?`, then text and `Enter` | Search forward / backward |
-| `Space w` | Save |
-| `Space q` | Quit if there are no unsaved changes |
+| `Space w` | Save focused file / apply focused directory edits |
+| `Space o` | File's parent directory / return to file |
+| `Enter` / `-` (directory) | Open entry / parent directory |
+| Visual `Enter` (directory) | Open intersected file rows |
+| `Space m m` / `Space m o` | Toggle entry mark / open marked files |
+| `Space d m/s/h/f` | Major / side / hide / focus directory browser |
+| `Space b n/p/c/C` | Next / previous / close / discard file tab |
+| `Space b r` | Exclusively recreate a missing file from retained text |
+| `Space q` | Quit if all buffers are clean and no files are marked missing |
 | `Space Q` | Quit and discard unsaved changes |
 | `Space c c` | Open the command palette |
 | `Space v o` | Focus the problems view or return to the document |
@@ -71,6 +84,14 @@ open palette below it closes without execution. Closing discards the query and
 restores the covered workspace; an interrupted palette paste is dropped, never
 redirected to the document.
 
+**Directory saves are destructive:** removing an existing `@ches[ID]` row and
+pressing `Space w` permanently deletes its backing file/link or empty directory.
+There is no trash or confirmation dialog. Keep the token and TAB intact when
+renaming; add bare names for new files (`name/` for new directories). Copy syntax
+is `@copy[ID]<TAB>destination`, not a duplicated `@ches` token. Read the
+[directory workspace reference](docs/directory_workspace.md) before applying edits.
+Text undo does not undo filesystem changes.
+
 ## Architecture
 
 Editing state and commands are independent of the terminal frontend. The core
@@ -83,7 +104,7 @@ those frames.
 | --- | --- |
 | `core/` | Text storage, motions, selections, registers, and undo history |
 | `input/` | Terminal-independent keys, bindings, and modal keymap |
-| `app/` | Editing controller, file loading/saving, and highlight cache |
+| `app/` | Session/buffer ownership, filesystem apply, file I/O, and highlight cache |
 | `highlight/` | Provider-independent highlight ranges and snapshots |
 | `highlight_tree_sitter/` | Tree-sitter providers, grammars, and queries |
 | `error/` | Notifications, active problems, and bounded history |
@@ -113,6 +134,7 @@ dune build
 dune runtest
 dune exec ches -- PATH
 scripts/smoke.sh
+python3 scripts/directory_workspace_smoke.py
 # Just the floating palette's terminal scenarios:
 scripts/smoke.sh --palette-only
 ```
@@ -137,7 +159,15 @@ documented in the [editor reference](docs/editor_reference.md#terminal-smoke-tes
 - **Unicode and display:** movement and deletion use code points rather than
   grapheme clusters. CRLF is unsupported, and long lines scroll horizontally
   rather than wrap.
-- **Editing and tooling:** one document at a time, literal search, an unnamed
+- **Directory operations:** Linux `renameat2(RENAME_NOREPLACE)` is required; no
+  cross-device moves, nonempty directory deletion, filesystem undo, rollback,
+  watchers or crash-persistent intent. Partial apply can leave staging names;
+  retries retain unresolved intent only within the running session. Copies preserve
+  rwx bits, not ownership/timestamps/ACLs/xattrs or hard-link relationships.
+- **Session scale:** visited directories are retained without eviction; diagnostic
+  drivers use one runtime (potentially one language-server process) per file.
+  No session persistence or multiple editor groups.
+- **Editing and tooling:** literal search, an unnamed
   register, and a limited `:` prompt. Language-server integration currently
   consumes diagnostics only.
 - **Configuration:** keybindings and editing defaults are defined in code.

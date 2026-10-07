@@ -159,6 +159,13 @@ let begin_session state =
 
 let handle state (request : Ches_error.Source_request.t) =
   match request with
+  | Document_opened _ -> ()
+  | Document_closed { resource } ->
+    if Option.exists state.latest ~f:(fun document -> String.equal document.resource resource)
+    then (
+      state.session <- state.session + 1;
+      state.latest <- None; state.saved <- None; state.checked <- None; state.built <- None;
+      state.edit_scheduled <- false; state.build_scheduled <- false)
   | Document_changed { resource; text; revision } ->
     state.latest <- Some { resource; revision; text };
     (* Before any save, the text first sent is what is on disk. *)

@@ -94,9 +94,14 @@ val preferred_band_height : int
     [minors] (requested visible minor views, in order) share a bottom band (see
     {!preferred_band_height}), side by side with equal widths of at least
     {!min_minor_width} separated by {!gap}; the band is left out if document/status
-    minima cannot coexist, and views that don't fit are left out from the end. Status is allocated within the remaining upper rectangle. *)
+    minima cannot coexist, and views that don't fit are left out from the end. Status is allocated within the remaining upper rectangle.
+    [side] requests a full-height left minor, with a preferred outer width clamped
+    to at least 16 and leaving 16 document cells plus the gap. It is omitted below
+    33 columns or four rows; requests are never modified. The status and bottom
+    band are then allocated within the remaining right-hand rectangle. *)
 val allocate
   :  ?minors:Ches_tile.View_id.t list
+  -> ?side:(Ches_tile.View_id.t * int)
   -> Prefs.t
   -> allocation:Geometry.Rect.t
   -> t

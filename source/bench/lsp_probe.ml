@@ -12,6 +12,7 @@ module Source_event = Ches_error.Source_event
 let show ~root (event : Source_event.t) =
   let hide = String.substr_replace_all ~pattern:root ~with_:"<root>" in
   match event with
+  | Owned _ -> failwith "unexpected owned event from standalone driver"
   | Started { source; _ } -> printf "started %s\n%!" source
   | Stopped { source; reason; _ } -> printf "stopped %s: %s\n%!" source (hide reason)
   | Unavailable { source; reason; _ } -> printf "unavailable %s: %s\n%!" source reason

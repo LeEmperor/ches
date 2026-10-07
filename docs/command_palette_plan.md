@@ -1,5 +1,15 @@
 # Ches command palette implementation plan
 
+Current directory-workspace integration (2026-10-07): the default catalog now has
+49 entries, including tabs, directory navigation/marks/placement and missing-path
+recreation. **Save buffer** targets the invoking file or directory via Session;
+directory save applies filesystem edits directly, including permanent deletion.
+The palette remains Normal-only. Commands derive configured shortcuts;
+there is no save-all, open-path or interactive save-as action. Current user behavior
+is documented in [editor reference](editor_reference.md#command-palette) and
+[directory workspace reference](directory_workspace.md). Historical stage counts
+and single-document observations below describe their implementation milestones.
+
 Presentation follow-up (2026-10-06): the live palette is now floating. The docked
 placement, zen restriction, and bottom-band sizing below describe the original
 milestone, not current behavior. See [Floating tiles plan](../FLOATING_TILES_PLAN.md)

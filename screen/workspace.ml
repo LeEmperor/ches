@@ -118,7 +118,7 @@ let allocate_pair (prefs : Prefs.t) ~(allocation : Geometry.Rect.t) =
     })
 ;;
 
-let allocate ?(minors = []) prefs ~(allocation : Geometry.Rect.t) =
+let allocate_band ?(minors = []) prefs ~(allocation : Geometry.Rect.t) =
   let allocation =
     { allocation with width = Int.max 0 allocation.width; height = Int.max 0 allocation.height }
   in
@@ -166,6 +166,19 @@ let allocate ?(minors = []) prefs ~(allocation : Geometry.Rect.t) =
         })
     in
     { workspace with minors; gaps = workspace.gaps @ gaps })
+;;
+
+let allocate ?(minors = []) ?side prefs ~(allocation : Geometry.Rect.t) =
+  let allocation = { allocation with width = Int.max 0 allocation.width; height = Int.max 0 allocation.height } in
+  match side with
+  | Some (id, preferred) when allocation.width >= 16 + gap + min_document_width && allocation.height >= 4 ->
+    let size = Int.clamp_exn preferred ~min:16 ~max:(allocation.width - gap - min_document_width) in
+    let rect = { allocation with width = size } in
+    let rest = { allocation with x = allocation.x + size + gap; width = allocation.width - size - gap } in
+    let workspace = allocate_band ~minors prefs ~allocation:rest in
+    { workspace with minors = { Pane.id = Minor id; rect } :: workspace.minors
+      ; gaps = { allocation with x = allocation.x + size; width = gap } :: workspace.gaps }
+  | _ -> allocate_band ~minors prefs ~allocation
 ;;
 
 let minor t id =

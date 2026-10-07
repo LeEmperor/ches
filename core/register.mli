@@ -10,6 +10,16 @@ module Kind : sig
 end
 
 type t =
+  | Protected_block of
+      { rows : string list
+      ; width : int
+      }
+  | Protected_text of
+      { text : string
+      ; kind : Kind.t
+      ; scope : string
+      ; identities : (int * string) list
+      }
   | Text of
       { text : string
       ; kind : Kind.t
