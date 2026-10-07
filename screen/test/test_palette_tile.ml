@@ -55,8 +55,8 @@ let%expect_test "Space c c opens a focused palette in the bottom band, with a ba
     palette
     query: ""
     > file.save
-      app.quit
-      app.quit-discarding-changes
+      tabs.next
+      tabs.previous
     |}];
   band t;
   [%expect
@@ -65,8 +65,8 @@ let%expect_test "Space c c opens a focused palette in the bottom band, with a ba
     ╭─ Commands ───────────────────────────────────────────────────────────────────╮|
     │ >                                                                            │|
     │ > Save file                                                          Space w │|
-    │   Quit                                                               Space q │|
-    ╰─ 1/33 | Enter run, Ctrl-n/p, Esc ────────────────────────────────────────────╯|
+    │   Next file tab                                                    Space b n │|
+    ╰─ 1/48 | Enter run, Ctrl-n/p, Esc ────────────────────────────────────────────╯|
     cursor: 4,12 Bar
     |}]
 ;;
@@ -202,8 +202,8 @@ let%expect_test "Escape cancels: nothing runs, search and problems are untouched
   [%expect {|
     query: ""
     > file.save
-      app.quit
-      app.quit-discarding-changes
+      tabs.next
+      tabs.previous
     |}]
 ;;
 
@@ -298,7 +298,7 @@ let%expect_test "resizing keeps the query and selected command" =
     ╭─ Commands ─────────────────────────────────────╮|
     │ > tile                                         │|
     │ > Move document tile right by 10 columns       │|
-    ╰─ 4/16 | Enter run, Ctrl-n/p, Esc ──────────────╯|
+    ╰─ 4/17 | Enter run, Ctrl-n/p, Esc ──────────────╯|
     cursor: 8,9 Bar
     |}]
 ;;
@@ -324,7 +324,7 @@ let%expect_test "palette commands share the keyboard's effects and feedback" =
     ( "irst\
      \nsecond\
      \nthird" document)
-    ("Unsaved changes: save them or force quit")
+    ("Unsaved changes: a; save them or force quit (Space Q)")
     problems
     EXIT
     |}]

@@ -25,7 +25,11 @@ module Document = struct
   ;;
 
   let path t = t.path
-  let is t resource = Option.value_map t.path ~default:false ~f:(String.equal resource)
+  let same_resource a b =
+    let cwd = Core_unix.getcwd () in
+    String.equal (Resource.normalize ~cwd a) (Resource.normalize ~cwd b)
+  ;;
+  let is t resource = Option.value_map t.path ~default:false ~f:(same_resource resource)
 
   (* [line] is one-based, in the text [source]'s list was applied against. *)
   let line_text t ~source line =
@@ -48,6 +52,7 @@ module Key = struct
     | Problem of Feedback.Identity.t
     | Finding of
         { source : string
+        ; resource : string
         ; severity : Feedback.Severity.t
         ; message : string
         ; anchor : anchor
@@ -132,10 +137,10 @@ let finding_rows feedback ~document =
           `Text text)
       | Some { line; _ } -> `Line line
     in
-    let base = c.source, f.severity, f.message, anchor in
+    let base = c.source, c.resource, f.severity, f.message, anchor in
     let nth = Option.value (Hashtbl.find seen base) ~default:0 in
     Hashtbl.set seen ~key:base ~data:(nth + 1);
-    { Row.key = Finding { source = c.source; severity = f.severity; message = f.message; anchor; nth }
+    { Row.key = Finding { source = c.source; resource = c.resource; severity = f.severity; message = f.message; anchor; nth }
     ; severity = f.severity
     ; source = c.source
     ; resource = c.resource

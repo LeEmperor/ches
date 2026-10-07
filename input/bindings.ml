@@ -161,6 +161,25 @@ let default =
     ; editor [ ' '; 'w' ] Save
     ; editor [ ' '; 'q' ] Quit
     ; editor [ ' '; 'Q' ] Force_quit
+    ; [ leader; Key.char 'b'; Key.char 'n' ], View Next_tab
+    ; [ leader; Key.char 'o' ], View Toggle_directory
+    ; [ leader; Key.char 'd'; Key.char 'm' ], View Directory_major
+    ; [ leader; Key.char 'd'; Key.char 's' ], View Directory_side
+    ; [ leader; Key.char 'd'; Key.char 'h' ], View Hide_directory
+    ; [ leader; Key.char 'd'; Key.char 'f' ], View Focus_directory
+    ; [ leader; Key.char 'd'; Key.char '+' ], View (Adjust_directory_size 4)
+    ; [ leader; Key.char 'd'; Key.char '-' ], View (Adjust_directory_size (-4))
+    ; [ Key.Enter ], View Open_directory_entry
+    ; [ Key.char '-' ], View Directory_parent
+    ; [ leader; Key.char 'r' ], View Refresh_directory
+    ; [ leader; Key.char 'm'; Key.char 'm' ], View Toggle_entry_mark
+    ; [ leader; Key.char 'm'; Key.char 's' ], View Mark_selection
+    ; [ leader; Key.char 'm'; Key.char 'u' ], View Unmark_selection
+    ; [ leader; Key.char 'm'; Key.char 'c' ], View Clear_directory_marks
+    ; [ leader; Key.char 'm'; Key.char 'o' ], View Open_marked_files
+    ; [ leader; Key.char 'b'; Key.char 'p' ], View Previous_tab
+    ; [ leader; Key.char 'b'; Key.char 'c' ], View Close_tab
+    ; [ leader; Key.char 'b'; Key.char 'C' ], View Force_close_tab
     ; view 'c' Toggle_centered
     ; view 'h' (Shift (-2))
     ; view 'l' (Shift 2)

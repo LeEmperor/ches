@@ -28,13 +28,15 @@ type t =
   }
 [@@deriving sexp_of]
 
-let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
+let render_document ?highlights ?allocation ?reserve_status_row ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
   let screen_width = width in
+  let explicit_allocation = Option.is_some allocation in
   let workspace = Ui_state.workspace ui ~width ~height in
   let pane_relative = Option.is_some allocation || Option.is_some workspace.status
-    || not (List.is_empty workspace.minors) in
+    || not (List.is_empty workspace.minors)
+    || Option.is_some (Ui_state.tab_rect ui ~allocation:workspace.document.rect) in
   let minor_panes = if Option.is_some allocation then [] else workspace.minors in
   let allocation, default_reservation, status_pane =
     match allocation with
@@ -75,6 +77,19 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
     geometry
   in
   let fields = Status.fields ui in
+  let tab_row = Option.map (Ui_state.tab_rect ui ~allocation) ~f:(fun rect ->
+    rect, File_tabs.render (File_tabs.tabs (Ui_state.session ui)) ~width:rect.width) in
+  let directory = Session.input_directory (Ui_state.session ui) in
+  let header = Option.map (Ui_state.directory_rect ui ~allocation) ~f:(fun rect ->
+    let d = Option.value_exn directory in
+    let pending = if not (Ches_app.Directory_buffer.is_dirty d) then "" else
+      match Ches_app.Directory_buffer.plan d with
+      | Ok operations -> sprintf "* %d pending | " (List.length operations)
+      | Error _ -> "* invalid plan | " in
+    let label = if explicit_allocation then sprintf "%s%d marked | %s" pending (Set.length d.marks) (Directory_identity.encode_name d.path)
+      else sprintf "Directory: %s%d marked | %s" pending (Set.length d.marks) (Directory_identity.encode_name d.path) in
+    let label = String.prefix label rect.width in
+    rect, [ Span.create Hint (label ^ String.make (rect.width - String.length label) ' ') ~width:rect.width ]) in
   (* Status and minor views share the tile shell; adapters fill its content area. *)
   let status_tile = Option.map status_pane ~f:(fun pane ->
     let layout = Tile_shell.layout Tile_shell.Policy.status pane.Workspace.Pane.rect in
@@ -89,6 +104,7 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
   let minor_tiles = List.filter_map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
     match pane.id with
     | Document | Status -> None
+    | Minor id when Ches_tile.View_id.equal id Ui_state.directory_id -> None
     | Minor id ->
       let layout =
         Option.value_exn (Ui_state.minor_layout ui ~width ~height id) in
@@ -258,17 +274,27 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
         then [ Span.blank Gutter gutter.width ]
         else
           [ Span.create
-              (if on_cursor_line then Gutter_cursor_line else Gutter)
-              (Line_numbers.label
-                 (Ui_state.prefs ui).line_numbers
-                 ~digits:gutter_digits
-                 ~line
-                 ~cursor_line)
+               (if on_cursor_line then Gutter_cursor_line else Gutter)
+               (match directory with
+                | Some d ->
+                   let label = Option.value_map (Ches_app.Directory_buffer.row_at d line) ~default:"" ~f:(fun e ->
+                      (if Option.exists (Ches_app.Directory_buffer.backing_entry d e) ~f:(fun entry -> Set.mem d.marks entry.id) then "*" else " ") ^
+                     (match e.kind with File -> "f" | Directory -> "d" | Symlink -> "@" | Unsupported -> "!")) in
+                  String.prefix (String.make (Int.max 0 (gutter.width - String.length label - 1)) ' ' ^ label ^ " ") gutter.width
+                | None -> Line_numbers.label
+                  (Ui_state.prefs ui).line_numbers
+                  ~digits:gutter_digits
+                  ~line
+                  ~cursor_line)
               ~width:gutter.width
           ]
       in
       let text_spans =
-        if not exists
+         if Option.exists directory ~f:(fun d -> List.is_empty d.entries && not (Ches_app.Directory_buffer.is_dirty d)) && line = 0
+            && Mode.equal (Editor.mode editor) Normal then
+          let hint = String.prefix "(empty directory)" viewport.width in
+          [ Span.create Hint (hint ^ String.make (viewport.width - String.length hint) ' ') ~width:viewport.width ]
+        else if not exists
         then [ Span.blank (Style.document ()) viewport.width ]
         else (
           let text_style, special_style =
@@ -337,10 +363,13 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
   let rows =
     List.init height ~f:(fun y ->
       let document =
-        match area_on_row Status_row y with
-        | Some area -> [ area.rect, Status.render area fields ]
-        | None when y >= tile.y && y < tile.y + tile.height -> [ tile, tile_row y ]
-        | None -> []
+        match header with
+        | Some (rect, spans) when y = rect.y -> [ rect, spans ]
+        | _ -> match tab_row, area_on_row Status_row y with
+        | Some (rect, spans), _ when y = rect.y -> [ rect, spans ]
+        | _, Some area -> [ area.rect, Status.render area fields ]
+        | _, None when y >= tile.y && y < tile.y + tile.height -> [ tile, tile_row y ]
+        | _, None -> []
       in
       let status = match status_tile with
         | Some (rect, rows) when y >= rect.y && y < rect.y + rect.height -> [ rect, rows.(y - rect.y) ]
@@ -391,6 +420,42 @@ let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
         })
   in
   { width; height; rows; cursor; smear }
+;;
+
+let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
+  if Ui_state.has_document ui then
+    match allocation, Ui_state.side_layout ui ~width ~height with
+    | None, Some layout ->
+      let file = render_document ?highlights (Ui_state.surface ui ~directory:false) ~width ~height in
+      let dir = render_document (Ui_state.surface ui ~directory:true)
+        ~allocation:{ Geometry.Rect.x = 0; y = 0; width = layout.content.width; height = layout.content.height }
+        ~reserve_status_row:false ~width:layout.content.width ~height:layout.content.height in
+      let focused = Ches_tile.View_id.equal (Ui_state.focused_view ui ~width ~height) Ui_state.directory_id in
+      let side = Tile_shell.render layout ~focused { title = "Directory"; footer = None; body = dir.rows } in
+      (* The side pane is disjoint from the base document/status/band. Its omitted
+         area is backdrop, so cutting that leading run must not introduce the
+         clipping marker used by text labels ([Span.keep_right]). *)
+      let rec drop_backdrop spans n = match spans with
+        | [] -> []
+        | span :: rest when n >= span.Span.width -> drop_backdrop rest (n - span.width)
+        | span :: rest when n > 0 -> Span.blank span.style (span.width - n) :: rest
+        | _ -> spans in
+      let rows = List.mapi file.rows ~f:(fun y row ->
+        if y < layout.outer.y || y >= layout.outer.y + layout.outer.height then row else
+        let tail = drop_backdrop row (layout.outer.x + layout.outer.width) in
+        Span.merge (Span.take row ~n:layout.outer.x @ List.nth_exn side (y - layout.outer.y) @ tail)) in
+      let cursor = if focused then Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) -> { Cursor.x; y; shape = Block }) else file.cursor in
+      { file with rows; cursor; smear = (if focused then [] else file.smear) }
+    | _ -> render_document ?highlights ?allocation ?reserve_status_row ui ~width ~height
+  else
+    let width = Int.max 0 width and height = Int.max 0 height in
+    let messages =
+      [ "No file open - Space q to quit"
+      ; "Directory fallback: " ^ Ches_core.Directory_identity.encode_name (Session.startup_directory (Ui_state.session ui)) ] in
+    let rows = List.init height ~f:(fun y ->
+      let text = Option.value_map (List.nth messages y) ~default:"" ~f:(fun message -> String.prefix message width) in
+      [ { Span.text = text ^ String.make (width - String.length text) ' '; width; style = Hint } ]) in
+    { width; height; rows; cursor = None; smear = [] }
 ;;
 
 let to_string t =

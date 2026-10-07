@@ -167,7 +167,7 @@ module Io =
 module Document = struct
   type t =
     { resource : string (** As Ches names it. *)
-    ; file : string (** Absolute, symbolic links resolved where possible. *)
+    ; file : string (** Lexically normalized absolute path; symlink aliases stay distinct. *)
     ; uri : Lsp.Uri.t
     ; revision : int
     ; text : string
@@ -207,7 +207,7 @@ let canonical file =
   let file =
     if Filename.is_relative file then Filename.concat (Core_unix.getcwd ()) file else file
   in
-  Option.value (Option.try_with (fun () -> Filename_unix.realpath file)) ~default:file
+  Ches_core.Resource.normalize ~cwd:(Core_unix.getcwd ()) file
 ;;
 
 let display_path file =
@@ -577,6 +577,18 @@ let end_session t =
 
 let handle_request t (request : Source_request.t) =
   match request with
+  | Document_opened _ -> ()
+  | Document_closed { resource } ->
+    (match t.document with
+     | Some document when String.equal document.resource resource ->
+       Option.iter t.session ~f:(fun session ->
+         Option.iter session.opened ~f:(fun opened ->
+           notify session (TextDocumentDidClose (Types.DidCloseTextDocumentParams.create
+             ~textDocument:(Types.TextDocumentIdentifier.create ~uri:opened.uri))));
+         session.opened <- None);
+       t.document <- None;
+       Queue.clear t.recent
+     | _ -> ())
   | Document_changed { resource; text; revision } ->
     let file = canonical resource in
     let document =
@@ -588,9 +600,9 @@ let handle_request t (request : Source_request.t) =
       ignore (Queue.dequeue_exn t.recent : int * string)
     done;
     Option.iter t.session ~f:(synchronize t)
-  | Document_saved { resource = _; revision = _ } ->
+   | Document_saved { resource; revision = _ } ->
     Option.iter t.session ~f:(fun session ->
-      Option.iter session.opened ~f:(fun opened ->
+       Option.iter (Option.filter session.opened ~f:(fun opened -> String.equal opened.resource resource)) ~f:(fun opened ->
         notify
           session
           (DidSaveTextDocument

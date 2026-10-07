@@ -88,6 +88,7 @@ let create (config : Config.t) =
 let reset t = create t.config
 let lookup t keys = Bindings.find t.config.normal keys
 let bindings t = t.config.normal
+let config t = t.config
 let cancel t notice = { (reset t) with notice = Some notice }, []
 
 let keys_to_string ?count keys =

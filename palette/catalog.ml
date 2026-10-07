@@ -76,7 +76,11 @@ let default =
   in
   let numbers = [ "gutter"; "numbering"; "line numbers" ] in
   create
-    [ editor ~id:"file.save" ~title:"Save file" ~keywords:[ "write"; "w" ] Save
+     [ editor ~id:"file.save" ~title:"Save file" ~keywords:[ "write"; "w" ] Save
+    ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab
+    ; view ~id:"tabs.previous" ~title:"Previous file tab" ~keywords:[ "buffer"; "switch" ] Previous_tab
+    ; view ~id:"tabs.close" ~title:"Close file tab" ~keywords:[ "buffer" ] Close_tab
+    ; view ~id:"tabs.close-discarding-changes" ~title:"Close file tab, discarding unsaved changes" ~keywords:[ "buffer"; "force close" ] Force_close_tab
     ; editor
         ~id:"app.quit"
         ~title:"Quit"
@@ -228,7 +232,18 @@ let default =
         ~id:"source.restart"
         ~title:"Restart diagnostic source"
         ~keywords:[ "checker"; "lsp"; "diagnostics" ]
-        Restart_source
+         Restart_source
+     ; view ~id:"directory.toggle-mark" ~title:"Toggle directory entry mark" Toggle_entry_mark
+     ; view ~id:"directory.mark-selection" ~title:"Mark directory selection" Mark_selection
+     ; view ~id:"directory.unmark-selection" ~title:"Unmark directory selection" Unmark_selection
+     ; view ~id:"directory.clear-marks" ~title:"Clear directory marks" Clear_directory_marks
+      ; view ~id:"directory.open-marked" ~title:"Open marked files" Open_marked_files
+      ; view ~id:"directory.major" ~title:"Show directory in main area" Directory_major
+      ; view ~id:"directory.side" ~title:"Show directory in sidebar" Directory_side
+      ; view ~id:"directory.hide" ~title:"Hide directory browser" Hide_directory
+      ; view ~id:"directory.focus" ~title:"Focus directory browser or editor" Focus_directory
+      ; view ~id:"directory.grow" ~title:"Grow directory sidebar" (Adjust_directory_size 4)
+      ; view ~id:"directory.shrink" ~title:"Shrink directory sidebar" (Adjust_directory_size (-4))
     ]
   |> Or_error.ok_exn
 ;;

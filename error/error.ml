@@ -255,6 +255,9 @@ let empty =
 let problems t = t.problems
 let history t = t.history
 let diagnostics t = t.diagnostics
+let forget_resource t resource =
+  { t with diagnostics = { t.diagnostics with by_resource = Map.remove t.diagnostics.by_resource resource } }
+;;
 let find t identity = List.find t.problems ~f:(fun p -> Identity.equal p.identity identity)
 
 (* First occurrence order is stable, including updates after acknowledgement. *)

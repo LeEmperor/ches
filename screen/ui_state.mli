@@ -1,7 +1,8 @@
 (** All UI-side state, and the transition for one input. No Bonsai types appear here, so
     tests drive it headlessly, exactly as the terminal frontend does.
 
-    The model holds the {!Ches_app.Controller.t} (editor and keymap), the layout
+    The model owns a {!Ches_app.Session.t}, with a cached active controller for presentation,
+    per-buffer scroll positions, the layout
     preferences, the scroll position, the shared {!Ches_tile.Host} (focus, capture, and a
     bracketed paste's owner), and the minor views' adapter states. Workspace requests and
     zen suppression are UI state, not editor state. This module is application assembly:
@@ -36,7 +37,7 @@ module Input : sig
      (** A timestamped frontend animation-clock pulse; never reaches the editor. *)
     | Resize (** Reconcile allocation/focus without interpreting editor input. *)
     | Source of Ches_error.Source_event.t
-    (** A diagnostic source's message, stamped with the editor's current revision.
+     (** A diagnostic source's message, stamped with its owning buffer's revision.
         Diagnostic lists that arrive during Insert are held (newest per source and
         resource) until Insert ends; started/stopped apply at once. Never reaches the
         editor. *)
@@ -64,10 +65,26 @@ val create
 
 (** The primary (editor) view and the non-focusable status view. *)
 val document_id : Ches_tile.View_id.t
+val directory_id : Ches_tile.View_id.t
+val side_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+(** Rendering-only snapshot of a retained surface; never adopt or dispatch it. *)
+val surface : t -> directory:bool -> t
 
 val status_id : Ches_tile.View_id.t
 
+(** Active file or directory presentation snapshot. Last-file close normally shows
+    the remembered/startup directory. If fallback loading failed, check [has_document]
+    before dispatch/rendering; use [session] for ownership. *)
 val controller : t -> Ches_app.Controller.t
+val session : t -> Ches_app.Session.t
+val show_directory : ?select:string -> t -> width:int -> height:int -> string -> t Or_error.t
+val has_document : t -> bool
+val open_file : t -> width:int -> height:int -> string -> (t * Ches_app.Buffer_id.t) Or_error.t
+val activate_buffer : t -> width:int -> height:int -> Ches_app.Buffer_id.t -> t Or_error.t
+val close_current : t -> width:int -> height:int -> force:bool -> t * bool
+val close_buffer : t -> width:int -> height:int -> Ches_app.Buffer_id.t -> force:bool -> t * bool
+val save_all : t -> width:int -> height:int -> t * (Ches_app.Buffer_id.t * bool) list
+val quit_session : t -> width:int -> height:int -> force:bool -> t * Ches_app.Controller.Status.t
 val prefs : t -> Geometry.Prefs.t
 val workspace_prefs : t -> Workspace.Prefs.t
 val hotkey_hints : t -> bool
@@ -167,14 +184,14 @@ val animation : t -> Animation.t
 (** Whether a bracketed paste is being collected. *)
 val pasting : t -> bool
 
-(** [Ches_app.Controller.take_clipboard] on the model's controller: what the frontend
+(** The session clipboard queue: what the frontend
     should put on the system clipboard after the inputs it just applied, from an editor
     yank or a copy in a read-only view, whichever was newest. *)
 val take_clipboard : t -> t * string option
 
 (** What the frontend should send the diagnostic source after the inputs it just
-    applied, in order: the document's text when its revision changed since the last
-    take (so the first take sends the initial text), a successful save of it, then
+    applied, in order: actual closes, lifetime-tagged opens and changed text for every
+    buffer whose revision changed since the last take, all successful saves, then
     [Space v R]/[Space v K] requests in the order given. Empty unless
     [source_attached]. The synchronous side never waits for the source. *)
 val take_source_requests : t -> t * Ches_error.Source_request.t list
@@ -311,6 +328,9 @@ val fitted_scroll : t -> width:int -> height:int -> Scroll.t
     same allocation and explicit status policy; scroll positions remain document
     coordinates and cursor positions are terminal coordinates. These queries do not change
     the model or editor. *)
+(** File strip above the document; single-file, zen and tiny allocations hide it. *)
+val tab_rect : t -> allocation:Geometry.Rect.t -> Geometry.Rect.t option
+val directory_rect : t -> allocation:Geometry.Rect.t -> Geometry.Rect.t option
 val geometry_in : t -> allocation:Geometry.Rect.t -> reserve_status_row:bool -> Geometry.t
 
 val fitted_scroll_in

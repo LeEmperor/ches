@@ -1,6 +1,8 @@
 open! Core
 
 type t =
+  | Document_opened of { resource : string; generation : int }
+  | Document_closed of { resource : string }
   | Document_changed of
       { resource : string
       ; text : string

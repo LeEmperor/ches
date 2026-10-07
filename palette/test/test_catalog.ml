@@ -21,7 +21,11 @@ let bindings =
   ; [ Ctrl 'r' ], Editor Redo
   ; editor " w" Save
   ; editor " q" Quit
-  ; editor " Q" Force_quit
+   ; editor " Q" Force_quit
+   ; keys " bn", View Next_tab
+   ; keys " bp", View Previous_tab
+   ; keys " bc", View Close_tab
+   ; keys " bC", View Force_close_tab
   ; view 'c' Toggle_centered
   ; view 'h' (Shift (-2))
   ; view 'l' (Shift 2)
@@ -57,6 +61,10 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
   [%expect
     {|
     file.save                      Save file                              Space w
+    tabs.next                      Next file tab                          Space b n
+    tabs.previous                  Previous file tab                      Space b p
+    tabs.close                     Close file tab                         Space b c
+    tabs.close-discarding-changes  Close file tab, discarding unsaved changes Space b C
     app.quit                       Quit                                   Space q
     app.quit-discarding-changes    Quit, discarding unsaved changes       Space Q
     edit.undo                      Undo                                   u
@@ -89,6 +97,17 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     report.toggle                  Toggle demo report
     report.focus                   Focus demo report
     source.restart                 Restart diagnostic source
+    directory.toggle-mark          Toggle directory entry mark
+    directory.mark-selection       Mark directory selection
+    directory.unmark-selection     Unmark directory selection
+    directory.clear-marks          Clear directory marks
+    directory.open-marked          Open marked files
+    directory.major                Show directory in main area
+    directory.side                 Show directory in sidebar
+    directory.hide                 Hide directory browser
+    directory.focus                Focus directory browser or editor
+    directory.grow                 Grow directory sidebar
+    directory.shrink               Shrink directory sidebar
     |}]
 ;;
 
@@ -145,8 +164,8 @@ let%expect_test "realistic queries" =
   search "save";
   [%expect {|
     file.save                      [Save] file
+    tabs.close-discarding-changes  Close file tab, discarding un[save]d changes
     app.quit-discarding-changes    Quit, discarding un[save]d changes
-    workspace.status-above         Move [s]tatus tile [a]bo[ve]
     |}];
   search "quit";
   [%expect
@@ -172,9 +191,9 @@ let%expect_test "empty query lists available commands in catalog order" =
   [%expect
     {|
     file.save                      Save file
-    app.quit                       Quit
-    app.quit-discarding-changes    Quit, discarding unsaved changes
-    edit.undo                      Undo
+    tabs.next                      Next file tab
+    tabs.previous                  Previous file tab
+    tabs.close                     Close file tab
     |}]
 ;;
 

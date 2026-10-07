@@ -27,6 +27,24 @@ module Status_position = struct
 end
 
 type t =
+  | Toggle_directory
+  | Directory_major
+  | Directory_side
+  | Hide_directory
+  | Focus_directory
+  | Adjust_directory_size of int
+  | Open_directory_entry
+  | Directory_parent
+  | Refresh_directory
+  | Toggle_entry_mark
+  | Mark_selection
+  | Unmark_selection
+  | Clear_directory_marks
+  | Open_marked_files
+  | Next_tab
+  | Previous_tab
+  | Close_tab
+  | Force_close_tab
   | Toggle_centered
   | Shift of int
   | Adjust_width of int

@@ -3,9 +3,11 @@ open! Async
 
 let command =
   Command.async
-    ~summary:"Edit a UTF-8, LF text file"
+    ~summary:"Edit a UTF-8, LF text file or browse a directory"
     ~readme:(fun () ->
-      "Opens PATH, or starts an empty document if nothing exists there; saving \
+       "Directory PATH opens a read-only browser (including ches .): Enter opens, \
+        - goes to the parent, Space o toggles file/directory, Space r refreshes.\n\
+        File PATH opens, or starts an empty document if nothing exists there; saving \
        creates it.\n\
        Normal mode: h/j/k/l move, w/b/e and W/B/E move by words, 0/^/$ to the\n\
        line start/first non-blank/end, _/g_ to the first/last non-blank,\n\
@@ -50,7 +52,7 @@ let command =
        ~doc:" Do not run a language server (ocamllsp or slang-server)"
      and demo_report = flag "--demo-report" no_arg
        ~doc:" Install a static, error-free report view for manual tile testing" in
-     fun () ->
+      fun () ->
        let fail error =
          eprintf "ches: %s\n" (Error.to_string_hum error);
          exit 1
@@ -61,7 +63,7 @@ let command =
        then fail (Error.of_string "standard input is not a terminal")
        else (
          match
-           Ches_app.Controller.open_file ~cell_width:Ches_screen.Cell_map.width path
+            Ches_app.Startup.open_path ~cell_width:Ches_screen.Cell_map.width path
          with
          | Error error -> fail error
           | Ok controller ->
@@ -72,22 +74,15 @@ let command =
            let report =
              Option.some_if demo_report Ches_screen.Report_tile.demo in
            (* One source: the synthetic checker, a test flag, replaces the server. *)
-           let source =
-             if synthetic_checker
-             then
-               Some
-                 (Ches_source.Synthetic.start
-                    ~root:(Ches_source.Workspace_root.find path)
-                    ())
-             else if no_lsp
-             then None
-             else
-               Option.map (Ches_source.Lsp_client.Config.for_path path) ~f:(fun lsp ->
-                 Ches_source.Lsp_client.start
-                   ~config:lsp
-                   ~cell_width:Ches_screen.Cell_map.width
-                   ~root:(Ches_source.Lsp_client.Config.root lsp path)
-                   ())
+            let source =
+              if no_lsp && not synthetic_checker
+              then None
+              else
+                Some (Ches_source.Workspace.start ~create:(fun path ->
+                  if synthetic_checker then Some (Ches_source.Synthetic.start ~root:(Ches_source.Workspace_root.find path) ())
+                  else Option.map (Ches_source.Lsp_client.Config.for_path path) ~f:(fun lsp ->
+                    Ches_source.Lsp_client.start ~config:lsp ~cell_width:Ches_screen.Cell_map.width
+                      ~root:(Ches_source.Lsp_client.Config.root lsp path) ())) ())
            in
            (match%bind Ches_ui.Editor_view.run ?report ?source controller with
             | Ok () -> return ()

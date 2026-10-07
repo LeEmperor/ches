@@ -104,6 +104,12 @@ let create ?path ?(search_case = Search_case.Smart) ~cell_width text =
 
 let text t = t.text
 let path t = t.path
+let with_path t path = { t with path = Some path }
+let rebase_text t ~saved ~text =
+  let fresh = create ?path:t.path ~search_case:t.search_case ~cell_width:t.cell_width text in
+  { fresh with saved; revision = t.revision + 1; saved_revision = t.revision + 1
+    ; unnamed_register = t.unnamed_register }
+;;
 let mode t = t.mode
 let revision t = t.revision
 let is_dirty t = not (B.equal t.text t.saved)
@@ -1028,6 +1034,7 @@ let save t =
   | None -> { t with message = Some (Error "No file name") }, []
   | Some path -> t, [ Effect.Write_file { path; text = t.text; revision = t.revision } ]
 ;;
+let request_save t = save { t with message = None }
 
 let quit t =
   if is_dirty t

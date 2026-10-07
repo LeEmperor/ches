@@ -11,11 +11,15 @@ let fields ui : Status_field.t list =
   in
   let mode =
     let mode = Editor.mode editor in
-    let label = sprintf " %s " (Mode.to_string mode) in
+    let label = if Option.is_some (Session.input_directory (Ui_state.session ui))
+      then (if Mode.equal mode Normal then " DIRECTORY " else sprintf " DIRECTORY %s " (Mode.to_string mode))
+      else sprintf " %s " (Mode.to_string mode) in
     field Mode ~priority:0 [ Span.create (Mode mode) label ~width:(String.length label) ]
   in
   let filename =
-    Option.bind (Editor.path editor) ~f:(fun path ->
+     Option.bind (Controller.display_path (Ui_state.controller ui)) ~f:(fun path ->
+      let path = if Option.is_some (Session.input_directory (Ui_state.session ui))
+        then Directory_identity.encode_name path else path in
       field
         Filename
         ~priority:5

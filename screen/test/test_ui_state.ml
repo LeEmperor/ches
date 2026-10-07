@@ -86,7 +86,10 @@ let%expect_test "a bracketed paste is one literal insertion, even of Normal-mode
 let%expect_test "quitting: refused while dirty, forced, and clean" =
   let t = run (ui "abc") (keys "x q") in
   message t;
-  [%expect {| (((kind Error) (text "Unsaved changes: save them or force quit"))) |}];
+  [%expect {|
+    (((kind Error)
+      (text "Unsaved changes: f.txt; save them or force quit (Space Q)")))
+    |}];
   let (_ : Ui_state.t) = run t (keys " Q") in
   [%expect {| EXIT |}];
   (* Inputs after the exit are not applied. *)

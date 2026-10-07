@@ -1,6 +1,6 @@
 # Directory Workspace: buffers, tabs, and editable directories
 
-Status: planned; no implementation phases completed. Scoped on 2026-10-06.
+Status: phases 0–6 implemented; phases 7–9 pending. Scoped on 2026-10-06.
 
 ## Goal
 
@@ -384,4 +384,852 @@ Next-phase integration notes:
 
 ## Implementation handoffs
 
-None yet.
+### Phase 0 / 2026-10-07 / implemented
+
+#### Implemented behavior and public spike contracts
+
+- Added pure `core/directory_identity.ml` / `.mli` and eight headless tests in
+  `test/test_directory_identity.ml`. No startup, controller, input, rendering, or
+  filesystem behavior changes. This is an identity/codec spike, **not** phase 6's
+  operation planner. `create` validates a baseline; `text` serializes it into ordinary
+  `Text_buffer`; `parse` validates a whole edited snapshot and returns entry-associated
+  rows; `missing_ids` exposes deletion proposals without executing anything.
+- Existing entries carry positive directory-local IDs, independent of name, order,
+  and kind decorations. Baseline IDs are allocated monotonically by the eventual
+  directory-buffer owner, never reused during that buffer's lifetime, and remain
+  stable across refresh/save for surviving entries. Refresh after external changes
+  must not infer identity solely from a matching row number or inode (hard links
+  exist); retain unchanged backing names, reconcile known committed operations,
+  and give genuinely new/external replacement entries new IDs.
+- Chosen mechanism: explicit identity tokens, protected **by validation**, rather
+  than edit-tracked invisible metadata. Existing row syntax is
+  `@ches[ID]<TAB>ENCODED_NAME`, with `/` after directory names only. Tokens are ordinary
+  visible text in this spike and travel with yank/paste, multiline replacement, and
+  the editor's existing undo snapshots. Rendering may style them as a muted prefix
+  later, but must not hide a row-number map and claim it is identity. Headers, kind
+  icons, mark indicators and paths remain outside editable text.
+- Renaming a name retains its ID; moving whole rows retains IDs; deleting a row
+  removes that ID from the proposal, not from the baseline. A tokenless row is
+  `Fresh`, a creation proposal with **no backing identity**. Separate fresh rows
+  are separate proposals; stable entry IDs are assigned on successful creation,
+  not from provisional row positions. Opening fresh rows requires save first.
+- Copying a complete existing row duplicates its ID and is explicitly rejected
+  until phase 8. Cutting then pasting once is a move. Joining two token rows,
+  splitting a token, malformed/noncanonical/unknown IDs, malformed escapes, and
+  existing-kind changes fail whole-snapshot validation. Undo/redo can restore either
+  valid or invalid text; invalid text never authorizes filesystem IO.
+- This mechanism is not tamper-proof: removing a **whole** token looks like deleting
+  the original entry plus creating a new one, and exchanging valid unique tokens
+  asserts different name-to-ID associations. Do not infer an intended rename from
+  these edits. Phase 6 must reject every missing-ID/deletion proposal until phase 8;
+  phase 8 must show destructive intent explicitly under its deletion policy. The
+  adapter should discourage partial token edits, but command interception is not
+  required to make the snapshot validator safe. Never execute only the valid subset
+  of an invalid snapshot. Destination collisions and unsupported operations still
+  require phase 6 validation; parser success alone is not an executable plan.
+
+#### Filename display and round-trip contract
+
+- Unix child names are raw byte strings, not assumed UTF-8. The canonical editable
+  representation is printable ASCII; encode every byte below 32 or at least 127,
+  backslash, `@`, and first/last spaces as uppercase `\xHH`. Internal spaces remain
+  literal; do not trim any row. Thus TAB = `\x09`, LF = `\x0A`, CR = `\x0D`, invalid
+  UTF-8 byte FF = `\xFF`, backslash = `\x5C`, and `@` = `\x40`. Unicode names are
+  currently byte-escaped too: less pretty, but deterministic, terminal-safe, and
+  lossless without a UTF-8 exception path. Names resembling identity syntax are
+  escaped names, never tokens. No shell-style quoting or escape interpretation.
+- Decode only canonical uppercase hex escapes. Reject empty names, `.`, `..`, NUL,
+  and slash even when escaped. A single unescaped final `/` means fresh directory
+  creation; existing entries must keep their original kind. In particular a symlink
+  to a directory is still a symlink row, **without** `/`; display target-kind hints
+  outside text. Empty rows (including final LF) are ignored; a literal-space-only
+  name must use canonical edge escapes. Preserve original baseline bytes for IO.
+- The codec supports all legal Unix child-name bytes, tested individually and in
+  combination. Unsupported filesystem kinds (FIFO/socket/device or a later platform
+  limitation) remain visible as `Unsupported` rows and are non-editable: alteration
+  or omission rejects validation. They may be selected/copied, but opening or filesystem
+  operations report unsupported. Never silently omit an unrepresentable entry; use
+  an explicitly read-only escaped display if another platform cannot round-trip it.
+
+#### Session contracts for phase 1 (specified, not implemented here)
+
+- Introduce separate abstract `Buffer_id` and `Group_id` types with comparison/hash
+  support and monotonic session-local integer allocation. IDs are not paths, tab
+  positions, `View_id`, entry IDs, or LSP versions. Start with exactly one editor
+  group. The session resource index maps a normalized absolute path to one typed
+  file/directory buffer; kind conflicts require explicit refresh/reconciliation.
+  Close releases the index entry; reopen gets a new buffer ID. IDs survive renames.
+- Resource normalization is **lexical absolute-path** normalization: resolve relative
+  inputs against an explicit startup working directory, collapse repeated `/`, `.`,
+  and `..` (clamped at root), strip final `/` except root. Case-sensitive byte equality
+  on this Unix checkout; no `realpath`, case folding, inode or hard-link deduplication.
+  Normalized paths must also be the paths used for IO, not just index keys. This
+  intentionally gives lexical `link/..` semantics, not the OS's symlink traversal
+  semantics; document this limitation and do not silently mix both interpretations.
+  Startup directories may themselves be symlink paths and keep that lexical identity.
+- Opening the same normalized file activates its existing buffer/tab, including dirty
+  content; a failed new open creates no tab and leaves the current presentation intact.
+  Tabs are ordered by first successful open, no preview replacement or MRU reordering.
+  Two symlink aliases or hard links may deliberately open as distinct buffers; their
+  shared target is not deduplicated and save conflict detection is not promised.
+- Symlink **directory-entry mutations** always use the stored lexical parent/child
+  path and `lstat` identity, never a resolved target path. Renaming a symlink renames
+  the link, not the target. Opening/saving a file through a symlink follows the target
+  as current `File_io` does. Single-entry navigation may follow a directory symlink,
+  retaining its lexical path; cycles do not trigger recursive traversal. Refresh and
+  phase 7 must distinguish a replaced link from the original baseline link.
+- Semantic commands: `Open_or_activate`, `Activate_buffer`, `Close_current`,
+  `Force_close_current` (explicit discard), `Save_current`, `Save_all`, `Quit_session`,
+  `Force_quit_session`. Exact new keys deferred to their UI phases; existing `Space w`
+  stays save-current and `Space q` / `Space Q` become session quit / explicit discard
+  quit. Close is not quit. Dirty close/quit refuses with actionable feedback naming
+  dirty buffers, including hidden directories; force commands require explicit user
+  invocation, not a repeated-key or implicit discard heuristic. No confirmation dialog
+  machinery is required for phase 1. Save-all visits dirty buffers in buffer-ID order,
+  continues after failures, reports each result and a summary; failures stay dirty.
+- Closing an active tab chooses the next tab at its old index, else the preceding last
+  tab. Closing an inactive tab leaves activation unchanged. Closing the final file
+  falls back to the remembered directory, else startup directory (the initial file's
+  parent for file startup); phase 1 may represent this as a no-file session pending
+  phase 3, never fabricate an empty file. Non-active buffers retain text, undo, cursor,
+  mode, highlights, and scroll; finish Insert transactions/exit Visual on an explicit
+  context switch before hiding, then reset both outgoing and incoming pending keymaps.
+- Session owns one unnamed register, clipboard queue and feedback store. Before each
+  document dispatch install the session register; after a yank/delete collect its new
+  value, without falsely publishing clipboard changes merely due to tab activation.
+  Effect dispatch stays synchronous and buffer-addressed; highlight runtimes remain
+  document-local and are released on actual close/session shutdown, never switching.
+
+#### Presentation, navigation, and marks contracts
+
+- Presentation state carries directory `Buffer_id`, `Major | Side`, target `Group_id`,
+  and optional return file `Buffer_id`. Major replaces the visible editor surface,
+  preserving file tabs and group activation underneath; directories do not become file
+  tabs. Side reuses the same directory adapter/state, not a new buffer. Initially one
+  directory view; moving/hiding it preserves text, cursor, scroll, marks and baseline.
+- File `Space o` shows its parent and selects its baseline backing entry, recording
+  that file as return target. Directory `Space o` returns to the recorded live file;
+  if closed, fall back to the group's live active file; with neither, remain in the
+  directory and give harmless feedback. Successful major file-open activates the file
+  surface; side file-open keeps the directory visible and focuses the target editor.
+  Parent navigation selects the child just left. Remember selection by entry ID and
+  scroll per visited buffer; missing selections choose the old index's next neighbor,
+  else last row. Retain visited directories for the session. Dirty refresh refuses
+  unless an explicit discard/reload command is invoked.
+- Sort all entries, including dotfiles, by raw byte name (case-sensitive, no directory
+  grouping); synthetic parent/header/empty hints are decorations, not editable entries.
+  Listing order means current text row order once editing is enabled. Normal Enter
+  acts only on the cursor row; single directory Enter navigates. Visual Enter opens
+  all intersected entry rows, including blockwise intersections, in listing order;
+  headers/empty rows are ignored. Marks never override either Enter behavior.
+- Named commands (palette-first, new bindings deferred): `Toggle_entry_mark`,
+  `Mark_selection`, `Unmark_selection`, `Clear_directory_marks`, `Open_marked_files`.
+  Marks are directory-local existing-entry IDs, external to text/history/dirty state;
+  fresh proposals cannot be marked for opening. A deleted text row leaves its mark
+  dormant so undo restores visibility; successful commit prunes actually removed IDs.
+  Existing renamed rows open their **baseline backing path**, not pending destination.
+- Both batch paths deduplicate normalized resources in current listing order, skip
+  directories/unsupported kinds with feedback, continue after individual failures,
+  activate the first successful file, and summarize failures/skips. Open-marked clears
+  only successfully opened IDs (including existing-tab activation); skipped/failed
+  marks remain. Ordinary/visual opens do not change marks. No opening implicitly saves.
+
+#### Concrete current-code seams and changes required
+
+- `core/editor.mli`: immutable text snapshots, byte-boundary cursor, increasing revision,
+  dirty comparison to saved text, Insert transactions and text/cursor undo already
+  suffice for token identity. `Text_buffer` accepts only UTF-8 without NUL/CR, hence the
+  byte codec. Cursor is per editor; do not introduce multi-view cursors. Editor path
+  has no reassociation API: add a narrow path update before phase 7, preserving history
+  and saved text. Directory save must not dispatch `Effect.Write_file` for listing text;
+  phase 6/7 use application planning/apply and a fresh saved-text/history baseline.
+- `app/controller.ml` currently owns feedback, pending clipboard/save, keymap, highlight
+  runtime and synchronous `perform`; `Effect.Exit` closes its highlight runtime. Phase
+  1 must separate session exit from document close, collect save events per buffer
+  rather than one newest event, and centralize feedback/registers. Do not dispatch
+  document-local Quit as if it checked dirty siblings. `Controller.cancel_pending`
+  already wraps `Keymap.reset`; `Editor.set_unnamed_register` is the register seam.
+- `screen/ui_state.ml` owns a single controller, `scroll`, `sent_revision`, held source
+  lists and host. Replace active-controller ownership with session access, persist
+  scroll per buffer, sent revisions per resource, held lists per owning buffer/source,
+  and clear animation trails on context switches. `take_source_requests` emits only
+  active text today; `receive` stamps **every** event with the active revision/text and
+  delays all lists during active Insert. Resolve each normalized event resource first:
+  stamp/hold with its owning buffer's revision/text/mode even while inactive; unknown
+  resources retain workspace findings but must not acquire an unrelated revision.
+  Close/reopen and rename need source lifecycle/generation handling for late events.
+- `error/source_request.mli` lacks document-close; `source/lsp_client.ml` stores one
+  `document`/`opened`/revision-text queue and uses realpath-based canonicalization.
+  Therefore it is **not** currently a multi-document reusable runtime. Phase 1 must
+  add addressed close and per-resource runtime state (or explicit separate runtimes
+  per buffer until reuse exists), handle URI alias mapping without merging lexical
+  buffers, and never reinterpret a late version against a different document. The
+  frontend's single `?source`/`Source.stop` wiring in `ui/editor_view.ml` and source
+  startup in `bin/ches.ml` must become session lifecycle wiring as well.
+- `tile/host.mli` already owns focus, capture prefix and paste start owner by `View_id`.
+  The document view ID stays constant across file tabs, so paste ownership must also
+  capture the starting **buffer ID/context generation**: tab change/close during paste
+  must drop it, not deliver to the newly active file. Clear controller and host prefixes
+  on switches; do not erase paste ownership to make a stale paste look unowned. Current
+  captured tile routing rejects editor actions and text input consumes leader keys;
+  a side directory adapter needs explicit modal document routing, not the read-only
+  details adapter or palette text-input policy reused unexamined.
+- `screen/workspace.ml` allocates one document, status, and bottom-band minors; use
+  the major document allocation for directory presentation without losing tab state.
+  Real side placement waits for phase 5. `Ui_state.view_layout`/`view_available` have
+  explicit floating-layer parameters from floating phase 1; preserve that seam.
+  `FLOATING_TILES_PLAN.md` currently has only phase 1 implemented; no shared screen
+  modules were changed here. `bin/ches.ml` has one required PATH and calls
+  `Controller.open_file`; `File_io.read` rejects directories. Typed file/directory
+  startup belongs to phase 3, not this spike. No additional CLI syntax chosen.
+
+#### Checks, gaps, and next-phase handoff
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test`: passed, including the eight new
+  tests. Coverage includes name rename, fresh insertion/paste, deletion, whole-row
+  movement, yank/paste duplication, joining, token splitting, multiline replacement,
+  undo/redo, baseline validation, unsupported kinds, and exhaustive legal byte names.
+- `opam exec --switch=5.2.0+ox -- dune runtest screen/test`: passed.
+- `git diff --check`: passed. Git was used only for read-only status/diff/archive;
+  no mutative Git operations, metadata changes, remote actions, or subagents.
+- `opam exec --switch=5.2.0+ox -- dune runtest`: fails in
+  `ui/test/test_editor_view.ml` on old snapshots expecting hidden tiles while current
+  defaults show status/problems/history. No expectations were promoted. This failure
+  is also recorded in the floating phase-1 handoff and was reproduced by running
+  the same UI suite in an isolated, unchanged `git archive HEAD` extraction at
+  `/tmp/opencode/directory-phase0-baseline-10zq87vb` (exit 1, same snapshot diff).
+  Log: `ui-baseline-check.log` in that directory. No source-suite failure occurred
+  in this run.
+- No filesystem executor, directory adapter, tokens styled/protected at input time,
+  new commands/bindings, resource-normalization implementation, or session owner was
+  added: those belong to the explicitly pending phases. No terminal smoke needed for
+  this pure, non-UI phase. The full-suite snapshot failure is a repository check gap,
+  not an identity-spike blocker.
+- Phase 1 should implement the specified owner/lifetime contracts and tests, recheck
+  current source interfaces, and keep the phase-0 codec isolated from application IO.
+  Phase 3 can use baseline serialization read-only; phase 6 can consume validated rows
+  but must add collision/type/operation validation before any filesystem plan. Phase 7
+  must reconcile backing paths and saved baselines without conflating text undo with
+  filesystem undo. Do not start those phases in this assignment.
+
+### Phase 1 / 2026-10-07 / implemented
+
+#### Implemented behavior
+
+- Added `Ches_app.Session`: session-local abstract `Buffer_id`/`Group_id`, an actual
+  lexical-resource index, ordered persistent file controllers, one editor group,
+  open-or-activate, addressed activation/close, explicit force-close, save-current,
+  save-all and guarded/forced session quit. Failed opens preserve the presentation;
+  repeated opens retain dirty text rather than reading disk again. Close removes the
+  resource index entry; reopen allocates a new ID. Closing an active buffer chooses
+  the next at its former index, else the preceding last buffer. Inactive close does
+  not switch activation or cancel the active document's pending input.
+- Controllers retain independent text, history, cursor and highlighting. Switching
+  finishes Insert transactions/exits Visual, cancels incoming/outgoing keymaps and
+  host capture prefixes, and restores per-buffer UI scroll. Highlight providers are
+  released only on actual close or session shutdown, not activation.
+- Session feedback, unnamed register, newest pending clipboard publication and FIFO
+  successful-save events are shared. Installing an equal register is a no-op; merely
+  switching does not publish clipboard changes. Existing minor-view copies use this
+  same register/clipboard route. Quit checks every open buffer, including inactive
+  dirty files, and names dirty buffers with actionable force-quit guidance.
+- Save-current targets only its file. Save-all visits dirty buffers in ID order,
+  continues after each failure, returns addressed outcomes, retains each failure as
+  file-operation feedback and publishes a saved/failed summary. Failed text stays
+  dirty. Application save requests work independently of modal command availability,
+  preserving Visual selection/mode and committing an Insert transaction as needed.
+- The UI exposes open/activate/close-current/close-addressed/save-all/quit APIs for the
+  upcoming adapters. Existing `Space w`, `Space q`, `Space Q` now use session policy.
+  A paste retains its host start owner, but any document switch invalidates its
+  buffer context, even a switch away and back before paste-end. Closed scroll and
+  diagnostic-anchor state is pruned. Closing the final file leaves a **no-file**
+  session, renders a no-file message with no cursor, and still accepts session quit;
+  it does not fabricate an empty file or quit implicitly.
+
+#### Changed modules and public contracts
+
+- New `app/session.ml` / `.mli`, `app/buffer_id`, `app/group_id`, and `core/resource`
+  (re-exported as `Ches_app.Resource`). Resource normalization is the phase-0 lexical
+  absolute policy, used for actual file IO too. Symlink aliases remain distinct.
+- `core/editor`: narrow `with_path` and effect-only `request_save` APIs, preserving
+  text/history/cursor; filesystem IO remains in the controller. `app/controller`:
+  feed-without-execution, shared-feedback/register installation, normalization path
+  update and original display-path access. `input/keymap`: configuration accessor so
+  newly opened files inherit the initial controller's configured keymap.
+- `screen/ui_state`: session ownership/synchronization, lifecycle APIs, per-buffer
+  scroll, addressed source requests and events, context-safe paste. Its legacy
+  `controller` accessor is a presentation snapshot: check `has_document` before
+  treating it as live, especially after last close. `screen/frame` handles no-file
+  presentation; `screen/status` retains original filename spelling for display.
+- `screen/problems` finding keys now include resource identity; `problems_tile`
+  diagnostic text anchors are keyed by source **and** resource, not source alone.
+  `error/error.forget_resource` releases closed-document diagnostic collections and
+  revision guards without erasing operation-feedback history.
+- `Source_request.Document_opened {resource; generation}` and
+  `Document_closed {resource}` delimit actual lifetimes. `Source_event.Owned`
+  carries runtime ownership/generation; the UI rejects events from closed/reopened
+  owners. Changed-text requests cover every open buffer, not only the active one;
+  successful saves are not collapsed to the newest buffer's event.
+- New `source/workspace` multiplexes existing single-document runtimes. LSP URI paths
+  use lexical normalization (no realpath alias merging); LSP saves and closes are
+  resource-addressed, and close clears its document/revision-text state. Synthetic
+  close invalidates pending timers. Event-queue coalescing respects owner lifetime.
+  `bin/ches` creates the source manager; `ui/editor_view` disposes session highlights
+  and all diagnostic drivers on exit/deactivation, including shutdown without keys.
+
+#### Policy decisions and scope
+
+- Both existing drivers remain single-document, so phase 1 deliberately uses one
+  runtime per resource rather than claiming multi-document process reuse. Managed
+  source names have a `#buffer-ID` suffix, isolating diagnostics/revision guards and
+  stopped state between runtimes. Existing restart/kill commands address all managed
+  runtimes. The source manager belongs to one session, not multiple replacement sessions.
+- Diagnostics resolve their owning buffer's revision/text/mode even while inactive.
+  Insert-held lists release when that owner leaves Insert, including on activation
+  of another buffer. Unknown workspace resources remain visible and use arrival
+  revision `-1` (the current diagnostics API has an integer basis), never the active
+  file's revision. Actual close clears the closed resource's diagnostic guards.
+- No tab strip, new navigation/close bindings, directory startup/browser, directory
+  buffer, filesystem planner/executor, or later-phase commands were implemented.
+  Final-file close remembers `Session.startup_directory` for phase 3's fallback.
+  The no-file UI retains a closed presentation snapshot for legacy geometry queries,
+  but that snapshot is not indexed/live and its highlight runtime is disposed.
+
+#### Checks and next-phase integration
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test source/test`: passed.
+  Seven new headless tests in `test/test_session.ml`,
+  `screen/test/test_session_ui.ml`, and `source/test/test_workspace.ml` cover independent
+  edits/undo/highlight identities, deduplication, symlink aliases and normalized IO,
+  shared registers, mode/prefix/scroll preservation, failed-open safety, save-current,
+  save-all with two individually retained failures and a successful save after a
+  failure, hidden dirty quit, both close-successor cases, no-file quit, inactive and
+  unknown diagnostic revisions, held-list release, late close/reopen events, round-trip
+  paste invalidation, addressed source saves and runtime cleanup. Earlier tests pass;
+  only intentional named-quit feedback and initial source-open expectations changed.
+- PTY smoke of `_build/default/bin/ches.exe --no-lsp TEMP/a.txt`: passed startup,
+  Insert editing, dirty `Space q` refusal without implicit save, `Space w` disk write,
+  and clean `Space q` exit (status 0), using an isolated `/tmp/opencode` fixture.
+- `opam exec --switch=5.2.0+ox -- dune runtest`: still fails only on the documented
+  `ui/test/test_editor_view.ml` old hidden-tile layout snapshots. The same HEAD failure
+  is established in the phase-0 handoff; those UI expectations were not promoted.
+  Final full-suite log: `/tmp/opencode/directory-phase1-runtest.log` (exit 1).
+- `git diff --check`: passed. Only read-only Git inspection was used. No Git metadata,
+  staging/history/config/branch/worktree operations, remote mutations, or subagents.
+- Phase 2 should render the session's ordered file buffers and use the UI lifecycle
+  facade, not replace controllers. Phase 3 must add typed directory ownership and
+  presentation/fallback without bypassing shared lifetime, source routing or paste
+  invalidation; presentation switches must invalidate input context even if the
+  underlying active file ID remains unchanged. Phase 7 still needs explicit resource
+  reindex/reassociation and refreshed display labels on rename; `with_path` here is
+  a normalization seam, not a complete rename operation. Per-resource language-server
+  processes are a known scalability limitation, not a phase-1 correctness blocker.
+
+### Phase 2 / 2026-10-07 / implemented
+
+#### Implemented behavior and policy decisions
+
+- File tabs render in first-successful-open order above the document allocation.
+  Brackets and the title style identify the active tab; `*` identifies modified
+  buffers. Labels use the shortest distinguishing lexical path suffix (e.g.
+  `one/same.txt`, `two/same.txt`), with the phase-0 byte-name codec keeping controls,
+  invalid UTF-8 and non-ASCII names terminal-safe. Visible ordinals identify tabs
+  even when long labels are clipped. No preview replacement or MRU reordering.
+- Exact Normal-mode defaults: `Space b n` next, `Space b p` previous, `Space b c`
+  close, `Space b C` force-close/discard. Navigation wraps in open order. Four
+  matching palette entries derive shortcuts from the configured bindings and run
+  once through the existing UI/session lifecycle. Dirty close refuses with the
+  file path and explicit save/force-close guidance; ordinary close is not quit.
+- **One-tab visibility:** hide the strip for zero or one file, and in zen. Show
+  it for multiple files when the document allocation has positive width and at
+  least three rows. Very short terminals give their rows to content/status instead.
+  The workspace's document/status/minor rectangles are unchanged; the strip takes
+  one row inside the document allocation. All document geometry, fitted scroll,
+  rendering and cursor queries use the same reduced allocation. Appearing/hiding
+  the strip fits the viewport without modifying document cursor/text/history;
+  scroll is retained where valid and adjusted only as necessary to keep the cursor
+  visible. Stale animation coordinates are cleared on context/visibility changes.
+- Overflow is a deterministic contiguous window containing the active tab. Grow
+  toward preceding neighbors first, then following neighbors when they fit; `<`
+  and `>` advertise hidden neighbors. Individual labels cap at 40 cells including
+  chrome; `~` denotes clipping. The active ordinal and dirty suffix survive where
+  width permits; at extremely small widths retain a styled active marker rather
+  than overflowing. Every rendered row has exactly the requested cell width.
+- Closing active tabs uses phase 1's next-at-old-index, else preceding-last policy.
+  Inactive close preserves active input/prefix state while reconciling strip
+  visibility. Last-file close leaves zero indexed/live buffers, no cursor and a
+  terminal-safe no-file message showing `Session.startup_directory` as the directory
+  fallback target. It neither creates an empty file nor exits. Tab commands are
+  harmless with no files; quit remains available. Opening another file reuses the
+  ordinary lifecycle. A no-file palette open is explicitly refused, not left as an
+  invisible input capture. Actual directory presentation remains phase 3 work.
+
+#### Changed modules and public contracts
+
+- New `screen/file_tabs.ml` / `.mli`: `tabs` projects the session's live ordered file
+  controllers into disambiguated descriptors; `render` handles terminal-safe strip
+  content, clipping and overflow. No new file-buffer ownership or filesystem IO.
+- `input/view_command` adds `Next_tab`, `Previous_tab`, `Close_tab`, `Force_close_tab`;
+  `input/bindings` and `palette/catalog` expose the defaults and discoverable actions.
+- `screen/ui_state` exposes `tab_rect`; `geometry` now delegates to `geometry_in`,
+  sharing the strip reservation with explicit allocations, scroll and frame drawing.
+  Moved common lifecycle reconciliation into `adopt_session_state` and
+  `close_buffer_state` so keyed/palette commands and the phase-1 public facade share
+  scroll retention, source cleanup, pending-prefix cancellation and paste invalidation.
+  Buffer changes cannot animate a cursor trail between unrelated documents.
+- `app/session` improves dirty-close instructions and resets the no-file keymap when
+  entering/leaving a file context, preventing a no-file leader prefix from surviving
+  open/last-close and unexpectedly executing in the next no-file context.
+- `screen/frame` composes the strip outside document text, and clips the no-file
+  directory-target message as safe ASCII. Only palette catalog/count expectations
+  were updated in `palette/test` and `screen/test/test_palette_tile.ml`; existing
+  single-file geometry and UI snapshots were not broadly promoted.
+
+#### Checks run and results
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test palette/test source/test`:
+  passed. Five new headless tests in `screen/test/test_file_tabs.ml` cover binding and
+  palette selection, both wrap directions, deduplication/open order, independent
+  dirty text/undo/cursor/scroll, same-basename labels, dirty refusal/explicit discard,
+  both close successor cases, inactive-close prefix retention, no-file prefix reset,
+  last-file fallback/reopen, deterministic overflow/dirty markers, exact span widths,
+  zen/strip visibility, offset allocations and exhaustive small terminal geometry.
+  Earlier session, diagnostic, paste and highlight lifetime tests also pass.
+- PTY smoke of `_build/default/bin/ches.exe --no-lsp TEMP/file.txt`: passed Insert
+  editing, dirty `Space b c` refusal, `Space b C` returning to no-file with a directory
+  target, explicit SIGWINCH resize to 8x2 and restoration to 80x16, then clean no-file
+  `Space q` exit (0). The discarded edit never reached disk. Capture:
+  `/tmp/opencode/directory-phase2-pty.log`. Multi-file input/rendering is exercised
+  headlessly through the public open facade; the CLI still accepts one startup file
+  and the directory-driven opening workflow deliberately waits for phase 3. No human
+  visual acceptance is claimed.
+- Final `opam exec --switch=5.2.0+ox -- dune runtest`: exit 1, only the previously
+  documented `ui/test/test_editor_view.ml` default-visible-tile snapshot mismatch.
+  Log: `/tmp/opencode/directory-phase2-runtest.log`. Those expectations remain unchanged.
+  An initial attempted `input/test` target was invalid (input tests live in `test`),
+  and a parallel build/test attempt hit Dune's lock; the valid checks above were
+  rerun serially and passed.
+- `git diff --check`: passed. Git inspection was read-only; no Git metadata,
+  staging/history/config/branch/worktree operations, remote changes or subagents.
+
+#### Known gaps and next-phase integration
+
+- No directory owner/listing/navigation/startup handling, filesystem planner, side
+  placement, mark commands or later-phase documentation was implemented. The full UI
+  snapshot failure is an existing repository check gap, not a tab acceptance blocker.
+- Phase 3 should replace no-file fallback with remembered-directory, else startup-
+  directory presentation, keeping zero file tabs rather than fabricating a file.
+  Extend session fallback ownership when remembered directories exist. Directories
+  must not join `File_tabs.tabs`; retain the group's ordered file controllers under
+  major directory presentation. Keep `tab_rect`/geometry consistent with that new
+  presentation policy and preserve the shared lifecycle facade for file opens.
+- Directory/file presentation changes must still invalidate paste/input context even
+  if the underlying active file ID is unchanged. Preserve the explicit floating-layout
+  seam in `view_layout`/`view_available` from `FLOATING_TILES_PLAN.md`; no floating work
+   or workspace allocation changes were made in phase 2.
+
+### Phase 3 / 2026-10-07 / implemented
+
+#### Implemented behavior
+
+- `ches .` and other directory PATHs start a read-only, buffer-backed major directory
+  presentation with zero file tabs. `Startup` classifies normalized paths and checks
+  readability; `Controller.Kind` carries explicit file/directory startup identity
+  rather than guessing from arbitrary text-controller paths. Missing file arguments
+  retain the existing new-file behavior. The startup directory controller is adopted
+  into a directory owner, never indexed or retained as a file tab.
+- Normal `Space o` opens a file's parent with that backing entry selected; from a
+  directory it returns to the recorded live file, else the group's active file, else
+  stays put with feedback. `Enter` opens/activates the cursor file in persistent tabs,
+  or enters a directory (including directory symlinks). `-` goes to the lexical parent
+  and selects the child just left. `Space r` explicitly refreshes a directory; these
+  directory-only actions are harmless from a file. Directory opens use the session's
+  ordinary file lifetime and deduplication route, not controller replacement.
+- Directory rows are the phase-0 `Directory_identity.text` in a real editor controller,
+  retaining baseline entry IDs and escaped raw-byte backing names. All entries,
+  including hidden ones, sort by raw byte name without directory grouping. The path
+  header, read-only label, kind gutter (`f`, `d`, `@`, `!`) and empty-state hint are
+  decorations outside row text. The status reports DIRECTORY. On tiny allocations
+  the header/margins give space to content using the existing geometry rules.
+- Visited directory buffers survive for the session. Selection/cursor and viewport
+  survive hiding, parent/child revisits and failed opens. Refresh preserves surviving
+  entry IDs/selection; missing selection chooses the old index's next neighbor, else
+  the last row. Explicit originating-file/child selection takes precedence over a
+  directory's remembered cursor. Refresh errors preserve the existing baseline/view.
+- Unsupported kinds (including FIFO), broken links, invalid file text and unreadable
+  directories produce feedback without creating a tab or replacing the current view.
+  Read-only dispatch rejects edits, Insert/Visual entry, paste, undo, save and ordinary
+  file reload; movement and search remain available. No filesystem mutation commands,
+  visual-range opening, marks or side placement were enabled.
+- Last-file close now shows the remembered directory, else the file-startup parent,
+  instead of the phase-1/2 no-file placeholder. A fallback read failure retains a
+  zero-file session with feedback and the existing no-file rendering; quitting stays
+  available. File tabs remain underneath major directory presentation. File cursor,
+  scroll, dirty text and undo are preserved on return and existing-tab activation.
+- UI lifecycle adoption uses the visible **context ID**, independently of the active
+  file tab. Both keyed/palette and public directory switches reconcile scroll, host
+  prefixes, animation and paste ownership, including a file→directory→same-file
+  round trip. Source requests still enumerate only file buffers. Save-all while
+  browsing saves dirty files and restores the directory presentation.
+
+#### Changed modules and new public contracts
+
+- New `app/directory_buffer.ml` / `.mli`: placement-independent baseline loader,
+  selected-entry/name-selection adapter and read-only command policy. Directory state
+  includes stable session buffer ID, lexical path, baseline identity text/entries,
+  controller, monotonic next-entry ID and lstat fingerprints. No screen/tile types or
+  filesystem mutation depend on its placement.
+- New `app/startup.ml` / `.mli`, `Controller.Kind` and optional `Controller.create
+  ~kind`: explicit file/directory classification before frontend startup. `bin/ches`
+  uses it and mentions the phase-3 navigation keys in CLI help.
+- `app/session`: retained directory ownership, `show_directory`, `directory_buffer`,
+  `context_id`, `has_buffer` and typed `find_resource_buffer`. Existing `buffers`,
+  `active_id`, `find` and `find_resource` remain **file** APIs for tabs/diagnostics;
+  `active_controller` is now the visible file **or directory**. The presentation
+  descriptor explicitly carries buffer, `Major`, target `Group_id` and return file;
+  `Side` is only a future contract vocabulary, not implemented placement.
+- `screen/ui_state`: public `show_directory ?select`, directory header allocation,
+  directory-aware geometry and context-based viewport/paste reconciliation.
+  `screen/frame` and `screen/status` render directory decorations; no workspace or
+  floating layout allocation changes. `input/view_command` / `bindings` add the four
+  navigation actions/defaults. Session dispatch owns their IO and read-only policy.
+- Five new headless tests in `screen/test/test_directory_navigation.ml`. Only
+  intentional Enter/last-file-fallback expectations changed in existing keymap,
+  file-tab and session-UI tests; unrelated UI snapshots remain untouched.
+
+#### Policy decisions settled
+
+- Cached revisits do not implicitly reread disk; `Space r` is the explicit refresh.
+  Unchanged names/kinds with matching lstat device/inode retain IDs. Replaced resources
+  with different fingerprints and new names get monotonically fresh IDs. This is not
+  a watcher or a race-proof identity guarantee (rapid inode reuse can be indistinguishable);
+  later filesystem apply must still recheck its own baseline immediately before IO.
+- Symlink-directory navigation keeps the lexical alias, and separate aliases retain
+  separate buffers. Kind decorations still identify the link as a symlink; its row
+  has no directory suffix. Files open through their stored lexical backing paths.
+- File/directory resource-kind conflicts are explicitly refused rather than permitting
+  two differently typed owners at the same normalized path. Directories never appear
+  in `File_tabs.tabs`. The one existing editor group is the explicit open target.
+- Directory text is read-only in this phase, including selection/copy commands reserved
+  for phase 4. Refresh replaces its clean text baseline, not filesystem contents.
+
+#### Checks run and results
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test palette/test source/test`:
+  passed. New tests cover the complete directory→A→directory→B workflow, independent
+  edits/undo and cursor/scroll, cached parent/child selection and viewport, read-only
+  editing/save/paste rejection, no-return behavior, refresh identity including a
+  same-name external replacement, failed navigation/refresh under actual unreadable
+  permissions, invalid text/broken symlink/FIFO refusal, save-all while browsing,
+  directory exclusion from tabs/source requests, normalized resource reuse, symlink
+  alias policy, and exhaustive 0–29 by 0–13 terminal geometry/cell widths.
+- `python3 /tmp/opencode/directory-phase3-smoke.py`: passed against the built executable,
+  with PATH `.` in an isolated fixture. PTY coverage: directory startup, opening/editing
+  A and B in retained tabs, parent/child and return-to-file, dirty quit refusal, saving
+  B only, dirty-close refusal, force-close of the last file into a real directory,
+  harmless no-return toggle, SIGWINCH resize to 8x2/back, clean quit (0), and disk
+  verification that discarded A was untouched. Capture:
+  `/tmp/opencode/directory-phase3-pty.log`; last fixture:
+  `/tmp/opencode/directory-phase3-pty-lyms4490`. No human visual acceptance is claimed.
+- Final `opam exec --switch=5.2.0+ox -- dune runtest`: exit 1, only the previously
+  documented `ui/test/test_editor_view.ml` default-visible-tile snapshot mismatch.
+  Log: `/tmp/opencode/directory-phase3-runtest.log`. No baseline expectations promoted.
+- `git diff --check`: passed. Git was used only for read-only diff inspection; no Git
+  metadata/staging/history/config/branch/worktree changes, remote mutations or subagents.
+
+#### Known gaps and next-phase integration notes
+
+- Phase 3 is complete; phases 4–9 remain pending. No filesystem edit planner/executor,
+  visual or marked batch opening, side layout, directory eviction or background watcher
+  was implemented. The existing full-suite UI snapshots remain a repository check gap.
+- Phase 4 should extend the directory adapter's allowed command set for read-only
+  selection/yank and intercept Visual Enter before ordinary cursor-entry navigation.
+  Add entry-ID marks outside text; normal Enter must continue ignoring marks.
+- Phase 5 should store/change actual placement and reuse these same retained buffers,
+  target-group descriptor and context-safe UI adoption, not create a second controller
+  for side placement. `directory_rect` and major kind gutter are presentation-only.
+- Phase 6 must add dirty-directory session quit/save-all handling before enabling text
+  mutation, preserve dirty baselines on navigation, refuse dirty refresh, and integrate
+  marks/entry reconciliation. Today's read-only filter must never simply be removed
+  while allowing directory `Command.Save` to reach ordinary `Effect.Write_file`.
+- Session construction consumes the validated startup directory classification and
+  loads its baseline synchronously. Like other startup IO, filesystem changes between
+  readability validation and baseline loading can still race; no atomic snapshot or
+  watching guarantee is claimed. Per-file source runtime scalability and later rename
+   resource-reindexing limitations from phase 1 remain unchanged.
+
+### Phase 4 / 2026-10-07 / implemented
+
+#### Implemented behavior and policy decisions
+
+- Read-only directories now permit Characterwise, Linewise and Blockwise selection,
+  selection cancellation and all yank variants. They still reject text mutation,
+  paste, undo, reload and save. Yanks use the session's shared register/clipboard.
+- Visual `Enter` opens all intersected entry rows in listing order, including reverse
+  and block selections. Normal `Enter` remains cursor-only and ignores marks; single
+  directory navigation remains unchanged. Neither ordinary nor Visual opens clears marks.
+- Directory-local existing-entry IDs carry noncontiguous marks outside text, dirty
+  state and undo. The kind gutter adds `*` and the header reports the marked count.
+  Cached navigation/hiding preserves marks; refresh retains surviving IDs and prunes
+  IDs genuinely absent from the new clean baseline. Decorations are never yanked.
+- Exact Normal/Visual bindings: `Space m m` toggle cursor mark, `Space m s` mark
+  selection (cursor outside Visual), `Space m u` unmark selection, `Space m c` clear
+  this directory's marks, `Space m o` open marked files. Five discoverable palette
+  commands expose the same actions and configured shortcuts. The existing palette
+  remains Normal-only; Visual selection commands use their bindings/public dispatch.
+- One shared session batch resolver handles Visual and marked targets. It deduplicates
+  normalized lexical backing resources in current listing order, opens via the ordinary
+  persistent-tab lifecycle, continues after failures, skips directories (including
+  directory symlinks) and unsupported kinds, and activates the first successful file.
+  Each failure/skip is retained in feedback history, followed by an opened/failed/skipped
+  summary. With no successful target, the directory presentation remains intact.
+  Open-marked clears only successful IDs, including reused tabs; failed/skipped marks
+  remain. Empty batches report zero outcomes without switching. Opening never saves.
+
+#### Changed modules and contracts
+
+- `app/directory_buffer`: `marks : Int.Set.t`, listing-ordered `selection_entries` and
+  `marked_entries`, `mark_selection`, `toggle_mark`, refresh mark reconciliation and
+  expanded read-only allowlist. This remains placement-independent; no filesystem
+  planner/executor or side placement was added.
+- `app/session`: centralized batch resolution and directory mark action interception.
+  `input/view_command`, `input/bindings`, `palette/catalog`, `screen/ui_state` and
+  `screen/frame`: commands, routing, shortcuts and external decorations. Existing
+  palette order is retained; only intentional new catalog/count expectations changed.
+- Five additional headless tests in `screen/test/test_directory_navigation.ml` cover
+  Visual kinds/shared yank, noncontiguous order/tab reuse/normal-Enter isolation,
+  failure summaries and real unreadable permissions, successful/failed/skipped marks,
+  mark/unmark/clear, cached directory-local lifetime/refresh, palette execution/shortcut
+  discovery and tiny-frame widths. Prior phases' tests remain intact.
+
+#### Checks run and results
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test palette/test source/test`:
+  passed, including all new tests. Initial runs exposed intentional catalog/count and
+  header expectations; the final header retains the old read-only prefix and existing
+  catalog ordering. Only the five new catalog entries/counts required updates.
+- `python3 /tmp/opencode/directory-phase4-smoke.py`: passed. PTY coverage: directory
+  startup, Visual multi-open, first-success activation verified by edit/save on disk,
+  noncontiguous marks, existing-tab reuse, bad-text failure/directory skip feedback,
+  failed/skipped mark retention, clear, SIGWINCH 8x2/back and clean quit (0). Other
+  fixture files stayed unchanged. Capture `/tmp/opencode/directory-phase4-pty.log`;
+  final fixture `/tmp/opencode/directory-phase4-pty-9bg27e0n`. The first smoke assertion
+  expected an unclipped summary in a narrow history tile; corrected assertions verify
+  visible individual failure/skip feedback. No human visual acceptance is claimed.
+- Full `opam exec --switch=5.2.0+ox -- dune runtest`: exit 1, the documented baseline
+  `ui/test/test_editor_view.ml` visible-tile snapshot mismatch only. Log:
+  `/tmp/opencode/directory-phase4-runtest.log`; no baseline UI snapshots promoted.
+- `git diff --check`: passed. Git use was read-only; no Git metadata/staging/history,
+  branches/config/worktrees, remote mutations/publications or subagents.
+
+#### Known gaps and next-phase integration
+
+- Phase 4 complete; phases 5–9 remain pending. Full-suite baseline UI mismatch remains
+  a repository check gap. Cross-directory collections and recursive opens are deferred.
+- Phase 5 must reuse retained directory marks/controller and the shared session resolver
+  with its explicit target-group presentation contract. The current sole group remains
+  the target; actual Side placement/focus behavior is not implemented here.
+- Phase 6 must replace baseline-row selection resolution with validated current identity
+  rows before enabling edits, retain dormant marks for deleted text rows until commit,
+  resolve renamed entries to baseline backing paths, and reject marking/opening fresh
+  rows until save. Do not remove save/mutation guards without dirty-directory/session
+  policy and the operation planner. Refresh currently reconciles a clean read-only baseline.
+
+### Phase 5 / 2026-10-07 / implemented
+
+#### Implemented behavior and policy decisions
+
+- The same retained directory buffer/controller, entry IDs, marks and session batch
+  resolver now support major and left minor-side placement. A side open sends files
+  through the ordinary persistent-tab lifecycle, leaves the browser present, and
+  focuses the opened file (first successful file for batches). Failed/skipped opens
+  retain the browser/input context and marks according to phase 4's policy. Directory
+  Enter/parent/refresh/search/yank/Visual/mark keys use the same modal adapter, not the
+  supporting-details or palette input interpreter.
+- Exact Normal/Visual bindings: `Space d m` major, `Space d s` side/show, `Space d h`
+  hide, `Space d f` focus browser/editor, `Space d +` grow four columns, `Space d -`
+  shrink four columns. Six matching palette entries preserve the existing catalog's
+  ordering. `Space o` still selects a file's parent entry or returns to the recorded
+  live file (else active group file). Side `Tab` explicitly returns focus to the
+  editor; Escape remains the ordinary modal selection/search/prefix cancellation.
+  Palette/supporting-view cancellation restores the directory target's focus when
+  it was opened from the side browser. Modal prefixes and stale paste context are
+  canceled across focus/placement changes.
+- Moving/hiding/focus-return preserves directory text/controller, selection, cursor,
+  marks and per-buffer scroll (fitted only as needed for the new viewport). File
+  opening intentionally finishes a Visual batch as before. File cursors, edits,
+  undo and scroll remain independent underneath either placement. Placement never
+  refreshes a cached baseline or discards text; phase 6 can retain pending edits using
+  the same owner. Target `Group_id` and return-file descriptor survive placement.
+- Preferred side outer width is **32**, adjusted in four-column steps and retained
+  in the range **16–500**. Allocation clamps the effective width while leaving at
+  least 16 editor columns and a one-cell backdrop gap. It requires **33 columns and
+  four rows**. The side shell spans the terminal height; status and existing bottom
+  minors occupy the remaining right-hand allocation. Shared `Tile_shell` geometry
+  drives its content, drawing, availability and cursor; no floating implementation
+  was added and the explicit floating-layout seam is unchanged.
+- Zen or insufficient terminal space suppresses (does not hide/discard) a requested
+  side browser. If it owned input and a file exists, focus returns to the file and
+  prefixes/paste context are canceled. Growing/leaving zen restores the requested
+  placement/width without stealing file focus. With no file tabs, including after
+  last-file close, the directory remains a reachable major fallback while preserving
+  the Side request for the next successful file open. Hide/focus-return with no file
+  cannot strand the user on an empty editor; hide reports no return file.
+
+#### Changed modules and public contracts
+
+- `app/session`: actual placement and directory-input ownership; `directory_buffer`
+  now also returns an **unfocused presented side browser**, while `input_directory`
+  identifies the modal directory input owner. `context_id`, `active_controller`,
+  `replace_active`, read-only dispatch and save-all respect that distinction. New
+  `set_directory_placement`, `focus_directory`, `hide_directory` preserve retained
+  ownership; `surface` is a rendering-only snapshot, never a session to adopt/dispatch.
+  Existing group IDs, directory adapter and batch resolver remain the sole owners.
+- `screen/workspace`: optional `allocate ~side:(View_id, preferred_outer_width)`
+  splits the full-height left shell before allocating existing status/bottom panes.
+  Without that request, existing allocation is unchanged.
+- `screen/ui_state`: directory host spec/ID, size preference, side availability,
+  modal routing, scroll/prefix/paste reconciliation, focus-return, rendering surface
+  snapshots and shared side cursor queries. `screen/frame` renders both retained
+  surfaces and places the directory shell into its disjoint backdrop allocation;
+  backdrop slicing deliberately introduces no text clipping markers. Major directory
+  headers remain unchanged; the narrower side header shows marked count and path.
+  `screen/status` uses the input owner, so editor focus does not say DIRECTORY merely
+  because a side browser is present.
+- `input/view_command`, `input/bindings`, `palette/catalog`: placement/focus/size
+  commands and defaults. Only six catalog entries and resulting palette counts were
+  added to existing expected output; unrelated baseline UI snapshots remain untouched.
+- Nine new headless tests in `screen/test/test_directory_side.ml`; reusable isolated
+  PTY check in `scripts/directory_side_smoke.py` (run after building).
+
+#### Checks run and results
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test palette/test source/test`:
+  passed. New tests cover exhaustive side allocation containment/nonoverlap/minima
+  with nonzero origins, width restoration, frame cell widths/cursor bounds across
+  tiny resizes, unchanged backdrop gaps, same buffer/group identity, editor focus on
+  single and all three Visual batch kinds, marked partial failures/clearing, cached
+  parent navigation/return target, selection/marks/exact same-size scroll retention
+  on hide/show, file-local scroll/edits/undo, shared yank/paste refusal, interrupted
+  editor paste across a side focus round trip, palette focus restoration/commands,
+  zen and tiny suppression, and no-file/last-close fallback.
+- `python3 scripts/directory_side_smoke.py`: passed with an isolated PATH `.` fixture.
+  PTY coverage: side request before files exist, single/Visual/marked opens, first
+  activation verified by edit/save on disk, major/side/hide restoration, failed-file
+  and directory-skip feedback/mark retention, width changes, zen/tiny editor input,
+  parent navigation, palette hide, explicit Tab focus return and clean quit (0).
+  Other files remain unchanged. Capture: `/tmp/opencode/directory-phase5-pty.log`;
+  final successful fixture: `/tmp/opencode/directory-phase5-pty-6j7x0mt6`.
+  An initial feedback assertion was clipped by the narrow history tile; the smoke
+  now hides status/problems before checking full failure text. No human visual
+  acceptance is claimed.
+- Full `opam exec --switch=5.2.0+ox -- dune runtest`: exit 1, only the documented
+  `ui/test/test_editor_view.ml` baseline visible-tile snapshot mismatch. Log:
+  `/tmp/opencode/directory-phase5-runtest.log`; no baseline snapshots promoted.
+- `git diff --check`: passed. Git inspection was read-only. No Git metadata/index,
+  history/config/branch/worktree changes, remote mutations/publications or subagents.
+
+#### Known gaps and next-phase integration notes
+
+- Phase 5 is complete; phases 6–9 remain pending. The full-suite baseline mismatch
+  remains a repository check gap, not a side-placement blocker. Directory text is
+  still read-only; no filesystem planner/executor or later-phase behavior was added.
+- Phase 6 must use `input_directory` for input/save guards and `directory_buffer`
+  for presented-browser decorations, including when the editor owns input. Retained
+  directory buffers survive hide/move; add dirty-directory quit/save-all and refresh
+  policy before enabling mutation. Do not send listing text to `Write_file`, or
+  adopt the rendering-only `Session.surface` / `Ui_state.surface` snapshots.
+- The sole editor group remains the explicit target. Simultaneous directory views,
+  multiple groups, mouse dragging, floating browser placement and background watching
+  remain outside this phase. Existing source-runtime scalability and rename-reindex
+   limitations from earlier phases are unchanged.
+
+### Phase 6 / 2026-10-07 / implemented
+
+#### Implemented behavior and public contracts
+
+- Directory controllers now accept ordinary modal editing, paste, undo and redo.
+  Visible identity tokens travel with the existing text history; validation protects
+  identities, not an invisible row-number map. Existing-kind changes, malformed or
+  duplicated identities and unsupported-entry alteration remain whole-snapshot errors.
+- New pure `core/directory_plan.ml` / `.mli`: `plan` returns `Create_file`,
+  `Create_directory`, and identity-addressed `Rename {id; source; destination}`
+  proposals; `summary` provides escaped, readable operation descriptions. It performs
+  no IO. Child-name/escape/type validation uses `Directory_identity`; missing IDs
+  reject deletion, repeated IDs reject copy, duplicate final names reject collisions.
+  Slash/cross-directory paths are invalid, a fresh final `/` creates a directory,
+  and existing entries cannot change kind. Rename swaps/cycles and creation into a
+  name renamed away are valid proposals for the later dependency-aware executor.
+- `app/directory_buffer` exposes validated current rows, row selection, backing-entry
+  resolution, dirty state and planning. Cursor, Visual and marked targets now resolve
+  current logical row positions/order (including blank lines), not baseline indices.
+  Renamed rows open their baseline backing paths. Fresh rows cannot be marked/opened;
+  Visual batches continue opening existing rows and report fresh rows requiring save.
+  Invalid identity snapshots refuse row-associated actions rather than guessing.
+- Marks remain baseline-ID state outside text/history. Omitted rows retain dormant
+  marks and undo restores their visibility; current rows drive mark/open ordering and
+  gutter decorations. Clean refresh still prunes actually missing baseline IDs.
+- Dirty cached directories survive navigation, major/side/hide changes and editor
+  focus. Dirty refresh refuses with undo guidance; ordinary directory Reload refuses
+  instead of reading listing text as a file. Insert transactions finish when focus
+  changes; cached same-directory navigation retains the finished controller/history.
+- `app/session` checks all retained dirty directories (including hidden/inactive ones)
+  on quit and addressed close. Explicit force-close discards that owner and reconciles
+  presentation/fallback. Save-all visits dirty files and directories in buffer-ID order,
+  continues saving files, and reports directory proposals as failures, retaining edits.
+  File tabs' close commands retain their existing file-tab semantics.
+- Directory Save validates and displays the full operation summary, then explicitly
+  refuses application because no executor exists yet. It never clears dirty state,
+  emits a successful-save event, or writes listing text. Session intercepts Save/Reload;
+  `app/controller` also filters those actions for Directory kind as defence in depth,
+  including direct calls outside Session. No filesystem executor/mutation was added.
+- `screen/frame` shows dirty/pending-count or invalid-plan headers on major and side
+  surfaces, even with editor focus, and resolves gutters from current identities.
+  Empty-directory decoration no longer covers inserted text. `screen/status` shows
+  directory Insert/Visual modes and existing dirty indicators. No new keys or palette
+  entries: `Space w` is the phase-local validation/summary action.
+
+#### Checks run and results
+
+- `opam exec --switch=5.2.0+ox -- dune build`: passed.
+- `opam exec --switch=5.2.0+ox -- dune runtest test screen/test palette/test source/test`:
+  passed. Seven new tests in `test/test_directory_plan.ml` and
+  `screen/test/test_directory_editing.ml` cover creates, symlink renames, swaps,
+  reorder/blank rows, collisions, deletion/copy/type/token/path rejection, modal
+  undo/redo, dormant marks, dirty refresh/close/quit, hidden/save-all ordering/results,
+  current-order Visual opens with fresh rows, backing paths, placement/navigation
+  retention, unfocused side dirty decoration, and controller-level no-write defence.
+  Only obsolete read-only directory expectations in earlier headless tests changed.
+- `python3 scripts/directory_editing_smoke.py`: passed against the built executable
+  in an isolated fixture. It verifies modal rename/create summaries, undo, save/refresh
+  refusal, backing-file editing/saving, hidden dirty quit refusal, fresh-row refusal,
+  clean quit (0), and unchanged filesystem names/no listing writes. Capture:
+  `/tmp/opencode/directory-phase6-pty.log`; fixture:
+  `/tmp/opencode/directory-phase6-pty-az2x24qw`. No human visual acceptance is claimed.
+- Full `opam exec --switch=5.2.0+ox -- dune runtest`: exit 1, the documented
+  `ui/test/test_editor_view.ml` baseline visible-tile snapshot mismatch only. Log:
+  `/tmp/opencode/directory-phase6-runtest.log`; no baseline snapshots promoted.
+- `git diff --check`: passed. Git was used read-only only. No metadata/index,
+  staging/history/config/branch/worktree operations, remote mutations or subagents.
+  All pre-existing working-tree changes were preserved.
+
+#### Known gaps and phase-7 integration notes
+
+- Phase 6 complete; phases 7–9 remain pending. Save intentionally cannot apply even
+  a valid/no-op directory proposal or mark its text saved. Undo to the clean text or
+  explicit force-close/force-quit are available; dirty refresh never discards intent.
+- The pure planner validates collisions against the supplied baseline/final names,
+  not external filesystem changes, path length limits or race conditions. Phase 7
+  must recheck lstat fingerprints/destinations immediately before mutation, handle
+  dependencies/cycles without overwriting occupants, reconcile partial failures and
+  refresh baselines/history only after successful application. Never route directory
+  Save through `Effect.Write_file`. Deletion/copy/cross-directory moves remain rejected.
+- Retain dormant marks until commit reconciliation; use `backing_entry` for pending
+  opens and current `Row.line` for rendering/navigation. Resource/path reassociation
+  for open files/descendants remains phase 7; no index changes were implemented here.

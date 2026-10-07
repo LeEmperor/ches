@@ -13,6 +13,8 @@ let show t requests =
   List.iter (List.rev !requests) ~f:(fun (request : Ches_error.Source_request.t) ->
     print_s
       (match request with
+       | Document_opened { resource; generation } -> [%message "opened" ~_:(H.relative t resource : string) (generation : int)]
+       | Document_closed { resource } -> [%message "closed" ~_:(H.relative t resource : string)]
        | Document_changed { resource; text; revision } ->
          [%message "changed" ~_:(H.relative t resource : string) text (revision : int)]
        | Document_saved { resource; revision } ->
@@ -27,7 +29,10 @@ let%expect_test "initial text, changes, saves (also unchanged), restart and kill
   let t = H.create ~text:"ab\n" ~source:(recording requests) () in
   H.send_requests t;
   show t requests;
-  [%expect {| (changed a.ml "ab\n" (revision 0)) |}];
+  [%expect {|
+   (opened a.ml (generation 1))
+   (changed a.ml "ab\n" (revision 0))
+   |}];
   (* Moving sends nothing; each edit's revision is sent once, however many keys. *)
   H.keys t "l";
   show t requests;

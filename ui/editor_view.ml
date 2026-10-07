@@ -90,6 +90,7 @@ let app ?(smear_enabled = false) ?report ?source ?font controller ~exit ~dimensi
                 (Effect.of_thunk (fun () -> Ches_source.Source.send source request))));
           (match status with
            | Exit when was_running ->
+              Option.iter source ~f:Ches_source.Source.stop;
              Bonsai.Apply_action_context.schedule_event context (exit ())
            | Exit | Running -> ());
           model)
@@ -100,8 +101,13 @@ let app ?(smear_enabled = false) ?report ?source ?font controller ~exit ~dimensi
   in
   (* Source events enter like keys, as inputs of their own transition, one bounded batch
      at a time, so keys typed during a burst are handled between batches. *)
-  Option.iter source ~f:(fun source ->
-    Bonsai.Edge.lifecycle
+   Bonsai.Edge.lifecycle
+     ~on_deactivate:(let%arr model in
+       Effect.of_thunk (fun () -> Ches_app.Session.dispose (Ui_state.session model)))
+     graph;
+   Option.iter source ~f:(fun source ->
+     Bonsai.Edge.lifecycle
+        ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Ches_source.Source.stop source)))
       ~on_activate:
         (let%arr inject in
          let rec pump () =

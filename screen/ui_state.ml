@@ -32,11 +32,16 @@ end
 
 type t =
   { controller : Controller.t
+  ; session : Session.t
+  ; scrolls : (Buffer_id.t * Scroll.t) list
+  ; paste_buffer : Buffer_id.t option
   ; prefs : Geometry.Prefs.t
   ; workspace_prefs : Workspace.Prefs.t
   ; other_status_size : int (** Requested size for the inactive split axis. *)
   ; hotkey_hints : bool
   ; zen : bool
+  ; directory_size : int
+  ; hide_tabs : bool (** Rendering-only directory surface snapshot. *)
   ; host : Host.t (** Focus, capture prefix/notice, and paste owner. *)
   ; problems_visible : bool
   ; problems : Problems_tile.t
@@ -56,13 +61,14 @@ type t =
   (** Diagnostic snapshots that arrived during Insert, newest per (source, resource),
       in arrival order, with the text at arrival; applied when Insert ends. *)
   ; source_attached : bool (** A diagnostic source runs ([--synthetic-checker]). *)
-  ; sent_revision : int option (** The document revision last taken as a request. *)
+  ; sent_revisions : (Buffer_id.t * (int * int)) list
   ; source_commands : Ches_error.Source_request.t list
   (** Restart/kill requests not yet taken, newest first. *)
   }
 
 let document_id = View_id.of_string "document"
 let status_id = View_id.of_string "status"
+let directory_id = View_id.of_string "directory"
 
 let create
   ?(prefs = Geometry.Prefs.default)
@@ -78,7 +84,12 @@ let create
     Option.value workspace_prefs
       ~default:{ Workspace.Prefs.default with status_visible = tiles_visible }
   in
+  let session = Session.create ~cell_width:Cell_map.width controller in
+  let controller = Option.value_exn (Session.active_controller session) in
   { controller
+  ; session
+  ; scrolls = []
+  ; paste_buffer = None
   ; prefs
   ; workspace_prefs
   ; other_status_size =
@@ -87,6 +98,8 @@ let create
        | Vertical -> 28)
   ; hotkey_hints
   ; zen = false
+  ; directory_size = 32
+  ; hide_tabs = false
   ; host =
       Host.create
         ~leader:(Key.char ' ')
@@ -97,6 +110,7 @@ let create
         ; Report_tile.spec
         ; History_tile.spec
         ; Palette_tile.spec
+        ; Ches_tile.Spec.read_only_text directory_id ~title:"Directory"
         ]
   ; problems_visible = tiles_visible
   ; problems = Problems_tile.empty
@@ -112,12 +126,14 @@ let create
   ; exited = false
   ; held = []
   ; source_attached
-  ; sent_revision = None
+  ; sent_revisions = []
   ; source_commands = []
   }
 ;;
 
 let controller t = t.controller
+let session t = Session.replace_active t.session t.controller
+let has_document t = Option.is_some (Session.context_id t.session)
 let prefs t = t.prefs
 let workspace_prefs t = t.workspace_prefs
 let hotkey_hints t = t.hotkey_hints
@@ -174,47 +190,74 @@ let message t =
 let pasting t = Host.pasting t.host
 
 let take_clipboard t =
-  let controller, text = Controller.take_clipboard t.controller in
-  { t with controller }, text
+  let session, text = Session.take_clipboard (session t) in
+  let controller = Option.value (Session.active_controller session) ~default:t.controller in
+  { t with session; controller }, text
 ;;
 
 let take_source_requests t =
   if not t.source_attached
-  then t, []
+  then (
+    let session, _ = Session.take_saved (session t) in
+    let session, _ = Session.take_closed session in
+    let controller = Option.value (Session.active_controller session) ~default:t.controller in
+    { t with session; controller; source_commands = [] }, [])
   else (
-    let editor = Controller.editor t.controller in
-    let revision = Editor.revision editor in
-    let controller, saved = Controller.take_saved t.controller in
-    let document =
+    let session, saved = Session.take_saved (session t) in
+    let session, closed = Session.take_closed session in
+    let live = Session.buffers session in
+    let document = List.concat_map live ~f:(fun (id, controller) ->
+      let editor = Controller.editor controller in
       match Editor.path editor with
       | None -> []
       | Some resource ->
-        let changed : Ches_error.Source_request.t list =
-          if [%equal: int option] t.sent_revision (Some revision)
-          then []
-          else
-            [ Document_changed
-                { resource; text = Text_buffer.to_string (Editor.text editor); revision }
-            ]
-        in
-        let saved : Ches_error.Source_request.t list =
-          match saved with
-          | Some { path; revision } when String.equal path resource ->
-            [ Document_saved { resource; revision } ]
-          | Some _ | None -> []
-        in
-        changed @ saved
-    in
-    ( { t with controller; sent_revision = Some revision; source_commands = [] }
-    , document @ List.rev t.source_commands ))
+        let previous = List.Assoc.find t.sent_revisions id ~equal:Buffer_id.equal in
+        let generation = Session.source_generation session id |> Option.value_exn in
+        let same_lifetime = Option.exists previous ~f:(fun (old, _) -> old = generation) in
+        let opened = if not same_lifetime then [ Ches_error.Source_request.Document_opened { resource; generation } ] else [] in
+        opened @ (if Option.equal Poly.equal previous (Some (generation, Editor.revision editor)) then [] else
+          [ Document_changed { resource; text = Text_buffer.to_string (Editor.text editor); revision = Editor.revision editor } ])) in
+    let sent_revisions = List.map live ~f:(fun (id, c) -> id, (Session.source_generation session id |> Option.value_exn, Editor.revision (Controller.editor c))) in
+    let saves = List.map saved ~f:(fun { Controller.Saved.path; revision } -> Ches_error.Source_request.Document_saved { resource = path; revision }) in
+    let closes = List.map closed ~f:(fun resource -> Ches_error.Source_request.Document_closed { resource }) in
+    let controller = Option.value (Session.active_controller session) ~default:t.controller in
+    ( { t with session; controller; sent_revisions; source_commands = [] }
+    , closes @ document @ saves @ List.rev t.source_commands ))
 ;;
 
 let exited t = t.exited
 let animation t = t.animation
 
+let tab_rect t ~(allocation : Geometry.Rect.t) =
+  if not t.hide_tabs
+     && not (Option.is_some (Session.input_directory t.session)
+       && Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side))
+     && List.length (Session.buffers t.session) > 1
+     && not t.zen && allocation.width > 0 && allocation.height >= 3
+  then Some { allocation with height = 1 }
+  else None
+;;
+
+let directory_rect t ~(allocation : Geometry.Rect.t) =
+  let allocation = match tab_rect t ~allocation with None -> allocation | Some _ ->
+    { allocation with y = allocation.y + 1; height = allocation.height - 1 } in
+  if Option.is_some (Session.input_directory t.session) && allocation.height >= 2 && allocation.width > 0
+  then Some { allocation with height = 1 } else None
+;;
+
 let geometry_in t ~allocation ~reserve_status_row =
+  let header = directory_rect t ~allocation in
+  let allocation = match tab_rect t ~allocation with
+    | None -> allocation
+    | Some _ -> { allocation with y = allocation.y + 1; height = allocation.height - 1 } in
+  let allocation = match header with None -> allocation | Some _ ->
+    { allocation with y = allocation.y + 1; height = allocation.height - 1 } in
   Geometry.compute_in
-    t.prefs
+    (if Option.is_some (Session.input_directory t.session) then
+       if Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side)
+       then { t.prefs with line_numbers = Absolute; centered = false; left_padding = 0 }
+       else { t.prefs with line_numbers = Absolute }
+     else t.prefs)
     ~allocation
     ~reserve_status_row
     ~line_count:(Text_buffer.line_count (Editor.text (Controller.editor t.controller)))
@@ -236,6 +279,9 @@ let workspace t ~width ~height =
   in
   Workspace.allocate
     ~minors
+    ?side:(Option.bind (Session.directory_presentation t.session) ~f:(fun p ->
+      Option.some_if (Poly.equal p.placement Side && not t.zen && Option.is_some (Session.active_id t.session))
+        (directory_id, t.directory_size)))
     (if t.zen then { prefs with status_visible = false } else prefs)
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
 ;;
@@ -270,10 +316,29 @@ let view_available ?floating t ~width ~height =
 
 let available t ~width ~height = view_available t ~width ~height
 
+let side_layout t ~width ~height = view_layout t ~width ~height directory_id
+
+let input_allocation t ~width ~height =
+  match Session.input_directory t.session, side_layout t ~width ~height with
+  | Some _, Some layout -> layout.content, false
+  | _ -> let w = workspace t ~width ~height in w.document.rect, w.reserve_status_row
+;;
+
 let focused_view t ~width ~height = Host.focused t.host ~available:(available t ~width ~height)
 
 let cursor_owner t ~width ~height =
-  Host.cursor_owner t.host ~available:(available t ~width ~height)
+  Option.filter (Host.cursor_owner t.host ~available:(available t ~width ~height))
+    ~f:(fun id -> not (View_id.equal id document_id) || has_document t)
+;;
+
+let surface t ~directory =
+  let session = Session.surface (session t) ~directory in
+  let id = Session.context_id session in
+  let scroll = if Option.equal Buffer_id.equal id (Session.context_id t.session) then t.scroll else
+    Option.value (Option.bind id ~f:(fun id -> List.Assoc.find t.scrolls id ~equal:Buffer_id.equal)) ~default:Scroll.zero in
+  { t with session; controller = Option.value (Session.active_controller session) ~default:t.controller
+    ; scroll; rows = None; hide_tabs = directory
+    ; prefs = (if directory then { t.prefs with centered = false; left_padding = 0 } else t.prefs) }
 ;;
 
 let problems_focused t ~width ~height =
@@ -339,7 +404,7 @@ let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option 
       { Ches_tile.Cursor.row = row - Ches_tile.Text_view.top view; column; shape = Block })
 ;;
 
-let minor_cursor t ~width ~height =
+let supporting_cursor t ~width ~height =
   match Host.cursor_owner t.host ~available:(available t ~width ~height) with
   | None -> None
   | Some id when View_id.equal id document_id -> None
@@ -381,7 +446,11 @@ let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id; Palette_til
 let return_to_document t =
   let t = List.fold minor_ids ~init:t ~f:leave in
   { t with
-    host = Host.return t.host
+    host = (let host = Host.return t.host in
+      if Option.is_some (Session.input_directory t.session)
+         && Option.is_some (Session.active_id t.session)
+         && Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side)
+      then Host.focus host directory_id else host)
   ; animation = Animation.create ~enabled:(Animation.enabled t.animation)
   ; controller = Controller.cancel_pending t.controller
   }
@@ -390,6 +459,20 @@ let return_to_document t =
 (* Fit each minor view's state to its viewport and source. When the source changes
    the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
+  (* Suppressed side placement keeps its request/buffer, but must never retain
+     invisible input focus. With no files, the directory remains the major surface. *)
+  let t = if Option.is_some (Session.input_directory t.session)
+      && Option.is_some (Session.active_id t.session)
+      && Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side)
+      && Option.is_none (side_layout t ~width ~height)
+    then
+      let old = Session.context_id t.session in
+      let scrolls = Option.value_map old ~default:t.scrolls ~f:(fun id -> List.Assoc.add t.scrolls ~equal:Buffer_id.equal id t.scroll) in
+      let session = Session.focus_directory (session t) false in
+      let scroll = Option.value (Option.bind (Session.context_id session) ~f:(fun id -> List.Assoc.find scrolls id ~equal:Buffer_id.equal)) ~default:Scroll.zero in
+      { (return_to_document t) with session; controller = Option.value_exn (Session.active_controller session)
+        ; scrolls; scroll; rows = None; paste_buffer = None }
+    else t in
   let before = List.map minor_ids ~f:(text_view t) in
   let t =
     { t with
@@ -434,10 +517,70 @@ let update_feedback t ~width ~height update =
 ;;
 
 let geometry t ~width ~height =
-  Workspace.document_geometry
-    (workspace t ~width ~height)
-    t.prefs
-    ~line_count:(Text_buffer.line_count (Editor.text (Controller.editor t.controller)))
+  let allocation, reserve_status_row = input_allocation t ~width ~height in
+  geometry_in t ~allocation ~reserve_status_row
+;;
+
+(* All tab paths share lifetime, viewport, prefix and paste reconciliation. Held
+   diagnostics are released by the input assembly or the public lifecycle facade. *)
+let adopt_session_state t session ~width ~height =
+  let retired = List.filter_map (Session.buffers t.session) ~f:(fun (id, controller) ->
+    if Option.equal Int.equal (Session.source_generation t.session id) (Session.source_generation session id)
+    then None else Editor.path (Controller.editor controller)) in
+  let t = { t with held = List.filter t.held ~f:(fun ((_, resource), _, _) ->
+    not (List.mem retired (Session.normalize t.session resource) ~equal:String.equal))
+    ; problems = List.fold retired ~init:t.problems ~f:Problems_tile.forget_resource } in
+  let previous = Session.context_id t.session in
+  let changed = not (Option.equal Buffer_id.equal previous (Session.context_id session)) in
+  let placement_changed = not (Option.equal Poly.equal
+    (Option.map (Session.directory_presentation t.session) ~f:(fun p -> p.placement))
+    (Option.map (Session.directory_presentation session) ~f:(fun p -> p.placement))) in
+  let tabs_changed = not (Bool.equal
+    (List.length (Session.buffers t.session) > 1)
+    (List.length (Session.buffers session) > 1)) in
+  let scrolls = match previous with
+    | None -> t.scrolls
+    | Some id -> List.Assoc.add t.scrolls ~equal:Buffer_id.equal id t.scroll in
+  let scrolls = List.filter scrolls ~f:(fun (id, _) -> Session.has_buffer session id) in
+  let controller = Option.value (Session.active_controller session)
+    ~default:(Controller.with_feedback t.controller (Session.feedback session)) in
+  let t = { t with session; controller; scrolls; exited = Session.exited session } in
+  let t = if not changed then
+    (if placement_changed then { t with rows = None; paste_buffer = None
+        ; host = Host.return t.host; controller = Controller.cancel_pending t.controller
+        ; animation = Animation.create ~enabled:(Animation.enabled t.animation) } else
+    (if not tabs_changed then t else
+       { t with rows = None; animation = Animation.create ~enabled:(Animation.enabled t.animation) }))
+    else
+    let scroll = Option.value (Option.bind (Session.context_id session) ~f:(fun id -> List.Assoc.find scrolls id ~equal:Buffer_id.equal)) ~default:Scroll.zero in
+    { (return_to_document t) with scroll; rows = None; paste_buffer = None
+      ; animation = Animation.create ~enabled:(Animation.enabled t.animation) } in
+  let t = synchronize t ~width ~height in
+  if Option.is_some (Session.input_directory t.session) && Option.is_some (side_layout t ~width ~height)
+     && Option.is_none t.palette
+  then { t with host = Host.focus t.host directory_id }
+  else t
+;;
+
+let close_buffer_state t ~width ~height id ~force =
+  let session = session t in
+  let resource = Option.bind (Session.find session id) ~f:(fun c -> Editor.path (Controller.editor c)) in
+  let session, closed = Session.close_buffer session id ~force in
+  let t = { t with held = List.filter t.held ~f:(fun ((_, resource), _, _) -> Option.is_some (Session.find_resource session resource)) } in
+  let t = if not closed then t else Option.value_map resource ~default:t ~f:(fun resource ->
+    { t with problems = Problems_tile.forget_resource t.problems resource }) in
+  adopt_session_state t session ~width ~height, closed
+;;
+
+let switch_tab t ~width ~height ~direction =
+  let session = session t in
+  let ids = List.map (Session.buffers session) ~f:fst in
+  match Session.active_id session with
+  | None -> t
+  | Some active ->
+    let index = List.findi_exn ids ~f:(fun _ id -> Buffer_id.equal id active) |> fst in
+    let target = List.nth_exn ids ((index + direction + List.length ids) % List.length ids) in
+    adopt_session_state t (Session.activate session target |> Or_error.ok_exn) ~width ~height
 ;;
 
 (* The cursor's line and cells. A block insert's cursor is at its first insertion point,
@@ -475,6 +618,7 @@ let fitted_scroll_in t ~allocation ~reserve_status_row =
 ;;
 
 let cursor_position_in t ~allocation ~reserve_status_row =
+  if not (has_document t) then None else
   let cursor_line, (start, _) = cursor_cells (Controller.editor t.controller) in
   let scroll = fitted_scroll_in t ~allocation ~reserve_status_row in
   let { Geometry.text = viewport; _ } = geometry_in t ~allocation ~reserve_status_row in
@@ -486,19 +630,25 @@ let cursor_position_in t ~allocation ~reserve_status_row =
 ;;
 
 let fitted_scroll t ~width ~height =
-  let workspace = workspace t ~width ~height in
+  let allocation, reserve_status_row = input_allocation t ~width ~height in
   fitted_scroll_in
     t
-    ~allocation:workspace.document.rect
-    ~reserve_status_row:workspace.reserve_status_row
+    ~allocation
+    ~reserve_status_row
 ;;
 
 let cursor_position t ~width ~height =
-  let workspace = workspace t ~width ~height in
+  let allocation, reserve_status_row = input_allocation t ~width ~height in
   cursor_position_in
     t
-    ~allocation:workspace.document.rect
-    ~reserve_status_row:workspace.reserve_status_row
+    ~allocation
+    ~reserve_status_row
+;;
+
+let minor_cursor t ~width ~height =
+  if View_id.equal (focused_view t ~width ~height) directory_id then
+    Option.map (cursor_position t ~width ~height) ~f:(fun (x, y) -> x, y, Ches_tile.Cursor.Shape.Block)
+  else supporting_cursor t ~width ~height
 ;;
 
 let min_width = 20
@@ -514,6 +664,10 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
+  | Next_tab | Previous_tab | Close_tab | Force_close_tab
+  | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files
+  | Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory
+  | Directory_major | Directory_side | Hide_directory | Focus_directory | Adjust_directory_size _
   | Toggle_problems
   | Toggle_problems_filter
   | Focus_problems
@@ -560,6 +714,15 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   | Focus_problems | Focus_demo_report | Focus_history ->
     let focused = Host.spec t.host (focused_view t ~width ~height) in
     Some (Option.value (Host.notice t.host) ~default:(focused.title ^ " focused"))
+  | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files
+  | Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory -> None
+  | Directory_major -> Option.map (Session.directory_presentation t.session) ~f:(fun _ -> "Directory in major tile")
+  | Directory_side -> Option.map (Session.directory_presentation t.session) ~f:(fun _ ->
+      if Option.is_some (side_layout t ~width ~height) then "Directory in left side tile" else "Directory side requested (compact/zen/no file)")
+  | Hide_directory -> None
+  | Focus_directory -> Option.map (Session.directory_presentation t.session) ~f:(fun _ ->
+      if Option.is_some (Session.input_directory t.session) then "Directory focused" else "Editor focused")
+  | Adjust_directory_size _ -> Some (sprintf "Directory width %d (requested)" t.directory_size)
   | Toggle_demo_report ->
     Some
       (match t.report with
@@ -576,7 +739,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
     Some (if t.source_attached then "Diagnostic source restart requested" else no_source)
   | Kill_source ->
     Some (if t.source_attached then "Diagnostic source kill requested" else no_source)
-  | Inspect_problems | Scroll _ -> None
+  | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Close_tab | Force_close_tab -> None
   | Open_palette -> Host.notice t.host
   | Toggle_problems ->
     Some (if not t.problems_visible then "Problems hidden"
@@ -712,7 +875,9 @@ let palette_title = "Command palette"
 let open_palette t ~width ~height =
   let notice text = { t with host = Host.with_notice t.host text } in
   let editor = Controller.editor t.controller in
-  if not (Mode.equal (Editor.mode editor) Normal)
+  if not (has_document t)
+  then notice "No file open; Space q quits the session"
+  else if not (Mode.equal (Editor.mode editor) Normal)
   then notice "Leave Insert/Visual mode before opening the command palette"
   else if t.zen
   then notice "Command palette unavailable in zen; Space v z restores the workspace"
@@ -747,6 +912,28 @@ let open_palette t ~width ~height =
 
 let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
+  | Directory_major | Directory_side ->
+    adopt_session_state t (Session.set_directory_placement (session t)
+      (if View_command.equal view Directory_major then Major else Side)) ~width ~height
+  | Hide_directory -> adopt_session_state t (Session.hide_directory (session t)) ~width ~height
+  | Focus_directory ->
+    let s = session t in
+    let s = if Option.is_none (Session.directory_buffer s) then Session.set_directory_placement s Side
+      else Session.focus_directory s (Option.is_none (Session.input_directory s) || Option.is_none (Session.active_id s)) in
+    adopt_session_state t s ~width ~height
+  | Adjust_directory_size cells ->
+    { t with directory_size = Int.clamp_exn (t.directory_size + cells) ~min:16 ~max:500; rows = None
+      ; animation = Animation.create ~enabled:(Animation.enabled t.animation) }
+  | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files
+  | Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory ->
+    let session, _, _ = Session.dispatch (session t) [ View view ] in
+    adopt_session_state t session ~width ~height
+  | Next_tab -> switch_tab t ~width ~height ~direction:1
+  | Previous_tab -> switch_tab t ~width ~height ~direction:(-1)
+  | Close_tab | Force_close_tab ->
+    (match Session.active_id (session t) with
+     | None -> t
+     | Some id -> fst (close_buffer_state t ~width ~height id ~force:(View_command.equal view Force_close_tab)))
   | Open_palette -> open_palette t ~width ~height
   | Focus_problems ->
     toggle_focus t ~width ~height Problems_tile.id ~show:(fun t ->
@@ -850,9 +1037,11 @@ let finish_step t ~width ~height ~controller ~views ~keymap_notice =
 ;;
 
 let feed t ~width ~height (input : Keymap.Input.t) =
-  let controller, views, status = Controller.handle_input t.controller input in
+  let session, views, status = Session.handle_input (session t) input in
+  let t = adopt_session_state t session ~width ~height in
+  let controller = Option.value (Session.active_controller session) ~default:(Controller.with_feedback t.controller (Session.feedback session)) in
   ( finish_step
-      t
+      { t with session }
       ~width
       ~height
       ~controller
@@ -1010,8 +1199,10 @@ let accept_palette t ~width ~height palette =
     refuse (sprintf "%s is unavailable here; nothing ran" title), Running
   | Execute { action; _ } ->
     let t = return_to_document t in
-    let controller, views, status = Controller.dispatch t.controller [ action ] in
-    finish_step t ~width ~height ~controller ~views ~keymap_notice:None, status
+     let session, views, status = Session.dispatch (session t) [ action ] in
+     let t = adopt_session_state t session ~width ~height in
+    let controller = Option.value (Session.active_controller session) ~default:(Controller.with_feedback t.controller (Session.feedback session)) in
+    finish_step { t with session } ~width ~height ~controller ~views ~keymap_notice:None, status
 ;;
 
 (* A key typed into the open palette. Every character is query text (it accepts text),
@@ -1047,6 +1238,12 @@ let feed_palette t ~width ~height palette key =
 
 let route t ~width ~height key =
   match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id when View_id.equal id directory_id ->
+    (* A directory is a modal document, not a details/palette capture. In
+       particular Space, Visual Enter, search and mark bindings use its keymap. *)
+    if Key.equal key Tab then
+      apply_view_command t ~width ~height Focus_directory, Controller.Status.Running
+    else feed t ~width ~height (Key key)
   | Some id when View_id.equal id Palette_tile.id ->
     (match t.palette with
      | Some palette -> feed_palette t ~width ~height palette key
@@ -1063,8 +1260,6 @@ let refit t ~width ~height =
   }
 ;;
 
-let inserting t = Mode.equal (Editor.mode (Controller.editor t.controller)) Insert
-
 (* Diagnostic lists wait while Insert lasts (Neovim's [update_in_insert = false]); a
    checker starting or stopping is an event and applies at once. The revision is
    stamped on arrival, so a held unversioned list is behind the edits made since. *)
@@ -1074,22 +1269,30 @@ let inserting t = Mode.equal (Editor.mode (Controller.editor t.controller)) Inse
 let apply_source t update ~text =
   let t =
     match (update : Ches_error.Error.update) with
-    | Diagnostics_received { source; resource; _ }
-      when [%equal: string option] (path t) (Some resource) ->
-      { t with problems = Problems_tile.applied t.problems ~source ~text }
+    | Diagnostics_received { source; resource; _ } ->
+       { t with problems = Problems_tile.applied t.problems ~source ~resource ~text }
     | _ -> t
   in
   { t with controller = Controller.update_feedback t.controller update }
 ;;
 
-let receive t (event : Ches_error.Source_event.t) =
-  let editor = Controller.editor t.controller in
-  let update =
-    Ches_error.Source_event.to_update event ~current_revision:(Editor.revision editor)
-  in
-  let text = Editor.text editor in
+let rec receive t (event : Ches_error.Source_event.t) =
   match event with
-  | Diagnostics { source; resource; _ } when inserting t ->
+  | Owned { resource; generation; event } ->
+    (match Session.find_resource (session t) resource with
+     | Some (id, _) when Option.equal Int.equal (Session.source_generation t.session id) (Some generation) -> receive t event
+     | _ -> t)
+  | event ->
+  let owner = match event with
+    | Diagnostics { resource; _ } -> Session.find_resource (session t) resource
+    | _ -> None in
+  let editor = Option.map owner ~f:(fun (_, c) -> Controller.editor c) in
+  let update =
+    Ches_error.Source_event.to_update event ~current_revision:(Option.value_map editor ~default:(-1) ~f:Editor.revision)
+  in
+  let text = Option.value_map editor ~default:Text_buffer.empty ~f:Editor.text in
+  match event with
+  | Diagnostics { source; resource; _ } when Option.exists editor ~f:(fun e -> Mode.equal (Editor.mode e) Insert) ->
     let key = source, resource in
     { t with
       held =
@@ -1098,6 +1301,7 @@ let receive t (event : Ches_error.Source_event.t) =
         @ [ key, update, text ]
     }
   | Diagnostics _ | Started _ | Stopped _ | Unavailable _ -> apply_source t update ~text
+  | Owned _ -> assert false
 ;;
 
 let receive_all t ~width ~height events =
@@ -1105,11 +1309,9 @@ let receive_all t ~width ~height events =
 ;;
 
 let release_held t ~width ~height =
-  if List.is_empty t.held || inserting t
-  then t
-  else
-    List.fold t.held ~init:{ t with held = [] } ~f:(fun t (_, update, text) ->
-      apply_source t update ~text)
+  let held, ready = List.partition_tf t.held ~f:(fun ((_, resource), _, _) ->
+    Option.exists (Session.find_resource (session t) resource) ~f:(fun (_, c) -> Mode.equal (Editor.mode (Controller.editor c)) Insert)) in
+    List.fold ready ~init:{ t with held } ~f:(fun t (_, update, text) -> apply_source t update ~text)
     |> synchronize ~width ~height
 ;;
 
@@ -1139,21 +1341,26 @@ and apply_running t ~width ~height (input : Input.t) =
     and before_report_visible = t.report_visible
     and before_history_visible = t.history_visible
     and before_zen = t.zen in
+    let before_buffer = Session.context_id t.session in
     let t, status =
       match input with
-      | Paste_start ->
-        ( { t with host = Host.paste_start t.host ~available:(available t ~width ~height) }
+       | Paste_start ->
+          ( { t with host = Host.paste_start t.host ~available:(available t ~width ~height); paste_buffer = Session.context_id t.session }
         , Controller.Status.Running )
       | Paste_end ->
         (match Host.paste_end t.host with
          | host, `Not_pasting -> { t with host }, Running
-         | host, `Deliver (owner, text) when View_id.equal owner document_id ->
-           feed ~width ~height { t with host } (Paste text)
+          | host, `Deliver (owner, text) when View_id.equal owner document_id ->
+            if Option.equal Buffer_id.equal t.paste_buffer (Session.context_id t.session) && has_document t
+            then feed ~width ~height { t with host } (Paste text)
+            else { t with host }, Running
          | host, `Deliver (owner, text) ->
            paste_capture { t with host } ~width ~height owner text, Running
          | host, `Reject (owner, text) -> pane_notice { t with host } ~source:owner text, Running)
       | Key key when Host.pasting t.host -> { t with host = Host.paste_key t.host key }, Running
-      | Key key -> route ~width ~height t key
+       | Key key when not (has_document t) ->
+         feed t ~width ~height (Key key)
+       | Key key -> route ~width ~height t key
       | Animation_tick _ | Resize | Source _ -> assert false
     in
     let t = release_held t ~width ~height in
@@ -1162,6 +1369,7 @@ and apply_running t ~width ~height (input : Input.t) =
     let was_active = Animation.active t.animation in
     let animation =
       if (not (Workspace.Prefs.equal before_workspace t.workspace_prefs))
+          || not (Option.equal Buffer_id.equal before_buffer (Session.context_id t.session))
          || Bool.(before_problems_visible <> t.problems_visible)
          || Bool.(before_report_visible <> t.report_visible)
          || Bool.(before_history_visible <> t.history_visible)
@@ -1214,4 +1422,35 @@ let apply_all t ~width ~height inputs =
       | t, Running -> Continue t
       | t, Exit -> Stop (t, Controller.Status.Exit))
     ~finish:(fun t -> t, Running)
+;;
+
+let adopt_session t session ~width ~height =
+  release_held (adopt_session_state t session ~width ~height) ~width ~height
+;;
+
+let open_file t ~width ~height path =
+  Or_error.map (Session.open_or_activate (session t) path) ~f:(fun (session, id) -> adopt_session t session ~width ~height, id)
+;;
+let activate_buffer t ~width ~height id =
+  Or_error.map (Session.activate (session t) id) ~f:(fun session -> adopt_session t session ~width ~height)
+;;
+let show_directory ?select t ~width ~height path =
+  Or_error.map (Session.show_directory ?select (session t) path) ~f:(fun session -> adopt_session t session ~width ~height)
+;;
+let close_buffer t ~width ~height id ~force =
+  let t, closed = close_buffer_state t ~width ~height id ~force in
+  release_held t ~width ~height, closed
+;;
+let close_current t ~width ~height ~force =
+  match Session.active_id (session t) with
+  | None -> t, false
+  | Some id -> close_buffer t ~width ~height id ~force
+;;
+let save_all t ~width ~height =
+  let session, results = Session.save_all (session t) in
+  adopt_session t session ~width ~height, results
+;;
+let quit_session t ~width ~height ~force =
+  let session, status = Session.quit (session t) ~force in
+  adopt_session t session ~width ~height, status
 ;;
