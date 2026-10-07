@@ -969,10 +969,10 @@ let%expect_test "Space v: Escape cancels, unknown continuations give a notice" =
     NORMAL 0:0
     > |abc
     |}];
-  let t = run t (keys " vz") in
+  let t = run t (keys " vx") in
   show t;
   [%expect {|
-    NORMAL 0:0 notice="Space v z is not bound"
+    NORMAL 0:0 notice="Space v x is not bound"
     > |abc
     |}];
   (* Nothing leaks: [l] after a cancelled prefix moves. *)

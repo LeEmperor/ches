@@ -159,8 +159,8 @@ For this project, however, Bonsai_term is preferred because the goal is likely t
 # Rendering Guidance
 
 For the concrete MVP0 visual direction and layout contracts, see
-[`rendering_design.md`](rendering_design.md) and phase 6 of
-[`mvp0_plan.md`](mvp0_plan.md). These add a richly colored, finely framed document
+[`rendering_design.md`](rendering_design.md) (phase 6 of the MVP0 plan, now
+removed). These add a richly colored, finely framed document
 view, responsive centered placement, adjustable width/horizontal offset, and
 Normal-mode layout controls. Placement preferences belong to the UI and do not
 change the buffer representation or editor semantics. Future supporting tiles

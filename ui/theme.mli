@@ -21,7 +21,8 @@ val selected : Preset.t
 
 module Role : sig
   type t =
-    | Backdrop (** Outside the document tile: a shade darker, so the tile stands out. *)
+    | Backdrop
+    (** Outside the tiles and under their frames: a shade darker, so tiles stand out. *)
     | Background (** The document tile. *)
     | Foreground
     | Surface (** Status line. *)
@@ -78,7 +79,8 @@ end
     {!Font.default}). The font callback API is unchanged; document styles now match
     [Document { special; overlay; current_line; syntax }] rather than flat variants
     such as [Special_cursor_line] or [Search_match_current]. Interaction overlays
-    replace foreground/background for contrast, without erasing underlying data. *)
+    replace foreground/background for contrast, without erasing underlying data.
+    Frame cells (borders and their titles/hints) are on the backdrop. *)
 val attrs
   :  ?font:(Ches_screen.Style.t -> Font.t list)
   -> Ches_screen.Style.t

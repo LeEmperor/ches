@@ -183,11 +183,15 @@ module Font = struct
     | Gutter
     | Gutter_cursor_line
     | Border
+    | Border_focused
     | Title_special
     | Status
     | Status_special
+    | Hint
     | Info
     | Warning
+    | Severity_hint
+    | Stale
     | Smear -> []
   ;;
 end
@@ -221,11 +225,15 @@ let colors (style : Ches_screen.Style.t) =
          (if current_line then Current_line else Background))
   | Gutter -> colors Muted Background
   | Gutter_cursor_line -> colors Foreground Current_line
-  | Border -> colors Border Background
-  | Title -> colors Foreground Background
-  | Title_special -> colors Special Background
+  (* Frame cells (borders and the labels set into them) sit on the backdrop, so rounded
+     corners read as round and the borders alone separate tiles across a gap. *)
+  | Border -> colors Border Backdrop
+  | Border_focused -> colors Normal_accent Backdrop
+  | Title -> colors Foreground Backdrop
+  | Title_special -> colors Special Backdrop
   | Status -> colors Foreground Surface
   | Status_special -> colors Special Surface
+  | Hint -> colors Muted Backdrop
   | Mode Normal -> colors Background Normal_accent
   | Mode Insert -> colors Background Insert_accent
   | Mode (Visual _) -> colors Background Warning
@@ -234,6 +242,9 @@ let colors (style : Ches_screen.Style.t) =
   | Info -> colors Foreground Surface
   | Warning -> colors Warning Surface
   | Error -> colors Error Surface
+  (* Quieter than Info but, unlike Stale, still in color: a hint is current, not dimmed. *)
+  | Severity_hint -> colors Syntax_comment Surface
+  | Stale -> colors Muted Surface
   | Smear -> [ Attr.fg (Role.color Smear) ]
 ;;
 

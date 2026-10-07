@@ -96,20 +96,19 @@ let%expect_test "the default fonts bold the title, badge, markers, and errors on
     ; Smear
     ]
     ~f:(fun style ->
-      print_s [%sexp (style : Ches_screen.Style.t), (Theme.Font.default style : Theme.Font.t list)]);
+       printf "%s %s\n" (Ches_screen.Style.to_string_hum style)
+         (Sexp.to_string ([%sexp (Theme.Font.default style : Theme.Font.t list)])));
   [%expect
     {|
-    ((Document
-      ((syntax Plain) (current_line false) (special false) (overlay ())))
-     ())
-    (Title (Bold))
-    ((Mode Normal) (Bold))
-    ((Mode (Visual Blockwise)) (Bold))
-    (Dirty (Bold))
-    (Pending (Bold))
-    (Warning ())
-    (Error (Bold))
-    (Smear ())
+    Text ()
+    Title (Bold)
+    (Mode Normal) (Bold)
+    (Mode (Visual Blockwise)) (Bold)
+    Dirty (Bold)
+    Pending (Bold)
+    Warning ()
+    Error (Bold)
+    Smear ()
     |}]
 ;;
 
@@ -139,5 +138,34 @@ let%expect_test "a font function replaces the default fonts and keeps the colors
     {|
     ((special_italic true) (match_bold_underlined true)
      (title_no_longer_bold true) (default_title_bold true))
+    |}]
+;;
+
+let%expect_test "frame cells sit on the backdrop; tile interiors keep their ground" =
+  let bg role = Attr.bg (Theme.Role.color role) in
+  let on role style =
+    List.exists (Theme.attrs ~font:(fun _ -> []) style) ~f:(Attr.equal (bg role))
+  in
+  List.iter
+    [ Ches_screen.Style.Border
+    ; Border_focused
+    ; Title
+    ; Title_special
+    ; Hint
+    ; Ches_screen.Style.document ()
+    ; Gutter
+    ; Status
+    ]
+    ~f:(fun style ->
+      printf "%s backdrop=%b\n" (Ches_screen.Style.to_string_hum style) (on Backdrop style));
+  [%expect {|
+    Border backdrop=true
+    Border_focused backdrop=true
+    Title backdrop=true
+    Title_special backdrop=true
+    Hint backdrop=true
+    Text backdrop=false
+    Gutter backdrop=false
+    Status backdrop=false
     |}]
 ;;

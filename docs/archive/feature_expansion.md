@@ -1,7 +1,8 @@
 # Ches feature expansion — MVP1
 
-**Status (2026-10-02):** phases 1–4B accepted by the owner after the checkpoint
-below; no ergonomic corrections were requested. Next: phase 5.
+**Status: archived (2026-10-06).** Phases 1–17 were implemented; this plan is
+kept for history. Deferred items carried forward are listed in the README's
+"Next milestones".
 
 ## Purpose
 
@@ -15,10 +16,10 @@ adding workspace or language-tooling infrastructure.
 
 Read alongside:
 
-- [`mvp0_plan.md`](mvp0_plan.md): established architecture, cursor, text, history,
+- `mvp0_plan.md` (removed; in git history): established architecture, cursor, text, history,
   and effect contracts, plus implementation-session conventions.
-- [`README.md`](README.md): current behavior, build commands, and limitations.
-- [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md): long-term
+- [`README.md`](../../README.md): current behavior, build commands, and limitations.
+- [`ches_editor_prototype_brief.md`](../ches_editor_prototype_brief.md): long-term
   direction. Its future ideas are not requirements for this milestone.
 
 This plan extends MVP0 contracts only where stated. Follow existing code naming

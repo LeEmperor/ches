@@ -17,6 +17,15 @@ module Scroll = struct
   ;;
 end
 
+module Status_position = struct
+  type t =
+    | Left
+    | Right
+    | Above
+    | Below
+  [@@deriving sexp_of, equal]
+end
+
 type t =
   | Toggle_centered
   | Shift of int
@@ -24,6 +33,20 @@ type t =
   | Toggle_absolute_numbers
   | Toggle_relative_numbers
   | Toggle_smear
+  | Toggle_status
+  | Position_status of Status_position.t
+  | Adjust_status_size of int
+  | Inspect_problems
+  | Toggle_problems
+  | Toggle_problems_filter
+  | Focus_problems
+  | Toggle_demo_report
+  | Focus_demo_report
+  | Toggle_history
+  | Focus_history
+  | Restart_source
+  | Kill_source
+  | Toggle_zen
   | Reset
   | Scroll of
       { scroll : Scroll.t

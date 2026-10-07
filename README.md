@@ -2,11 +2,12 @@
 
 A small modal programmer's editor in OCaml, with a UI-independent editing core
 and a [Bonsai_term](https://github.com/janestreet/bonsai_term) terminal
-frontend. See [`ches_editor_prototype_brief.md`](ches_editor_prototype_brief.md)
-for the long-term direction, [`mvp0_plan.md`](mvp0_plan.md) for the first
-milestone, and [`feature_expansion.md`](feature_expansion.md) for MVP1, in
- progress (phases 1–6 and 8 are done: counted movement, word, line, and document
-motions, Insert entry, `%`, line-number styles, and view scrolling).
+frontend. See [`docs/ches_editor_prototype_brief.md`](docs/ches_editor_prototype_brief.md)
+for the long-term direction and
+[`docs/workspace_tiles_design.md`](docs/workspace_tiles_design.md) for the current tile
+work. Finished phase plans are kept in [`docs/archive/`](docs/archive/): the MVP1
+editing plan ([`feature_expansion.md`](docs/archive/feature_expansion.md)) and the
+syntax-highlighting plan. The MVP0 plan was removed; it is in git history.
 
 **Status: MVP0 complete (2026-10-01).** `ches PATH` is a working terminal
 editor: it opens, edits, scrolls, saves, and quits, in a
@@ -95,6 +96,13 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `y{motion}` / `yy` | Yank by motion / whole line(s) |
 | Normal | `p` / `P` | Paste the unnamed register after / before the cursor or line |
 | Normal | `v` / `V` / `Ctrl-v` | Start characterwise / linewise / blockwise Visual selection |
+| Normal | `Space v e` | Cycle retained problem details |
+| Normal | `Space v b` | Show/hide the read-only bottom problems preview |
+| Normal | `Space v f` | Switch problems preview between workspace/current document |
+| Normal | `Space v o` | Show/focus problems, or return to the document |
+| Normal | `Space v d` / `Space v D` | Show/hide, or show/focus, the static demo report (`--demo-report` only) |
+| Normal | `Space v m` / `Space v M` | Show/hide, or show/focus, the notification history |
+| Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -110,8 +118,12 @@ It also exits with an error if its standard input is not a terminal.
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
 | Normal | `Space v s` | Toggle the animated smear cursor (on by default) |
+| Normal | `Space v t` | Show/hide the status cell (hidden by default) |
+| Normal | `Space v p h/l/k/j` | Place status left/right/above/below and show it |
+| Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`) |
+| Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
-| Normal | `Escape` | Cancel a pending count or `Space` sequence |
+| Normal | `Escape` | Cancel pending input; when idle, clear search highlights and acknowledge the presented problem |
 | Visual | motions, `%` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
 | Visual | `d` / `c` / `y` | Delete / change / yank the selected range |
@@ -132,6 +144,212 @@ character covers the column; on a TAB the cursor aims for the TAB's last cell
 (its first cell in Insert mode, and in Visual mode at or before where the
 selection started). Leaving Insert mode steps the cursor back one character,
 as in Vim. Motions never change the text, the undo history, or `[+]`.
+
+### Workspace status
+
+Status can occupy a cell on any side of the document. It shows mode, file/dirty
+state, position, pending keys, and current feedback; it never takes keyboard focus.
+Side-by-side width starts at 28 cells, stacked height at 6 rows, and each requested
+size is remembered separately. Small windows fall back to the bottom status row;
+expanding restores the requested layout automatically. Wider windows never turn
+status on by themselves.
+
+Zen keeps the bottom row for essential feedback without changing document placement
+or saved workspace requests. Status controls used in zen update the saved layout;
+toggle zen off to see it. `Space v r` still resets only document placement.
+All settings are session-local. Save and reload failures remain visible across editing,
+layout changes, compact status, and zen until acknowledged. An idle Normal-mode
+`Escape` acknowledges the currently displayed problem and clears search highlighting.
+Leaving Insert/Visual mode or cancelling a command, count, or search takes precedence;
+press Escape again once idle to acknowledge. Acknowledgement leaves the problem active
+and does not change dirty state. Status then shows an unresolved-problem count;
+`Space v e` cycles retained details without retrying the operation. Repeated failure
+renews attention without adding another entry. Successful save and reload resolve only
+the corresponding failure for that file. Routine feedback, including refused quit,
+clears on the next completed editor command or is replaced by newer routine feedback.
+Pending prefixes, ignored keys, resize, and animation do not clear it.
+
+The status-workspace milestone is human-accepted, as are the phase 7A shared tile
+host, the phase 7B shared shell (rounded frames, padding, and spacing for status
+and supporting views), and phase 7C read-only text selection and copying in
+supporting views. The problems view and its navigation (phases 6 and 7) are
+human-accepted too, as is phase 8's notification history.
+See [`docs/workspace_tiles_design.md`](docs/workspace_tiles_design.md).
+
+### Problems pane
+
+`Space v b` toggles a bottom preview; `Space v f` switches workspace/current-file
+filtering. `Space v o` shows and focuses the pane. It remains read-only:
+
+| Pane keys | Action |
+| --- | --- |
+| `j/k`, `gg/G`, `Ctrl-d/u` | Select problems; move the text cursor while inspecting details |
+| `yy` / `Y` | Copy the selected problem's whole description |
+| `e` | Toggle full wrapped details for the selected problem, as read-only text (below) |
+| `a` | Acknowledge only the selected problem, without resolving it |
+| `Enter` | Jump to a valid current-file location and return to the editor |
+| `Escape` | Cancel a prefix, end a selection, close details, then return to the editor |
+| `Tab` or `Space v o` | Return directly to the editor |
+| `Space v …` | Layout controls; editor commands and document scrolling are rejected |
+
+Supporting views (problems, the demo report, and a dedicated status cell with room
+for it) share one rounded, padded frame with their title in the top border and key
+hints, notices, or a pending prefix in the bottom border; side-by-side tiles are
+separated by a one-cell gap. The bottom band takes up to ten rows, never more than a
+third of the window. Frames sit on the dark backdrop, so their rounded borders alone
+separate tiles. The
+`>` marker, the `Problems*` title, and an accent-coloured
+frame show selection/focus; the terminal cursor is hidden in a pane's list and marks
+the text cursor in its details. Hiding, zen, or resizing too small returns focus
+to the editor. Pane pastes are ignored atomically, not treated as commands.
+Focus, Escape/Tab/prefix precedence, workspace bindings, and paste ownership come
+from the shared tile host (`tile/`), not the problems pane; any other supporting
+view gets the same rules.
+Missing/out-of-range locations and cross-file jumps are explained without touching the
+document. Currently save/reload failures have no locations; location navigation
+can be tried with the opt-in synthetic demo below, not a language server or multiple buffers.
+
+To try navigation on a file with several lines:
+
+```sh
+dune exec ches -- --demo-problems PATH
+```
+
+Press `Space v o`, then `G` to select the last demo finding and `Enter` to jump to
+the file's last line. Refocus with `Space v o`; try `gg` and `j/k` to navigate,
+or `G` then `e` to inspect the long final finding (`j/k` scroll details;
+Escape closes them).
+
+The flag adds eight clearly labelled **DEMO** entries, initially acknowledged so
+they do not demand failure attention. It does not change your text or write files;
+normal editing/saving still works. Entries are session-local and disappear on
+restart without the flag. Their locations are a startup snapshot, not refreshed
+after edits/reload. Short/empty files have repeated locations; use a multiline file
+to see distinct jump targets. No demo problems are added in an ordinary launch.
+
+### Demo diagnostics (checker findings fixture)
+
+```sh
+dune exec ches -- --demo-diagnostics PATH
+```
+
+Until a real checker is wired in, this seeds static, labelled **DEMO** checker
+findings so the problems view can be reviewed. It adds two sources on PATH (one
+versioned, one unversioned, which reports a `hint`), a finding in another file, and a
+stopped source whose finding stays marked `[source stopped]` (its stop warning is in
+history). Findings are standing
+state: they count in the status line (`[N problems: Space v e]`) but never take
+attention or need acknowledging (`a` on one says so). The problems view lists
+problems first, then findings by file, severity, and position. Findings for the open
+file dim after an edit until their checker catches up; nothing updates the demo, so
+they stay dimmed. Other files' findings never dim from typing. A finding's selection
+survives lines inserted above it. Lists that arrive during Insert wait until it ends.
+
+### Language server (ocamllsp)
+
+```sh
+dune exec ches -- PATH.ml          # or .mli, .mll, .mly; --no-lsp turns it off
+```
+
+Like the owner's Neovim setup, ches starts `ocamllsp` from PATH for OCaml files. Its
+root is found the way Neovim's `root_markers` do: the nearest `dune-project`; failing
+any, the nearest `dune-workspace`; then `*.opam` (a literal name, as in Neovim),
+`opam`, `esy.json`, `package.json`, `.git`; else the file's directory. Diagnostics go
+to the problems view and status count; Hints are their own, quieter severity.
+
+ches never runs dune. Merlin needs a build's configuration, so in a project that has
+never been built the only finding is `No config found … Try calling 'dune build'`, and
+errors from other files appear only while you run `dune build --watch` yourself.
+ocamllsp 1.19 sends its lists unversioned, so open-file findings dim from your first
+edit after a list arrives until the next one.
+
+As in Neovim: no server on PATH is only a history entry (`Space v m`); a server that
+exits or crashes is a one-off warning (`ocamllsp stopped: … (Space v R to restart)`),
+kept in history, its findings kept dimmed and marked `stopped`; nothing restarts on
+its own. On quit ches asks the server to shut down and waits up to 1 s.
+`--synthetic-checker` replaces it. To check the client against the installed server
+without the UI: `dune exec source/bench/lsp_probe.exe -- -build`.
+
+### Synthetic checker (live diagnostic source)
+
+```sh
+dune exec ches -- --synthetic-checker PATH
+```
+
+Until a language server is wired in (phase 10), this runs a fake checker through the
+same asynchronous source boundary a server will use, so freshness, crash, and restart
+behaviour can be tried by hand. It starts with the document, rooted at the nearest
+directory with a `dune-project` (else PATH's directory). Like ocamllsp it is one
+source, `synthetic`, running two checks and merging them into one list per file:
+
+- an edit check, like merlin: about 0.4 s after an edit it checks the newest text: a
+  line containing `ERROR` is an error, one containing `TODO` a warning.
+- a build check, like dune: about 0.8 s after a save (and at start) it checks the
+  saved text's `ERROR` lines (`synthetic build error`) and adds a warning in
+  `synthetic_other.ml`, a file you have not opened.
+
+The open file's list describes the revision of the newest edit check, so its findings
+dim while you type ahead of it. As with dune, a build finding stays until you save.
+
+`Space v K` crashes the checker. As in Neovim, that is a one-off warning
+(`synthetic stopped: … (Space v R to restart)`), gone at the next command but kept in
+history; nothing takes attention. Its last findings stay listed, dimmed and marked
+`stopped`. `Space v R` restarts it; kept findings stay dimmed until the restarted
+checker replaces them. There is no automatic restart. Without the flag both keys only say
+there is no source.
+
+### Demo report (tile-system fixture)
+
+```sh
+dune exec ches -- --demo-report PATH
+```
+
+This installs a static, error-free report of ten labelled **DEMO REPORT** rows. It
+exercises the shared tile host without the problems system. `Space v d` shows it in
+the bottom band (beside problems when both are shown); `Space v D` focuses it.
+`j/k`, `gg/G`, and `Ctrl-d/u` select, `e` or `Enter` toggles wrapped details (the
+last row's details scroll), and Escape/Tab/`Space v …` behave as in problems.
+`Space v o` and `Space v D` move focus between the two views. The report never
+posts feedback, touches problems, or edits the file. Without the flag, `Space v d`
+and `Space v D` only report that it is unavailable.
+
+### Notification history
+
+`Space v m` shows the history in the bottom band (beside problems and the report);
+`Space v M` focuses it, like `:messages` in Vim. It lists past feedback oldest first,
+numbered `#N`: editor messages and keymap notices, and each problem's failures
+(`problem`, `problem again` when it was still active) and resolutions. Layout
+feedback and a view's own notices (such as a rejected paste) are not kept. An event
+repeated back to back is counted on one entry (`×3`). The newest 200 entries are kept
+in memory; the title counts any older ones dropped. Nothing persists across launches.
+
+History is a record, not current state: problems live in the problems pane. Resolving
+a problem adds a `resolved` entry and keeps the earlier failure. Clearing the history
+leaves active problems alone. The focused list follows the newest entry until you move.
+`j/k`, `gg/G`, `Ctrl-d/u` select, `yy` copies an entry, `e`/`Enter` opens it as
+read-only text (below), and `X` clears the history. Escape, Tab, and `Space v …`
+behave as in problems.
+
+### Read-only text in supporting views
+
+Open details (problems, the demo report, and history) are read-only text, like a read-only
+buffer in a Neovim split, with the terminal cursor on the text cursor:
+
+| Details keys | Action |
+| --- | --- |
+| `h/l`, `0` `^` `$`, `w/b` | Move within the text (`0`/`$` and `^` use the whole logical line, not the wrapped row) |
+| `j/k`, `gg/G`, `Ctrl-d/u` | Move by wrapped row, to the first/last row, or by half the view |
+| `v` / `V` | Characterwise / linewise Visual selection; again to end it, `o` swaps ends |
+| `y` (Visual), `yy` / `Y` | Copy the selection, or the cursor's whole line |
+| `e` | Close details (`Enter` also jumps in problems, `a` acknowledges) |
+| `Escape` | End a selection, then close details, then return |
+
+A copy goes where an editor yank goes: the unnamed register, so `p` in the editor
+pastes it, and the system clipboard. It copies the text itself, never the wrapping,
+padding, border, or markers, and shows `Copied …` in the view's footer. Copying and
+selecting never acknowledge, resolve, or jump. Edit keys (`i`, `x`, `d`, `p`, `u`,
+…) and pastes are rejected with a notice. If a problem's text changes while its
+details are open, the view takes the new text and ends any selection, saying so.
 
 ### Words and lines
 
@@ -403,7 +621,7 @@ opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_live_probe/probe.exe
 Implementation and automated regression checks are complete. The owner reviewed
 the palette and reported live behavior satisfactory; the detailed terminal checklist
 below remains available for further review. See
-[`syntax_highlighting_plan.md`](syntax_highlighting_plan.md) for measurements,
+[`docs/archive/syntax_highlighting_plan.md`](docs/archive/syntax_highlighting_plan.md) for measurements,
 check outcomes and the acceptance handoff.
 
 ## Text
@@ -564,6 +782,7 @@ colors, and the Bonsai_term app.
 
 ```text
 dune-project   project and package metadata (generates ches.opam)
+error/         ches_error: pure shared notification, active-problem lifecycle, and bounded history
 core/          ches_core: pure editing library; depends only on `core`
 input/         ches_input: terminal-independent keys and modal keymap
 app/           ches_app: file loading/saving, input controller and highlight cache
@@ -620,6 +839,9 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
 - tabs, wide characters, and control characters
 - a fast burst of keys with a paste in it, and a paste in Normal mode
 - every `Space v` command, with clamping and restoring on resize
+- workspace status on all four sides, separate width/height requests, scrolling and
+  cursor alignment, hide/show, zen and saved-layout changes, compact fallback and
+  restoration, edit/undo/redo/save, and error visibility across layout transitions
 - line-number styles: both toggles from the default (none), a rejected count,
   `Space v r`, renumbering as the cursor moves, and a toggle while too small
 - view scrolling: `Ctrl-e`/`Ctrl-y` with counts and a pushed cursor, `Ctrl-d`/
@@ -629,7 +851,7 @@ table, including the Insert-mode editing keys, soft tabs, `j k`, and an unbound
   that is not a terminal
 
 It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
-`dune runtest`. A run takes about 15 seconds:
+`dune runtest`. It waits for screen/cursor updates rather than assuming a fixed runtime:
 
 ```sh
 dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe
@@ -719,8 +941,10 @@ and changes made to the file by other programs are not detected.
 
 These come after MVP0 and are not part of it. Roughly in order:
 
-1. Yank/paste, changes, replacement, and the remaining MVP1 editing features
-   (see [`feature_expansion.md`](feature_expansion.md)).
+1. Editing features deferred from MVP1: text objects (`iw`, `i"`), macros,
+   named/numbered registers, regex search and substitution, scroll margins,
+   horizontal scroll commands, and saved view preferences. Safer saving and
+   detecting changes made by other programs are separate follow-up work.
 2. More `:` commands (`:w`, `:q`, `:wq`, `:q!`) on the narrow prompt used by
    `:e!`.
 3. Better Unicode (grapheme clusters) and line-ending support (CRLF).

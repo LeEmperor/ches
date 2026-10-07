@@ -38,7 +38,7 @@ the parsers match upstream OCaml `v0.26.0`.
 The owner declined further investigation; this unresolved audit is not an
 implementation gate. That disposition is **not a finding of license compliance**.
 No additional audit or source vendoring was performed in phase 3. See
-`syntax_highlighting_plan.md` for the earlier findings and disposition.
+[`syntax_highlighting_plan.md`](../docs/archive/syntax_highlighting_plan.md) for the earlier findings and disposition.
 
 ## Ownership and limitations
 

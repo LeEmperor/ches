@@ -59,10 +59,10 @@ type t =
 
 let gutter_digits ~line_count = Int.max 3 (String.length (Int.to_string line_count))
 
-let compute (prefs : Prefs.t) ~width ~height ~line_count =
-  let width = Int.max 0 width
-  and height = Int.max 0 height in
-  let status_height = Int.min 1 height in
+let compute_in (prefs : Prefs.t) ~(allocation : Rect.t) ~reserve_status_row ~line_count =
+  let width = Int.max 0 allocation.width
+  and height = Int.max 0 allocation.height in
+  let status_height = if reserve_status_row then Int.min 1 height else 0 in
   let tile_height = height - status_height in
   let gutter_digits = gutter_digits ~line_count in
   let full_gutter_width =
@@ -95,17 +95,21 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
     then Int.clamp_exn (centered_x + prefs.offset) ~min:0 ~max:(width - tile_width)
     else 0
   in
-  let inner_y = border_width in
+  let inner_y = allocation.y + border_width in
   let inner_height = Int.max 0 (tile_height - (2 * border_width)) in
   let gutter =
-    { Rect.x = tile_x + border_width + padding
+    { Rect.x = allocation.x + tile_x + border_width + padding
     ; y = inner_y
     ; width = gutter_width
     ; height = inner_height
     }
   in
-  let tile = { Rect.x = tile_x; y = 0; width = tile_width; height = tile_height } in
-  let status = { Rect.x = 0; y = tile_height; width; height = status_height } in
+  let tile =
+    { Rect.x = allocation.x + tile_x; y = allocation.y; width = tile_width; height = tile_height }
+  in
+  let status =
+    { Rect.x = allocation.x; y = allocation.y + tile_height; width; height = status_height }
+  in
   let areas =
     let status_area =
       { Area.rect = status
@@ -139,4 +143,12 @@ let compute (prefs : Prefs.t) ~width ~height ~line_count =
   ; offset = (if prefs.centered then tile_x - centered_x else 0)
   ; areas
   }
+;;
+
+let compute prefs ~width ~height ~line_count =
+  compute_in
+    prefs
+    ~allocation:{ Rect.x = 0; y = 0; width; height }
+    ~reserve_status_row:true
+    ~line_count
 ;;
