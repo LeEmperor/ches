@@ -174,6 +174,17 @@ let set_cursor ?line_break t offset =
 ;;
 
 let snapshot t = { History.text = t.text; cursor = t.cursor }
+let display_position_of_offset t offset =
+  if not (B.is_boundary t.text offset)
+  then Or_error.error_string "Invalid document byte boundary"
+  else (
+    let line = B.line_of_offset t.text offset in
+    let pos = offset - B.line_start t.text line in
+    let glyphs = Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line) in
+    let col, _ = Cell_layout.cursor_span glyphs ~pos ~insertion:false in
+    Ok (line + 1, col + 1))
+;;
+
 let go_to_display_position t ~line ~column =
   if not (Mode.equal t.mode Normal)
   then Or_error.error_string "Problem navigation requires Normal mode"

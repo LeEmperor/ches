@@ -197,6 +197,12 @@ val cursor : t -> int
     glyph selects that glyph; line-end positions normalize to the Normal cursor.
     Invalid/out-of-range positions return an error without modifying the editor. *)
 val go_to_display_position : t -> line:int -> column:int -> t Or_error.t
+
+(** Convert an absolute UTF-8 byte boundary using this editor's width table to
+    one-based line/display-cell coordinates. Zero-width scalars map to the
+    preceding visible glyph (or cell 1), as in [Cell_layout.cursor_span]; display
+    navigation cannot address them separately. No state changes. *)
+val display_position_of_offset : t -> int -> (int * int) Or_error.t
 val selection : t -> Selection.t option
 
 (** The rectangle of a blockwise selection, which reaches every line's end after

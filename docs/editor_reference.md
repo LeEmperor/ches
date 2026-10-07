@@ -135,6 +135,15 @@ To add a command, add an entry (ID, title, keywords, and the existing editor or 
 action) to `Catalog.default` in `palette/catalog.ml`. Its shortcut is derived from the
 bindings, so it needs no label and no execution code of its own.
 
+### Planned file, line, and content pickers — not live commands
+
+`Space f f` is **not bound** and there are no live line/content picker commands or
+palette entries. The implemented providers, models and screen adapters are
+headless foundations. The command palette above remains docked; floating
+composition/migration and multi-buffer opening are still missing. See
+[picker status and setup](pickers.md) for search semantics, ripgrep dependencies,
+resource limits and integration blockers. Existing `/` and `?` search is unchanged.
+
 ### Problems pane
 
 `Space v b` toggles a bottom preview; `Space v f` switches workspace/current-file

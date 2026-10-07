@@ -18,8 +18,14 @@ module Saved = struct
   [@@deriving sexp_of, equal]
 end
 
+module Document_id = struct
+  type t = unit ref
+  let equal = phys_equal
+end
+
 type t =
   { editor : Editor.t
+  ; document_id : Document_id.t
   ; feedback : Feedback.t
   ; keymap : Keymap.t
   ; dispatched : bool
@@ -30,6 +36,7 @@ type t =
 
 let create ?(keymap_config = Keymap.Config.default) editor =
   { editor
+  ; document_id = ref ()
   ; feedback = Feedback.empty
   ; keymap = Keymap.create keymap_config
   ; dispatched = false
@@ -50,6 +57,7 @@ let open_file ?keymap_config ~cell_width path =
 ;;
 
 let editor t = t.editor
+let document_id t = t.document_id
 let keymap t = t.keymap
 let highlights t = Highlighting.snapshot t.highlighting
 let highlight_status t = Highlighting.status t.highlighting
@@ -216,7 +224,8 @@ let run t ~keymap ~feedback actions =
       ~reloaded:false
   in
   let highlighting = Highlighting.update t.highlighting editor ~reset:reloaded in
-  let t = { editor; feedback; keymap; dispatched; clipboard; saved; highlighting } in
+  let document_id = if reloaded then ref () else t.document_id in
+  let t = { editor; document_id; feedback; keymap; dispatched; clipboard; saved; highlighting } in
   (match status with
    | Exit -> close t
    | Running -> ());

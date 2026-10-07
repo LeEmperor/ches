@@ -19,6 +19,8 @@
   core
   core_unix
   async
+  yojson
+  base64
   bonsai
   bonsai_term
   lsp

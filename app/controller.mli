@@ -34,6 +34,16 @@ end
 
 type t
 
+(** Runtime identity, distinct even for independently opened documents with the
+    same path/text/revision. Preserved by ordinary transitions; successful reload
+    starts a new identity. *)
+module Document_id : sig
+  type t
+  val equal : t -> t -> bool
+end
+
+val document_id : t -> Document_id.t
+
 (** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing exists
     there. The error says which path could not be opened, and why. [cell_width] is passed
     to [Editor.create]. *)

@@ -1,0 +1,17 @@
+(executable
+ (name query_latency)
+ (modules query_latency)
+ (libraries ches_file_picker ches_palette core core_unix)
+ (preprocess (pps ppx_jane)))
+
+(executable
+ (name discovery_latency)
+ (modules discovery_latency)
+ (libraries ches_file_discovery ches_file_picker core core_unix async)
+ (preprocess (pps ppx_jane)))
+
+(executable
+ (name interaction_latency)
+ (modules interaction_latency)
+ (libraries ches_file_picker ches_palette core core_unix)
+ (preprocess (pps ppx_jane)))

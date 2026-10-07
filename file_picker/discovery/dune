@@ -1,0 +1,5 @@
+(library
+ (name ches_file_discovery)
+ (libraries ches_file_picker core core_unix core_unix.filename_unix core_unix.sys_unix async)
+ (preprocess
+  (pps ppx_jane)))

@@ -1,0 +1,5 @@
+(library
+ (name ches_content_search_test)
+ (libraries ches_content_search ches_content_picker ches_file_picker core core_unix core_unix.filename_unix core_unix.sys_unix async)
+ (inline_tests (deps fake_rg/fake_rg.exe) (flags (:standard -source-tree-root .)))
+ (preprocess (pps ppx_jane)))

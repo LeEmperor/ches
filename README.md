@@ -30,6 +30,11 @@ for general distribution.
 Ches edits one document per session. It accepts UTF-8 text with LF line endings
 and preserves the file's contents, including whether it ends with a newline.
 
+File picking, fuzzy current-document lines, and project content search have
+**headless foundations only**, not live editor commands. `Space f f` is planned,
+not bound. See [picker status and setup](docs/pickers.md) for implemented behavior,
+ripgrep requirements, limits, and the missing floating/buffer integration.
+
 ## Usage
 
 The local shell command points to the built executable at
@@ -81,6 +86,9 @@ those frames.
 | `source/` | Asynchronous diagnostic sources and language-server client |
 | `tile/` | Shared tile host, focus, and input routing |
 | `palette/` | Command catalog and fuzzy matching |
+| `file_picker/` | Headless file model, bounded discovery, matching and interaction |
+| `line_picker/` | Headless fuzzy search over current in-memory document lines |
+| `content_picker/` | Headless on-disk literal search provider and acceptance intents |
 | `screen/` | Screen geometry, workspace state, and frame rendering |
 | `ui/` | Bonsai_term frontend, event adapter, and theme |
 | `bin/` | Command-line entry point |
@@ -96,6 +104,9 @@ Development uses the OxCaml opam switch `5.2.0+ox` and Jane Street
 `v0.18~preview` packages. The project declares Dune language version 3.17 and
 pins `tree-sitter` to 0.1.0. The bundled SystemVerilog parser also requires a C
 compiler and `gzip` at build time.
+Picker libraries additionally use Async, Yojson and Base64 (declared in
+`dune-project`). File/content provider tests and probes require `rg` on `PATH`;
+neither `fzf` nor ripgrep is needed for ordinary editing or the command palette.
 
 With the local switch active:
 
@@ -114,6 +125,9 @@ and frontend behavior. The separate terminal smoke test uses tmux, bash, and a
 UTF-8 locale to check the built editor's screen output, saved bytes, and terminal
 restoration. Visual checks and the `ppx_expect` source-path workaround are
 documented in the [editor reference](docs/editor_reference.md#terminal-smoke-test).
+The [phase-9 check record](FILE_PICKER_PLAN.md#phase-9-implementation-and-handoff-2026-10-07--partial)
+records passing headless picker checks and the observed, unpromoted UI snapshot
+mismatch. It does not establish live picker acceptance.
 
 ## Current limitations
 
