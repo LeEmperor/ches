@@ -37,14 +37,28 @@ type t =
   }
 [@@deriving sexp_of]
 
-(** Uses the controller's cached current highlights by default, with no parsing.
-    An optional override supplies an expected current key and snapshot. The caller
-    owns identity/configuration and must supply the current key, never the key
-    copied from an obsolete result. Mismatched keys or editor revisions fall back
-    to plain text. No provider work occurs here. *)
+(** Compose the effective workspace's document, optional status tile, and minor views
+    (each in the shared {!Tile_shell}, its content from its adapter) against a
+    screen-sized backdrop. Only the cursor owner draws a terminal cursor: the document
+    (with its smear) when focused, or a focused minor view's open read-only text (see
+    {!Ui_state.text_cursor}). Scrolling and cursor placement share its document geometry.
+    Compact/zen layouts retain bottom-row feedback. An explicit [allocation] instead
+    renders only the document there, clipped to screen bounds, reserving a status row
+    by default. [reserve_status_row] overrides either policy for headless callers.
+
+    The document uses the controller's cached current highlights by default, with no
+    parsing. [highlights] overrides them with an expected current key and snapshot. The
+    caller owns identity/configuration and must supply the current key, never the key
+    copied from an obsolete result. Mismatched keys or editor revisions fall back to
+    plain text. No provider work occurs here. *)
 val render
-  :  ?highlights:(Ches_highlight.Snapshot.Key.t * Ches_highlight.Snapshot.t)
-  -> Ui_state.t -> width:int -> height:int -> t
+  :  ?highlights:Ches_highlight.Snapshot.Key.t * Ches_highlight.Snapshot.t
+  -> ?allocation:Geometry.Rect.t
+  -> ?reserve_status_row:bool
+  -> Ui_state.t
+  -> width:int
+  -> height:int
+  -> t
 
 (** The screen as text, one line per row, each ending in [|] to show the width, then
     the cursor. For tests. *)

@@ -21,4 +21,6 @@
   async
   bonsai
   bonsai_term
+  lsp
+  jsonrpc
   ppx_jane))

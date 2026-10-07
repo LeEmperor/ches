@@ -3,7 +3,7 @@
 ## Purpose and scope
 
 This is the rendering companion to [the architecture brief](ches_editor_prototype_brief.md)
-and [the MVP0 phase plan](mvp0_plan.md). The phase plan determines implementation
+and the MVP0 phase plan (removed; see git history). The phase plan determines implementation
 order; this document records visual intent, concrete layout behavior, and future
 directions. The MVP0 requirements below belong to phase 6, not a restart of
 phases 1–4. No commits, pushes, or other Git state changes by implementation agents.
@@ -21,7 +21,7 @@ MVP0 uses one document tile:
 - Thin, single-cell borders; filename in the top border when space permits.
 - Muted line-number gutter and a subtle current-line background. Since MVP1
   phase 4A the gutter has four styles (off by default, absolute, relative,
-  hybrid); see [`feature_expansion.md`](feature_expansion.md).
+  hybrid); see [`feature_expansion.md`](archive/feature_expansion.md).
 - Clear mode badge, dirty indicator, position, and predictable feedback area.
 - Block cursor in Normal and bar cursor in Insert where supported.
 - No special icon font requirement. Labels remain understandable without color.
@@ -194,21 +194,18 @@ one-based, and the column is the code-point column (`Editor.cursor_column + 1`),
 not the display column. While a sequence is pending, its keys (e.g. `Space v`)
 appear in their own field, independent of the message slot.
 
-The message slot shows the feedback from the most recent input that produced
-any. In order of precedence:
-
-1. the keymap notice, if that feed set one;
-2. otherwise layout feedback, if the input produced a view command;
-3. otherwise, if the input dispatched any editor command, `Editor.message`.
-   This may be none, which clears the slot.
-
-An input that produces none of these leaves the slot unchanged. Examples are an
-ignored key and the first key of a sequence. There is no timer: brief feedback
-lasts until the next input that replaces it. Editor errors use the error role
-and notices use the warning role.
+Phase 5 of `workspace_tiles_design.md` replaces the disposable message slot with
+shared controller feedback. Editor commands clear transient notifications before
+posting their new feedback. Keymap notices and layout actions post structured
+transient notifications; prefixes, ignored keys, resize, and animation do not clear
+feedback. Unacknowledged save/reload problems take display precedence over routine
+notifications and persist until matching recovery or acknowledgement. Acknowledgement
+retains an unresolved count, and `Space v e` cycles retained details. Idle Normal
+Escape acknowledges the presented problem and clears search highlighting; mode exits
+and pending cancellation take precedence. All status presentations query this state.
 
 When the status line is too narrow, drop fields from lowest priority first:
-non-error message, filename (truncate from the left first, marked with `<`),
+routine message without active problems, filename (truncate from the left first, marked with `<`),
 position, dirty indicator, pending keys, error message. The mode badge is the
 last field kept.
 
@@ -278,7 +275,7 @@ cursor line and span, the text viewport size, and the line count:
   as little as possible to make the whole span visible. If the span is wider
   than the viewport, show its first cell.
 - No scroll margin (scrolloff). MVP1 phase 4B adds explicit scroll commands
-  (`Ctrl-e/y/d/u`, `zz/zt/zb`); see [`feature_expansion.md`](feature_expansion.md)
+  (`Ctrl-e/y/d/u`, `zz/zt/zb`); see [`feature_expansion.md`](archive/feature_expansion.md)
   and `Ui_state`.
 - With zero text rows or columns, keep the scroll unchanged and show no cursor
   (`set_cursor None`).
@@ -325,7 +322,7 @@ Do a bounded visual pass in checkpoint 6B, after 6A has the real editor
 working, with representative Normal, Insert, dirty, pending-prefix, and error
 states. Review at approximately 80×24 and 160×48 cells, plus pathological tiny
 dimensions for robustness. The phase 6 smoke script (`scripts/smoke.sh`; see
-[the phase plan](mvp0_plan.md#terminal-smoke-script)) saves these screens with
+[the README](../README.md#terminal-smoke-test)) saves these screens with
 colors for review.
 
 Test layout geometry, clamp/restore behavior on resize, nudge/reset/toggle,

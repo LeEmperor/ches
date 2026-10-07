@@ -12,6 +12,12 @@ open Bonsai_term
     {!Theme.Font.default}. *)
 val app
   :  ?smear_enabled:bool
+  -> ?report:Ches_screen.Report_tile.Item.t list
+       (** Installs a static report view (see {!Ches_screen.Ui_state.create}). *)
+  -> ?source:Ches_source.Source.t
+       (** A running diagnostic source: its events become [Source] inputs, and
+           {!Ches_screen.Ui_state.take_source_requests} is sent to it after each
+           transition. *)
   -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> Ches_app.Controller.t
   -> exit:(unit -> unit Effect.t)
@@ -23,9 +29,12 @@ val app
     that the terminal library measures differently cannot shift the layout. *)
 val draw : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
 
-(** Runs the editor in the terminal until it exits. SIGTERM and SIGHUP end the process
-    with status 1, discarding unsaved changes, after restoring the terminal. *)
+(** Runs the editor in the terminal until it exits, then stops [source]. SIGTERM and
+    SIGHUP end the process with status 1, discarding unsaved changes, after restoring the
+    terminal. *)
 val run
   :  ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+  -> ?report:Ches_screen.Report_tile.Item.t list
+  -> ?source:Ches_source.Source.t
   -> Ches_app.Controller.t
   -> unit Async.Deferred.Or_error.t

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Terminal smoke test: drives the built `ches` binary inside tmux and checks what
 # reaches the screen, the cursor, the files written, and the terminal state left for
-# the shell. See mvp0_plan.md, "Terminal smoke script".
+# the shell. See README.md, "Terminal smoke test".
 #
 # Usage: scripts/smoke.sh [PATH-TO-CHES]   (default: _build/default/bin/ches.exe)
 #
@@ -30,6 +30,7 @@ export LC_ALL=C.UTF-8
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke.XXXXXX")
 screens=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke-screens.XXXXXX")
+# A per-run socket prevents another checkout's smoke run from sharing this session.
 tmux_cmd=(tmux -S "$work/tmux.sock" -f /dev/null)
 session=smoke
 
@@ -82,8 +83,9 @@ expect_screen() {
   if poll screen_has "$1"; then ok "screen shows '$1'"; else fail "screen never showed '$1'"; fi
 }
 
-# Status can update before smear finishes. A hidden cursor's reported coordinates
-# are not its eventual text position; poll visibility and the assertion together.
+# Whether the row the cursor is on contains TEXT. Status can update before smear
+# finishes. A hidden cursor's reported coordinates are not its eventual text position;
+# poll visibility and the assertion together.
 cursor_row_has() {
   local y visible
   read -r _ y visible <<< "$(cursor)"
@@ -106,12 +108,6 @@ expect_status() {
 }
 
 cursor_is() { [ "$(cursor)" = "$1" ]; }
-
-cursor_in_text_row() {
-  local x y visible
-  read -r x y visible <<< "$(cursor)"
-  [ "$visible" = 1 ] && [ "$y" = "$1" ] && [ "$x" -ge "$2" ] && [ "$x" -le "$3" ]
-}
 
 expect_cursor() {
   if poll cursor_is "$1"; then
@@ -149,9 +145,11 @@ hybrid_numbers() {
 }
 
 # Starts ches with hybrid line numbers, which the checks here are written against.
+# $launch_env, when set, prefixes the command (env PATH=... for the language server).
+launch_env=""
 launch() {
   shell "clear; stty -g > $work/stty.before"
-  t send-keys -t "$session" -l "$ches $*"
+  t send-keys -t "$session" -l "${launch_env:+$launch_env }$ches $*"
   t send-keys -t "$session" Enter
   if poll alternate_is 1 && poll status_has "NORMAL"; then
     ok "launched ches $*"
@@ -867,8 +865,8 @@ expect_layout "Width 500 (152 fit)" 0 159
 keys Space v r
 expect_layout "Layout reset" 28 131 3
 hybrid_numbers
-keys Space v z
-expect_status "Space v z is not bound"
+keys Space v x
+expect_status "Space v x is not bound"
 # After Escape, l moves the cursor instead of nudging the tile.
 keys Space v Escape l
 expect_status "1:2"
@@ -1032,21 +1030,528 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+section "workspace status cells and zen restoration"
+resize 80 24
+for i in $(seq 1 60); do printf 'workspace line %d\n' "$i"; done > "$work/workspace.txt"
+cp "$work/workspace.txt" "$work/workspace.expected"
+launch workspace.txt
+keys Space v t
+expect_screen "Status right 28 (shown)"
+expect_cursor "7 1 1"
+save_screen "workspace-right-80x24"
+keys Space v p h
+expect_screen "Status left 28 (shown)"
+expect_cursor "36 1 1"
+keys 4 0 j
+expect_cursor_row "41  workspace line 41"
+keys g g
+expect_cursor "36 1 1"
+save_screen "workspace-left-80x24"
+keys Space v p k
+expect_screen "Status above 6 (shown)"
+expect_cursor "7 7 1"
+save_screen "workspace-above-80x24"
+keys Space v p j
+expect_screen "Status below 6 (shown)"
+expect_cursor "7 1 1"
+keys Space v p +
+expect_screen "Status below 8 (shown)"
+keys Space v p -
+expect_screen "Status below 6 (shown)"
+keys Space v z
+expect_status "Zen (status hidden)"
+expect_cursor "7 1 1"
+keys Space v p
+expect_status "Space v p"
+keys Escape Space v p h
+expect_status "Status left 28 (saved for workspace; zen)"
+keys Space v z
+expect_screen "Workspace restored"
+expect_cursor "36 1 1"
+resize 23 12
+expect_status "NORMAL"
+expect_cursor "6 0 1"
+resize 1 1
+if poll cursor_flag_is 0; then ok "no cursor in empty document viewport"; else fail "cursor shown at 1x1"; fi
+resize 160 48
+expect_cursor "47 1 1"
+expect_screen "workspace.txt"
+save_screen "workspace-left-160x48"
+# Hide/show preserves placement and the document's preferred width.
+keys Space v t
+expect_status "Status left 28 (hidden)"
+expect_cursor "33 1 1"
+keys Space v t
+expect_screen "Status left 28 (shown)"
+expect_cursor "47 1 1"
+keys i X Escape
+expect_screen "workspace.txt [+]"
+expect_cursor_row "Xworkspace line 1"
+keys u
+expect_cursor_row "workspace line 1"
+keys C-r
+expect_cursor_row "Xworkspace line 1"
+keys Space w
+expect_screen "Wrote workspace.txt"
+sed '1s/^/X/' "$work/workspace.expected" > "$work/workspace.saved"
+expect_file "$work/workspace.txt" "$work/workspace.saved"
+keys u Space w
+expect_screen "Wrote workspace.txt"
+keys Space q
+expect_exit 0
+expect_file "$work/workspace.txt" "$work/workspace.expected"
+# A controlled save failure remains visible when moving/hiding status or using zen.
+resize 80 24
+launch ro/workspace.txt
+keys i X Escape Space w
+expect_status "Permission denied"
+keys Space v t
+expect_screen "Failed to write ro/work>"
+keys Space v p h
+expect_screen "Failed to write ro/work>"
+keys Space v z
+expect_status "Permission denied"
+save_screen "workspace-error-zen-80x24"
+keys Space v z
+expect_screen "Failed to write ro/work>"
+# Editing and keymap notices cannot replace unacknowledged persistence attention.
+keys l i Y Escape 3 '^'
+expect_screen "Failed to write ro/work>"
+keys Escape
+expect_screen "1 problem: Space v e"
+expect_no_screen "Failed to write"
+save_screen "workspace-problem-acknowledged-80x24"
+keys Space v e
+expect_screen "Failed to write ro/work>"
+keys Space w
+expect_screen "Failed to write ro/work>"
+keys Escape
+expect_screen "1 problem: Space v e"
+# Matching save recovery removes the retained save problem.
+keys Space v b
+expect_screen "Problems (workspace): 1/1"
+expect_screen "error [file] ro/workspace.txt: Failed to write"
+keys Space v f
+expect_screen "Problems (document): 1/1"
+keys Space v z
+expect_no_screen "Problems ("
+keys Space v z
+expect_screen "Problems (document): 1/1"
+resize 15 4
+expect_no_screen "Problems ("
+resize 80 24
+expect_screen "Problems (document): 1/1"
+save_screen "workspace-problems-acknowledged-80x24"
+keys Space v b
+expect_no_screen "Problems ("
+keys Space v b
+expect_screen "Problems (document): 1/1"
+chmod 755 "$work/ro"
+keys Space w
+expect_screen "Wrote ro/workspace.txt"
+expect_no_screen "problems:"
+expect_screen "Problems (document): 0/0"
+expect_screen "No active problems"
+keys Space v b
+# A reload failure has its own identity and matching recovery.
+mv "$work/ro/workspace.txt" "$work/workspace-reload.saved"
+mkdir "$work/ro/workspace.txt"
+keys : e ! Enter
+expect_screen "Failed to reload"
+keys Space v b
+expect_screen "Problems (document): 1/1"
+expect_screen "error [file] ro/workspace.txt: Failed to reload"
+keys l Escape
+expect_screen "1 problem: Space v e"
+keys Space v e
+expect_screen "Failed to reload"
+rmdir "$work/ro/workspace.txt"
+mv "$work/workspace-reload.saved" "$work/ro/workspace.txt"
+keys : e ! Enter
+expect_screen "Reloaded ro/workspace.t"
+expect_no_screen "problems:"
+expect_screen "Problems (document): 0/0"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "interactive problems pane"
+resize 80 24
+printf 'first\nsecond\n' > "$work/problems.txt"
+launch problems.txt
+mv "$work/problems.txt" "$work/problems.saved"
+mkdir "$work/problems.txt"
+keys i X Escape Space w : e ! Enter
+expect_screen "2 problems"
+keys Space v o
+expect_screen "Problems* (workspace): 2/2 [1/2]"
+pane_cursor_hidden() { [ "$(t display -p -t "$session" '#{cursor_flag}')" = 0 ]; }
+if poll pane_cursor_hidden; then ok "problems capture hides terminal cursor"; else fail "pane cursor visible"; fi
+keys j
+expect_screen "Problems* (workspace): 2/2 [2/2]"
+keys a
+expect_screen "Acknowledged; problem remains active"
+keys e
+expect_screen "Problems* details"
+expect_screen "Failed to reload"
+keys Escape g Escape
+expect_screen "Problems* (workspace): 2/2 [2/2]"
+keys Enter
+expect_screen "This problem has no document location"
+keys i u Space q
+expect_screen "Editor command unavailable"
+t set-buffer -b smoke ' voij'
+t paste-buffer -p -b smoke -t "$session"
+expect_screen "Problems: read-only; paste ignored"
+save_screen "workspace-problems-focused-80x24"
+resize 15 4
+expect_no_screen "Problems*"
+resize 80 24
+expect_screen "Problems (workspace): 2/2"
+expect_cursor_row "Xfirst"
+keys u
+expect_cursor_row "first"
+rmdir "$work/problems.txt"
+mv "$work/problems.saved" "$work/problems.txt"
+keys Space w : e ! Enter
+expect_screen "Problems (workspace): 0/0"
+keys Space v o
+expect_screen "No active problems"
+keys Escape Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "opt-in demo problems and real location jumps"
+for i in $(seq 1 12); do printf 'demo line %s\n' "$i"; done > "$work/problems-demo.txt"
+cp "$work/problems-demo.txt" "$work/problems-demo.expected"
+launch --demo-problems problems-demo.txt
+keys Space v o
+expect_screen "Problems* (workspace): 8/8 [1/8]"
+keys G
+expect_screen "Problems* (workspace): 8/8 [8/8]"
+keys e
+expect_screen "Problems* details"
+expect_screen "DEMO 8/8: jump to line 13, column 1"
+keys C-d Enter
+expect_cursor "7 13 1"
+keys Space v o g g Enter
+expect_cursor "7 1 1"
+expect_cursor_row "demo line 1"
+keys Space w
+expect_file "$work/problems-demo.txt" "$work/problems-demo.expected"
+expect_screen "Problems (workspace): 8/8"
+save_screen "workspace-demo-problems-jumps-80x24"
+keys Space q
+expect_exit 0
+launch problems-demo.txt
+keys Space v b
+expect_screen "No active problems"
+expect_screen "Problems (workspace): 0/0"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "static demo report through the shared tile host"
+printf 'report one\nreport two\n' > "$work/report.txt"
+cp "$work/report.txt" "$work/report.expected"
+launch --demo-report report.txt
+keys Space v d
+expect_screen "Demo report (static): 10 items"
+# Phase 7B: the shared shell frames the view, with its labels set into the borders.
+expect_screen "╭─ Demo report (static): 10 items ─"
+expect_screen "╰─ Space v D: focus ─"
+keys Space v D
+expect_screen "Demo report* (static): [1/10]"
+if poll pane_cursor_hidden; then ok "report capture hides terminal cursor"; else fail "report cursor visible"; fi
+keys G e
+expect_screen "Demo report* details (static): [10/10]"
+expect_screen "DEMO REPORT 10/10"
+keys G
+expect_screen "Details "
+expect_no_screen "DEMO REPORT 10/10"
+keys Escape
+expect_screen "Demo report* (static): [10/10]"
+keys Space v o
+expect_screen "Problems* (workspace): 0/0 [0/0]"
+expect_screen "Demo report (static): 10 items"
+keys Space v D
+expect_screen "Demo report* (static): [10/10]"
+t set-buffer -b smoke ' vDij'
+t paste-buffer -p -b smoke -t "$session"
+expect_screen "Demo report: read-only; paste ignored"
+expect_screen "╰─ Demo report: read-only; paste igno> ╯"
+save_screen "workspace-demo-report-80x24"
+keys Tab
+expect_screen "Demo report (static): 10 items"
+expect_no_screen "Demo report*"
+keys Space w
+expect_file "$work/report.txt" "$work/report.expected"
+# Framed status beside the document and both minor views in the band, for review at
+# laptop and monitor sizes. Problems is still shown from above.
+keys Space v t
+expect_screen "╭─ Status ─"
+expect_screen "╭─ Problems (workspace): 0/0 ─"
+resize 120 40
+expect_screen "╮ ╭─ Demo report (static): 10 items ─"
+save_screen "tiles-shell-120x40"
+resize 200 60
+expect_screen "╭─ Demo report (static): 10 items ─"
+save_screen "tiles-shell-200x60"
+resize 80 24
+keys Space q
+expect_exit 0
+launch report.txt
+keys Space v d
+expect_screen "Demo report unavailable; launch with --demo-report"
+expect_no_screen "Demo report ("
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "read-only text: cursor, selection, and copying in a supporting view"
+printf 'copy target\n' > "$work/copy.txt"
+cp "$work/copy.txt" "$work/copy.expected"
+launch --demo-report copy.txt
+keys Space v D
+expect_screen "Demo report* (static): [1/10]"
+if poll pane_cursor_hidden; then ok "no terminal cursor in the list"; else fail "list cursor visible"; fi
+keys e
+expect_screen "Demo report* details (static): [1/10]"
+expect_screen "hjkl w b v V yy; e/Esc back"
+if poll cursor_flag_is 1; then ok "details show the text cursor"; else fail "details cursor hidden: $(cursor)"; fi
+# "REPORT " from the item's text: w to it, select through the blank after it.
+keys w v w h
+expect_screen "VISUAL: y copy"
+keys y
+expect_screen "Copied 7 characters"
+keys x
+expect_screen "Demo report: read-only; edits unavailable"
+keys Escape
+expect_screen "Demo report* (static): [1/10]"
+if poll pane_cursor_hidden; then ok "closing details hides the cursor"; else fail "cursor left visible"; fi
+keys Escape
+expect_no_screen "Demo report*"
+# The copy reached the unnamed register: p pastes it in the editor, and undo removes it.
+keys p
+expect_cursor_row "cREPORT opy target"
+keys u
+expect_cursor_row "copy target"
+keys Space w
+expect_file "$work/copy.txt" "$work/copy.expected"
+save_screen "tiles-text-copy-80x24"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "notification history beside problems"
+resize 80 24
+printf 'history one\n' > "$work/history.txt"
+printf 'Xhistory one\n' > "$work/history.expected"
+launch history.txt
+mv "$work/history.txt" "$work/history.saved"
+mkdir "$work/history.txt"
+keys i X Escape Space w
+expect_screen "Failed to write"
+# Acknowledgement and layout feedback are not history entries.
+keys l Escape Space v c Space v c
+keys Space v m
+expect_screen "╭─ History: 1 entry ─"
+expect_screen "error problem [file save]"
+expect_screen "╰─ Space v M: focus ─"
+keys Space v b
+expect_screen "Problems (workspace): 1/1"
+expect_screen "╮ ╭─ History: 1 entry ─"
+keys Space v M
+expect_screen "History*: [1/1]"
+if poll pane_cursor_hidden; then ok "history list hides terminal cursor"; else fail "history cursor visible"; fi
+keys e
+expect_screen "History* details: [1/1]"
+if poll cursor_flag_is 1; then ok "history details show the text cursor"; else fail "details cursor hidden: $(cursor)"; fi
+keys V y
+expect_screen "Copied 1 line"
+keys x
+expect_screen "History: read-only; edits unavailable"
+t set-buffer -b smoke ' vMij'
+t paste-buffer -p -b smoke -t "$session"
+expect_screen "History: read-only; paste ignored"
+save_screen "tiles-history-focused-80x24"
+keys Escape X
+# The notice is cut to the 39-column tile's bottom border.
+expect_screen "╰─ History cleared; active problems u> ╯"
+expect_screen "No history"
+expect_screen "Problems (workspace): 1/1"
+# Zen hides the band and returns focus; leaving zen restores both views unfocused.
+keys Space v z
+expect_no_screen "╭─ History"
+keys Space v z
+expect_screen "History: 0 entries"
+expect_no_screen "History*"
+rmdir "$work/history.txt"
+mv "$work/history.saved" "$work/history.txt"
+keys Space w
+expect_screen "Problems (workspace): 0/0"
+expect_screen "resolved [file save]"
+expect_screen "info [editor]"
+expect_screen "History: 2 entries"
+# The copied entry reached the unnamed register; undo removes the paste.
+keys p
+expect_screen "error problem [file save]"
+keys u
+expect_cursor_row "Xhistory one"
+expect_file "$work/history.txt" "$work/history.expected"
+save_screen "tiles-history-80x24"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "demo diagnostics in the problems view"
+resize 80 24
+printf 'let x = 1\nlet y = x +\nlet z = 3\nlet w = 4\nlet v = 5\nlet u = 6\n' > "$work/diag.ml"
+cp "$work/diag.ml" "$work/diag.expected"
+launch diag.ml --demo-diagnostics --no-lsp
+# Findings count, but take no attention: the acknowledged stop leaves only the count.
+expect_status "[5 problems: Space v e]"
+keys Space v b
+expect_screen "Problems (workspace): 5/5"
+expect_screen "error [demo-check] ./demo-other.ml:4:1"
+expect_screen "error [demo-check] diag.ml:1:1"
+expect_screen "hint [demo-lint] diag.ml:2:1"
+expect_screen "warning [demo-stopped stopped] diag.ml:6:1"
+save_screen "tiles-diagnostics-80x24"
+keys Space v o
+expect_screen "Problems* (workspace): 5/5 [1/5]"
+keys j a
+expect_screen "Diagnostics are not acknowledged"
+keys Enter
+expect_cursor_row "let x = 1"
+# An edit puts current-file findings behind the text: dimmed, still listed.
+keys x
+expect_screen "Problems (workspace): 5/5"
+save_screen "tiles-diagnostics-dimmed-80x24"
+keys u
+expect_file "$work/diag.ml" "$work/diag.expected"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+section "synthetic checker: edits, saves, crash and restart"
+resize 80 24
+printf 'let x = 1\nlet y = 2 (* TODO *)\n' > "$work/chk.ml"
+launch chk.ml --synthetic-checker
+keys Space v b
+# The initial text is checked after the edit delay, the on-disk text after the build's.
+expect_screen "warning [synthetic] chk.ml:2:1"
+expect_screen "warning [synthetic] ./synthetic_other.ml:3:1"
+keys o E R R O R Escape
+expect_screen "error [synthetic] chk.ml:2:1"
+expect_no_screen "build error"
+# Saving makes the build check report it too, in the same source's list.
+keys Space w
+expect_screen "build error: ERROR does not compile"
+# One crash is one problem.
+keys Space v K
+expect_screen "synthetic stopped: killed by Space v K"
+expect_screen "error [synthetic stopped] chk.ml:2:1"
+expect_screen "Problems (workspace): 4/4"
+keys Escape Space v R
+expect_screen "error [synthetic] chk.ml:2:1"
+expect_no_screen "(Space v R to restart)"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
+# A scripted server stands in for ocamllsp on PATH (see
+# source/test/fake_lsp/fake_lsp.ml): ERROR/WARN lines are findings, CRASH exits 3.
+fake_lsp=$root/_build/default/source/test/fake_lsp/fake_lsp.exe
+mkdir -p "$work/fakebin" "$work/emptybin"
+ln -s "$fake_lsp" "$work/fakebin/ocamllsp"
+
+# Whether a fake server launched by ches is still running.
+fake_lsp_running() {
+  local pid
+  for pid in $(pgrep -x ocamllsp); do
+    [ "$(readlink "/proc/$pid/exe")" = "$fake_lsp" ] && return 0
+  done
+  return 1
+}
+fake_lsp_gone() { ! fake_lsp_running; }
+
+section "language server for an OCaml file: findings, edits, crash, restart, quit"
+resize 80 24
+mkdir -p "$work/lspproj/sub"
+printf '(lang dune 3.0)\n' > "$work/lspproj/dune-project"
+printf 'let a = 1\nlet b = ERROR\n' > "$work/lspproj/sub/a.ml"
+launch_env="env PATH=$work/fakebin:$PATH"
+launch lspproj/sub/a.ml
+launch_env=""
+keys Space v b
+expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+expect_screen "[1 problem: Space v e]"
+# Fixing the line clears the list; undo brings the finding back.
+keys j d d
+expect_screen "Problems (workspace): 0/0"
+keys u
+expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+keys Space v o Enter
+expect_cursor_row "let b = ERROR"
+# A crash is a one-off warning; the findings stay, marked stopped.
+keys Escape o C R A S H Escape
+expect_screen "ocamllsp stopped: exited with code 3"
+expect_screen "[ocamllsp stopped] lspproj/sub/a.ml:2:9"
+keys u
+expect_no_screen "ocamllsp stopped:"
+keys Space v R
+expect_screen "error [ocamllsp] lspproj/sub/a.ml:2:9: fake error"
+expect_no_screen "[ocamllsp stopped]"
+# Problems hidden, history gets the full width; the stop stays recorded there.
+keys Space v b Space v m
+expect_screen "warning [ocamllsp]: ocamllsp stopped: exited with code 3"
+keys Space q
+expect_exit 0
+if poll fake_lsp_gone; then
+  ok "no language server left running"
+else
+  fail "a language server outlived ches"
+fi
+
+section "no language server: other files, none on PATH, --no-lsp"
+resize 80 24
+printf 'ERROR\n' > "$work/lspproj/notes.txt"
+launch_env="env PATH=$work/fakebin:$PATH"
+launch lspproj/notes.txt
+sleep 1
+expect_no_screen "problem"
+keys Space q
+expect_exit 0
+launch lspproj/sub/a.ml --no-lsp
+sleep 1
+expect_no_screen "problem"
+keys Space q
+expect_exit 0
+# Missing from PATH: only a history entry, as Neovim only logs it.
+launch_env="env PATH=$work/emptybin"
+launch lspproj/sub/a.ml
+launch_env=""
+sleep 1
+expect_no_screen "unavailable"
+keys Space v m
+expect_screen "ocamllsp unavailable: ocamllsp not found on PATH"
+keys Space q
+expect_exit 0
+
+# ---------------------------------------------------------------------------
 section "scrolling a wide line"
 { for _ in $(seq 1 40); do printf '0123456789'; done; printf '\nshort\n'; } > "$work/wide.txt"
 launch wide.txt
 keys -N 250 l
 expect_status "1:251"
-if poll cursor_in_text_row 1 7 78; then
-  ok "cursor inside the text"
-else
-  fail "cursor outside the text: $(cursor)"
-fi
-if poll char_under_cursor_is 0; then
-  ok "cursor on the 251st character"
-else
-  fail "wrong character under the cursor"
-fi
+cursor_inside_wide_text() {
+  local x visible
+  read -r x _ visible <<< "$(cursor)"
+  [ "$visible" = 1 ] && [ "$x" -ge 7 ] && [ "$x" -le 78 ]
+}
+if poll cursor_inside_wide_text; then ok "cursor inside the text"; else fail "cursor outside the text: $(cursor)"; fi
+if poll char_under_cursor_is 0; then ok "cursor on the 251st character"; else fail "wrong character under the cursor"; fi
 keys j
 expect_status "2:5"
 expect_cursor "11 2 1"
@@ -1124,7 +1629,7 @@ let () =
 EOF
 for size in 80x24 160x48; do
   resize "${size%x*}" "${size#*x}"
-  launch sample.ml
+  launch sample.ml --no-lsp
   keys j
   expect_status "2:1"
   save_screen "normal-$size"
@@ -1156,7 +1661,7 @@ if [ "$(id -u)" != 0 ]; then
   chmod 444 "$work/review-ro/sample.ml"
   for size in 80x24 160x48; do
     resize "${size%x*}" "${size#*x}"
-    launch review-ro/sample.ml
+    launch review-ro/sample.ml --no-lsp
     keys x Space w
     expect_status "Permission denied"
     save_screen "error-$size"
@@ -1165,7 +1670,7 @@ if [ "$(id -u)" != 0 ]; then
   done
 fi
 resize 80 24
-launch sample.ml
+launch sample.ml --no-lsp
 keys j
 expect_status "2:1"
 for size in 40x10 20x6 10x3 1x1; do

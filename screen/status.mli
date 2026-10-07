@@ -23,3 +23,31 @@ val fields : Ui_state.t -> Status_field.t list
       border is unbroken. The status-line styles of the fields' text become the
       border-title styles. *)
 val render : Geometry.Area.t -> Status_field.t list -> Span.t list
+
+module Tile : sig
+  (** Pane-local rows; row [i] starts at terminal [rect.x, rect.y + i]. No surrounding
+      terminal backdrop or cursor is supplied. All rows occupy [rect.width] cells. *)
+  type t =
+    { rect : Geometry.Rect.t
+    ; rows : Span.t list list
+    }
+  [@@deriving sexp_of]
+end
+
+(** Vertical status within any allocation. Negative dimensions normalize to zero;
+    the origin is preserved. Output has exactly [rect.height] rows, each exactly
+    [rect.width] display cells, including blank unused rows.
+
+    Order: mode, filename/dirty, position, pending, message. Absent fields consume
+    no rows. Height priority: mode, error message (priority 1), pending, dirty/file,
+    clean file, position, routine message (priority 6). Selected rows keep presentation
+    order, independently of [side] and input field order. Message urgency comes from
+    the existing field priority; other vertical priorities are explicit.
+
+    Filename retains its tail with [<], reserving space for the dirty marker. Other
+    text retains its start with [>]; mode strips badge margins and retains initial
+    letters without a marker. Dirty, pending, and error cut markers retain their
+    semantic styles even in a one-cell allocation. Unicode cell boundaries use the
+    existing span operations. No borders, message lifecycle, or UI integration are
+    introduced here. *)
+val vertical : rect:Geometry.Rect.t -> Status_field.t list -> Tile.t

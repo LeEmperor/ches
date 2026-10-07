@@ -111,6 +111,7 @@ let cursor t = t.cursor
 let selection t = t.selection
 let message t = t.message
 let unnamed_register t = t.unnamed_register
+let set_unnamed_register t register = { t with unnamed_register = Some register }
 let search_case t = t.search_case
 let search_state t =
   if t.search_visible
@@ -173,6 +174,23 @@ let set_cursor ?line_break t offset =
 ;;
 
 let snapshot t = { History.text = t.text; cursor = t.cursor }
+let go_to_display_position t ~line ~column =
+  if not (Mode.equal t.mode Normal)
+  then Or_error.error_string "Problem navigation requires Normal mode"
+  else if line < 1 || line > B.line_count t.text || column < 1
+  then Or_error.error_string "Problem location is outside the current document"
+  else
+    let line = line - 1 in
+    let glyphs = Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line) in
+    let width = Cell_layout.total_width glyphs in
+    if column - 1 > width
+    then Or_error.error_string "Problem column is outside the current line"
+    else
+      let pos = Option.value (Cell_layout.pos_of_column glyphs (column - 1))
+        ~default:(B.line_end t.text line - B.line_start t.text line) in
+      Ok (set_cursor t (B.line_start t.text line + pos))
+;;
+
 let commit t = { t with history = History.commit t.history ~after:(snapshot t) }
 
 (* [text] must differ from [t.text]. Joins the active transaction, starting one if

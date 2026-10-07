@@ -28,9 +28,25 @@ type t =
   }
 [@@deriving sexp_of]
 
-let render ?highlights ui ~width ~height =
+let render ?highlights ?allocation ?reserve_status_row ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
+  let screen_width = width in
+  let workspace = Ui_state.workspace ui ~width ~height in
+  let pane_relative = Option.is_some allocation || Option.is_some workspace.status
+    || not (List.is_empty workspace.minors) in
+  let minor_panes = if Option.is_some allocation then [] else workspace.minors in
+  let allocation, default_reservation, status_pane =
+    match allocation with
+    | None -> workspace.document.rect, workspace.reserve_status_row, workspace.status
+    | Some (rect : Geometry.Rect.t) ->
+      let x = Int.clamp_exn rect.x ~min:0 ~max:width in
+      let y = Int.clamp_exn rect.y ~min:0 ~max:height in
+      let right = Int.clamp_exn (rect.x + Int.max 0 rect.width) ~min:x ~max:width in
+      let bottom = Int.clamp_exn (rect.y + Int.max 0 rect.height) ~min:y ~max:height in
+      { Geometry.Rect.x; y; width = right - x; height = bottom - y }, true, None
+  in
+  let reserve_status_row = Option.value reserve_status_row ~default:default_reservation in
   let editor = Controller.editor (Ui_state.controller ui) in
   let text = Editor.text editor in
   let key, snapshot =
@@ -43,8 +59,8 @@ let render ?highlights ui ~width ~height =
   in
   let line_count = Text_buffer.line_count text in
   let cursor_line = Editor.cursor_line editor in
-  let geometry = Ui_state.geometry ui ~width ~height in
-  let scroll = Ui_state.fitted_scroll ui ~width ~height in
+  let geometry = Ui_state.geometry_in ui ~allocation ~reserve_status_row in
+  let scroll = Ui_state.fitted_scroll_in ui ~allocation ~reserve_status_row in
   let { Geometry.tile
       ; border
       ; padding
@@ -59,6 +75,47 @@ let render ?highlights ui ~width ~height =
     geometry
   in
   let fields = Status.fields ui in
+  (* Status and minor views share the tile shell; adapters fill its content area. *)
+  let status_tile = Option.map status_pane ~f:(fun pane ->
+    let layout = Tile_shell.layout Tile_shell.Policy.status pane.Workspace.Pane.rect in
+    let body = (Status.vertical ~rect:layout.content fields).rows in
+    layout.outer,
+    Array.of_list (Tile_shell.render layout ~focused:false { title = "Status"; footer = None; body }))
+  in
+  (* Each minor pane's content comes from its adapter; only the focused view shows the
+     host's capture notice and pending prefix. *)
+  let focused_view = Ui_state.focused_view ui ~width ~height in
+  let minor_tiles = List.filter_map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
+    match pane.id with
+    | Document | Status -> None
+    | Minor id ->
+      let layout =
+        Option.value_exn (Ui_state.minor_layout ui ~width ~height id) in
+      let width = layout.content.width and rows = layout.content.height in
+      let focused = Ches_tile.View_id.equal focused_view id in
+      let notice, pending =
+        if focused then Ui_state.capture_notice ui, Ui_state.capture_pending ui else None, None in
+      let content : Tile_shell.Content.t =
+        match Ui_state.report ui with
+        | _ when Ches_tile.View_id.equal id Problems_tile.id ->
+          let tile = Ui_state.problems_tile ui in
+          Problems.render
+            ~focused
+            ~navigation:(Ui_state.problem_navigation ui ~width:screen_width ~height)
+            ?details:(Problems_tile.text_view tile)
+            ?notice ?pending
+            (Controller.feedback (Ui_state.controller ui))
+            ~current_document:(Problems_tile.current_document tile)
+            ~document:(Problems_tile.document tile editor) ~width ~rows
+        | _ when Ches_tile.View_id.equal id History_tile.id ->
+          History_tile.render ~focused ?notice ?pending (Ui_state.history_tile ui)
+            (Ches_error.Error.history (Controller.feedback (Ui_state.controller ui)))
+            ~width ~rows
+        | Some report when Ches_tile.View_id.equal id Report_tile.id ->
+          Report_tile.render ~focused ?notice ?pending report ~width ~rows
+        | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }
+      in
+      Some (layout.outer, Array.of_list (Tile_shell.render layout ~focused content))) in
   let search =
     match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
     | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)
@@ -274,23 +331,46 @@ let render ?highlights ui ~width ~height =
   in
   let rows =
     List.init height ~f:(fun y ->
-      let row (rect : Geometry.Rect.t) spans =
-        Span.merge
-          ([ Span.blank Backdrop rect.x ]
-           @ spans
-           @ [ Span.blank Backdrop (width - rect.x - rect.width) ])
+      let document =
+        match area_on_row Status_row y with
+        | Some area -> [ area.rect, Status.render area fields ]
+        | None when y >= tile.y && y < tile.y + tile.height -> [ tile, tile_row y ]
+        | None -> []
       in
-      match area_on_row Status_row y with
-      | Some area -> row area.rect (Status.render area fields)
-      | None -> row tile (tile_row y))
+      let status = match status_tile with
+        | Some (rect, rows) when y >= rect.y && y < rect.y + rect.height -> [ rect, rows.(y - rect.y) ]
+        | Some _ | None -> []
+      in
+      let minors = List.filter_map minor_tiles ~f:(fun (rect, rows) ->
+        if y >= rect.y && y < rect.y + rect.height then Some (rect, rows.(y - rect.y))
+        else None) in
+      let segments = List.sort (document @ status @ minors) ~compare:(fun (a, _) (b, _) -> Int.compare a.x b.x) in
+      let spans, right = List.fold segments ~init:([], 0) ~f:(fun (spans, right) (rect, content) ->
+        spans @ [ Span.blank Backdrop (rect.x - right) ] @ content, rect.x + rect.width)
+      in
+      Span.merge (spans @ [ Span.blank Backdrop (width - right) ]))
   in
   let animation = Ui_state.animation ui in
-  let smear = Animation.cells animation ~width ~height in
+  let document_cursor =
+    Option.exists (Ui_state.cursor_owner ui ~width ~height)
+      ~f:(Ches_tile.View_id.equal Ui_state.document_id) in
+  let smear =
+    (if not document_cursor then [] else Animation.cells animation ~width ~height)
+    |> List.filter ~f:(fun (x, y) ->
+      not pane_relative
+      || (x >= viewport.x && x < viewport.x + viewport.width
+          && y >= viewport.y && y < viewport.y + viewport.height))
+  in
   let cursor =
-    if Animation.active animation || not (List.is_empty insert_points)
+    if not document_cursor
+    then
+      (* A focused read-only text view's cursor, the one other terminal-cursor owner. *)
+      Option.map (Ui_state.text_cursor ui ~width ~height) ~f:(fun (x, y) ->
+        { Cursor.x; y; shape = Block })
+    else if Animation.active animation || not (List.is_empty insert_points)
     then None
     else
-      Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) ->
+       Option.map (Ui_state.cursor_position_in ui ~allocation ~reserve_status_row) ~f:(fun (x, y) ->
         { Cursor.x = x
         ; y
         ; shape =

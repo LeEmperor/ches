@@ -1,12 +1,12 @@
-(** The running application for one document: the editor, its keymap, and the
-    execution of the editor's effects.
+(** The running application for one document: the editor, its keymap, and the execution of
+    the editor's effects.
 
     A frontend opens a file with {!open_file}, then for each normalized input calls
     {!handle_input}, applies the view commands it returns to its own layout state, and
-    redraws from {!editor} and {!keymap}. All feedback is in
-    [Editor.message] (including save results and errors) and [Keymap.pending] /
-    [Keymap.notice]. When {!handle_input} returns [Exit], the frontend restores the
-    terminal and ends the process.
+    redraws from {!editor} and {!keymap}. Shared feedback is available through [feedback];
+    pending keys and notices remain in [Keymap.pending] / [Keymap.notice]. When
+    {!handle_input} returns [Exit], the frontend restores the terminal and ends the
+    process.
 
     Effects run synchronously, in the order the editor requested them: a save has
     finished, and its outcome is reflected in the editor, by the time {!handle_input}
@@ -23,11 +23,20 @@ module Status : sig
   [@@deriving sexp_of, equal]
 end
 
+(** A successful write of the document. *)
+module Saved : sig
+  type t =
+    { path : string
+    ; revision : int (** The editor revision whose text was written. *)
+    }
+  [@@deriving sexp_of, equal]
+end
+
 type t
 
-(** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing
-    exists there. The error says which path could not be opened, and why.
-    [cell_width] is passed to [Editor.create]. *)
+(** Loads [path] with {!File_io.read}, or starts a clean, empty document if nothing exists
+    there. The error says which path could not be opened, and why. [cell_width] is passed
+    to [Editor.create]. *)
 val open_file
   :  ?keymap_config:Keymap.Config.t
   -> cell_width:Cell_layout.Width.t
@@ -56,29 +65,47 @@ val highlight_parse_count : t -> int
     should also close on normal shutdown/error. Do not keep using a closed runtime. *)
 val close : t -> unit
 
-(** Whether the most recent {!handle_input} dispatched at least one editor command.
-    The keymap produces none for, e.g., an ignored key or the first key of a sequence.
-    A frontend uses this to decide whether [Editor.message] is fresh feedback for that
+(** Whether the most recent {!handle_input} dispatched at least one editor command. The
+    keymap produces none for, e.g., an ignored key or the first key of a sequence. A
+    frontend uses this to decide whether [Editor.message] is fresh feedback for that
     input. [false] before any input. *)
 val last_input_dispatched : t -> bool
 
 (** The newest text the editor asked to put on the system clipboard (see
-    [Effect.Set_clipboard]) since the last take, and the controller with it cleared.
-    The controller cannot reach the terminal, so a frontend takes it after
-    {!handle_input} and sets the clipboard itself; older requests were superseded. *)
+    [Effect.Set_clipboard]) since the last take, and the controller with it cleared. The
+    controller cannot reach the terminal, so a frontend takes it after {!handle_input} and
+    sets the clipboard itself; older requests were superseded. *)
 val take_clipboard : t -> t * string option
 
+(** The newest successful write since the last take, and the controller with it
+    cleared. A frontend tells diagnostic sources about saves with it; a save at an
+    unchanged revision still counts. *)
+val take_saved : t -> t * Saved.t option
+
 (** Feeds [input] through the keymap in the editor's current mode, dispatches the
-    resulting editor commands, and performs their effects. The view commands are
-    returned, in order, for the frontend to apply; they touch no state here. Actions
-    after an editor command that requests [Exit] are neither dispatched nor
-    returned. *)
+    resulting editor commands, and performs their effects. The view commands are returned,
+    in order, for the frontend to apply; they touch no state here. Actions after an editor
+    command that requests [Exit] are neither dispatched nor returned. *)
 val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Status.t
 
-(** Dispatches [Move { motion; count }] to the editor, for a frontend whose view
-    command must bring the cursor along (scrolling the cursor line out of view). Moves
-    request no effects. It leaves the keymap and {!last_input_dispatched} alone. *)
+(** Dispatches [Move { motion; count }] to the editor, for a frontend whose view command
+    must bring the cursor along (scrolling the cursor line out of view). Moves request no
+    effects. It leaves the keymap and {!last_input_dispatched} alone. *)
 val move : t -> Motion.t -> count:int option -> t
+
+(** Copy text from a read-only view to both destinations an editor yank reaches: the
+    editor's unnamed register (so [p] pastes it) and the system clipboard (see
+    {!take_clipboard}). No editor command runs: the document, cursor, history, dirty
+    state, keymap, and feedback are unchanged. *)
+val yank : t -> Register.t -> t
+
+val feedback : t -> Ches_error.Error.t
+val update_feedback : t -> Ches_error.Error.update -> t
+
+val cancel_pending : t -> t
+
+(** Validated current-document navigation only. No IO, edits, or feedback resolution. *)
+val jump : t -> line:int -> column:int -> t Or_error.t
 
 module For_testing : sig
   val with_highlight_language : t -> Ches_highlight.Language.t -> t

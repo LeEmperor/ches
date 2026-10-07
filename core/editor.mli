@@ -191,6 +191,12 @@ val is_dirty : t -> bool
 
 (** Byte offset; see the cursor rules above. *)
 val cursor : t -> int
+
+(** Navigate without editing, only in Normal mode. [line] and [column] are one-based
+    terminal display cells, not byte/UTF-16 offsets. A column within a TAB or wide
+    glyph selects that glyph; line-end positions normalize to the Normal cursor.
+    Invalid/out-of-range positions return an error without modifying the editor. *)
+val go_to_display_position : t -> line:int -> column:int -> t Or_error.t
 val selection : t -> Selection.t option
 
 (** The rectangle of a blockwise selection, which reaches every line's end after
@@ -218,6 +224,11 @@ val message : t -> Message.t option
     that an empty characterwise yank or a block of empty rows leaves it; history does
     not restore it. *)
 val unnamed_register : t -> Register.t option
+
+(** Replace the unnamed register with text copied from outside the document, such as
+    a read-only view. Nothing else changes: not the text, cursor, mode, history,
+    revision, dirty state, or message. *)
+val set_unnamed_register : t -> Register.t -> t
 val search_case : t -> Search_case.t
 
 val search_state : t -> (string * bool * bool * int option) option

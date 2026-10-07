@@ -32,16 +32,20 @@ type t =
   | Gutter
   | Gutter_cursor_line
   | Border
+  | Border_focused
   | Title
   | Title_special
   | Status
   | Status_special
+  | Hint
   | Mode of Ches_core.Mode.t
   | Dirty
   | Pending
   | Info
   | Warning
   | Error
+  | Severity_hint
+  | Stale
   | Smear
 [@@deriving sexp_of, equal]
 
