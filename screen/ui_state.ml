@@ -240,10 +240,35 @@ let workspace t ~width ~height =
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
 ;;
 
-let available t ~width ~height =
-  let workspace = workspace t ~width ~height in
-  fun id -> View_id.equal id document_id || Option.is_some (Workspace.minor workspace id)
+(* A supplied floating identity overrides its tiled placement, including when
+   resize makes its layout unavailable. The docked palette will opt into this
+   layer when its compositor is ready; existing callers retain tiled behavior. *)
+let view_layout_in ?floating (workspace : Workspace.t) id =
+  if View_id.equal id document_id
+  then None
+  else match floating with
+  | Some (floating_id, layout) when View_id.equal id floating_id -> layout
+  | _ ->
+    if View_id.equal id status_id
+    then Option.map workspace.status ~f:(fun pane ->
+      Tile_shell.layout Tile_shell.Policy.status pane.rect)
+    else
+      Option.map (Workspace.minor workspace id) ~f:(fun pane ->
+        Tile_shell.layout Tile_shell.Policy.minor pane.rect)
 ;;
+
+let view_layout ?floating t ~width ~height id =
+  view_layout_in ?floating (workspace t ~width ~height) id
+;;
+
+let view_available ?floating t ~width ~height =
+  let workspace = workspace t ~width ~height in
+  fun id ->
+    View_id.equal id document_id
+    || Option.is_some (view_layout_in ?floating workspace id)
+;;
+
+let available t ~width ~height = view_available t ~width ~height
 
 let focused_view t ~width ~height = Host.focused t.host ~available:(available t ~width ~height)
 
@@ -256,8 +281,9 @@ let problems_focused t ~width ~height =
 ;;
 
 let minor_layout t ~width ~height id =
-  Option.map (Workspace.minor (workspace t ~width ~height) id) ~f:(fun pane ->
-    Tile_shell.layout Tile_shell.Policy.minor pane.rect)
+  if View_id.equal id status_id || View_id.equal id document_id
+  then None
+  else view_layout t ~width ~height id
 ;;
 
 (* A minor view's content viewport: what it scrolls by and wraps to. *)

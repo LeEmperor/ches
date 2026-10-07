@@ -1,6 +1,6 @@
 # Floating tiles: command palette first
 
-Status: proposed; implementation has not started. Scoped on 2026-10-06.
+Status: phase 1 implemented; phases 2–4 pending. Scoped on 2026-10-06.
 
 ## Goal and starting point
 
@@ -9,10 +9,10 @@ Opening it must preserve the document viewport and the allocation of status,
 problems, history, and report tiles. Reuse the shared tile host, shell, and palette
 adapter for input, decoration, and command execution.
 
-The current checkout is `oxcaml`; the docked palette implementation is on
-`bpurtell/fzf-commands` (inspected at `9233b02`). Implementation needs a base that
-includes that palette and the latest tile work. Reconcile those changes before
-runtime edits; preserve existing uncommitted work.
+The current checkout is `oxcaml`. At planning time the docked palette implementation
+was on `bpurtell/fzf-commands` (inspected at `9233b02`). Phase 1 started from
+`a70b35e`, which already includes the palette and latest tile work. The working tree
+was clean; no branch reconciliation was needed.
 
 Existing foundations:
 
@@ -54,6 +54,49 @@ working without introducing a registry.
 
 Verify centering, clamping, nonzero origins, tiny/zero dimensions, and deterministic
 resize behavior with pure geometry tests.
+
+### Phase 1 implementation and handoff (2026-10-06)
+
+- `screen/floating.ml` adds pure `place` and `layout` operations with explicit
+  terminal bounds, preferred outer size, and minimum outer size. Placement preserves
+  nonzero origins and centers with an odd spare cell on the right/bottom. A one-cell
+  margin is retained independently on each axis when the minimum still fits; the
+  margin gives way before the minimum. Negative bounds are empty; minimum sizes are
+  normalized to at least one cell, and preferences cannot undercut them.
+- `Floating.layout` passes the resulting outer rectangle through `Tile_shell.layout`
+  once, producing the shared frame/content/cursor coordinate source. The consumer
+  supplies its policy and sufficient outer minima. Tests use the intended 80×14
+  preference and a 14×4 minimum with at least 12×2 framed content (padding can give
+  way), enough for a query and one result.
+- `Ui_state.view_layout` resolves tiled supporting shells or an explicit transient
+  `(View_id, layout option)` supplied as `~floating`. An unavailable floating view
+  does not fall back to a tiled duplicate. `view_available` gives the same resolution
+  to the existing host; the document stays available and retains its own geometry.
+  Existing host focus/cursor/reconciliation paths use this shared availability query,
+  and existing `minor_layout` callers keep their tiled contract. No registry or
+  floating content state was introduced.
+- The explicit floating argument is the staging boundary for phases 2–3: compute
+  its layout once and share it with rendering, viewport/cursor queries, and host
+  availability. The live palette still uses the docked layout until the compositor
+  and migration are implemented. Workspace allocation and palette behavior are
+  unchanged in this phase.
+- Five new headless tests cover expected placements, degenerate dimensions,
+  exhaustive containment/centering/margin checks over terminal sizes, deterministic
+  resize restoration, shared shell geometry with synthetic content, floating host
+  focus/resize reconciliation, and unchanged tiled/document geometry and scroll.
+- Automated verification using the `5.2.0+ox` switch: `dune build` and
+  `dune runtest screen/test` pass. Full `dune runtest` fails in
+  `source/test/test_lsp_client.ml` (project-root expectations) and
+  `ui/test/test_editor_view.ml` (snapshots predating default-visible tiles). Both
+  failures were reproduced with those suites in an isolated archive of unchanged
+  `a70b35e`; no expectations were promoted.
+- Terminal smoke verification: the full `scripts/smoke.sh` run passed, including
+  the existing docked-palette input/cancel/paste/accept scenario. It ran outside the
+  sandbox (private tmux sockets are blocked inside) against a stable executable
+  copy at `/tmp/ches-floating-phase1.exe`. Log:
+  `/tmp/ches-floating-phase1-smoke-final.log`; terminal captures:
+  `/tmp/ches-smoke-screens.JvBI7S`. Human visual acceptance has not been performed;
+  a visible floating palette is not part of phase 1.
 
 ## 2. Compose the floating layer
 

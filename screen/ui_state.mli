@@ -111,6 +111,30 @@ val minor_layout
   -> Ches_tile.View_id.t
   -> Tile_shell.Layout.t option
 
+(** Resolve a supporting view's shared shell in either layer. [floating] names
+    the transient view and its already computed layout; [None] for that layout
+    means it cannot fit, and never falls back to a tiled allocation. Without this
+    argument, resolve the existing tiled status/minor views. The document uses
+    {!geometry}, rather than a supporting shell, and returns [None]. This query
+    does not change workspace allocation or state. *)
+val view_layout
+  :  ?floating:(Ches_tile.View_id.t * Tile_shell.Layout.t option)
+  -> t
+  -> width:int
+  -> height:int
+  -> Ches_tile.View_id.t
+  -> Tile_shell.Layout.t option
+
+(** Availability for {!Ches_tile.Host.focused}, [cursor_owner], and [reconcile].
+    The document is always available; supporting views use {!view_layout}. *)
+val view_available
+  :  ?floating:(Ches_tile.View_id.t * Tile_shell.Layout.t option)
+  -> t
+  -> width:int
+  -> height:int
+  -> Ches_tile.View_id.t
+  -> bool
+
 val problem_navigation
   :  t
   -> width:int
