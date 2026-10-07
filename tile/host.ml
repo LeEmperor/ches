@@ -89,7 +89,8 @@ let key t (key : Key.t) ~lookup ~content ~escape ~hint : t * _ Decision.t =
      | Bound (View view) -> { t with pending = []; notice = None }, Workspace view
      | Bound _ -> notice "Editor command unavailable; Escape returns to editor"
      | Unbound -> notice "Unbound workspace key")
-  | _, [] when Key.equal key t.leader -> prefix [ key ]
+  | _, [] when Key.equal key t.leader && not (spec t t.focus).accepts_text ->
+    prefix [ key ]
   | _, pending ->
     let keys = pending @ [ key ] in
     (match (content keys : _ Content_key.t) with

@@ -80,6 +80,9 @@ val report_visible : t -> bool
 val history_visible : t -> bool
 val history_tile : t -> History_tile.t
 
+(** The command palette, while open (it is then focused). *)
+val palette : t -> Palette_tile.t option
+
 (** The effective focus: a minor view only while it is allocated. *)
 val focused_view : t -> width:int -> height:int -> Ches_tile.View_id.t
 
@@ -88,11 +91,16 @@ val cursor_owner : t -> width:int -> height:int -> Ches_tile.View_id.t option
 
 val problems_focused : t -> width:int -> height:int -> bool
 
-(** The terminal cell of the text cursor of the focused minor view's open read-only
-    text ({!Ches_tile.Text_view}), when that view owns the cursor and the cell is in
-    its content. [None] while the document owns the cursor, in a list, or for views
-    without text. Exactly one view owns the terminal cursor at a time. *)
-val text_cursor : t -> width:int -> height:int -> (int * int) option
+(** The terminal cell and shape of the focused minor view's cursor, when that view owns
+    the cursor and its adapter's {!Ches_tile.Cursor} intent lies in its content: a block
+    on the text cursor of open read-only text ({!Ches_tile.Text_view}). [None] while the
+    document owns the cursor, in a list, for views without text, or for an intent
+    outside the content. Exactly one view owns the terminal cursor at a time. *)
+val minor_cursor
+  :  t
+  -> width:int
+  -> height:int
+  -> (int * int * Ches_tile.Cursor.Shape.t) option
 
 (** The shared shell layout of an allocated minor view. Rendering and the view's
     content viewport (selection rows, scroll range, detail wrapping) both use it. *)
@@ -197,7 +205,7 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
 
     Open details (problems, the demo report, and history) are read-only text
     ({!Ches_tile.Text_view}): a text cursor, which is then the terminal cursor (see
-    {!text_cursor}), movement, [v]/[V] Visual selection, and [y]/[yy]/[Y] copies; in a
+    {!minor_cursor}), movement, [v]/[V] Visual selection, and [y]/[yy]/[Y] copies; in a
     list, [yy]/[Y] copy the selected item's whole text. Escape ends Visual before it
     closes details. A copy goes to the editor's unnamed register and the system
     clipboard ({!Ches_app.Controller.yank}, then {!take_clipboard}) and shows

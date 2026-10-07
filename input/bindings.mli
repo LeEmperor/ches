@@ -61,3 +61,7 @@ type lookup =
   | Unbound
 
 val find : t -> Key.t list -> lookup
+
+(** The validated [(keys, target)] pairs, in the order given to {!create}: for
+    displaying the active bindings, e.g. as command palette shortcut hints. *)
+val to_list : t -> (Key.t list * Target.t) list

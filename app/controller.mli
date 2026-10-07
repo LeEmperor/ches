@@ -65,10 +65,10 @@ val highlight_parse_count : t -> int
     should also close on normal shutdown/error. Do not keep using a closed runtime. *)
 val close : t -> unit
 
-(** Whether the most recent {!handle_input} dispatched at least one editor command. The
-    keymap produces none for, e.g., an ignored key or the first key of a sequence. A
-    frontend uses this to decide whether [Editor.message] is fresh feedback for that
-    input. [false] before any input. *)
+(** Whether the most recent {!handle_input} or {!dispatch} ran at least one editor
+    command. The keymap produces none for, e.g., an ignored key or the first key of a
+    sequence. A frontend uses this to decide whether [Editor.message] is fresh feedback
+    for that input. [false] before any input. *)
 val last_input_dispatched : t -> bool
 
 (** The newest text the editor asked to put on the system clipboard (see
@@ -87,6 +87,15 @@ val take_saved : t -> t * Saved.t option
     in order, for the frontend to apply; they touch no state here. Actions after an editor
     command that requests [Exit] are neither dispatched nor returned. *)
 val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Status.t
+
+(** Dispatches [actions] exactly as {!handle_input} would had the keymap produced them,
+    for a frontend that already holds a typed action, such as the command palette. Editor
+    commands, effects, feedback, highlighting, and the [Exit] cutoff are shared with
+    {!handle_input}; the view commands are returned in the same way. The keymap is left
+    alone, so a pending sequence survives (cancel it first with {!cancel_pending} where
+    that matters), and no problem is acknowledged: that belongs to an idle Escape key.
+    {!last_input_dispatched} afterwards reports whether [actions] ran an editor command. *)
+val dispatch : t -> Keymap.Action.t list -> t * View_command.t list * Status.t
 
 (** Dispatches [Move { motion; count }] to the editor, for a frontend whose view command
     must bring the cursor along (scrolling the cursor line out of view). Moves request no

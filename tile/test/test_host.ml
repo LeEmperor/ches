@@ -191,6 +191,51 @@ let%expect_test "a paste belongs to the view that started it" =
     |}]
 ;;
 
+let%expect_test "a text-input view takes the leader as text; Escape still returns" =
+  let prompt = View_id.of_string "prompt" in
+  let t =
+    Host.create
+      ~leader:(Key.char ' ')
+      ~primary:document
+      [ Spec.primary document ~title:"Document"; Spec.text_input prompt ~title:"Prompt" ]
+  in
+  let t = Host.focus t prompt in
+  print_s [%sexp (Host.cursor_owner t ~available:all : View_id.t option)];
+  [%expect {| (prompt) |}];
+  (* Every key is text: no workspace sequence starts, and [j] is not a list motion. *)
+  let text keys : Key.t Content_key.t =
+    match keys with
+    | [ key ] -> Action key
+    | _ -> Unbound
+  in
+  let t =
+    List.fold (keys " vj<Tab>") ~init:t ~f:(fun t key ->
+      let t, decision = Host.key t key ~lookup ~content:text ~escape:None ~hint:"hint" in
+      print_s [%sexp (decision : Key.t Host.Decision.t)];
+      match decision with
+      | Return -> Host.return (Host.focus t prompt)
+      | _ -> t)
+  in
+  let t, decision = Host.key t Escape ~lookup ~content:text ~escape:None ~hint:"hint" in
+  print_s [%sexp (decision : Key.t Host.Decision.t), (Host.pending t : Key.t list)];
+  [%expect
+    {|
+    (Content (Char U+0020))
+    (Content (Char U+0076))
+    (Content (Char U+006A))
+    Return
+    (Return ())
+    |}];
+  (* A paste started there is delivered. *)
+  let t = Host.paste_start (Host.focus t prompt) ~available:all in
+  let t = List.fold (keys "a b") ~init:t ~f:Host.paste_key in
+  print_s
+    [%sexp
+      (snd (Host.paste_end t)
+       : [ `Deliver of View_id.t * string | `Reject of View_id.t * string | `Not_pasting ])];
+  [%expect {| (Deliver (prompt "a b")) |}]
+;;
+
 let%expect_test "selection follows opaque keys and picks a neighbor when one disappears" =
   let module S = Navigation.Selection in
   let show (s : string S.t) =

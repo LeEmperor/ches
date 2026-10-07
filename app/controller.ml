@@ -202,19 +202,13 @@ let rec perform_all
        perform_all editor feedback rest ~views ~pending ~dispatched:true ~reloaded)
 ;;
 
-let handle_input t input =
-  let keymap, actions = Keymap.feed t.keymap ~mode:(Editor.mode t.editor) input in
-  (* Only idle Normal Escape dispatches [Clear_search_highlight]. Acknowledge
-     before command completion clears the inspected identity. *)
-  let acknowledge =
-    match input, actions with
-    | Key Escape, [ Editor Clear_search_highlight ] -> true
-    | _ -> false
-  in
+(* The shared route from typed actions to the editor, effects, highlighting, and the
+   [Exit] cutoff, for both {!handle_input} and {!dispatch}. *)
+let run t ~keymap ~feedback actions =
   let editor, feedback, views, { Pending.clipboard; saved }, dispatched, status, reloaded =
     perform_all
       t.editor
-      (if acknowledge then Feedback.apply t.feedback Acknowledge else t.feedback)
+      feedback
       actions
       ~views:[]
       ~pending:{ clipboard = t.clipboard; saved = t.saved }
@@ -228,6 +222,24 @@ let handle_input t input =
    | Running -> ());
   t, views, status
 ;;
+
+let handle_input t input =
+  let keymap, actions = Keymap.feed t.keymap ~mode:(Editor.mode t.editor) input in
+  (* Only idle Normal Escape dispatches [Clear_search_highlight]. Acknowledge
+     before command completion clears the inspected identity. *)
+  let acknowledge =
+    match input, actions with
+    | Key Escape, [ Editor Clear_search_highlight ] -> true
+    | _ -> false
+  in
+  run
+    t
+    ~keymap
+    ~feedback:(if acknowledge then Feedback.apply t.feedback Acknowledge else t.feedback)
+    actions
+;;
+
+let dispatch t actions = run t ~keymap:t.keymap ~feedback:t.feedback actions
 
 let move t motion ~count =
   match Editor.dispatch t.editor (Move { motion; count }) with

@@ -193,6 +193,7 @@ let default =
     ; status '+' (Adjust_status_size 2)
     ; status '=' (Adjust_status_size 2)
     ; view 'r' Reset
+    ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
     ]
   |> Or_error.ok_exn
 ;;
@@ -201,6 +202,8 @@ type lookup =
   | Bound of Target.t
   | Prefix
   | Unbound
+
+let to_list t = t
 
 let find t keys =
   match List.Assoc.find t keys ~equal:[%equal: Key.t list] with

@@ -87,6 +87,7 @@ let create (config : Config.t) =
 (* The state between sequences: only the configuration carries over. *)
 let reset t = create t.config
 let lookup t keys = Bindings.find t.config.normal keys
+let bindings t = t.config.normal
 let cancel t notice = { (reset t) with notice = Some notice }, []
 
 let keys_to_string ?count keys =
@@ -251,7 +252,7 @@ let feed_command_prompt t input =
     if String.equal prompt "e!"
     then reset t, [ Action.Editor Reload ]
     else cancel t (sprintf "Unknown command: :%s" prompt)
-  | Input.Key Backspace ->
+  | Input.Key (Backspace | Ctrl 'h') ->
     let prompt = String.drop_suffix prompt 1 in
     { t with command_prompt = Some prompt }, []
   | Input.Key key ->
@@ -274,7 +275,7 @@ let feed_search_prompt t input =
   | Input.Key Escape -> reset t, []
   | Input.Key Enter ->
     reset t, [ Action.Editor (Command.Search { query = Some query; forward; count = 1; whole_word = false }) ]
-  | Input.Key Backspace -> { t with search_prompt = Some (forward, drop_last_code_point query) }, []
+  | Input.Key (Backspace | Ctrl 'h') -> { t with search_prompt = Some (forward, drop_last_code_point query) }, []
   | Input.Key key ->
     (match Key.text key with
      | None -> t, []
@@ -297,7 +298,7 @@ let feed_insert_key t (key : Key.t) =
       match key with
       | Escape -> [ Exit_insert ]
       | Delete -> [ Delete_forward ]
-      | Backspace ->
+      | Backspace | Ctrl 'h' ->
         (match t.config.tab with
          | Literal_tab -> [ Delete_backward ]
          | Spaces width -> [ Delete_soft_tab_backward width ])
