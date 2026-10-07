@@ -180,6 +180,8 @@ let default =
     ; view 'D' Focus_demo_report
     ; view 'm' Toggle_history
     ; view 'M' Focus_history
+    ; view 'u' Toggle_rubiks
+    ; view 'U' Focus_rubiks
     ; view 'R' Restart_source
     ; view 'K' Kill_source
     ; view 't' Toggle_status

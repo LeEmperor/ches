@@ -58,6 +58,16 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space c c` | Open the command palette |
 | `Space v o` | Focus the problems view or return to the document |
 | `Space v M` | Show and focus notification history |
+| `Space v u` | Show/hide the Rubik's scramble/timer tile |
+| `Space v U` | Focus the Rubik's tile (Rubik's mode) |
+
+In the Rubik's tile, `Space` starts/stops a solve, `n` skips to a new
+scramble while idle, and `Escape` or `Tab` returns to editing. Stopping records
+the solve and generates the next scramble; leaving the tile cancels an unfinished
+solve. The live timer shows seconds to two decimal places, with best/mean statistics
+for the latest 100 session-local solves. Scrambles are 20-move 3×3 practice
+sequences, not WCA random-state scrambles. Terminal input uses presses rather than
+csTimer's hold-and-release gesture; tap Space rather than holding it down.
 
 See the [editor reference](docs/editor_reference.md) for the complete keybindings,
 editing semantics, workspace controls, and diagnostic-source behavior.

@@ -45,6 +45,8 @@ type t =
   | Focus_demo_report
   | Toggle_history
   | Focus_history
+  | Toggle_rubiks
+  | Focus_rubiks
   | Restart_source
   | Kill_source
   | Toggle_zen

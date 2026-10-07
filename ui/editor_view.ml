@@ -129,7 +129,7 @@ let app ?(smear_enabled = false) ?report ?source ?font controller ~exit ~dimensi
       (let%arr inject
        and model
        and get_current_time in
-       if Animation.active (Ui_state.animation model)
+       if Animation.active (Ui_state.animation model) || Ui_state.timer_running model
        then (
          let%bind.Effect now = get_current_time in
          inject [ Ui_state.Input.Animation_tick now ])

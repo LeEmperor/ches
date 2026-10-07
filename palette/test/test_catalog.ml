@@ -86,6 +86,8 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     problems.inspect               Inspect next problem
     history.toggle                 Toggle notification history
     history.focus                  Focus notification history
+    rubiks.toggle                  Toggle Rubik's scramble timer
+    rubiks.focus                   Focus Rubik's scramble timer
     report.toggle                  Toggle demo report
     report.focus                   Focus demo report
     source.restart                 Restart diagnostic source

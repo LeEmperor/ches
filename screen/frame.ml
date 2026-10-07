@@ -141,7 +141,9 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
         | _ when Ches_tile.View_id.equal id History_tile.id ->
           History_tile.render ~hotkey_hints ~focused ?notice ?pending (Ui_state.history_tile ui)
             (Ches_error.Error.history (Controller.feedback (Ui_state.controller ui)))
-            ~width ~rows
+             ~width ~rows
+        | _ when Ches_tile.View_id.equal id Rubiks_tile.id ->
+          Rubiks_tile.render (Ui_state.rubiks_tile ui) ~focused ~width ~rows
         | Some report when Ches_tile.View_id.equal id Report_tile.id ->
           Report_tile.render ~hotkey_hints ~focused ?notice ?pending report ~width ~rows
         | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }

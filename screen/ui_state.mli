@@ -79,6 +79,8 @@ val report : t -> Report_tile.t option
 val report_visible : t -> bool
 val history_visible : t -> bool
 val history_tile : t -> History_tile.t
+val rubiks_tile : t -> Rubiks_tile.t
+val timer_running : t -> bool
 
 (** The command palette, while open (it is then focused). *)
 val palette : t -> Palette_tile.t option

@@ -214,6 +214,10 @@ let default =
         ~title:"Focus notification history"
         ~keywords:[ "messages"; "log"; "notifications" ]
         Focus_history
+    ; view ~id:"rubiks.toggle" ~title:"Toggle Rubik's scramble timer"
+        ~keywords:[ "cube"; "3x3"; "practice" ] Toggle_rubiks
+    ; view ~id:"rubiks.focus" ~title:"Focus Rubik's scramble timer"
+        ~keywords:[ "cube"; "3x3"; "practice" ] Focus_rubiks
     ; view
         ~id:"report.toggle"
         ~title:"Toggle demo report"

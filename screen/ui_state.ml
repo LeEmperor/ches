@@ -44,6 +44,8 @@ type t =
   ; report_visible : bool
   ; history_visible : bool
   ; history : History_tile.t
+  ; rubiks : Rubiks_tile.t
+  ; rubiks_visible : bool
   ; palette : Palette_tile.t option (** Open, and then focused, or closed. *)
   ; scroll : Scroll.t
   ; rows : int option
@@ -96,6 +98,7 @@ let create
         ; Problems_tile.spec
         ; Report_tile.spec
         ; History_tile.spec
+        ; Rubiks_tile.spec
         ; Palette_tile.spec
         ]
   ; problems_visible = tiles_visible
@@ -104,6 +107,8 @@ let create
   ; report_visible = tiles_visible && Option.is_some report
   ; history_visible = tiles_visible
   ; history = History_tile.empty
+  ; rubiks = Rubiks_tile.create ()
+  ; rubiks_visible = false
   ; palette = None
   ; scroll = Scroll.zero
   ; rows = None
@@ -129,6 +134,8 @@ let report t = t.report
 let report_visible t = t.report_visible
 let history_visible t = t.history_visible
 let history_tile t = t.history
+let rubiks_tile t = t.rubiks
+let timer_running t = Rubiks_tile.running t.rubiks
 let palette t = t.palette
 let scroll t = t.scroll
 
@@ -230,6 +237,7 @@ let workspace t ~width ~height =
         [ Option.some_if t.problems_visible Problems_tile.id
         ; Option.some_if (t.report_visible && Option.is_some t.report) Report_tile.id
         ; Option.some_if t.history_visible History_tile.id
+        ; Option.some_if t.rubiks_visible Rubiks_tile.id
         ]
   in
   Workspace.allocate
@@ -389,13 +397,15 @@ let leave t id =
   then { t with report = Option.map t.report ~f:Report_tile.leave }
   else if View_id.equal id History_tile.id
   then { t with history = History_tile.leave t.history }
+  else if View_id.equal id Rubiks_tile.id
+  then { t with rubiks = Rubiks_tile.cancel t.rubiks }
   else if View_id.equal id Palette_tile.id
   then (* Leaving closes the palette and discards its query; nothing runs. *)
     { t with palette = None }
   else t
 ;;
 
-let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id; Palette_tile.id ]
+let minor_ids = [ Problems_tile.id; Report_tile.id; History_tile.id; Rubiks_tile.id; Palette_tile.id ]
 
 let return_to_document t =
   let t = List.fold minor_ids ~init:t ~f:leave in
@@ -540,6 +550,8 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Focus_demo_report
   | Toggle_history
   | Focus_history
+  | Toggle_rubiks
+  | Focus_rubiks
   | Restart_source
   | Kill_source
   | Scroll _
@@ -576,7 +588,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
-  | Focus_problems | Focus_demo_report | Focus_history ->
+  | Focus_problems | Focus_demo_report | Focus_history | Focus_rubiks ->
     let focused = Host.spec t.host (focused_view t ~width ~height) in
     Some (Option.value (Host.notice t.host) ~default:(focused.title ^ " focused"))
   | Toggle_demo_report ->
@@ -590,7 +602,8 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   | Toggle_history ->
     Some (if not t.history_visible then "History hidden"
       else if Option.is_none (Workspace.minor (workspace t ~width ~height) History_tile.id)
-      then "History requested (compact/zen)" else "History shown")
+       then "History requested (compact/zen)" else "History shown")
+  | Toggle_rubiks -> Some (if t.rubiks_visible then "Rubik's tile requested" else "Rubik's tile hidden")
   | Restart_source ->
     Some (if t.source_attached then "Diagnostic source restart requested" else no_source)
   | Kill_source ->
@@ -773,6 +786,10 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     toggle_focus t ~width ~height History_tile.id ~show:(fun t ->
       { t with history_visible = true })
   | Toggle_history -> { t with history_visible = not t.history_visible }
+  | Toggle_rubiks -> { t with rubiks_visible = not t.rubiks_visible }
+  | Focus_rubiks ->
+    toggle_focus t ~width ~height Rubiks_tile.id ~show:(fun t ->
+      { t with rubiks_visible = true })
   | Restart_source when t.source_attached ->
     { t with source_commands = Restart :: t.source_commands }
   | Kill_source when t.source_attached ->
@@ -938,6 +955,11 @@ let feed_capture t ~width ~height id key =
           | Some (`Show text) -> { t with host = Host.with_notice t.host text }
         in
         if return then return_to_document t else t)
+  else if View_id.equal id Rubiks_tile.id
+  then
+    route ~content:Rubiks_tile.interpret ~escape:None
+      ~hint:"Space start/stop; n next scramble; Escape returns"
+      ~perform:(fun t action -> { t with rubiks = Rubiks_tile.perform t.rubiks action })
   else if View_id.equal id History_tile.id
   then
     route
@@ -1139,7 +1161,8 @@ and apply_running t ~width ~height (input : Input.t) =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
         Time_ns.diff now previous |> Time_ns.Span.to_sec)
     in
-    ( { t with animation = Animation.tick t.animation ~dt; animation_time = Some now }
+    ( { t with animation = Animation.tick t.animation ~dt; animation_time = Some now
+             ; rubiks = Rubiks_tile.tick t.rubiks now }
     , Running )
   | Key _ | Paste_start | Paste_end ->
     let before = cursor_position t ~width ~height in
@@ -1148,6 +1171,7 @@ and apply_running t ~width ~height (input : Input.t) =
     and before_problems_visible = t.problems_visible
     and before_report_visible = t.report_visible
     and before_history_visible = t.history_visible
+    and before_rubiks_visible = t.rubiks_visible
     and before_zen = t.zen in
     let t, status =
       match input with
@@ -1175,6 +1199,7 @@ and apply_running t ~width ~height (input : Input.t) =
          || Bool.(before_problems_visible <> t.problems_visible)
          || Bool.(before_report_visible <> t.report_visible)
          || Bool.(before_history_visible <> t.history_visible)
+         || Bool.(before_rubiks_visible <> t.rubiks_visible)
          || not (View_id.equal before_focus (focused_view t ~width ~height))
          || Bool.(before_zen <> t.zen)
       then Animation.create ~enabled:(Animation.enabled t.animation)
