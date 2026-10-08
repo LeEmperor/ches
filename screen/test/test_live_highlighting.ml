@@ -32,6 +32,29 @@ let%test_unit "SystemVerilog syntax renders, edits incrementally, and restores o
     Controller.close (Ui_state.controller ui))
 ;;
 
+let%test_unit "GAS syntax renders for .s/.S, edits incrementally and restores on undo" =
+  List.iter [ "f.s"; "f.S" ] ~f:(fun path ->
+    let ui = ui ~path ".text\nmain:\nmovq $foo+8, %rax\n1: jmp 1b\n" in
+    let original = Snapshot.ranges (snapshot ui) in
+    List.iter [ Category.Keyword; Function; Number; Constant ] ~f:(fun category ->
+      assert (List.exists (syntax_spans (render ui)) ~f:(fun (_, d) ->
+        Category.equal d.syntax category)));
+    let before = count ui in
+    let ui = run ui (keys "i#<Esc>") in
+    assert (List.exists (syntax_spans (render ui)) ~f:(fun (_, d) ->
+      Category.equal d.syntax Comment));
+    let ui = run ui (keys "u") in
+    [%test_result: Snapshot.Range.t list] (Snapshot.ranges (snapshot ui)) ~expect:original;
+    assert (count ui > before);
+    assert (Controller.For_testing.highlight_incremental_count (Ui_state.controller ui) > 0);
+    let invalid_key = Snapshot.Key.create ~document:(Snapshot.Document_id.create ())
+        ~revision:(-1) ~language:Plain ~configuration:"gas-plain" in
+    let colored = render ui in
+    let plain = Frame.render ~highlights:(invalid_key, snapshot ui) ui ~width:40 ~height:8 in
+    [%test_result: string] (Frame.to_string colored) ~expect:(Frame.to_string plain);
+    Controller.close (Ui_state.controller ui))
+;;
+
 let%test_unit "frames, movement, scrolling, resizing, animation, search and selections reuse highlights" =
   let source = String.concat (List.init 100 ~f:(fun i -> sprintf "let item%d = \"é\"\n" i)) in
   let controller = Controller.create (Editor.create ~path:"f.ml" ~cell_width:Cell_map.width
@@ -88,7 +111,7 @@ let%test_unit "cached provider failure renders plain text, and unsupported paths
   done;
   assert (count ui = before && phys_equal cached (snapshot ui));
   Controller.close (Ui_state.controller ui);
-  List.iter [ "f.txt"; "f.ML"; "extensionless" ] ~f:(fun path ->
+  List.iter [ "f.txt"; "f.ML"; "f.asm"; "extensionless" ] ~f:(fun path ->
     let ui = Helpers.ui ~path "let x = 1" in
     let ui = run ui (keys "i <Esc>u<C-r>") in
     assert (count ui = 0);

@@ -6,6 +6,10 @@ implementation/interface grammars are compiled into the executable. Ches does no
 vendor the OCaml grammars, regenerate them, fetch them at runtime, or search a
 development path. The shared provider also supports a vendored SystemVerilog grammar;
 see [grammar/ASSETS.md](grammar/ASSETS.md) for its pin, checksums, and license.
+AT&T/GAS assembly uses a separately vendored, locally patched **GPLv3** grammar;
+see [gas_grammar/ASSETS.md](gas_grammar/ASSETS.md) for its source, checksums,
+regeneration recipe, notices and distribution implications. This is not an MIT/ISC
+grammar, and its license does not replace the license of existing Ches code.
 No Tree-sitter CLI, Node, or external editor installation is required.
 
 Package release: Mosaic commit `bbaec9a2b49eccc7be958df1a3fc3f53443787b8`.

@@ -69,11 +69,14 @@ let%test_unit "case-sensitive detection, initial highlights and per-document ide
     ; Some "f.sv", Systemverilog; Some "f.svh", Systemverilog
     ; Some "f.v", Systemverilog; Some "f.vh", Systemverilog
     ; Some "f.SV", Plain; Some "f.sv.bak", Plain
+    ; Some "f.s", Gas; Some "f.S", Gas; Some "f.asm", Plain
+    ; Some "f.ASM", Plain; Some "f.s.bak", Plain; Some "f.S.bak", Plain
     ] ~f:(fun (path, language) ->
       assert (Language.equal (Language.of_path path) language);
       let initial = match language with
         | Ocaml_interface -> "val f : int -> int\n"
         | Systemverilog -> "module top; logic q; endmodule\n"
+        | Gas -> ".text\nmain:\n movq $1, %rax\n ret\n"
         | Ocaml | Plain -> "let f x = x\n"
       in
       let t = create ?path initial in

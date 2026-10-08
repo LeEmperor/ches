@@ -38,11 +38,13 @@ let configuration = "tree-sitter.0.1.0/ches-ocaml-structural-v1"
 
 let configuration_for_language = function
   | Language.Systemverilog -> "tree-sitter-systemverilog.d6be6119/ches-sv-structural-v1"
+  | Gas -> "tree-sitter-gas.60f44364/ches-gas-grammar-v2/ches-gas-structural-v1"
   | Plain | Ocaml | Ocaml_interface -> configuration
 ;;
 
 let query_source = function
   | Language.Systemverilog -> Some Systemverilog_queries.source
+  | Gas -> Some Gas_queries.source
   | language -> Ocaml_queries.source language
 ;;
 
@@ -50,13 +52,14 @@ let initialize language query_source =
   match language, query_source with
   | Language.Plain, _ -> Unavailable Unsupported_language
   | _, None -> Unavailable (Initialization "missing compiled highlight query")
-  | (Ocaml | Ocaml_interface | Systemverilog), Some source ->
+  | (Ocaml | Ocaml_interface | Systemverilog | Gas), Some source ->
     (try
        let grammar =
          match language with
          | Ocaml -> Tree_sitter_ocaml.ocaml ()
          | Ocaml_interface -> Tree_sitter_ocaml.interface ()
-         | Systemverilog -> Ches_tree_sitter_systemverilog.language ()
+          | Systemverilog -> Ches_tree_sitter_systemverilog.language ()
+          | Gas -> Ches_tree_sitter_gas.language ()
          | Plain -> assert false
        in
        let query = Tree_sitter.Query.create grammar ~source in

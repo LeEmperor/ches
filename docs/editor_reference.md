@@ -639,7 +639,8 @@ changes, after restoring the terminal.
 ## Syntax highlighting
 
 Ches highlights OCaml implementation (`.ml`) and interface (`.mli`) files, plus
-SystemVerilog (`.sv`, `.svh`) and Verilog (`.v`, `.vh`), locally with Tree-sitter.
+SystemVerilog (`.sv`, `.svh`), Verilog (`.v`, `.vh`), and AT&T/GAS assembly
+(`.s`, `.S`), locally with Tree-sitter. `.asm` is unsupported, not Intel syntax.
 Verilog uses the SystemVerilog grammar. Suffix detection is case-sensitive: `.ML`,
 `.SV`, extensionless files, unsupported languages, and buffers without a path stay
 plain text. No language server, network access, external query files, or Neovim
@@ -650,6 +651,14 @@ Keywords, strings/escapes, numbers, nested comments and structural type/function
 module/constructor constructs receive colors. This is grammatical highlighting,
 not semantic name resolution; it does not know a symbol's meaning across files.
 Incomplete and malformed code is normal input and can still receive useful colors.
+Assembly directives, mnemonics and prefixes are keywords; registers are constants;
+labels and numeric local references are functions; symbols are variables; relocation
+modifiers and directive types such as `@function` are properties. Numbers, strings
+and comments retain their usual categories. The grammar supports numeric local
+labels, immediate/displacement arithmetic and simple assignments, but is not an
+assembler validator. x87 `%st(0)`, AVX-512 decorators, relocation modifiers in
+directive arguments, multiple same-line labels and `rep; ret` are not fully supported.
+`.S` preprocessor lines are treated as comments, not C-preprocessor syntax.
 If provider initialization or parsing fails, the current document renders as plain
 text rather than keeping stale colors. This does not block editing or saving or
 replace editor feedback; a later text change or successful reload retries it.
@@ -679,9 +688,15 @@ The pinned **`tree-sitter.0.1.0`** opam package supplies the compiled-in runtime
 the OCaml grammars (`tree-sitter` and `tree-sitter.ocaml` Dune libraries). The
 SystemVerilog grammar is pinned and bundled in `highlight_tree_sitter/grammar`; its
 generated C parser is stored compressed and expanded by `gzip` during the build.
+The locally patched GAS grammar is bundled similarly in
+`highlight_tree_sitter/gas_grammar`; its upstream license is GPLv3, not the license
+of Ches-authored code. See its [asset record](../highlight_tree_sitter/gas_grammar/ASSETS.md)
+for notices, regeneration and distribution implications.
+The GAS grammar handles compiler debug `.file`/`.loc` whitespace-separated arguments
+and their following instructions; other directive argument lists remain comma-separated.
 Building needs a C compiler and gzip, not Node, a Tree-sitter CLI or grammar
 regeneration. Queries are Ches-owned, predicate-free strings in
-`highlight_tree_sitter/ocaml_queries.ml` and `systemverilog_queries.ml`. Packaging,
+`highlight_tree_sitter/ocaml_queries.ml`, `systemverilog_queries.ml` and `gas_queries.ml`. Packaging,
 ownership and unresolved bundled-asset provenance/license-notice findings are
 recorded in [`highlight_tree_sitter/ASSETS.md`](../highlight_tree_sitter/ASSETS.md); technical
 verification is not a license-compliance finding.

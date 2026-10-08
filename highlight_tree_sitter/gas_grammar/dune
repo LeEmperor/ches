@@ -1,0 +1,12 @@
+(rule
+ (target parser.c)
+ (deps parser.c.gz)
+ (action (with-stdout-to %{target} (run gzip -dc %{deps}))))
+
+(library
+ (name ches_tree_sitter_gas)
+ (libraries tree-sitter)
+ (foreign_stubs
+  (language c)
+  (names parser binding)
+  (extra_deps tree_sitter/parser.h)))

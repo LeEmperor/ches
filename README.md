@@ -28,7 +28,7 @@ for general distribution.
   visual/marked batch opening, explicit-save creation, rename, copy, cross-directory
   move and permanent deletion of files or empty directories.
 - **Syntax highlighting:** local Tree-sitter highlighting for OCaml, Verilog,
-  and SystemVerilog, including incremental parsing.
+  SystemVerilog, and AT&T/GAS assembly (`.s`/`.S`), including incremental parsing.
 - **Diagnostics:** `ocamllsp` for OCaml and `slang-server` for Verilog and
   SystemVerilog, with a problems view, freshness tracking, and explicit restart
   controls.
@@ -140,8 +140,11 @@ These boundaries allow most behavior to be tested headlessly.
 
 Development uses the OxCaml opam switch `5.2.0+ox` and Jane Street
 `v0.18~preview` packages. The project declares Dune language version 3.17 and
-pins `tree-sitter` to 0.1.0. The bundled SystemVerilog parser also requires a C
+pins `tree-sitter` to 0.1.0. The bundled SystemVerilog and GAS parsers require a C
 compiler and `gzip` at build time.
+The GAS grammar is GPLv3 (with local patches); see
+[`highlight_tree_sitter/gas_grammar/ASSETS.md`](highlight_tree_sitter/gas_grammar/ASSETS.md)
+for provenance, notices, regeneration, and distribution implications.
 Picker libraries additionally use Async, Yojson and Base64 (declared in
 `dune-project`). File/content provider tests and probes require `rg` on `PATH`;
 neither `fzf` nor ripgrep is needed for ordinary editing or the command palette.
