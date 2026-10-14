@@ -7,6 +7,18 @@ open Ches_highlight
     be serialized. Snapshots/keys/statuses remain immutable across updates. *)
 type t
 
+(** Inclusive synchronous work policy: size checks precede provider creation,
+    UTF-8 validation, diff, parsing and querying. Out-of-policy revisions receive
+    fresh empty snapshots and a reason in [status]. Size fallback recovers as soon
+    as both size limits fit. Capture fallback retries after a 25% byte OR line
+    shrink, reset/reload or language change; tiny edits do not repeat the work.
+    No timing-outlier-based disabling and no notifications. *)
+module Policy : sig
+  val max_bytes : int
+  val max_lines : int
+  val max_captures : int
+end
+
 val create : Editor.t -> t
 val update : t -> Editor.t -> reset:bool -> t
 val snapshot : t -> Snapshot.Key.t * Snapshot.t

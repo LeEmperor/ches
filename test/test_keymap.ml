@@ -123,6 +123,50 @@ let%expect_test "Ctrl-v selects a block; counts extend it; v, V and Ctrl-v switc
     |}]
 ;;
 
+let%test_unit "terminal block delete undo redo paste saves exact padded rows" =
+  let feed session notation =
+    List.fold (keys notation) ~init:(session, []) ~f:(fun (session, effects) input ->
+      let keymap, actions =
+        Keymap.feed session.keymap ~mode:(Editor.mode session.editor) input
+      in
+      let editor, effects =
+        List.fold actions ~init:(session.editor, effects) ~f:(fun (editor, effects) action ->
+          match action with
+          | View _ -> editor, effects
+          | Editor command ->
+            let editor, requested = Editor.dispatch editor command in
+            editor, effects @ requested)
+      in
+      { editor; keymap }, effects)
+  in
+  let original = "abcdefgh\nab\nabcdefgh\n" in
+  let deleted = "abcgh\nab\nabcgh\n" in
+  let expected = "defabcgh\n   ab\ndefabcgh\n" in
+  let check session expected =
+    [%test_eq: string] (Text_buffer.to_string (Editor.text session.editor)) expected
+  in
+  let t, _ = feed (create original) "3l<C-v>2jlld" in
+  check t deleted;
+  let t, _ = feed t "u" in
+  check t original;
+  let t, _ = feed t "<C-r>" in
+  check t deleted;
+  let t, _ = feed t "0P" in
+  check t expected;
+  [%test_eq: int] (Editor.cursor t.editor) 0;
+  let t, effects = feed t " w" in
+  match effects with
+  | [ Effect.Write_file { path; text; revision } ] ->
+    [%test_eq: string] path "f.txt";
+    [%test_eq: string] (Text_buffer.to_string text) expected;
+    let editor =
+      Editor.handle_outcome t.editor
+        (Effect.Outcome.Write_file_finished { path; text; revision; result = Ok () })
+    in
+    assert (not (Editor.is_dirty editor))
+  | _ -> raise_s [%message "expected one save request" (effects : Effect.t list)]
+;;
+
 let%expect_test "Visual-block I, A, and c type on every line; jk leaves" =
   let s = "abcdefgh\nab\nabcdefgh" in
   let t = run (create s) (keys "3l<C-v>2jIXY<Esc>") in

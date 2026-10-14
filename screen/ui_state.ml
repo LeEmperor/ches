@@ -28,6 +28,7 @@ module Input = struct
     | Resize
     | Source of Ches_error.Source_event.t
     | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
+    | File_picker_update of Ches_file_picker.Model.Discovery.Update.t
     | File_preview of Ches_file_preview_model.Model.snapshot
     | File_picker_work of Ches_file_picker.Model.Discovery.request
     | File_picker_accept of View_id.t Ches_file_picker.Model.Request.t
@@ -40,7 +41,7 @@ end
 type t =
   { controller : Controller.t
   ; session : Session.t
-  ; scrolls : (Buffer_id.t * Scroll.t) list
+  ; scrolls : Scroll.t Buffer_id.Map.t
   ; paste_buffer : Buffer_id.t option
   ; prefs : Geometry.Prefs.t
   ; workspace_prefs : Workspace.Prefs.t
@@ -77,12 +78,13 @@ type t =
       viewport (see {!Scroll.fit}). *)
   ; animation : Animation.t
   ; animation_time : Time_ns.t option
+  ; fitted_dimensions : (int * int) option
   ; exited : bool
   ; held : ((string * string) * Ches_error.Error.update * Text_buffer.t) list
   (** Diagnostic snapshots that arrived during Insert, newest per (source, resource),
       in arrival order, with the text at arrival; applied when Insert ends. *)
   ; source_attached : bool (** A diagnostic source runs ([--synthetic-checker]). *)
-  ; sent_revisions : (Buffer_id.t * (int * int)) list
+  ; sent_revisions : (int * int) Buffer_id.Map.t
   ; source_commands : Ches_error.Source_request.t list
   (** Restart/kill requests not yet taken, newest first. *)
   }
@@ -111,7 +113,7 @@ let create
   let controller = Option.value_exn (Session.active_controller session) in
   { controller
   ; session
-  ; scrolls = []
+  ; scrolls = Buffer_id.Map.empty
   ; paste_buffer = None
   ; prefs
   ; workspace_prefs
@@ -163,10 +165,11 @@ let create
   ; rows = None
   ; animation = Animation.create ~enabled:smear_enabled
   ; animation_time = None
+  ; fitted_dimensions = None
   ; exited = false
   ; held = []
   ; source_attached
-  ; sent_revisions = []
+  ; sent_revisions = Buffer_id.Map.empty
   ; source_commands = []
   }
 ;;
@@ -188,6 +191,7 @@ let history_visible t = t.history_visible
 let history_tile t = t.history
 let palette t = t.palette
 let file_picker t = t.file_picker
+let file_picker_visible_stamp t = Option.map t.file_picker ~f:File_picker_tile.visible_stamp
 let content_picker t = t.content_picker
 let take_content_requests t = { t with content_requests = [] }, List.rev t.content_requests
 let line_picker t = t.line_picker
@@ -249,24 +253,29 @@ let take_source_requests t =
   then (
     let session, _ = Session.take_saved (session t) in
     let session, _ = Session.take_closed session in
+    let session, _ = Session.take_source_changes session in
     let controller = Option.value (Session.active_controller session) ~default:t.controller in
     { t with session; controller; source_commands = [] }, [])
   else (
     let session, saved = Session.take_saved (session t) in
     let session, closed = Session.take_closed session in
-    let live = Session.buffers session in
-    let document = List.concat_map live ~f:(fun (id, controller) ->
-      let editor = Controller.editor controller in
-      match Editor.path editor with
-      | None -> []
-      | Some resource ->
-        let previous = List.Assoc.find t.sent_revisions id ~equal:Buffer_id.equal in
-        let generation = Session.source_generation session id |> Option.value_exn in
-        let same_lifetime = Option.exists previous ~f:(fun (old, _) -> old = generation) in
-        let opened = if not same_lifetime then [ Ches_error.Source_request.Document_opened { resource; generation } ] else [] in
-        opened @ (if Option.equal Poly.equal previous (Some (generation, Editor.revision editor)) then [] else
-          [ Document_changed { resource; text = Text_buffer.to_string (Editor.text editor); revision = Editor.revision editor } ])) in
-    let sent_revisions = List.map live ~f:(fun (id, c) -> id, (Session.source_generation session id |> Option.value_exn, Editor.revision (Controller.editor c))) in
+    let session, changes = Session.take_source_changes session in
+    let sent_revisions, document = List.fold changes ~init:(t.sent_revisions, []) ~f:(fun (sent, requests) (id, current) ->
+      match current with
+      | None -> Map.remove sent id, requests
+      | Some (generation, controller) ->
+        let editor = Controller.editor controller in
+        let previous = Map.find sent id in
+        let sent = Map.set sent ~key:id ~data:(generation, Editor.revision editor) in
+        match Editor.path editor with
+        | None -> sent, requests
+        | Some resource ->
+          let same_lifetime = Option.exists previous ~f:(fun (old, _) -> old = generation) in
+          let opened = if not same_lifetime then [ Ches_error.Source_request.Document_opened { resource; generation } ] else [] in
+          let changed = if Option.equal Poly.equal previous (Some (generation, Editor.revision editor)) then [] else
+            [ Ches_error.Source_request.Document_changed { resource; text = Text_buffer.to_string (Editor.text editor); revision = Editor.revision editor } ] in
+          sent, List.rev_append (opened @ changed) requests) in
+    let document = List.rev document in
     let saves = List.map saved ~f:(fun { Controller.Saved.path; revision } -> Ches_error.Source_request.Document_saved { resource = path; revision }) in
     let closes = List.map closed ~f:(fun resource -> Ches_error.Source_request.Document_closed { resource }) in
     let controller = Option.value (Session.active_controller session) ~default:t.controller in
@@ -281,7 +290,7 @@ let tab_rect ?(buffers_in_status = false) t ~(allocation : Geometry.Rect.t) =
   if not buffers_in_status && not t.hide_tabs
      && not (Option.is_some (Session.input_directory t.session)
        && Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side))
-     && List.length (Session.buffers t.session) > 1
+     && Session.buffer_count t.session > 1
      && not t.zen && allocation.width > 0 && allocation.height >= 3
   then Some { allocation with height = 1 }
   else None
@@ -444,7 +453,7 @@ let surface t ~directory =
   let session = Session.surface (session t) ~directory in
   let id = Session.context_id session in
   let scroll = if Option.equal Buffer_id.equal id (Session.context_id t.session) then t.scroll else
-    Option.value (Option.bind id ~f:(fun id -> List.Assoc.find t.scrolls id ~equal:Buffer_id.equal)) ~default:Scroll.zero in
+    Option.value (Option.bind id ~f:(Map.find t.scrolls)) ~default:Scroll.zero in
   { t with session; controller = Option.value (Session.active_controller session) ~default:t.controller
     ; scroll; rows = None; hide_tabs = directory
     ; prefs = (if directory then { t.prefs with centered = false; left_padding = 0 } else t.prefs) }
@@ -641,9 +650,9 @@ let synchronize t ~width ~height =
       && Option.is_none (side_layout t ~width ~height)
     then
       let old = Session.context_id t.session in
-      let scrolls = Option.value_map old ~default:t.scrolls ~f:(fun id -> List.Assoc.add t.scrolls ~equal:Buffer_id.equal id t.scroll) in
+      let scrolls = Option.value_map old ~default:t.scrolls ~f:(fun id -> Map.set t.scrolls ~key:id ~data:t.scroll) in
       let session = Session.focus_directory (session t) false in
-      let scroll = Option.value (Option.bind (Session.context_id session) ~f:(fun id -> List.Assoc.find scrolls id ~equal:Buffer_id.equal)) ~default:Scroll.zero in
+      let scroll = Option.value (Option.bind (Session.context_id session) ~f:(Map.find scrolls)) ~default:Scroll.zero in
       { (return_to_document t) with session; controller = Option.value_exn (Session.active_controller session)
         ; scrolls; scroll; rows = None; paste_buffer = None }
     else t in
@@ -698,7 +707,8 @@ let geometry t ~width ~height =
 (* All tab paths share lifetime, viewport, prefix and paste reconciliation. Held
    diagnostics are released by the input assembly or the public lifecycle facade. *)
 let adopt_session_state t session ~width ~height =
-  let retired = List.filter_map (Session.buffers t.session) ~f:(fun (id, controller) ->
+  let retired = if Session.same_file_lifetimes t.session session then [] else
+    List.filter_map (Session.buffers t.session) ~f:(fun (id, controller) ->
     if Option.equal Int.equal (Session.source_generation t.session id) (Session.source_generation session id)
     then None else Editor.path (Controller.editor controller)) in
   let t = { t with held = List.filter t.held ~f:(fun ((_, resource), _, _) ->
@@ -710,12 +720,13 @@ let adopt_session_state t session ~width ~height =
     (Option.map (Session.directory_presentation t.session) ~f:(fun p -> p.placement))
     (Option.map (Session.directory_presentation session) ~f:(fun p -> p.placement))) in
   let tabs_changed = not (Bool.equal
-    (List.length (Session.buffers t.session) > 1)
-    (List.length (Session.buffers session) > 1)) in
+    (Session.buffer_count t.session > 1)
+    (Session.buffer_count session > 1)) in
   let scrolls = match previous with
     | None -> t.scrolls
-    | Some id -> List.Assoc.add t.scrolls ~equal:Buffer_id.equal id t.scroll in
-  let scrolls = List.filter scrolls ~f:(fun (id, _) -> Session.has_buffer session id) in
+    | Some id -> Map.set t.scrolls ~key:id ~data:t.scroll in
+  let scrolls = if Session.same_buffer_membership t.session session then scrolls else
+    Map.filter_keys scrolls ~f:(Session.has_buffer session) in
   let controller = Option.value (Session.active_controller session)
     ~default:(Controller.with_feedback t.controller (Session.feedback session)) in
   let t = { t with session; controller; scrolls; exited = Session.exited session } in
@@ -726,7 +737,7 @@ let adopt_session_state t session ~width ~height =
     (if not tabs_changed then t else
        { t with rows = None; animation = Animation.create ~enabled:(Animation.enabled t.animation) }))
     else
-    let scroll = Option.value (Option.bind (Session.context_id session) ~f:(fun id -> List.Assoc.find scrolls id ~equal:Buffer_id.equal)) ~default:Scroll.zero in
+    let scroll = Option.value (Option.bind (Session.context_id session) ~f:(Map.find scrolls)) ~default:Scroll.zero in
     { (return_to_document t) with scroll; rows = None; paste_buffer = None
       ; animation = Animation.create ~enabled:(Animation.enabled t.animation) } in
   let t = synchronize t ~width ~height in
@@ -769,8 +780,8 @@ let cursor_cells editor =
     let text = Editor.text editor in
     let line = Editor.cursor_line editor in
     ( line
-    , Cell_map.cursor_span
-        (Cell_map.glyphs (Text_buffer.line_text text line))
+    , Cell_layout.Index.cursor_span
+        (Text_buffer.line_layout text ~width:Cell_map.width line)
         ~pos:(Editor.cursor editor - Text_buffer.line_start text line)
         ~insertion:
           (match Editor.mode editor with
@@ -1580,6 +1591,7 @@ let refit t ~width ~height =
   { t with
     scroll = fitted_scroll t ~width ~height
   ; rows = Some (geometry t ~width ~height).text.height
+  ; fitted_dimensions = Some (width, height)
   }
 ;;
 
@@ -1705,14 +1717,17 @@ and apply_running t ~width ~height (input : Input.t) =
   | File_picker_snapshot snapshot ->
     Option.iter t.file_picker ~f:(fun picker -> ignore (File_picker_tile.install picker snapshot : bool));
     t, Running
+  | File_picker_update update ->
+    Option.iter t.file_picker ~f:(fun picker -> ignore (File_picker_tile.install_update picker update : bool));
+    t, Running
   | File_preview snapshot ->
     Option.iter t.file_picker ~f:(fun picker ->
       ignore (File_picker_tile.install_preview picker snapshot : bool));
     t, Running
   | File_picker_work request ->
     Option.iter t.file_picker ~f:(fun picker ->
-      let current = (Ches_file_picker.Model.discovery
-        (Ches_file_picker.Interaction.model (File_picker_tile.session picker))).request in
+       let current = Ches_file_picker.Model.discovery_request
+        (Ches_file_picker.Interaction.model (File_picker_tile.session picker)) in
       if Ches_file_picker.Model.Discovery.equal_request current request then (
         File_picker_tile.work picker ~budget:128;
         if not (Ches_file_picker.Interaction.busy (File_picker_tile.session picker))
@@ -1723,14 +1738,17 @@ and apply_running t ~width ~height (input : Input.t) =
 and apply_regular t ~width ~height (input : Input.t) =
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = match input with
+    | Animation_tick _ when Option.equal [%equal: int * int]
+        t.fitted_dimensions (Some (width, height)) -> t
     | Resize ->
       Option.iter t.file_picker ~f:File_picker_tile.clear_preview;
-      synchronize t ~width ~height
+      let t = synchronize t ~width ~height in
+      { t with fitted_dimensions = Some (width, height) }
     | _ -> refit t ~width ~height in
   match input with
   | Resize -> t, Running
   | Source event -> receive_all t ~width ~height [ event ], Running
-     | File_preview _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
+     | File_preview _ | File_picker_snapshot _ | File_picker_update _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
   | Animation_tick now ->
     let dt =
       Option.value_map t.animation_time ~default:0.017 ~f:(fun previous ->
@@ -1766,7 +1784,7 @@ and apply_regular t ~width ~height (input : Input.t) =
         | Key key when not (has_document t) ->
           feed t ~width ~height (Key key)
         | Key key -> route ~width ~height t key
-       | Animation_tick _ | Resize | Source _ | File_preview _ | File_picker_snapshot _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
+       | Animation_tick _ | Resize | Source _ | File_preview _ | File_picker_snapshot _ | File_picker_update _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
     in
     let t = release_held t ~width ~height in
     let t = refit t ~width ~height in

@@ -1,0 +1,3 @@
+(executable
+ (name probe)
+ (libraries ches_screen ches_app ches_core core))

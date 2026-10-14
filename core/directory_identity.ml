@@ -18,7 +18,11 @@ module Entry = struct
   [@@deriving sexp_of, equal]
 end
 
-type t = Entry.t list
+type t =
+  { entries : Entry.t list
+  ; by_id : Entry.t Int.Map.t
+  ; by_token : Entry.t String.Map.t
+  }
 
 module Row = struct
   type identity =
@@ -104,11 +108,15 @@ let create entries =
   then Or_error.error_string "duplicate baseline identity"
   else if List.contains_dup (List.map entries ~f:(fun e -> e.Entry.name)) ~compare:String.compare
   then Or_error.error_string "duplicate baseline name"
-  else Ok entries
+  else
+    let by_id = Int.Map.of_alist_exn (List.map entries ~f:(fun e -> e.Entry.id, e)) in
+    let by_token = String.Map.of_alist_exn (List.concat_map entries ~f:(fun e ->
+      [ sprintf "@ches[%d]" e.Entry.id, e; sprintf "@copy[%d]" e.id, e ])) in
+    Ok { entries; by_id; by_token }
 ;;
 
 let text ?scope entries =
-  List.map entries ~f:(fun (entry : Entry.t) ->
+  List.map entries.entries ~f:(fun (entry : Entry.t) ->
     sprintf "@ches[%d]\t%s%s" entry.id (encode_name entry.name)
       (if Kind.equal entry.kind Directory then "/" else ""))
   |> String.concat ~sep:"\n"
@@ -118,27 +126,33 @@ let text ?scope entries =
   |> fun text -> match scope with
     | None -> text
     | Some scope ->
-      let names = List.map entries ~f:(fun (entry : Entry.t) ->
+      let names = List.map entries.entries ~f:(fun (entry : Entry.t) ->
         encode_name entry.name ^ (if Kind.equal entry.kind Directory then "/" else "")) in
       let visible = Text_buffer.of_string (String.concat ~sep:"\n" names) |> Result.ok |> Option.value_exn in
       Text_buffer.with_identities visible ~scope
-        (List.mapi entries ~f:(fun line entry -> Text_buffer.line_start visible line, sprintf "@ches[%d]" entry.id))
+        (List.mapi entries.entries ~f:(fun line entry -> Text_buffer.line_start visible line, sprintf "@ches[%d]" entry.id))
 ;;
 
 let missing_ids entries rows =
-  List.filter_map entries ~f:(fun (entry : Entry.t) ->
-    if List.exists rows ~f:(fun (row : Row.t) -> Row.equal_identity row.identity (Existing entry.id))
+  let present = Int.Set.of_list (List.filter_map rows ~f:(fun (row : Row.t) ->
+    match row.identity with Existing id -> Some id | Copy _ | Fresh -> None)) in
+  List.filter_map entries.entries ~f:(fun (entry : Entry.t) ->
+    if Set.mem present entry.id
     then None else Some entry.id)
 ;;
 
 let parse entries text =
   let open Or_error.Let_syntax in
+  (* Resolve each anchor once, including duplicates and anchors on empty rows. *)
+  let tokens_by_line = Array.create ~len:(Text_buffer.line_count text) [] in
+  List.iter (Text_buffer.identities text) ~f:(fun (offset, token) ->
+    let line = Text_buffer.line_of_offset text offset in
+    tokens_by_line.(line) <- token :: tokens_by_line.(line));
   let parse_line line raw =
     let%bind raw = match Text_buffer.identity_scope text with
       | None -> Ok raw
       | Some _ ->
-        let tokens = List.filter_map (Text_buffer.identities text) ~f:(fun (offset, token) ->
-          if Text_buffer.line_of_offset text offset = line then Some token else None) in
+        let tokens = tokens_by_line.(line) in
         (match tokens with
          | [] -> Ok raw
          | [ token ] ->
@@ -148,14 +162,12 @@ let parse entries text =
          | _ -> Or_error.error_string "joined protected identities; undo the join or delete whole rows") in
     let%bind identity, encoded =
       if (Option.is_none (Text_buffer.identity_scope text)
-          || List.exists (Text_buffer.identities text) ~f:(fun (offset, _) -> Text_buffer.line_of_offset text offset = line))
+           || not (List.is_empty tokens_by_line.(line)))
          && (String.is_prefix raw ~prefix:"@ches[" || String.is_prefix raw ~prefix:"@copy[")
       then (
         match String.lsplit2 raw ~on:'\t' with
         | Some (token, name) ->
-          (match List.find entries ~f:(fun (entry : Entry.t) ->
-              String.equal token (sprintf "@ches[%d]" entry.id)
-              || String.equal token (sprintf "@copy[%d]" entry.id)) with
+          (match Map.find entries.by_token token with
             | Some entry -> Ok ((if String.is_prefix token ~prefix:"@copy[" then Row.Copy entry.id else Existing entry.id), name)
            | None -> Or_error.error_string "unknown or malformed identity token")
         | None -> Or_error.error_string "identity token requires a TAB separator")
@@ -168,7 +180,7 @@ let parse entries text =
       match identity with
       | Fresh -> Ok (if directory then Kind.Directory else File)
       | Existing id | Copy id ->
-        let entry = List.find_exn entries ~f:(fun (entry : Entry.t) -> entry.id = id) in
+        let entry = Map.find_exn entries.by_id id in
         if not (Bool.equal directory (Kind.equal entry.kind Directory))
         then Or_error.error_string "existing entry kind cannot change"
         else if Kind.equal entry.kind Unsupported && not (String.equal name entry.name)
@@ -180,7 +192,7 @@ let parse entries text =
   let%bind rows =
     List.init (Text_buffer.line_count text) ~f:(fun line ->
       let raw = Text_buffer.line_text text line in
-       if String.is_empty raw && not (List.exists (Text_buffer.identities text) ~f:(fun (offset, _) -> Text_buffer.line_of_offset text offset = line)) then Ok None
+      if String.is_empty raw && List.is_empty tokens_by_line.(line) then Ok None
       else (
         parse_line line raw
         |> Or_error.tag ~tag:(sprintf "row %d" (line + 1))
@@ -192,8 +204,10 @@ let parse entries text =
     match row.Row.identity with Existing id -> Some id | Fresh | Copy _ -> None) in
   if List.contains_dup ids ~compare:Int.compare
    then Or_error.error_string "duplicate identity: copying existing rows is unsupported without explicit @copy[ID] token and a unique destination"
-  else if List.exists entries ~f:(fun (entry : Entry.t) ->
-    Kind.equal entry.kind Unsupported && List.mem (missing_ids entries rows) entry.id ~equal:Int.equal)
+  else if
+    let present = Int.Set.of_list ids in
+    List.exists entries.entries ~f:(fun (entry : Entry.t) ->
+      Kind.equal entry.kind Unsupported && not (Set.mem present entry.id))
   then Or_error.error_string "unsupported entry is read-only; restore its row"
   else Ok rows
 ;;

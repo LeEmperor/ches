@@ -306,3 +306,403 @@ Next concrete task:
 - Existing recorded timings are historical observations, not fresh baselines.
 - Next task: Phase 1, choose the harness/parser and define initial scenario/result
   contracts before implementing the PTY engine.
+
+### 2026-10-13 — Slice 5a, long-line rendering/navigation follow-up
+
+- [x] Bounded snapshot-owned sparse line layouts and viewport glyph construction.
+- [x] Cursor/fitted-scroll/preferred/scalar-column paths avoid recurring whole lines.
+- [x] Deterministic full-layout equivalence, work bounds, edit/width invalidation,
+  horizontal clipping and visual/block/beyond-EOL tests.
+- [x] Explicit 1K/10K/100K left/right headless probe, targeted tests and build.
+- Scope: measured editor optimization follow-up, not completion of the shared PTY
+  performance-suite phases. Sole agent; previous slice work preserved.
+- Files: `core/{cell_layout,text_buffer}.{ml,mli}`, `core/{editor,motion,block}.ml`,
+  `screen/{frame,ui_state}.ml`, `test/test_line_layout.ml`,
+  `screen/test/test_long_line.ml`, `scripts/long_line_probe/{dune,probe.ml}`,
+  `docs/long_line_rendering.md`, this handoff log.
+- Decisions, exact commands, measurements and remaining first-access/edit scans:
+  see `docs/long_line_rendering.md`. Core/screen tests and core/screen/UI/binary build
+  passed. Warm 100 KB render: 0.023 ms CPU left / 0.029 ms right; first right
+  navigation: 1.223 ms CPU. Internal observations only, no timing gates.
+- Next concrete task: session-label bookkeeping (owner's next slice); the PTY
+  suite phase checklist remains separately planned.
+
+### 2026-10-13 — Slice 6a, native picker / CLI fzf research
+
+- Focused source audit and bounded lifecycle/filter comparison; production picker
+  behavior unchanged. Sole agent, no git mutations, prior edits preserved.
+- Created `docs/picker_performance_recommendation.md` and explicitly invoked
+  `scripts/picker_comparison_probe/{dune,probe.ml,host_probe.ml,fzf_filter.py}`.
+- Fresh 50K native cold: 256.929 ms / 82.436 MiB retained interaction delta;
+  warm query progression 83–98 ms aggregate work; same-snapshot reopen 226.128 ms.
+  fzf 0.44.1 fresh filter including IO: broad queries 79–81 ms, selective `model`
+  28–29 ms, with different ranking and no native highlight/ID-mapping cost.
+- Real-root 445-file Async host + eager frames: final cold 30.019 ms, edits
+  8.522–12.047 ms, cleanup confirmed. No terminal/large-project latency claim.
+- Probe build passed. Exact commands, source evidence, limitations and staged
+  architecture are in the report; shared performance-suite phases remain planned.
+- Recommendation: native indexed results + blank-query fast path first, then
+  compiled/compact matching, bounded query reuse, discovery deltas and bounded
+  refresh-validated reopen cache. No fzf terminal handoff or per-query backend now.
+- Next concrete task: implement slice 6b from the report, preserving ranking,
+  selection, generation guards and pending-acceptance semantics; then measure.
+
+### 2026-10-13 — Slice 6b, indexed file results and blank-query fast path
+
+- [x] Budget-built immutable chunked result index, stable ID-to-position lookup,
+  cached counts/selection, indexed viewport/preview/acceptance; full results retained.
+- [x] Blank/whitespace indexing without fuzzy preparation/scoring/rank-output pass;
+  same-snapshot clear reuses the index, changed snapshots/close invalidate it.
+- [x] Work-bound, ownership, deep movement/render/preview, selection/reorder,
+  coalescing/stale/cancel/reopen tests; relevant palette/file/discovery/preview/host,
+  screen and frontend tests plus binary/probe build passed.
+- Final 50K blank: 16.615 ms / 4.410 MiB retained delta, versus 6a 256.929 ms /
+  82.436 MiB; 391 turns, zero prepared entries. Clear: one turn, ~0.001 ms.
+  Tile render 0.190 ms; blank Next+fit ~0.001 ms. Internal observations, not PTY.
+- Tradeoffs recorded: first `m` now pays deferred preparation (313.776 ms); broad
+  warm `mo` observed 134.063 ms versus 97.537 ms, due to extra result-index work.
+  Small real host cold 34.139 ms, so no overall live-open speedup claim.
+- Files, exact command history, final measurements and next-slice attribution:
+  `docs/picker_performance_recommendation.md#slice-6b-implementation-handoff--2026-10-13`.
+  Sole agent; no git mutations; earlier edits preserved. Later slices untouched.
+- Next concrete task: 6c query-once/compact preparation, measuring combined cold
+  blank + first query and ranked-output index overhead separately. Shared PTY-suite
+  phases remain planned, independently of these measured editor optimizations.
+
+### 2026-10-13 — Slice 6c, native compiled/compact scoring and shared result identity
+
+- [x] File jobs compile query once, share compact basename/path text, reuse rolling
+  score scratch, use single-scalar/exact fast paths and defer exact alignment to
+  full result/viewport reads with a 128-row query-owned memoization bound.
+- [x] Snapshot ID/ordinal index shared across queries; ranked output fills sparse
+  ordinal-position chunks without per-query string map rebuilding. All results,
+  stable ties/selection, pending/stale/cancel guards and display offsets preserved.
+- [x] Independent legacy oracle/randomized policy/Unicode/weighted-field tests,
+  bounded workspace/traceback, alignment ownership/eviction and ID-reuse invariants.
+  Palette/line/file/discovery/preview/host/screen/frontend checks and builds passed.
+- One 10K/50K probe: 50K first `m` 102.810 ms (6b 313.776), warm `mo` 43.335 ms
+  (6b 134.063, 6a 97.537), `model` 23.178 ms. Combined blank + first query
+  124.504 ms; 25.112 MiB retained post-query state, compact payload 4.26 MB.
+- Tradeoffs: blank index now 21.694 ms / 5.982 MiB (6b 16.615 / 4.410); visible
+  alignment and natural GC can exceed 2 ms; bounded traceback fallback can cost
+  more CPU. No PTY latency or peak-RSS guarantee. Actual small host cleanup passed.
+- Exact command history, files, evidence and limits:
+  `docs/picker_performance_recommendation.md#slice-6c-implementation-handoff--2026-10-13`.
+  Sole agent, previous work preserved, no mutative git operations.
+- Next concrete task: 6d byte-bounded query-result reuse/safe narrowing; discovery
+  deltas and runtime reopen cache remain separate later slices. Shared PTY suite
+  phase checklist is unchanged.
+
+### 2026-10-13 — Slice 6d, byte-budgeted completed-query reuse and safe narrowing
+
+- [x] Generation/identity-scoped complete-query LRU: four entries / 96 MiB
+  conservative reachable-ownership charge, including shared corpus/preparation,
+  indices/arrays/compiled tokens and full alignment reservations. Exact and
+  token-equivalent hits publish in one work turn with pending acceptance disabled.
+- [x] Proper-subset narrowing only from complete, compatible folded-token prefix
+  results; survivors rescored with original ordinals. No interrupted/partial set
+  narrowing; changed snapshots clear cache, current selection/fallback retained.
+- [x] Aligned-row memoization bounded by 128 rows / 256 KiB charged payload;
+  oversized rows exact but uncached. Preparation rebind drops old candidate owners.
+- [x] Cold-full/legacy oracle sequence equivalence, cancellation/output/generation,
+  selection, eviction/byte reservation, oversized alignment and weak ownership
+  tests; palette/line/file/discovery/preview/host/screen/frontend checks/build passed.
+- One 10K/50K probe: 50K repeat/backspace hits examine zero candidates, one turn,
+  ~0.001–0.002 ms work. New token extensions examine 10K rather than 50K candidates.
+  Peak LRU charge 84,225,912 bytes <96 MiB; final live delta 26.738 MiB with four
+  cached indices. Some uncached work rose modestly; no all-query speedup claim.
+- Actual small host cached backspace: 4.045 ms / one injected batch (6c 12.698 /
+  eight), cleanup verified. No PTY latency, p99 or global-RSS guarantee.
+- Exact commands, files, budgets, evidence and limitations:
+  `docs/picker_performance_recommendation.md#slice-6d-implementation-handoff--2026-10-13`.
+  Sole agent, no git mutations, prior edits retained.
+- Next concrete task: 6e discovery delta/progress/visible revision work, preserving
+  cache completeness/generation and accounting rules; runtime reopen cache is 6f.
+  Shared comparative PTY-suite phases remain separately planned.
+
+### 2026-10-13 — Slice 6e, persistent discovery/progress and pure-work redraw suppression
+
+- [x] Production delta/persistent-set polling without cumulative list rebuilding;
+  stable intake IDs, bytewise tree ranking, continued intake/preparation/scoring and
+  O(1)-root partial publication. New arrivals invalidate LRU but extend active work.
+- [x] Explicit lifetime/content/preview revisions and shared Frame.Cache transition
+  boundary: nonpublishing file work retains workspace/Notty base, while standard
+  effect pumping and all other input/discovery/preview/dimension invalidation remain.
+- [x] Streaming once-per-candidate, midstream edits, partial/status/caps/stale/reopen,
+  final legacy-oracle/cache-addition/old-model and Notty base-build invariants;
+  targeted discovery/file/host/preview/screen/UI/palette/line tests/build passed.
+- One bounded probe: 50K persistent-set appends 20.904 ms; blank + fuzzy streamed
+  work 124.997 ms, all 50K prepared/scored before final status, no final drain and
+  no cumulative list materialization. No apples-to-apples two-query speedup ratio.
+- Actual host: first `m` four injected batches / one base build, 4.956 ms (6d eight
+  batches with eager frames, 11.760 ms); cold 25.349 ms / six injected base builds.
+  Cleanup verified; no terminal/peak-RSS/quantile guarantee.
+- Commands, files, measurements and limits in
+  `docs/picker_performance_recommendation.md#slice-6e-implementation-handoff--2026-10-13`.
+  Sole agent, no git mutation, prior edits preserved. No undo/LSP work.
+- Next: 6f bounded runtime reopen ownership/freshness. Comparative PTY phases remain
+  separately planned.
+
+### 2026-10-14 — Slice 6f, validated runtime-owned reopen cache / final handoff
+
+- [x] Data-only successful idle snapshots; per-runtime root/policy LRU, default
+  two roots / 128 MiB conservative charge / 30-second monotonic validation TTL.
+  Slot copy-on-write and weak-lifetime tests protect retired session ownership.
+- [x] Blank/first-selection reopen with immediate cached rows and explicit refresh
+  label. Fresh rg required every opening; acceptance blocked until successful full
+  refresh/publication. Unchanged sets reuse indices/preparation/query entries;
+  changed sets rebuild in bounded turns and prune deletions/ignore changes.
+- [x] TTL, policy, byte/root limits, cancelled/failed/truncated refresh, stale work,
+  ignore changes, zero-rebuild unchanged refresh and retired-session release tests.
+- Small real-root host (451 files): cold immediate 0.026 ms / zero rows; cached
+  immediate 0.012 ms / 451 rows, zero indexing/preparation, charge 1,298,646 bytes.
+  Validation still took 21.177 ms (cold completion 25.351 ms); no latency guarantee.
+  One synthetic 10K/50K lifecycle run, not repeated for missing truncated output.
+- Final `opam exec --switch=5.2.0+ox -- dune build -j 10` and
+  `opam exec --switch=5.2.0+ox -- dune runtest -j 10` passed. Picker PTY smoke passed
+  (`/tmp/opencode/picker-terminal-5kxg6ln1`). Broader full smoke ran once and failed
+  one blockwise delete/yank/paste saved-byte comparison (`blockop.txt`); other checks
+  passed. Screens: `/tmp/opencode/ches-smoke-screens.IDj6iG`. This historical failure
+  was subsequently diagnosed and resolved below; preserve it as failed-run evidence.
+- Final architecture, measurements, commands and limits:
+  `docs/picker_performance_recommendation.md#slice-6f-final-handoff--2026-10-14`.
+  Native picker retained; previous fzf CLI observations are not terminal-equivalent.
+  Human ranking/visual acceptance and comparative terminal/RSS quantiles remain open.
+- Next agent: undo/text-storage work. Preserve this feature and extensive existing
+  worktree edits; the broader blockwise smoke failure is closed as recorded below.
+
+### Integration-failure closure — 2026-10-14
+
+- [x] Replayed exact terminal block keys through keymap/editor in
+  `test/test_keymap.ml`: delete, undo, redo, padded block paste, trailing LF, exact
+  24-byte save payload and successful-save clean state all pass.
+- [x] Root cause: immediate file comparison after `tmux send-keys Space w`, which
+  queues input without waiting for Save. Historical failure's diagnostic `cmp`
+  already saw equal bytes after capturing the successful `Wrote` frame.
+  `scripts/smoke.sh` now waits for path-specific successful write completion and
+  checks the unchanged expected bytes before and after exit.
+- [x] `opam exec --switch=5.2.0+ox -- dune runtest -j 10 test screen/test` and
+  `opam exec --switch=5.2.0+ox -- dune build -j 10 bin/ches.exe source/test/fake_lsp/fake_lsp.exe`
+  passed sequentially; shell syntax check passed. Script has no nested Dune calls.
+- Full smoke ran once: block scenario and both saved-byte assertions passed;
+  one immediate negative LSP assertion after queued Undo failed. Capture already
+  showed Undo completed and stop notice cleared. Screens:
+  `/tmp/opencode/ches-smoke-screens.V8IULe`; output:
+  `/home/wayne/.local/share/opencode/tool-output/tool_138334f7d001SPXOee40TlNXC5`.
+- [x] LSP assertion now waits for Undo's restored cursor row, then preserves its
+  negative notice assertion. New `--lsp-only` mode avoids repeating full smoke.
+  Initial focused verification rejected an extra bottom-row status barrier because
+  problems occupies that row; that extra barrier was removed. Final
+  `TMPDIR=/tmp/opencode bash scripts/smoke.sh --lsp-only` passed all checks;
+  screens `/tmp/opencode/ches-smoke-screens.J4qWgl`.
+- Both observed blockers are closed. No single all-green full run is claimed for
+  this slice; detailed historical failures, diagnosis and verification are retained
+   in `docs/picker_performance_recommendation.md#integration-smoke-blocker-closure--2026-10-14`.
+
+### 2026-10-14 — Slice 7a, bounded undo/history retention
+
+- [x] Per-buffer code-configurable limits: 1,000 complete transactions / 64 MiB
+  conservative soft charge budget across undo + redo. Preserve newest complete
+  transaction even if oversized: charge <= max(budget, newest retained step charge),
+  count <= configured positive limit. Active before snapshot is protected/excluded.
+- [x] Incremental step charges include text, line-start arrays, fixed overhead and
+  cached protected directory metadata estimate; shared snapshots deliberately charged
+  per step. Bounded layout caches are additional, uncharged. Not an RSS guarantee.
+- [x] Persistent ordered maps: O(log n) undo/redo/non-evicting commit, O(k log n)
+  k-step eviction, direct root replacement for oversized commit/redo invalidation.
+  No history-length traversal on keys or undo/redo, no list reversal spikes.
+- [x] Small-limit tests: count/exact-byte/multiple eviction, oversized and zero-budget
+  newest step, order/cursors, repeated undo/redo charge, active grouping, branch/no-op,
+  weak collection, persistent old history, hidden identities, layout warming,
+  save/dirty/selection and reload/directory-rebase limit preservation.
+- Files: `core/{history,text_buffer,editor}.{ml,mli}`, `test/test_history.ml`,
+  `test/test_editor.ml`, `README.md`, `docs/editor_reference.md`, this log.
+- Exact sequential commands/results:
+  - `opam exec --switch=5.2.0+ox -- dune runtest -j 10 test screen/test`: first attempt
+    failed to compile a new stats assertion (test_result required compare). Replaced
+    it with the exposed equality predicate; second attempt passed. Third attempt
+    after multi-eviction/layout-accounting fixtures also passed.
+  - `opam exec --switch=5.2.0+ox -- dune build -j 10`: passed full build.
+  - `opam exec --switch=5.2.0+ox -- dune runtest -j 10`: passed full suite, including
+    frontend/source integrations after the public Editor creation API change.
+  - `git diff --check`: passed; repeated after final documentation edits.
+- Sole agent, no subagents or mutative git operations; prior worktree edits preserved.
+  Shared comparative PTY-suite phases remain separately planned; no performance/RSS
+  measurement or terminal latency claim from these deterministic checks.
+- Next concrete task: slice 7b text-edit copying, document scans/equality and line-index
+  rebuild costs. Retention is bounded now, but large-file editing still copies/scans
+  full text; saved/current/register/application ownership and externally retained old
+  states remain outside the history estimate. Detailed policy/rationale: editor
+   reference Storage section.
+
+### 2026-10-14 — Slice 7b, text-edit copying and incremental line starts
+
+- [x] Shared `Text_buffer.replace`/insert/delete implementation: one exact-size
+  destination string with three blits, no temporary prefix/suffix strings, no
+  intermediate deleted document in editor block replacements. Immutable whole-string
+  storage remains deliberate; every nonempty edit still copies O(document bytes).
+- [x] Binary-search replaced endpoints; remove covered line starts, count/fill LFs
+  only in inserted text, copy prefix starts and shift suffix offsets. O(line count)
+  array allocation/update remains except equal-length/no-newline edits, which share
+  the immutable array. Required inserted UTF-8 validation remains O(inserted bytes).
+- [x] Hidden identity deletion/normalization/insertion affinity preserved, including
+  joined duplicate anchors, final empty rows, linewise removal and preserve-on-change.
+  Identity deletion now uses indexed line ends rather than scanning each row's text.
+  New text drops layouts; empty edits retain snapshots, except linewise identity removal.
+- [x] Equality audit: editor dirty, block no-op and history transaction checks all
+  use `Text_buffer.equal`; app open-buffer/directory/session dirty checks delegate
+  to editor. Added safe physical snapshot/string/identity-list guards centrally.
+  Distinct content is still compared; revision inequality is not used for dirty state.
+  Distinct equal text/no-net-change checks remain potentially O(document bytes).
+- [x] Independent whole-string oracle: 100 deterministic randomized sequences x 80
+  edits, multibyte UTF-8, newline boundaries, both affinities, linewise/preserve
+  policies and inserted hidden anchors; check bytes, lines, every boundary's
+  `line_of_offset`, identities/scope and earlier snapshots after each edit.
+  Added exhaustive small newline/empty/trailing-LF boundary replacements, validation,
+  layout invalidation and unchanged retention-charge checks.
+- [x] Deterministic work counters and GC allocation ceilings at 64 KiB / 205 KiB /
+  1 MiB: exactly one destination, zero full-text newline-index scans, <=2 inserted
+  newline-index bytes per ASCII insertion, zero on deletion; equal-length/no-newline
+  allocation excludes a new line array. Ceilings reject temporary prefix/suffix
+  copies and intermediate full documents. Counters exclude inserted UTF-8 validation;
+  actual GC ceilings include all edit allocations. Scoped synchronous probe roots
+  are restored on exceptions and retain no edited snapshots.
+- Bounded undo slice 7a remains complete; full conservative charging of shared arrays
+  and snapshots is unchanged, including newest-oversized-step policy and history limits.
+- Files changed in this slice: `core/text_buffer.{ml,mli}`, `core/editor.ml`,
+  `test/test_text_edits.ml`, `scripts/text_edit_probe/{dune,probe.ml}`, `README.md`,
+  `docs/editor_reference.md`, this handoff. Prior worktree changes preserved; sole
+  agent, no subagents or mutative git operations.
+
+#### Exact sequential commands and results
+
+1. `opam exec --switch=5.2.0+ox -- dune runtest -j10 test` — first attempt failed
+   compiling a new allocation assertion: local `Float` open selected float `+` for
+   integer budget arithmetic. Computed integer budgets outside the open.
+2. Same command — passed.
+3. `opam exec --switch=5.2.0+ox -- dune exec -j10 ./scripts/text_edit_probe/probe.exe`
+   — passed; one bounded invocation, measurements below.
+4. `opam exec --switch=5.2.0+ox -- dune build -j10` — full build passed.
+5. `opam exec --switch=5.2.0+ox -- dune runtest -j10` — full suite passed.
+6. After exhaustive boundary fixtures and ignoring supplied inserted identities for
+   empty inserted text (matching delete-then-insert semantics):
+   `opam exec --switch=5.2.0+ox -- dune runtest -j10 test` — passed.
+7. `opam exec --switch=5.2.0+ox -- dune build -j10` — full build passed.
+8. `opam exec --switch=5.2.0+ox -- dune runtest -j10` — full suite passed.
+9. `git diff --check` — passed (also checked during implementation).
+10. `uname -srmo` — Linux 6.8.0-142-generic x86_64 GNU/Linux.
+
+#### One bounded internal observation
+
+Default Dune build profile, switch `5.2.0+ox`, dirty worktree; generated ASCII LF
+every 80 bytes, edit at midpoint of fixed input snapshot. Three warmups and 24
+measured independent edits per case, naturally occurring GC included. CPU time
+(`Sys.time`), not wall/PTY/key-to-screen time; median is mean of middle two sorted
+samples. Allocated bytes use `Gc.allocated_bytes`, not retained memory or peak RSS.
+Each case verifies final bytes outside timing. No stress, competitor comparison,
+before/after speedup ratio, p99 or timing guarantee is claimed.
+
+| Bytes | Edit | Median CPU ms | Max CPU ms | Allocated bytes/edit |
+|---:|---|---:|---:|---:|
+| 65,536 | insert ASCII | 0.0575 | 0.6120 | 72,552 |
+| 65,536 | delete ASCII | 0.0305 | 0.4060 | 72,544 |
+| 65,536 | replace ASCII | 0.0030 | 0.3380 | 65,984 |
+| 65,536 | insert LF | 0.0060 | 0.2090 | 72,560 |
+| 209,920 | insert ASCII | 0.0150 | 0.4110 | 231,376 |
+| 209,920 | delete ASCII | 0.0220 | 0.4510 | 231,368 |
+| 209,920 | replace ASCII | 0.0070 | 0.3110 | 210,368 |
+| 209,920 | insert LF | 0.0150 | 0.3260 | 231,384 |
+| 1,048,576 | insert ASCII | 0.1065 | 0.6210 | 1,153,896 |
+| 1,048,576 | delete ASCII | 0.1075 | 0.5260 | 1,153,888 |
+| 1,048,576 | replace ASCII | 0.0835 | 0.4870 | 1,049,024 |
+| 1,048,576 | insert LF | 0.1050 | 0.5050 | 1,153,904 |
+
+All cases reported one destination of exactly resulting text length and zero old-text
+newline scan bytes; inserted index scan bytes were 2/0/1/2 respectively. The small
+sample CPU distributions include GC/order noise (including the slower 64 KiB insert);
+do not infer latency scaling or quantiles from them.
+
+Remaining costs: O(document bytes) string copy; O(line count) changed arrays;
+O(inserted bytes) validation/index scans; protected metadata normalization/list sort;
+first-access layout scans; distinct-equal-string comparisons and other existing
+highlight/render/application work. History budget is not global memory accounting.
+No user decision is needed for this slice. Final orchestrator owns integration
+verification; shared comparative PTY-suite phases remain separately planned.
+
+### 2026-10-14 — Final integration review and verification
+
+**Final software status: GREEN.** Final build/full suite and one all-green full
+terminal run are now recorded after the latest core changes and review fix. Earlier
+blockwise-save/LSP-Undo failures above remain historical evidence, not open blockers.
+Sole agent; all intentional dirty/untracked task changes preserved; no subagents or
+mutative Git commands. No performance probes or extra stress runs in this review.
+
+Review breadth: whole dirty-tree status/diff inventory and high-level diff review
+across app/core/source/screen/UI, picker/discovery/preview/matcher, interfaces,
+tests, scripts and docs. Detailed source review concentrated on immutable text and
+incremental line starts/hidden anchors, history charges/undo branching, snapshot-owned
+lazy layouts, directory parser/session indexes, session source bookkeeping,
+picker publication/reopen ownership and visible stamps, frontend cache invalidation,
+and LSP pools/timers/launch/shutdown/reaping. This is a focused cross-feature review,
+not an exhaustive line-by-line audit of every added test, probe or historical plan.
+
+Concrete finding/fix: `source/lsp_client.ml` previously waited indefinitely for a
+live child after stdout EOF. The new launch shutdown hold could therefore prevent
+editor shutdown from finishing. EOF now permits normal exit during `shutdown_grace`,
+then reports a protocol-stream failure and kills/reaps a surviving process. Added
+`-close-stdout` fake-server mode and a real-child regression in
+`source/test/{fake_lsp/fake_lsp.ml,test_lsp_client.ml}`: child closes stdout and stays
+alive; test requires the stop event and reaping before editor quit. Ordinary exit
+status/stderr handling remains covered. No additional concrete regression found in
+the focused cache/ownership paths. Directory shared memos check exact immutable
+inputs; edited text drops layouts; published picker aligners capture immutable
+query/preparation roots; redraw reuse checks visible revisions rather than mutable
+pointer identity. Updated editor reference and picker report status consistently.
+
+Exact commands, all sequential, all **PASS / exit 0**:
+
+1. `opam exec --switch=5.2.0+ox -- dune runtest -j 10 source/test`
+   — includes the new live-EOF/reaping regression and existing pooled/coalesced LSP tests.
+2. `opam exec --switch=5.2.0+ox -- dune build -j 10` — final full build.
+3. `opam exec --switch=5.2.0+ox -- dune runtest -j 10` — final full-suite command;
+   Dune reused already-green unchanged test aliases (no forced broad repetition).
+4. `TMPDIR=/tmp/opencode bash scripts/smoke.sh` — one full run, **all checks passed**;
+   block save/post-exit bytes, LSP Undo/restart/cleanup, editing/undo/Unicode/window
+   scrolling, workspace/float/paste/resize and terminal restoration passed.
+   Screens `/tmp/opencode/ches-smoke-screens.yaj6JY`; output
+   `/home/wayne/.local/share/opencode/tool-output/tool_13849d53a001CTzZiDprhYNL3m`.
+5. `python3 scripts/directory_editing_smoke.py` — pending edits/undo, refresh refusal,
+   backing-path opening, dirty quit guard and apply boundary;
+   fixture `/tmp/opencode/directory-phase6-pty-5uelvc59`.
+6. `python3 scripts/directory_apply_smoke.py` — create/rename, dirty file/descendant
+   reassociation, undo boundary and invalid-plan zero mutation;
+   fixture `/tmp/opencode/directory-phase7-pty-_yw4nlui`.
+7. `python3 scripts/directory_side_smoke.py` — side/major/hide, marks/Visual opens,
+   partial failures, zen/tiny focus return, tabs/undo/last-close;
+   fixture `/tmp/opencode/directory-phase5-pty-d7q2qmtz`.
+8. `python3 scripts/picker_smoke.py` — file/content query/navigation/accept/cancel,
+   dirty/stale/missing previews, Unicode locations, reopen/resize/interrupted paste,
+   directory startup and tty restore;
+   fixture/captures `/tmp/opencode/picker-terminal-9lji89tq`.
+9. `git diff --check` — final whitespace check.
+
+All executed smoke scripts were inspected before execution; none invokes Dune.
+Directory captures: `/tmp/opencode/directory-phase{5,6,7}-pty.log`.
+
+Integrated scope: directory parser/index caches; default-off opt-in smear and cached
+animation base; bounded highlight fallback; shared LSP pools/coalesced negotiated
+changes; lazy long-line windows; session/tab/source caches; native picker compact
+matching/indexed/delta results and bounded query/reopen reuse; bounded undo and
+one-copy edits/incremental line starts. Existing measurements/rationales above and
+in the linked reports remain observations, not new integration latency claims.
+
+Remaining explicit limitations: whole-document edit copies/changed line arrays and
+first-access long-line seeking still scale with input; under-policy native
+parse/query calls and oversized fuzzy alignment can still delay input; history and
+picker estimates are soft/separate ownership budgets, not total RSS limits. LSP
+sent-text history is count-bounded (32 per document), not byte-bounded, and closed-URI
+version tombstones grow for a surviving pool's lifetime. Unversioned diagnostics
+after reopen cannot distinguish an old lifetime's late response. These remain
+documented follow-up considerations, with no failing required software check.
+Human visual/cursor-shape/flicker/ranking acceptance and comparative PTY/RSS/quantile
+measurement remain unperformed; the shared performance-suite phases stay planned.

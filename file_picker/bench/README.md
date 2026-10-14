@@ -84,6 +84,14 @@ and a target project before treating ranking/performance as release-ready.
 
 ## Phase-4 interaction/cache scheduling probe
 
+Current bounded lifecycle/score/output/alignment/cache observations for slices 6a–6d are
+in `../../docs/picker_performance_recommendation.md`. The older query/interaction
+tables below are historical and use the earlier eager matcher representation.
+The explicitly invoked `scripts/picker_comparison_probe/probe.ml` now also checks a
+small independent legacy oracle and attributes score versus output work, examined
+candidates, reuse/narrowing, conservative LRU charge and aligned-row bytes. It has
+no nested Dune subprocesses and runs only 10K/50K synthetic lifecycle sequences.
+
 ```sh
 opam exec --switch=5.2.0+ox -- dune exec file_picker/bench/interaction_latency.exe
 ```
@@ -91,11 +99,13 @@ opam exec --switch=5.2.0+ox -- dune exec file_picker/bench/interaction_latency.e
 The probe uses the same deterministic 1k/10k/50k synthetic paths, monotonic clocks
 and local toolchain as above. It explicitly drains `Interaction.work` with budget
 128, measures each turn (including natural GC), and asserts preparation count
-stays exactly equal to candidate count across all queries. No discovery, candidate
+is zero on blank opening and reaches candidate count on the first fuzzy query,
+then remains unchanged across subsequent queries. No discovery, candidate
 construction, input routing, renderer, sleeps/yields or terminal redraw is timed.
 These are **one run per query**, not warmed medians, p99 or time bounds.
 
-Observed 2026-10-07, milliseconds **total explicit work / longest work turn**:
+Historical pre-6b observations, 2026-10-07, milliseconds
+**total explicit work / longest work turn** (blank opening then eagerly prepared):
 
 | Work | 1,000 | 10,000 | 50,000 |
 | --- | ---: | ---: | ---: |

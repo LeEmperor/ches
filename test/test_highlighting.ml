@@ -311,3 +311,109 @@ let%test_unit "dispatched edits and reloads keep highlights current, like their 
     assert (String.equal (source t) "let a = 1\n");
     Controller.close t)
 ;;
+
+let policy_plain t failure =
+  let key, snapshot = Controller.highlights t in
+  assert (Snapshot.matches snapshot key);
+  assert (Snapshot.Key.revision key = Editor.revision (Controller.editor t));
+  [%test_result: Snapshot.Range.t list] (Snapshot.ranges snapshot) ~expect:[];
+  assert (Option.equal Provider.Status.equal (Controller.highlight_status t) (Some (Plain failure)));
+  assert (not (Controller.For_testing.has_live_highlight_provider t))
+;;
+
+let%test_unit "inclusive byte policy drops stale spans before parsing, recovers on shrink and keys every revision" =
+  let max_bytes = Highlighting.Policy.max_bytes in
+  let initial = "let x = 1\n(*" ^ String.make (max_bytes - 14) ' ' ^ "*)" in
+  assert (String.length initial = max_bytes);
+  let t = create ~path:"f.ml" initial in
+  current t;
+  let old_key, old_snapshot = Controller.highlights t in
+  let t = run t "i <Esc>" in
+  assert (count t = 1);
+  policy_plain t (Source_byte_limit max_bytes);
+  assert (Snapshot.matches old_snapshot old_key);
+  assert (not (Snapshot.Key.equal old_key (fst (Controller.highlights t))));
+  let plain_key = fst (Controller.highlights t) in
+  let t = run t "i <Esc>" in
+  assert (count t = 1);
+  policy_plain t (Source_byte_limit max_bytes);
+  assert (not (Snapshot.Key.equal plain_key (fst (Controller.highlights t))));
+  let t = run t "uu" in
+  assert (count t = 2);
+  current t;
+  assert (Controller.For_testing.highlight_incremental_count t = 0);
+  Controller.close t;
+  let t = create ~path:"f.ml" (initial ^ " ") in
+  assert (count t = 0);
+  policy_plain t (Source_byte_limit max_bytes);
+  Controller.close t
+;;
+
+let%test_unit "inclusive line policy checks before provider and recovers at exact boundary" =
+  let max_lines = Highlighting.Policy.max_lines in
+  let t = create ~path:"f.ml" ("let x = 1" ^ String.make (max_lines - 1) '\n') in
+  assert (count t = 1);
+  current t;
+  let t = run t "i<CR><Esc>" in
+  assert (count t = 1);
+  policy_plain t (Source_line_limit max_lines);
+  let t = run t "u" in
+  assert (count t = 2);
+  current t;
+  Controller.close t;
+  let t = create ~path:"f.ml" (String.make max_lines '\n') in
+  assert (count t = 0);
+  policy_plain t (Source_line_limit max_lines);
+  Controller.close t
+;;
+
+let dense = "let x = [" ^ String.concat ~sep:";" (List.init 8200 ~f:(fun _ -> "1")) ^ "]\n"
+
+let%test_unit "capture fallback latches tiny edits, clears stale spans, recovers on undo and language switch" =
+  let t = create ~path:"f.ml" "let good = 1\n" in
+  let old_key, old_snapshot = Controller.highlights t in
+  let original = Snapshot.ranges old_snapshot in
+  let t = run t "i" |> fun t -> input t (Ches_input.Keymap.Input.Paste dense)
+          |> fun t -> run t "<Esc>" in
+  assert (count t = 2);
+  policy_plain t (Capture_limit Highlighting.Policy.max_captures);
+  let t = run t "i <Esc>" in
+  assert (count t = 2);
+  policy_plain t (Capture_limit Highlighting.Policy.max_captures);
+  let t = run t "uu" in
+  assert (count t = 3);
+  current t;
+  let t = run t "<C-r>" in
+  assert (count t = 4);
+  policy_plain t (Capture_limit Highlighting.Policy.max_captures);
+  let t = Controller.For_testing.with_highlight_language t Plain in
+  current t;
+  let t = Controller.For_testing.with_highlight_language t Ocaml in
+  assert (count t = 5);
+  policy_plain t (Capture_limit Highlighting.Policy.max_captures);
+  assert (Snapshot.matches old_snapshot old_key);
+  [%test_result: Snapshot.Range.t list] (Snapshot.ranges old_snapshot) ~expect:original;
+  Controller.close t
+;;
+
+let%test_unit "reload explicitly retries capture policy but size fallback never parses, then reload shrink recovers" =
+  with_dir (fun dir ->
+    let path = dir ^/ "f.ml" in
+    Out_channel.write_all path ~data:dense;
+    let t = Controller.open_file ~cell_width:Cell_width.f path |> Or_error.ok_exn in
+    assert (count t = 1);
+    policy_plain t (Capture_limit Highlighting.Policy.max_captures);
+    let t = run t ":e!<CR>" in
+    assert (count t = 2);
+    policy_plain t (Capture_limit Highlighting.Policy.max_captures);
+    Out_channel.write_all path ~data:(String.make (Highlighting.Policy.max_bytes + 1) ' ');
+    let t = run t ":e!<CR>" in
+    assert (count t = 2);
+    policy_plain t (Source_byte_limit Highlighting.Policy.max_bytes);
+    Out_channel.write_all path ~data:"let restored = 42\n";
+    let t = run t ":e!<CR>" in
+    assert (count t = 3);
+    assert (Controller.For_testing.highlight_incremental_count t = 0);
+    current t;
+    Controller.close t)
+;;

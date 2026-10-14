@@ -8,6 +8,15 @@ type directory_presentation =
 val directory_presentation : t -> directory_presentation option
 val create : ?cwd:string -> ?keymap_config:Keymap.Config.t -> ?directory_config:Directory_buffer.Config.t -> cell_width:Cell_layout.Width.t -> Controller.t -> t
 val buffers : t -> (Buffer_id.t * Controller.t) list
+val buffer_count : t -> int
+(** Path/membership-only cached labels in tab order; flags come from current controllers. *)
+val buffer_labels : t -> (Buffer_id.t * string) list
+(** Drain coalesced file lifetime/revision changes in tab order. Closed IDs have
+    no controller. Directory surfaces and feedback/register changes are excluded. *)
+val take_source_changes : t -> t * (Buffer_id.t * (int * Controller.t) option) list
+(** Constant-time conservative invalidation predicates for retained UI state. *)
+val same_file_lifetimes : t -> t -> bool
+val same_buffer_membership : t -> t -> bool
 (** Active file tab underneath any major directory presentation. *)
 val active_id : t -> Buffer_id.t option
 (** Visible input owner, not necessarily the active file tab. *)

@@ -34,6 +34,7 @@ let () =
     let t = Interaction.create ~token:() ~discovery in
     assert (Interaction.prepared_count t = 0);
     let total, max_turn, turns = drain t in
+    assert (Interaction.prepared_count t = 0); (* blank opens only build the index *)
     Gc.full_major ();
     let live = (Gc.stat ()).live_words - before in
     printf "count=%d initial_total_ms=%.3f max_work_ms=%.3f turns=%d retained_mib=%.2f prepared=%d\n%!"
@@ -50,6 +51,6 @@ let () =
       assert (Interaction.prepared_count t = count);
       printf "count=%d query=%S update_ms=%.3f work_total_ms=%.3f max_work_ms=%.3f turns=%d matches=%d prepared=%d\n%!"
         count query update_ms total max_turn turns
-        (List.length (Model.results (Interaction.model t))) (Interaction.prepared_count t));
+         (Model.result_count (Interaction.model t)) (Interaction.prepared_count t));
     Interaction.cancel t ~release:ignore)
 ;;

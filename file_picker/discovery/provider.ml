@@ -41,6 +41,7 @@ type run =
   ; mutable process : Process.t option
   ; mutable stopped : bool
   ; mutable timed_out : bool
+  ; mutable reuse : Discovery.Candidates.t option
   }
 
 type t =
@@ -48,8 +49,8 @@ type t =
   ; limits : Limits.t
   ; mutable next_id : int
   ; mutable active : run option
-  ; mutable candidates : Candidate.t String.Map.t
-  ; mutable snapshot : Discovery.t option
+  ; mutable current : Discovery.Update.t option
+  ; mutable snapshot : Discovery.t Lazy.t option
   ; mutable reaped : unit Deferred.t
   }
 
@@ -60,13 +61,20 @@ let create ?(prog = "rg") ?(limits = Limits.default) () =
        ] ~f:(fun n -> n <= 0)
      || Time_ns.Span.(limits.timeout <= zero)
   then invalid_arg "File discovery limits must be positive";
-  { prog; limits; next_id = 0; active = None; candidates = String.Map.empty
+   { prog; limits; next_id = 0; active = None; current = None
   ; snapshot = None; reaped = return () }
 ;;
 
 let request run = run.request
 let finished run = Ivar.read run.finished
-let snapshot t = t.snapshot
+let snapshot t = Option.map t.snapshot ~f:Lazy.force
+let current t = t.current
+let install_current t update =
+  t.current <- Some update;
+  t.snapshot <- Some (lazy
+    { Discovery.request = update.Discovery.Update.request; status = update.status
+    ; candidates = Discovery.Candidates.to_list update.candidates })
+;;
 
 let kill run =
   Option.iter run.process ~f:(fun process ->
@@ -78,11 +86,12 @@ let kill run =
 let cancel t =
   Option.iter t.active ~f:(fun run ->
     run.stopped <- true;
+    run.reuse <- None;
     Ivar.fill_if_empty run.abort_delivery ();
     Pipe.close_read run.reader;
     kill run;
-    t.snapshot <- Option.map t.snapshot ~f:(fun snapshot ->
-      { snapshot with status = Discovery.Cancelled }));
+    Option.iter t.current ~f:(fun update ->
+      install_current t (Discovery.Update.append update ~status:Cancelled [])));
   t.active <- None
 ;;
 
@@ -147,7 +156,10 @@ let collect run (limits : Limits.t) reader =
         if !output_bytes > limits.max_output_bytes then return `Truncated
         else if Set.mem !seen path then loop ()
         else (
-          match Candidate.create ~root:run.request.root ~relative_path:path with
+          let candidate = match Option.bind run.reuse ~f:(fun set -> Discovery.Candidates.find set path) with
+            | Some candidate when String.equal (Candidate.root candidate) run.request.root -> Ok candidate
+            | _ -> Candidate.create ~root:run.request.root ~relative_path:path in
+          match candidate with
           | Error _ -> return (`Failed "ripgrep returned an invalid relative path")
           | Ok candidate ->
             let candidate_bytes =
@@ -183,6 +195,7 @@ let worker t run =
   in
   match created with
   | Error _ ->
+    run.reuse <- None;
     run.terminal <- Some (Discovery.Failed
       "Could not start ripgrep file discovery. Install ripgrep (rg), check PATH and the project directory, then retry.");
     Pipe.close run.writer;
@@ -214,6 +227,7 @@ let worker t run =
     let%bind stderr = stderr in
     Clock_ns.Event.abort_if_possible timer ();
     run.process <- None;
+    run.reuse <- None;
     Ivar.fill_if_empty run.finished ();
     let status =
       if run.timed_out then Discovery.Failed "File discovery timed out; retry or narrow the project root."
@@ -246,6 +260,7 @@ let safe_worker t run =
   | Ok () -> return ()
   | Error _ ->
     kill run;
+    run.reuse <- None;
     let%bind () =
       match run.process with
       | None -> return ()
@@ -264,7 +279,7 @@ let safe_worker t run =
     return ()
 ;;
 
-let start t ~root =
+let start ?reuse t ~root =
   let validation =
     if String.length root > 4096 then Or_error.error_string "File picker root exceeds 4 KiB"
     else Candidate.create ~root ~relative_path:"root-validation"
@@ -283,12 +298,11 @@ let start t ~root =
     let run =
       { request; reader; writer; finished = Ivar.create (); abort_delivery = Ivar.create ()
       ; terminal = None; process = None
-      ; stopped = false; timed_out = false }
+      ; stopped = false; timed_out = false; reuse }
     in
     t.active <- Some run;
     t.reaped <- finished run;
-    t.candidates <- String.Map.empty;
-    t.snapshot <- Some { request; candidates = []; status = Discovery.Loading };
+    install_current t (Discovery.Update.initial request);
     don't_wait_for (
       let%bind () = previous in
       if run.stopped then (
@@ -298,14 +312,15 @@ let start t ~root =
     Ok run
 ;;
 
-let poll t ~max_batches =
+let poll_update t ~max_batches =
   if max_batches <= 0 then invalid_arg "max_batches must be positive";
   match t.active with
   | None -> None
   | Some run ->
     let changed = ref false in
-    let candidates_changed = ref false in
-    let status = ref (Option.value_exn t.snapshot).status in
+    let added_rev = ref [] in
+    let previous = Option.value_exn t.current in
+    let status = ref previous.status in
     let rec take remaining =
       if remaining > 0 then (
         match Pipe.read_now run.reader with
@@ -322,23 +337,19 @@ let poll t ~max_batches =
           then (
             List.iter delivery.candidates ~f:(fun candidate ->
               if String.equal (Candidate.root candidate) run.request.root then (
-                t.candidates <- Map.set t.candidates
-                  ~key:(Candidate.relative_path candidate) ~data:candidate;
-                candidates_changed := true));
+                 added_rev := candidate :: !added_rev));
             status := delivery.status;
             changed := true);
           take (remaining - 1))
     in
     take max_batches;
     if !changed then (
-      (* Interaction uses list identity to distinguish metadata-only updates.
-         Completion/failure must not restart a fully published ranking. *)
-      let candidates =
-        if !candidates_changed then Map.data t.candidates
-        else (Option.value_exn t.snapshot).candidates
-      in
-      t.snapshot <- Some
-        { request = run.request; candidates; status = !status };
-      t.snapshot)
+      let update = Discovery.Update.append previous ~status:!status (List.rev !added_rev) in
+      install_current t update;
+      Some update)
     else None
 ;;
+
+(* Compatibility consumers explicitly requesting full lists pay materialization
+   once per persistent set. The production host uses poll_update/current only. *)
+let poll t ~max_batches = Option.map (poll_update t ~max_batches) ~f:(fun _ -> Option.value_exn (snapshot t))

@@ -5,8 +5,22 @@ open! Async
     frontend. Root is explicit/retained by the caller, not inferred on each query.
     There is deliberately no file opener or default acceptance consumer. *)
 type t
+module Cache_limits : sig
+  type t = { max_roots : int; max_bytes : int; ttl : Time_ns.Span.t }
+  (** Per runtime: two roots, 128 MiB conservative data charge, 30-second age since
+      validation. Every hit still starts rg refresh; no acceptance until validated. *)
+  val default : t
+end
 val create
-  : ?prog:string -> ?limits:Ches_file_discovery.Provider.Limits.t -> unit -> t
+  : ?prog:string -> ?limits:Ches_file_discovery.Provider.Limits.t
+  -> ?cache_limits:Cache_limits.t -> ?now:(unit -> Time_ns.t) -> unit -> t
+val cache_bytes : t -> int
+val cache_entries : t -> int
+val cache_hits : t -> int
+val cache_evictions : t -> int
+val invalidate_cache : t -> unit
+val open_picker_with_policy : t -> Ches_screen.Ui_state.t -> root:string -> policy:string
+  -> width:int -> height:int -> Ches_screen.Ui_state.t Or_error.t
 val open_picker
   : t -> Ches_screen.Ui_state.t -> root:string -> width:int -> height:int
   -> Ches_screen.Ui_state.t Or_error.t

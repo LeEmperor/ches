@@ -15,6 +15,34 @@ let drain t =
 
 let row_text row = String.concat (List.map row ~f:(fun (s : Span.t) -> s.text))
 
+let%test_unit "deep movement and rendering read only indexed viewport results, never enumerate the corpus" =
+  let count = 2048 in
+  let paths = List.init count ~f:(sprintf "file%04d.ml") in
+  let tile = File_picker_tile.create ~token:() ~discovery:(snapshot Partial paths) in
+  drain tile;
+  let session = File_picker_tile.session tile in
+  let model = Interaction.model session in
+  assert (Interaction.prepared_count session = 0);
+  assert (Model.result_count model = count && Model.discovered_count model = count);
+  let before = Model.For_testing.indexed_reads model in
+  List.iter (List.init (count - 1) ~f:Fn.id) ~f:(fun _ -> File_picker_tile.update tile ~rows:10 Next);
+  let model = Interaction.model session in
+  assert (Model.For_testing.indexed_reads model - before = count - 1); (* one fit read per move *)
+  assert (Option.equal Int.equal (Model.selected_index model) (Some (count - 1)));
+  let before = Model.For_testing.indexed_reads model in
+  let content = File_picker_tile.render tile ~width:160 ~rows:10 in
+  assert (Model.For_testing.indexed_reads model - before <= 10); (* 8 rows + selection/preview *)
+  assert (not (Model.For_testing.results_forced model));
+  assert (String.is_substring (row_text (List.last_exn content.body)) ~substring:"> file2047.ml");
+  assert (String.is_substring (Option.value_exn content.footer).text ~substring:"2048/2048 matches");
+  let before = Model.For_testing.indexed_reads model in
+  let accepted = Option.value_exn (Model.accept model) in
+  assert (String.is_suffix accepted.path ~suffix:"file2047.ml");
+  assert (Model.For_testing.indexed_reads model - before = 1);
+  File_picker_tile.update tile ~rows:10 Next;
+  assert (Option.equal Int.equal (Model.selected_index (Interaction.model session)) (Some (count - 1)))
+;;
+
 let%expect_test "file tile exposes root, status, partial results, errors, limits, empty and no-match" =
   List.iter
     [ Model.Discovery.Loading, [], "Loading files..."

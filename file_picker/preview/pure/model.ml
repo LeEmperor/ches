@@ -5,16 +5,16 @@ type source = Disk | Buffer of { revision : int } [@@deriving sexp_of, equal]
 type truncation = { bytes : bool; lines : bool; utf8_boundary : bool }
 [@@deriving sexp_of, equal]
 type payload = { source : source; text : string; lines : string list; bytes_read : int }
-[@@deriving sexp_of]
+[@@deriving sexp_of, equal]
 type unsupported = Binary | Encoding | Special_file [@@deriving sexp_of, equal]
 type state = Loading | Ready of payload | Truncated of payload * truncation
   | Empty of source | Missing | Unreadable of string | Unsupported of unsupported
-[@@deriving sexp_of]
+[@@deriving sexp_of, equal]
 type request =
   { session : Ches_file_picker.Model.Discovery.request
   ; selected : Ches_file_picker.Model.Candidate.Id.t; generation : int }
 [@@deriving sexp_of, equal]
-type snapshot = { request : request; state : state } [@@deriving sexp_of]
+type snapshot = { request : request; state : state } [@@deriving sexp_of, equal]
 let accept ~expected snapshot = Option.exists expected ~f:(equal_request snapshot.request)
 
 (* Only an incomplete, otherwise legal final scalar may be removed at the byte

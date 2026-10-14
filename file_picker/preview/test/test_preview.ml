@@ -57,6 +57,30 @@ let%test_unit "bounded immutable buffer copy: giant line, line cap, UTF8 boundar
   match state with Truncated (_, { utf8_boundary = true; _ }) -> () | _ -> assert false
 ;;
 let pause () = Clock_ns.after (Time_ns.Span.of_int_ms 1)
+
+let%expect_test "following a deep indexed selection reads one result without forcing compatibility enumeration" =
+  let builder = Picker.Result_index.Builder.create () in
+  for i = 0 to 1024 do
+    Picker.Result_index.Builder.append builder
+      { candidate = candidate (sprintf "file%04d.ml" i); score = 0; positions = [] }
+  done;
+  let discovery : Picker.Discovery.t =
+    { request = session 1; candidates = []; status = Complete { truncated = false } } in
+  let model = Picker.with_result_index (Picker.create ~token:() ~discovery) ~query:""
+    (Picker.Result_index.Builder.finish builder) |> fun t -> Picker.select_index t 1024 in
+  let p = Provider.For_testing.create ~debounce:(Time_ns.Span.of_int_sec 60)
+    ~buffer:(fun ~path:_ -> None)
+    ~read:(fun ~cancelled:_ ~path:_ -> failwith "No read before debounce") () in
+  let before = Picker.For_testing.indexed_reads model in
+  let request = Option.value_exn (Provider.follow p (Some model)) in
+  assert (Picker.For_testing.indexed_reads model - before = 1);
+  assert (String.is_suffix (Picker.Candidate.Id.to_string request.selected) ~suffix:"file1024.ml");
+  assert (not (Picker.For_testing.results_forced model));
+  assert (Model.equal_request request (Option.value_exn (Provider.follow p (Some model))));
+  Provider.clear p;
+  return ()
+;;
+
 let timeout d =
   match%map Clock_ns.with_timeout (Time_ns.Span.of_sec 5.) d with
   | `Result r -> r | `Timeout -> failwith "Preview test timed out"

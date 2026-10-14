@@ -175,10 +175,12 @@ end
 (** A Normal-mode editor at the start of [text], which is considered saved. Use
     [Text_buffer.empty] for a file that does not exist yet. [cell_width] must be the
     width function the frontend draws with, so that display columns agree with the
-    screen. *)
+    screen. [history_limits] defaults to {!History.Limits.default} and is preserved
+    when reload or directory rebase resets history. *)
 val create
   :  ?path:string
-  -> ?search_case:Search_case.t
+   -> ?search_case:Search_case.t
+   -> ?history_limits:History.Limits.t
   -> cell_width:Cell_layout.Width.t
   -> Text_buffer.t
   -> t

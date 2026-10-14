@@ -61,11 +61,17 @@ val app
     that the terminal library measures differently cannot shift the layout. *)
 val draw : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
 
+(** Static rows and animation overlay split, used with [Frame.Cache]. *)
+val draw_base : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
+val draw_overlay : ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+  -> base:View.t -> Ches_screen.Frame.t -> View.t
+
 (** Runs the editor in the terminal until it exits, then stops [source]. SIGTERM and
     SIGHUP end the process with status 1, discarding unsaved changes, after restoring the
     terminal. *)
 val run
-  :  ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+  :  ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
+  -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t
   -> ?report:Ches_screen.Report_tile.Item.t list
   -> ?source:Ches_source.Source.t

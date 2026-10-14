@@ -56,6 +56,33 @@ let is_complete snapshot ~truncated =
   assert (Discovery.equal_status snapshot.Discovery.status (Complete { truncated }))
 ;;
 
+let%expect_test "delta polling owns persistent sets without materializing cumulative lists" =
+  with_root (fun root ->
+    write root "mode" "ordered";
+    let provider = Provider.create ~prog:fake_rg
+      ~limits:{ Provider.Limits.default with batch_size = 1 } () in
+    let run = Provider.start provider ~root |> Or_error.ok_exn in
+    let previous = ref (Option.value_exn (Provider.current provider)) in
+    let additions = ref [] in
+    let rec loop () =
+      match Provider.poll_update provider ~max_batches:1 with
+      | None -> let%bind () = pause () in loop ()
+      | Some update ->
+        assert (phys_equal update.base (Discovery.Candidates.stamp !previous.candidates));
+        assert (update.base_count = Discovery.Candidates.length !previous.candidates);
+        assert (List.length update.additions <= 1);
+        if not (List.is_empty update.additions) then assert (not (Discovery.Candidates.materialized update.candidates));
+        additions := List.rev_append update.additions !additions;
+        previous := update;
+        (match update.status with Loading | Partial -> loop () | _ -> return ()) in
+    let%bind () = timeout (loop ()) in
+    let%map () = timeout (Provider.finished run) in
+    assert (List.length !additions = 4);
+    [%test_eq: string list]
+      (Discovery.Candidates.to_list !previous.candidates |> List.map ~f:Candidate.relative_path)
+      [ "a\n\255"; "a/main.ml"; "b/main.ml"; "z" ])
+;;
+
 let%expect_test "nearest project marker, worktree file, canonicalization and fallback" =
   with_root (fun root ->
     write root "outer/.git/config" "";

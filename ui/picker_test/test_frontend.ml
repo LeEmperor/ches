@@ -38,7 +38,7 @@ let%expect_test "frontend chains async turns and consumes only after release, wi
       else return () in
     let%bind result = Clock_ns.with_timeout (Time_ns.Span.of_int_sec 10) (settle ()) in
     assert (match result with `Result () -> true | `Timeout -> false);
-    assert (Interaction.prepared_count session = 300);
+    assert (Interaction.prepared_count session = 0); (* blank open never decodes paths *)
     Bonsai_term_test.print_view (Bonsai_term_test.last_view handle);
     let output = [%expect.output] in
     cursor_output := output;
@@ -106,7 +106,7 @@ let%expect_test "frontend deactivation drops retained file results and rejects l
     assert (match result with `Result () -> true | `Timeout -> false);
     let session = File_picker_tile.session (Option.value_exn (Ui_state.file_picker !state)) in
     let snapshot = Model.discovery (Interaction.model session) in
-    assert (Interaction.prepared_count session = 1);
+    assert (Interaction.prepared_count session = 0);
     assert (List.length (Model.results (Interaction.model session)) = 1);
     let consumed = ref 0 in
     let file_picker : Ches_ui.Editor_view.File_picker_host.t =

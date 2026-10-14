@@ -146,3 +146,30 @@ let%test_unit "save-current, partial save-all, hidden dirty quit, close versus e
     let t, status = Session.quit t ~force:false in
     assert (Controller.Status.equal status Exit && Session.exited t))
 ;;
+
+let%test_unit "save-as invalidates only path metadata and starts a fresh source lifetime" =
+  with_files (fun directory a b ->
+    let t = start a in
+    let aid = Session.active_id t |> Option.value_exn in
+    let t, bid = Session.open_or_activate t b |> Or_error.ok_exn in
+    let old = t in
+    let cached = Session.buffer_labels t in
+    let generation = Session.source_generation t aid |> Option.value_exn in
+    let other_generation = Session.source_generation t bid in
+    let t, _ = Session.take_source_changes t in
+    let path = Filename.concat directory "later.ml" in
+    let t = Session.save_as t aid path |> Or_error.ok_exn in
+    assert (not (phys_equal cached (Session.buffer_labels t)));
+    assert (not (Session.same_file_lifetimes old t));
+    assert ((Session.source_generation t aid |> Option.value_exn) > generation);
+    assert (Option.equal Int.equal other_generation (Session.source_generation t bid));
+    assert (Option.is_none (Session.find_resource t a));
+    assert (Option.is_some (Session.find_resource old a));
+    assert (Option.is_some (Session.find_resource t path));
+    assert (String.equal (List.Assoc.find_exn (Session.buffer_labels t) aid ~equal:Buffer_id.equal) "later.ml");
+    let t, changes = Session.take_source_changes t in
+    assert (List.length changes = 1 && Buffer_id.equal (fst (List.hd_exn changes)) aid);
+    let t, closed = Session.take_closed t in
+    assert (List.equal String.equal closed [ a ]);
+    Session.dispose t)
+;;

@@ -15,8 +15,8 @@ let glyphs text ~cell_width line = Cell_layout.glyphs ~width:cell_width (B.line_
 let corner text ~cell_width offset =
   let line = B.line_of_offset text offset in
   let first, width =
-    Cell_layout.cursor_span
-      (glyphs text ~cell_width line)
+    Cell_layout.Index.cursor_span
+      (B.line_layout text ~width:cell_width line)
       ~pos:(offset - B.line_start text line)
       ~insertion:false
   in

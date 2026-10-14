@@ -7,13 +7,23 @@ type buffer = { id : Buffer_id.t; controller : Controller.t; generation : int }
 type placement = Major | Side
 type directory_presentation =
   { buffer : Buffer_id.t; placement : placement; target_group : Group_id.t; return_target : Buffer_id.t option }
+type directory_index =
+  { source : Directory_buffer.t list
+  ; by_id : Directory_buffer.t Buffer_id.Map.t
+  ; by_path : Directory_buffer.t String.Map.t
+  }
 type t =
   { cwd : string
   ; startup_directory : string
   ; cell_width : Cell_layout.Width.t
   ; keymap_config : Keymap.Config.t
   ; directory_config : Directory_buffer.Config.t
-  ; buffers : buffer list
+  ; order : Buffer_id.t list
+  ; buffer_index : buffer Buffer_id.Map.t
+  ; buffers : buffer list Lazy.t
+  ; labels : (Buffer_id.t * string) list Lazy.t
+  ; source_changes : Buffer_id.Set.t
+  ; file_lifetimes : unit ref
   ; resources : Buffer_id.t String.Map.t
   ; active : Buffer_id.t option
   ; next_id : int
@@ -25,7 +35,8 @@ type t =
   ; closed : string list
   ; exited : bool
   ; empty_keymap : Keymap.t
-  ; directories : Directory_buffer.t list
+   ; directories : Directory_buffer.t list
+   ; directory_index : directory_index option ref
   ; directory : Buffer_id.t option
   ; remembered : Buffer_id.t option
   ; return_file : Buffer_id.t option
@@ -33,20 +44,58 @@ type t =
   ; directory_focused : bool
   }
 
-let buffers t = List.map t.buffers ~f:(fun b -> b.id, b.controller)
+let ordered_buffers t = Lazy.force t.buffers
+let buffers t = List.map (ordered_buffers t) ~f:(fun b -> b.id, b.controller)
+let buffer_count t = Map.length t.buffer_index
+let buffer_labels t = Lazy.force t.labels
+(* IDs are monotonically allocated and tabs only append/remove, so map order is
+   also tab order. [order] is retained for close-neighbour/navigation policy. *)
+let snapshot index = lazy (Map.data index)
+let same_file_lifetimes a b = phys_equal a.file_lifetimes b.file_lifetimes
+let same_buffer_membership a b =
+  phys_equal a.order b.order && phys_equal a.directories b.directories
+;;
+let labels buffers = lazy (Buffer_labels.create (List.map (Lazy.force buffers) ~f:(fun b ->
+  b.id, Editor.path (Controller.editor b.controller))))
+let reindex t bs =
+  let buffer_index = Buffer_id.Map.of_alist_exn (List.map bs ~f:(fun b -> b.id, b)) in
+  let buffers = lazy bs in
+  { t with buffer_index; buffers }
+;;
 let active_id t = t.active
 let group_id _ = Group_id.of_int 1
 let startup_directory t = t.startup_directory
 let exited t = t.exited
 let normalize t = Resource.normalize ~cwd:t.cwd
-let find t id = List.find t.buffers ~f:(fun b -> Buffer_id.equal b.id id) |> Option.map ~f:(fun b -> b.controller)
-let source_generation t id = List.find t.buffers ~f:(fun b -> Buffer_id.equal b.id id) |> Option.map ~f:(fun b -> b.generation)
-let directory_buffer t = Option.bind t.directory ~f:(fun id -> List.find t.directories ~f:(fun d -> Buffer_id.equal d.id id))
+let find t id = Map.find t.buffer_index id |> Option.map ~f:(fun b -> b.controller)
+let source_generation t id = Map.find t.buffer_index id |> Option.map ~f:(fun b -> b.generation)
+let take_source_changes t =
+  let changes = Set.to_list t.source_changes |> List.map ~f:(fun id ->
+    id, Option.map (Map.find t.buffer_index id) ~f:(fun b -> b.generation, b.controller)) in
+  { t with source_changes = Buffer_id.Set.empty }, changes
+;;
+(* A bounded, derived one-slot cache keyed by the exact immutable list. Sharing
+   it across snapshots is safe: alternating snapshots can evict but never read
+   another snapshot's controllers. Every directory update replaces the list. *)
+let directory_index t =
+  match !(t.directory_index) with
+  | Some index when phys_equal index.source t.directories -> index
+  | _ ->
+    let index =
+      { source = t.directories
+      ; by_id = Buffer_id.Map.of_alist_exn (List.map t.directories ~f:(fun d -> d.id, d))
+      ; by_path = String.Map.of_alist_exn (List.map t.directories ~f:(fun d -> d.path, d)) } in
+    t.directory_index := Some index;
+    index
+;;
+let find_directory t id = Map.find (directory_index t).by_id id
+let find_directory_path t path = Map.find (directory_index t).by_path path
+let directory_buffer t = Option.bind t.directory ~f:(find_directory t)
 let input_directory t = if t.directory_focused then directory_buffer t else None
 let context_id t = if t.directory_focused then t.directory else t.active
 let directory_presentation t = Option.map t.directory ~f:(fun buffer ->
   { buffer; placement = t.placement; target_group = group_id t; return_target = t.return_file })
-let has_buffer t id = Option.is_some (find t id) || List.exists t.directories ~f:(fun d -> Buffer_id.equal d.id id)
+let has_buffer t id = Map.mem t.buffer_index id || Option.is_some (find_directory t id)
 let active_controller t = Option.map (match input_directory t with Some d -> Some d.controller | None -> Option.bind t.active ~f:(find t)) ~f:(fun c ->
   Controller.with_register (Controller.with_feedback c t.feedback) t.register)
 let find_resource t resource =
@@ -57,7 +106,7 @@ type resource_buffer = File_buffer of Buffer_id.t * Controller.t | Directory_buf
 let find_resource_buffer t resource =
   match find_resource t resource with
   | Some (id, controller) -> Some (File_buffer (id, controller))
-  | None -> Option.map (List.find t.directories ~f:(fun d -> String.equal d.path (normalize t resource))) ~f:(fun d -> Directory_buffer d)
+  | None -> Option.map (find_directory_path t (normalize t resource)) ~f:(fun d -> Directory_buffer d)
 ;;
 
 let create ?(cwd = Core_unix.getcwd ()) ?keymap_config ?(directory_config = Directory_buffer.Config.default) ~cell_width controller =
@@ -68,13 +117,20 @@ let create ?(cwd = Core_unix.getcwd ()) ?keymap_config ?(directory_config = Dire
   let startup_directory = Option.value_map path ~default:cwd ~f:(fun p -> if directory_start then Resource.normalize ~cwd p else Filename.dirname (Resource.normalize ~cwd p)) in
   let directories = if directory_start then [ Directory_buffer.load ~config:directory_config ~id:(Buffer_id.of_int 1) ~path:startup_directory ~cell_width ~keymap_config () |> Or_error.ok_exn ] else [] in
   if directory_start then Controller.close controller;
+  let bs = if directory_start then [] else [ { id = Buffer_id.of_int 1; controller; generation = 1 } ] in
+  let buffers = lazy bs in
   { cwd; startup_directory
-   ; cell_width; keymap_config; directory_config; buffers = (if directory_start then [] else [ { id = Buffer_id.of_int 1; controller; generation = 1 } ])
+   ; cell_width; keymap_config; directory_config; buffers; labels = labels buffers
+   ; order = List.map bs ~f:(fun b -> b.id)
+   ; buffer_index = Buffer_id.Map.of_alist_exn (List.map bs ~f:(fun b -> b.id, b))
+   ; source_changes = Buffer_id.Set.of_list (List.map bs ~f:(fun b -> b.id))
+   ; file_lifetimes = ref ()
   ; resources = (if directory_start then String.Map.empty else Option.value_map path ~default:String.Map.empty ~f:(fun p -> String.Map.singleton (Resource.normalize ~cwd p) (Buffer_id.of_int 1)))
    ; active = (if directory_start then None else Some (Buffer_id.of_int 1)); next_id = 2; next_generation = 2; feedback = Controller.feedback controller
   ; register = Editor.unnamed_register (Controller.editor controller); clipboard = None
   ; saved = []; closed = []; exited = false; empty_keymap = Keymap.create keymap_config
-  ; directories; directory = (if directory_start then Some (Buffer_id.of_int 1) else None)
+   ; directories; directory = (if directory_start then Some (Buffer_id.of_int 1) else None)
+   ; directory_index = ref None
    ; remembered = (if directory_start then Some (Buffer_id.of_int 1) else None); return_file = None
    ; placement = Major; directory_focused = directory_start }
 ;;
@@ -98,9 +154,26 @@ let refresh_tracked_resource t path =
 let replace_active t controller =
   let controller, clipboard = Controller.take_clipboard controller in
   let controller, saved = Controller.take_saved controller in
+  let t = if t.directory_focused then t else Option.value_map t.active ~default:t ~f:(fun id ->
+    let b = Map.find_exn t.buffer_index id in
+    let old_editor = Controller.editor b.controller and editor = Controller.editor controller in
+    let path_changed = not (Option.equal String.equal (Editor.path old_editor) (Editor.path editor)) in
+    let generation = if path_changed then t.next_generation else b.generation in
+    let buffer_index = Map.set t.buffer_index ~key:id ~data:{ b with controller; generation } in
+    let buffers = snapshot buffer_index in
+    { t with buffer_index; buffers
+      ; labels = (if path_changed then labels buffers else t.labels)
+      ; file_lifetimes = (if path_changed then ref () else t.file_lifetimes)
+      ; next_generation = (if path_changed then t.next_generation + 1 else t.next_generation)
+      ; resources = (if not path_changed then t.resources else
+          let resources = Option.value_map (Editor.path old_editor) ~default:t.resources ~f:(Map.remove t.resources) in
+          Option.value_map (Editor.path editor) ~default:resources ~f:(fun path -> Map.set resources ~key:path ~data:id))
+      ; closed = (if path_changed then t.closed @ Option.to_list (Editor.path old_editor) else t.closed)
+      ; source_changes = (if path_changed || Editor.revision old_editor <> Editor.revision editor
+          then Set.add t.source_changes id else t.source_changes) }) in
   let t = { t with
-    buffers = List.map t.buffers ~f:(fun b -> if not t.directory_focused && Option.equal Buffer_id.equal t.active (Some b.id) then { b with controller } else b)
-  ; directories = List.map t.directories ~f:(fun d -> if t.directory_focused && Option.equal Buffer_id.equal t.directory (Some d.id) then { d with controller } else d)
+    directories = (if not t.directory_focused then t.directories else
+      List.map t.directories ~f:(fun d -> if Option.equal Buffer_id.equal t.directory (Some d.id) then { d with controller } else d))
   ; feedback = Controller.feedback controller
   ; register = Editor.unnamed_register (Controller.editor controller)
   ; clipboard = Option.first_some clipboard t.clipboard
@@ -109,11 +182,11 @@ let replace_active t controller =
 ;;
 
 let install t c = Controller.with_register (Controller.with_feedback c t.feedback) t.register
-let dispose t = List.iter t.buffers ~f:(fun b -> Controller.close b.controller); List.iter t.directories ~f:(fun d -> Controller.close d.controller)
+let dispose t = List.iter (ordered_buffers t) ~f:(fun b -> Controller.close b.controller); List.iter t.directories ~f:(fun d -> Controller.close d.controller)
 let notify t text =
   { t with feedback = Feedback.apply t.feedback (Notify { source = "session"; scope = None; severity = Error; text; history = true }) }
 ;;
-let recoverable t = List.filter t.buffers ~f:(fun b -> Editor.is_dirty (Controller.editor b.controller) || Controller.is_missing b.controller)
+let recoverable t = List.filter (ordered_buffers t) ~f:(fun b -> Editor.is_dirty (Controller.editor b.controller) || Controller.is_missing b.controller)
 let dirty_directories t = List.filter t.directories ~f:Directory_buffer.is_dirty
 let relocate moves path =
   Option.value (List.find_map moves ~f:(fun (source, destination) ->
@@ -124,7 +197,7 @@ let relocate moves path =
 
 let check_resource_moves t moves =
   Or_error.try_with (fun () ->
-    let paths = List.filter_map t.buffers ~f:(fun b -> Editor.path (Controller.editor b.controller))
+    let paths = List.filter_map (ordered_buffers t) ~f:(fun b -> Editor.path (Controller.editor b.controller))
       @ List.map t.directories ~f:(fun d -> d.path) in
     let destinations = List.map paths ~f:(relocate moves) in
     List.iter moves ~f:(fun (_, destination) ->
@@ -140,7 +213,8 @@ let reconcile_paths t moves =
   let next = ref t.next_generation in
   let closed = ref t.closed in
   let feedback = ref t.feedback in
-  let buffers = List.map t.buffers ~f:(fun b ->
+  let changed = ref t.source_changes in
+  let buffers = List.map (ordered_buffers t) ~f:(fun b ->
     match Editor.path (Controller.editor b.controller) with
     | None -> b
     | Some path ->
@@ -152,6 +226,7 @@ let reconcile_paths t moves =
             if String.equal (normalize t collection.resource) path
             then Feedback.forget_resource feedback collection.resource else feedback);
         let generation = !next in incr next;
+        changed := Set.add !changed b.id;
         { b with controller = Controller.reassociate b.controller destination; generation })) in
   let resources = List.fold buffers ~init:String.Map.empty ~f:(fun resources b ->
     Option.value_map (Editor.path (Controller.editor b.controller)) ~default:resources
@@ -160,7 +235,11 @@ let reconcile_paths t moves =
     let path = relocate moves d.path in
     if String.equal path d.path then d else
       { d with path; controller = Controller.reassociate d.controller path }) in
-  { t with buffers; resources; directories; closed = !closed; feedback = !feedback
+  let t = reindex t buffers in
+  { t with resources; directories; closed = !closed; feedback = !feedback
+    ; labels = (if !next = t.next_generation then t.labels else labels t.buffers)
+    ; source_changes = !changed
+    ; file_lifetimes = (if !next = t.next_generation then t.file_lifetimes else ref ())
     ; saved = List.map t.saved ~f:(fun saved -> { saved with Controller.Saved.path = relocate moves saved.path })
     ; next_generation = !next; startup_directory = relocate moves t.startup_directory }
 ;;
@@ -193,14 +272,14 @@ let directory_save ?before_mutation t d =
     match coordination with
     | Error error -> notify t (Error.to_string_hum error)
     | Ok () ->
-      let reserved_paths = List.filter_map t.buffers ~f:(fun b -> Editor.path (Controller.editor b.controller))
+      let reserved_paths = List.filter_map (ordered_buffers t) ~f:(fun b -> Editor.path (Controller.editor b.controller))
         @ List.map t.directories ~f:(fun d -> d.path) in
       let result = Directory_apply.apply ~reserved_paths ?before_mutation d in
       let t = reconcile_paths t result.moves in
-      let t = { t with buffers = List.map t.buffers ~f:(fun b ->
+      let t = reindex t (List.map (ordered_buffers t) ~f:(fun b ->
         if Option.exists (Editor.path (Controller.editor b.controller)) ~f:(fun path ->
           List.exists result.deleted ~f:(fun deleted -> String.equal path deleted || String.is_prefix path ~prefix:(deleted ^ "/")))
-        then { b with controller = Controller.mark_missing b.controller } else b) } in
+        then { b with controller = Controller.mark_missing b.controller } else b)) in
       let fresh, refresh_error = if Option.is_some result.error then result.buffer, None else
         match Directory_buffer.load ~previous:result.buffer ~id:d.id ~path:d.path
           ~cell_width:t.cell_width ~keymap_config:t.keymap_config () with
@@ -274,7 +353,7 @@ let open_or_activate ?(must_exist = false) ?(validate = fun _ -> Ok ()) t path =
   let validate controller = Or_error.join (Or_error.try_with (fun () -> validate controller)) in
   let path = normalize t path in
   if t.exited then Or_error.error_string "Session has exited"
-  else if List.exists t.directories ~f:(fun d -> String.equal d.path path)
+  else if Option.is_some (find_directory_path t path)
   then Or_error.error_string "Resource belongs to a directory buffer; navigate or refresh it instead"
   else match find_resource t path with
   | Some (id, controller) -> Or_error.bind (validate controller) ~f:(fun () ->
@@ -286,21 +365,27 @@ let open_or_activate ?(must_exist = false) ?(validate = fun _ -> Ok ()) t path =
       | Error error -> Controller.close controller; Error error
       | Ok () ->
          let id = Buffer_id.of_int t.next_id in
-         let t = { t with buffers = t.buffers @ [ { id; controller; generation = t.next_generation } ]; resources = Map.set t.resources ~key:path ~data:id; next_id = t.next_id + 1; next_generation = t.next_generation + 1 } in
+         let order = t.order @ [ id ] in
+         let buffer_index = Map.set t.buffer_index ~key:id ~data:{ id; controller; generation = t.next_generation } in
+         let buffers = snapshot buffer_index in
+         let t = { t with order; buffer_index; buffers; labels = labels buffers
+           ; file_lifetimes = ref ()
+           ; source_changes = Set.add t.source_changes id
+           ; resources = Map.set t.resources ~key:path ~data:id; next_id = t.next_id + 1; next_generation = t.next_generation + 1 } in
          Or_error.map (activate t id) ~f:(fun t -> t, id))
 ;;
 
 let show_directory ?select t path =
   if t.exited then Or_error.error_string "Session has exited" else
   let path = normalize t path in
-  let cached = List.find t.directories ~f:(fun d -> String.equal d.path path) in
+  let cached = find_directory_path t path in
   let loaded = if Map.mem t.resources path then Or_error.error_string "Resource belongs to an open file buffer; close it before browsing a replacement directory"
     else match cached with Some d -> Ok d | None ->
     Directory_buffer.load ~config:t.directory_config ~id:(Buffer_id.of_int t.next_id) ~path ~cell_width:t.cell_width ~keymap_config:t.keymap_config () in
   Or_error.map loaded ~f:(fun d ->
     let t = finish_context t in
     let d = if Option.is_none cached then d else
-      List.find_exn t.directories ~f:(fun old -> Buffer_id.equal old.id d.id) in
+      find_directory t d.id |> Option.value_exn in
     let d = Option.value_map select ~default:d ~f:(Directory_buffer.select d) in
     let d = { d with controller = Controller.cancel_pending d.controller } in
     { t with directories = d :: List.filter t.directories ~f:(fun old -> not (Buffer_id.equal old.id d.id))
@@ -331,7 +416,7 @@ let set_directory_placement t placement =
   | Some _ -> focus_directory t true
   | None ->
     let path = Option.value_map t.remembered ~default:t.startup_directory ~f:(fun id ->
-      (List.find_exn t.directories ~f:(fun d -> Buffer_id.equal d.id id)).path) in
+      (find_directory t id |> Option.value_exn).path) in
     (match show_directory t path with Ok t -> t | Error e -> notify t (Error.to_string_hum e))
 ;;
 
@@ -370,7 +455,7 @@ let batch_open t d entries ~clear_marks =
           failed + (if Poly.equal outcome `Failed then 1 else 0),
           skipped + (if Poly.equal outcome `Skipped then 1 else 0)) in
   (* Fetch the retained controller: successful opening finished its Visual context. *)
-  let retained = List.find_exn t.directories ~f:(fun old -> Buffer_id.equal old.id d.id) in
+  let retained = find_directory t d.id |> Option.value_exn in
   let marks = if not clear_marks then retained.marks else
     List.fold entries ~init:retained.marks ~f:(fun marks e ->
       if Option.exists (Map.find outcomes (normalize t (Filename.concat d.path e.name)))
@@ -446,7 +531,7 @@ let save_as t id path =
   | None -> Or_error.error_string "File buffer is not open"
   | Some controller ->
     if Map.mem t.resources path && not (Option.equal Buffer_id.equal (Map.find t.resources path) (Some id))
-      || List.exists t.directories ~f:(fun d -> String.equal d.path path)
+      || Option.is_some (find_directory_path t path)
     then Or_error.error_string "Save-as destination belongs to another open resource" else
     Or_error.map (Controller.save_as (install t controller) path) ~f:(fun controller ->
       let t = Option.value_map (Editor.path (Controller.editor (Option.value_exn (find t id)))) ~default:t
@@ -537,12 +622,12 @@ let save_all t =
   let t, results = List.fold targets ~init:(t, []) ~f:(fun (t, results) (id, target) ->
     match target with
     | `Directory _ ->
-      let d = List.find_exn t.directories ~f:(fun d -> Buffer_id.equal d.id id) in
+      let d = find_directory t id |> Option.value_exn in
       let t = directory_save t d in
-      let d = List.find_exn t.directories ~f:(fun d -> Buffer_id.equal d.id id) in
+      let d = find_directory t id |> Option.value_exn in
       t, results @ [ id, not (Directory_buffer.is_dirty d) ]
     | `File original ->
-      let b = List.find_exn t.buffers ~f:(fun b -> Buffer_id.equal b.id original.id) in
+      let b = Map.find_exn t.buffer_index original.id in
       let c, _, _ = Controller.dispatch (install t b.controller) [ Editor Save ] in
       let t = replace_active { t with active = Some b.id; directory = None; directory_focused = false } c in
        t, results @ [ id, not (Controller.is_missing c || Editor.is_dirty (Controller.editor c)) ]) in
@@ -557,7 +642,7 @@ let close_buffer t id ~force =
   if t.exited then t, false else
   match find t id with
   | None ->
-    (match List.find t.directories ~f:(fun d -> Buffer_id.equal d.id id) with
+    (match find_directory t id with
      | None -> t, false
      | Some d when Directory_buffer.is_dirty d && not force ->
         notify t ("Unsaved directory: " ^ Directory_identity.encode_name d.path ^ "; save/retry, undo edits, or explicitly force close"), false
@@ -576,23 +661,27 @@ let close_buffer t id ~force =
     let was_active = Option.equal Buffer_id.equal t.active (Some id) in
     let t = if was_active then finish_context t else t in
     Controller.close c;
-    let index = List.findi_exn t.buffers ~f:(fun _ b -> Buffer_id.equal b.id id) |> fst in
-    let buffers = List.filter t.buffers ~f:(fun b -> not (Buffer_id.equal b.id id)) in
+    let index = List.findi_exn t.order ~f:(fun _ current -> Buffer_id.equal current id) |> fst in
+    let order = List.filter t.order ~f:(fun current -> not (Buffer_id.equal current id)) in
+    let buffer_index = Map.remove t.buffer_index id in
+    let buffers = snapshot buffer_index in
     let active = if Option.equal Buffer_id.equal t.active (Some id)
-      then (if List.is_empty buffers then None else Option.map (List.nth buffers (Int.min index (List.length buffers - 1))) ~f:(fun b -> b.id)) else t.active in
+      then (if List.is_empty order then None else List.nth order (Int.min index (List.length order - 1))) else t.active in
     let resources = Option.value_map (Editor.path (Controller.editor c)) ~default:t.resources ~f:(fun path -> Map.remove t.resources path) in
     let feedback = Option.value_map (Editor.path (Controller.editor c)) ~default:t.feedback ~f:(fun resource ->
       List.fold (Feedback.Diagnostics.collections (Feedback.diagnostics t.feedback)) ~init:(Feedback.forget_resource t.feedback resource)
         ~f:(fun feedback collection -> if String.equal (normalize t collection.resource) resource
           then Feedback.forget_resource feedback collection.resource else feedback)) in
-    let t = { t with buffers; resources; active; feedback
+    let t = { t with order; buffer_index; buffers; labels = labels buffers; resources; active; feedback
+      ; file_lifetimes = ref ()
+      ; source_changes = Set.add t.source_changes id
       ; empty_keymap = (if was_active then Keymap.reset t.empty_keymap else t.empty_keymap)
       ; closed = t.closed @ Option.to_list (Editor.path (Controller.editor c)) } in
     let t = if not was_active then t else match active_controller t with None -> t | Some c -> replace_active t (Controller.cancel_pending (install t c)) in
     let t = if Option.is_none t.active && Option.is_some t.directory then focus_directory t true else t in
     let t = if Option.is_some t.active || Option.is_some t.directory then t else
       let path = Option.value_map t.remembered ~default:t.startup_directory ~f:(fun id ->
-        (List.find_exn t.directories ~f:(fun d -> Buffer_id.equal d.id id)).path) in
+        (find_directory t id |> Option.value_exn).path) in
       match show_directory t path with Ok t -> t | Error error -> notify t (Error.to_string_hum error) in
     t, true
 ;;
@@ -604,7 +693,7 @@ let take_closed t = { t with closed = [] }, t.closed
 
 module For_testing = struct
   let save_directory t id ~before_mutation =
-    let d = List.find_exn t.directories ~f:(fun d -> Buffer_id.equal d.id id) in
+    let d = find_directory t id |> Option.value_exn in
     directory_save ~before_mutation t d
   ;;
 end

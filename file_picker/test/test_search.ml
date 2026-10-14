@@ -6,6 +6,39 @@ let rank query paths = Search.rank ~query (Search.prepare (List.map paths ~f:can
 let paths results = List.map results ~f:(fun r -> Model.Candidate.relative_path r.Model.Query_result.candidate)
 let check_order query input expected = assert (List.equal String.equal (paths (rank query input)) expected)
 
+(* Independent pre-6c oracle: retain original fuzzy DP and two separately prepared
+   weighted fields, including basename offset and escaped-display conversion. *)
+let oracle query candidates =
+  let module F = Ches_palette.Fuzzy in
+  let raw = List.map candidates ~f:(fun candidate ->
+    let path = Model.Candidate.relative_path candidate in
+    let start = match String.rindex path '/' with None -> 0 | Some i -> i + 1 in
+    candidate,
+    [ { F.Field.tag = start; text = String.drop_prefix path start; weight = 150 }
+    ; { F.Field.tag = 0; text = path; weight = 100 } ]) in
+  F.rank ~policy:Loose_subsequence ~query raw |> List.map ~f:(fun matched ->
+    let raw_positions = List.concat_map matched.F.Match.positions ~f:(fun (field, offsets) ->
+      List.map offsets ~f:(( + ) field.F.Field.tag)) in
+    { Model.Query_result.candidate = matched.item; score = matched.score
+    ; positions = Model.Candidate.display_positions matched.item ~raw_positions })
+;;
+
+let%test_unit "compact weighted shared fields preserve complete ranking, ties, multiple tokens, folding and Unicode positions" =
+  let random = Stdlib.Random.State.make [| 632026 |] in
+  let alphabet = [| "a"; "B"; "m"; "o"; "d"; "9"; "_"; "-"; "界"; "é"; "É"; "\xff"; "\xe0"; "\n"; "\\" |] in
+  for _ = 1 to 48 do
+    let candidates = List.init 12 ~f:(fun i -> candidate (sprintf "dir%d/f%s.ml" (i % 3)
+      (String.concat (List.init (Stdlib.Random.State.int random 20) ~f:(fun _ ->
+        alphabet.(Stdlib.Random.State.int random (Array.length alphabet))))))) in
+    let prepared = Search.prepare candidates in
+    List.iter [ ""; " \t\n"; "m"; "MO"; "dir m"; "é"; "É"; "�"; "\\"; "9 ml"; "zz" ]
+      ~f:(fun query ->
+        [%test_eq: string]
+          (Sexp.to_string [%sexp (Search.rank ~query prepared : Model.Query_result.t list)])
+          (Sexp.to_string [%sexp (oracle query candidates : Model.Query_result.t list)]))
+  done
+;;
+
 let%expect_test "basename weighting, quality, directory tokens and stable duplicate ties" =
   check_order "model" [ "model/other.ml"; "src/model.ml"; "src/modular_entry_list.ml" ]
     [ "src/model.ml"; "src/modular_entry_list.ml"; "model/other.ml" ];

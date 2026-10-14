@@ -76,7 +76,7 @@ type t =
   ; block_insert : Block_insert.t option (* Only in Insert mode. *)
   }
 
-let create ?path ?(search_case = Search_case.Smart) ~cell_width text =
+let create ?path ?(search_case = Search_case.Smart) ?(history_limits = History.Limits.default) ~cell_width text =
   { text
   ; path
   ; mode = Normal
@@ -85,12 +85,12 @@ let create ?path ?(search_case = Search_case.Smart) ~cell_width text =
   ; saved_revision = 0
   ; cursor = 0
   ; preferred_column =
-      Cell_layout.column
-        (Cell_layout.glyphs ~width:cell_width (B.line_text text 0))
+      Cell_layout.Index.column
+        (B.line_layout text ~width:cell_width 0)
         ~pos:0
         ~tab_end:true
   ; cell_width
-  ; history = History.empty
+  ; history = History.create ~limits:history_limits ()
   ; unnamed_register = None
   ; message = None
   ; last_find = None
@@ -106,7 +106,7 @@ let text t = t.text
 let path t = t.path
 let with_path t path = { t with path = Some path }
 let rebase_text t ~saved ~text =
-  let fresh = create ?path:t.path ~search_case:t.search_case ~cell_width:t.cell_width text in
+  let fresh = create ?path:t.path ~search_case:t.search_case ~history_limits:(History.limits t.history) ~cell_width:t.cell_width text in
   { fresh with saved; revision = t.revision + 1; saved_revision = t.revision + 1
     ; unnamed_register = t.unnamed_register }
 ;;
@@ -124,13 +124,16 @@ let search_state t =
   then Option.map t.last_search ~f:(fun (query, _direction, whole_word, current) -> query, whole_word, case_sensitive t.search_case query, current)
   else None
 let cursor_line t = B.line_of_offset t.text t.cursor
-let cursor_column t = B.column_of_offset t.text t.cursor
+let cursor_column t =
+  let line = cursor_line t in
+  Cell_layout.Index.scalar_column (B.line_layout t.text ~width:t.cell_width line)
+    ~pos:(t.cursor - B.line_start t.text line)
 
 (* The display column of boundary [offset]. *)
 let display_column t offset ~tab_end =
   let line = B.line_of_offset t.text offset in
-  Cell_layout.column
-    (Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line))
+  Cell_layout.Index.column
+    (B.line_layout t.text ~width:t.cell_width line)
     ~pos:(offset - B.line_start t.text line)
     ~tab_end
 ;;
@@ -186,8 +189,8 @@ let display_position_of_offset t offset =
   else (
     let line = B.line_of_offset t.text offset in
     let pos = offset - B.line_start t.text line in
-    let glyphs = Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line) in
-    let col, _ = Cell_layout.cursor_span glyphs ~pos ~insertion:false in
+    let layout = B.line_layout t.text ~width:t.cell_width line in
+    let col, _ = Cell_layout.Index.cursor_span layout ~pos ~insertion:false in
     Ok (line + 1, col + 1))
 ;;
 
@@ -198,14 +201,13 @@ let go_to_display_position t ~line ~column =
   then Or_error.error_string "Problem location is outside the current document"
   else
     let line = line - 1 in
-    let glyphs = Cell_layout.glyphs ~width:t.cell_width (B.line_text t.text line) in
-    let width = Cell_layout.total_width glyphs in
-    if column - 1 > width
-    then Or_error.error_string "Problem column is outside the current line"
-    else
-      let pos = Option.value (Cell_layout.pos_of_column glyphs (column - 1))
-        ~default:(B.line_end t.text line - B.line_start t.text line) in
-      Ok (set_cursor t (B.line_start t.text line + pos))
+    let layout = B.line_layout t.text ~width:t.cell_width line in
+    match Cell_layout.Index.pos_of_column layout (column - 1) with
+    | Some pos -> Ok (set_cursor t (B.line_start t.text line + pos))
+    | None ->
+      if column - 1 > Cell_layout.Index.total_width layout
+      then Or_error.error_string "Problem column is outside the current line"
+      else Ok (set_cursor t (B.line_end t.text line))
 ;;
 
 let commit t = { t with history = History.commit t.history ~after:(snapshot t) }
@@ -272,13 +274,9 @@ let block t =
 
 (* Replace [len] bytes at [pos] with [s], which is valid text. *)
 let replace text ~pos ~len s =
-  let text = if len = 0 then text else B.delete text ~pos ~len in
-  if String.is_empty s
-  then text
-  else
-    B.insert text ~at:pos s
-    |> Result.map_error ~f:B.Invalid_text.to_string_hum
-    |> Result.ok_or_failwith
+  B.replace text ~pos ~len s
+  |> Result.map_error ~f:B.Invalid_text.to_string_hum
+  |> Result.ok_or_failwith
 ;;
 
 (* The register of a block, unless all its rows are empty. *)
@@ -1252,7 +1250,7 @@ let handle_outcome t (outcome : Effect.Outcome.t) =
          ; saved = text
          ; saved_revision = t.revision + 1
          ; revision = t.revision + 1
-         ; history = History.empty
+         ; history = History.create ~limits:(History.limits t.history) ()
          ; block_insert = None
          ; message = Some (Info (sprintf "Reloaded %s" path))
          }

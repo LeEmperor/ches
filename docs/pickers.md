@@ -16,7 +16,7 @@ opens/activates its session buffer and reveals the location. Existing `/`, `?`, 
 
 | Foundation | Search behavior | Acceptance tested |
 | --- | --- | --- |
-| File picker (phases 1–6) | Discover once per opening; yielded fuzzy filtering in the shared float, preferring basenames | Session open/activation after host release and UI installation; production frontend and terminal dirty revisit, stable scope and failed opens tested |
+| File picker (phases 1–6, performance slices 6b–6f) | Persistent sets/bounded additions; yielded fuzzy filtering preferring basenames; bounded cached reopen with fresh discovery validation | Session open/activation after host release and UI installation; production frontend and terminal dirty revisit, stable scope and failed opens tested |
 | Document lines (phase 7) | Snapshot current in-memory text, **including unsaved edits**, with numbered duplicate/empty lines | Validated current-document jump after capture release, viewport reveal; actual frontend and terminal smoke checked |
 | Project contents (phase 8) | Debounced literal search over **on-disk** bytes in shared float; excludes unsaved edits | Production session open/activation, exact raw-line/literal/range validation and display-cell jump after release; frontend and terminal dirty/stale navigation tested |
 
@@ -116,6 +116,19 @@ cleanup, not consumption of terminal status: hosts must still poll. Cancellation
 retains the provider's bounded last snapshot until refresh or provider disposal;
 closed sessions drop their results/cache. Do not retain historical snapshots.
 
+The file runtime can retain data-only validated snapshots across close/reopen:
+**two roots / 128 MiB conservative charge / 30-second TTL since validation**.
+Reopen resets to blank query/first selection and immediately shows cached rows,
+labelled **Loading / refreshing cached files**. Every hit starts fresh rg discovery;
+**Enter stays disabled until successful untruncated refresh and publication**.
+Unchanged sets reuse indices/preparation and bounded prior query entries. Changed
+sets prune removed/ignored names and rebuild in yielded turns. Failed/truncated
+refreshes show their fresh known subset but remain nonaccepting and evict the saved
+entry; close/reopen to retry. Cancelling refresh does not renew the old validation
+age. Runtime teardown clears retention. This cache excludes previews, dirty buffer
+text, UI/session state and subprocess resources; the usual existing-file/dirty-buffer
+acceptance gate still applies after refresh. See the [runtime contract](../file_picker/README.md#runtime-owned-reopen-cache-6f).
+
 File/content requests reject stale runs/roots (content also checks query). Line
 sessions capture document identity, revision and immutable text identity; changed
 documents invalidate them permanently, requiring reopen. Line acceptance checks
@@ -136,7 +149,18 @@ to refresh stale results. See [content policy](../content_picker/README.md#locat
 
 Work uses bounded record turns (suggested 128), not hard time bounds. Prepared
 arrays, maps, old/in-flight results, JSON decoding and rendering add memory beyond
-string caps. DP matching, GC and O(results) publication/navigation can be costly.
+string caps. File results now have budget-built chunked indices: counts/movement
+are constant time, result/ID access logarithmic, and rendering reads only visible
+results. Blank file queries skip fuzzy preparation and reuse their index on clear;
+first nonblank queries still pay compact shared preparation. File jobs compile
+queries once, reuse score scratch and reconstruct exact highlights only on result
+access, with a 128-row/256 KiB query-scoped alignment cache. Completed file queries
+have a four-entry, 96 MiB conservatively charged generation-scoped LRU. Exact
+queries and identical folded-token aliases reuse in one work turn; proven token
+extensions rescore complete cached survivors. Changed candidate sets drop the LRU;
+no stale/partial query is accepted or used for narrowing. ID lookup shares a snapshot
+ordinal index rather than rebuilding a string index per query. DP matching, GC, discovery snapshots
+and the line/content pickers' list paths can still be costly.
 The live host must yield and schedule work between input/redraws, neither drain
 inside key callbacks nor limit ranking to one turn per frame.
 

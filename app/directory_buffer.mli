@@ -11,6 +11,9 @@ end
 type fingerprint = int * int * Core_unix.file_kind * int64 * float * float
 val fingerprint : string -> fingerprint
 val same_identity : fingerprint -> fingerprint -> bool
+module Parsed_cache : sig
+  type t
+end
 type t =
   { id : Buffer_id.t
   ; path : string
@@ -23,6 +26,7 @@ type t =
   ; marks : Int.Set.t
   ; config : Config.t
   ; identity_scope : string
+  ; parsed_cache : Parsed_cache.t
   }
 val is_directory : string -> bool
 val load : ?previous:t -> ?config:Config.t -> id:Buffer_id.t -> path:string -> cell_width:Cell_layout.Width.t -> keymap_config:Ches_input.Keymap.Config.t -> unit -> t Or_error.t
@@ -31,9 +35,13 @@ val select : t -> string -> t
     proposed destination. Invalid snapshots/fresh/blank rows resolve to None. *)
 val selected : t -> Directory_identity.Entry.t option
 val is_dirty : t -> bool
+(** Memoized success or error for the exact immutable text (including protected
+    identities), baseline and entries. Safe across retained session snapshots. *)
 val rows : t -> Directory_identity.Row.t list Or_error.t
 (** All-or-nothing pure create/rename/delete/copy plan; IO checks remain in apply. *)
 val plan : t -> Directory_plan.operation list Or_error.t
+(** Constant-time line lookup after the first snapshot parse. Blank rows and
+    invalid listings return [None]; backing ID lookup is logarithmic. *)
 val row_at : t -> int -> Directory_identity.Row.t option
 val selected_row : t -> Directory_identity.Row.t option
 val selection_rows : t -> Directory_identity.Row.t list

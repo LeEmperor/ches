@@ -660,6 +660,46 @@ let finish t (path, text, revision) result =
   Editor.handle_outcome t (Write_file_finished { path; text; revision; result })
 ;;
 
+let%test_unit "bounded history preserves grouping, saved state, cursor/selection and rebase limits" =
+  let dispatch t commands = List.fold commands ~init:t ~f:(fun t c -> fst (Editor.dispatch t c)) in
+  let t = Editor.create ~path:"f.txt" ~history_limits:{ max_steps = 1; max_bytes = 0 }
+      ~cell_width:Cell_width.f (of_string_exn "abc") in
+  let t = dispatch t [insert; Insert_text "X"; Insert_text "Y"; Exit_insert] in
+  let t, write = save t in
+  let t = finish t write (Ok ()) in
+  assert (not (Editor.is_dirty t));
+  let saved = Editor.text t in
+  let t = dispatch t [ Enter_visual `Characterwise; move Right; Visual_delete ] in
+  assert (Option.is_none (Editor.selection t));
+  assert (Editor.is_dirty t);
+  let edited = Editor.text t and cursor = Editor.cursor t in
+  let t = dispatch t [Undo] in
+  assert (Text_buffer.equal (Editor.text t) saved);
+  assert (not (Editor.is_dirty t));
+  [%test_result: int] (Editor.cursor t) ~expect:2;
+  assert (Option.is_none (Editor.selection t));
+  let oldest = Editor.text t in
+  let t = dispatch t [Undo] in
+  assert (Text_buffer.equal (Editor.text t) oldest);
+  let t = dispatch t [Redo] in
+  assert (Text_buffer.equal (Editor.text t) edited);
+  [%test_result: int] (Editor.cursor t) ~expect:cursor;
+  assert (Editor.is_dirty t);
+  (* Active typing is one complete oversized step when Undo closes it. *)
+  let t = dispatch t [insert; Insert_text "p"; Insert_text "q"; Undo] in
+  assert (Text_buffer.equal (Editor.text t) edited);
+  let t = dispatch t [Redo] in
+  assert (Editor.is_dirty t);
+  let base = of_string_exn "abcdef" in
+  let t = Editor.rebase_text t ~saved:base ~text:base in
+  let t = dispatch t [Delete_char; Delete_char; Undo; Undo] in
+  [%test_result: string] (Text_buffer.to_string (Editor.text t)) ~expect:"bcdef";
+  assert (Editor.is_dirty t);
+  let t = Editor.handle_outcome t (Read_file_finished { path = "f.txt"; result = Ok base }) in
+  let t = dispatch t [Delete_char; Delete_char; Undo; Undo] in
+  [%test_result: string] (Text_buffer.to_string (Editor.text t)) ~expect:"bcdef"
+;;
+
 let%expect_test "successful save marks the text saved" =
   let t, write = save (run (create "abc") [ Delete_char ]) in
   show (finish t write (Ok ()));

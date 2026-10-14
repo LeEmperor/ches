@@ -7,13 +7,21 @@
       [initialized], and reports [Started]. A program missing from PATH reports
       [Unavailable] (history only). A server that exits, crashes, fails the handshake, or
       breaks the protocol reports [Stopped], with its last line of stderr in the reason.
-    - [Document_changed] opens the document ([didOpen]) once the session is
-      initialized, then sends each new whole text ([didChange], full sync), versioned
-      with Ches's revision. [Document_saved] sends [didSave].
+    - [Document_changed] opens each document ([didOpen]) once the session is
+       initialized, using the newest text. Later edits replace one pending snapshot
+       per document and schedule a flush 25 ms after its first edit (continuous
+       typing does not postpone it). Diffing and serialization happen only at flush.
+       Negotiated Full sends whole text; Incremental sends one encompassing UTF-safe
+       replacement against the last sent text, using the negotiated position units.
+       Invalid UTF-8 or an unknown position encoding falls back to a full event.
+       Absent/None change support sends no changes. Wire versions are monotonic;
+       only sent versions enter the bounded revision/text history. [Document_saved]
+       flushes first, then sends [didSave] (including text if requested); saves before
+       initialization are sent after the newest open. Close/restart/stop cancel timers.
     - [Restart] ends the session and starts a new one, which reopens the newest text.
       [Kill] is ignored. Nothing restarts automatically.
     - Each [publishDiagnostics] becomes a [Diagnostics] snapshot for {!Config.source}:
-      the open document under Ches's own resource name and the server's version; any
+      an open document under Ches's own resource name and mapped revision; any
       other file unversioned, by its path relative to the working directory (absolute
       when outside it).
     - Stopping (Ches quitting) sends [shutdown] and [exit], killing the server if it is
@@ -33,7 +41,7 @@ module Config : sig
     ; args : string list
     ; applies_to : string -> bool (** Whether a document, by its path, is served. *)
     ; language_id : string -> string (** The document's [languageId], from its path. *)
-    ; root_markers : string list (** For {!Workspace_root.find_first}, in priority. *)
+    ; root_markers : string list (** For {!Workspace_root.find_nearest}. *)
     ; shutdown_grace : Time_ns.Span.t
     }
 
@@ -46,13 +54,13 @@ module Config : sig
 
   (** [slang-server] with no arguments, for [.sv], [.svh], [.v], and [.vh] files.
       SystemVerilog files use [systemverilog], Verilog files use [verilog]. The root
-      markers are [.slang] then [.git], with a 1 s shutdown grace. *)
+      markers are [.slang] and [.git], with a 1 s shutdown grace. *)
   val slang_server : t
 
   (** Selects a built-in server for [path], or [None] for unsupported files. *)
   val for_path : string -> t option
 
-  (** The workspace root for [path]: by [root_markers], else [path]'s directory. *)
+  (** Nearest directory containing any [root_markers], else [path]'s directory. *)
   val root : t -> string -> string
 end
 
@@ -62,6 +70,24 @@ val start
   :  ?config:Config.t
   -> cell_width:Ches_core.Cell_layout.Width.t
   -> root:string
+  -> unit
+  -> Source.t
+
+(** Owns one process per root and effective configuration, and routes document
+    diagnostics as [Owned] events. Closing the last resource stops its process.
+    Source names have stable pool IDs, so lifecycle state is isolated across pools;
+    [Owned] carries the separate document generation.
+    Symlink paths remain distinct URIs; a second resource normalizing to an already
+    open lexical URI is explicitly reported unavailable. Configuration callbacks
+    must reuse equivalent function values to share (closures are compared physically).
+     Unversioned diagnostics for an open URI use its current text and ownership,
+     including after reopen. They carry no revision or lifetime information: a late
+     old-lifetime unversioned message is indistinguishable from fresh output and
+     may temporarily replace current findings. Closed-URI tombstones reject output;
+     versioned histories and session/document generations remain isolated. *)
+val start_workspace
+  :  ?config_for_path:(string -> Config.t option)
+  -> cell_width:Ches_core.Cell_layout.Width.t
   -> unit
   -> Source.t
 

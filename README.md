@@ -181,9 +181,19 @@ acceptance remain separate and unperformed.
 - **Saving:** writes are synchronous and in place, without atomic replacement
   or `fsync`. A failed write can leave a truncated file. External file changes
   are not detected; `:e!` explicitly discards changes and reloads the file.
-- **Scale:** edits copy the document string, undo history retains whole-text
-  snapshots without a limit, and highlighting queries the full syntax tree
-  after each change. Large files and long sessions can be expensive.
+- **Scale:** edits still copy the whole immutable document string (one exact-size
+  destination with blits). Line starts update from the edited range and inserted
+  text, without rescanning unchanged document bytes; equal-length/no-newline edits
+  reuse the array. Highlighted files still query the full syntax tree after each
+  change; files above 64 KiB, 2,000 lines, or 16,000 captures fall back to plain text
+  to limit synchronous work. See the [editor reference](docs/editor_reference.md)
+  for fallback and recovery rules.
+  Bounded undo is complete: undo retains whole-text snapshots,
+  bounded per buffer to 1,000 complete transactions / a conservative 64 MiB soft
+  charge budget; the newest complete transaction always survives even if oversized.
+  Limits are configured in code (`History.Limits`, `Editor.create ~history_limits`).
+  This bounds history retention estimates, not total RSS; active/saved text and
+  bounded per-snapshot layout caches are additional. Large-file edits remain costly.
 - **Unicode and display:** movement and deletion use code points rather than
   grapheme clusters. CRLF is unsupported, and long lines scroll horizontally
   rather than wrap.
@@ -192,9 +202,10 @@ acceptance remain separate and unperformed.
   watchers or crash-persistent intent. Partial apply can leave staging names;
   retries retain unresolved intent only within the running session. Copies preserve
   rwx bits, not ownership/timestamps/ACLs/xattrs or hard-link relationships.
-- **Session scale:** visited directories are retained without eviction; diagnostic
-  drivers use one runtime (potentially one language-server process) per file.
-  No session persistence or multiple editor groups.
+- **Session scale:** visited directories are retained without eviction. Language
+  servers are shared by workspace root and configuration; document changes are
+  coalesced and use incremental synchronization when supported. The synthetic
+  checker retains per-file runtimes. No session persistence or multiple editor groups.
 - **Editing and tooling:** literal search, an unnamed
   register, and a limited `:` prompt. Language-server integration currently
   consumes diagnostics only.
@@ -207,6 +218,8 @@ acceptance remain separate and unperformed.
 - [Workspace and tile design](docs/workspace_tiles_design.md)
 - [Rendering design](docs/rendering_design.md)
 - [Syntax-highlighting latency](docs/syntax_highlighting_latency_plan.md)
+- [Long-line rendering](docs/long_line_rendering.md)
+- [Picker performance and backend comparison](docs/picker_performance_recommendation.md)
 - [AI integration design](docs/ai_integration_design.md)
 - [Deferred workspace work](docs/backlog/README.md)
 - [Archived implementation plans](docs/archive/)

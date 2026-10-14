@@ -1,0 +1,11 @@
+(executable
+ (name probe)
+ (modules probe)
+ (libraries ches_file_picker ches_palette ches_screen core core_unix)
+ (preprocess (pps ppx_jane)))
+
+(executable
+ (name host_probe)
+ (modules host_probe)
+ (libraries ches_file_picker_host ches_file_picker ches_screen ches_app ches_core ches_input core core_unix async)
+ (preprocess (pps ppx_jane)))

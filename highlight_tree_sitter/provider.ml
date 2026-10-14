@@ -10,6 +10,9 @@ module Failure = struct
     | Key_mismatch
     | Invalid_utf8
     | Source_too_large
+    | Source_byte_limit of int
+    | Source_line_limit of int
+    | Capture_limit of int
   [@@deriving sexp_of, equal]
 end
 
@@ -18,7 +21,11 @@ module Status = struct
   [@@deriving sexp_of, equal]
 end
 
-type handles = { parser : Tree_sitter.Parser.t; query : Tree_sitter.Query.t }
+type handles =
+  { parser : Tree_sitter.Parser.t
+  ; query : Tree_sitter.Query.t
+  ; categories : Category.t option array
+  }
 type state = Ready of handles | Unavailable of Failure.t
 type retained = { key : Snapshot.Key.t; source : string; tree : Tree_sitter.Tree.t }
 type timings = { preparation : float; parsing : float; querying : float; normalization : float }
@@ -31,6 +38,7 @@ type t =
   ; mutable retained : retained option
   ; mutable incremental_count : int
   ; mutable timings : timings option
+  ; mutable capture_count : int
   }
 type result = { snapshot : Snapshot.t; status : Status.t }
 
@@ -69,7 +77,10 @@ let initialize language query_source =
          if not (Array.is_empty (Tree_sitter.Query.predicates_for_pattern query pattern))
          then failwith "highlight query predicates are unsupported"
        done;
-       Ready { parser = Tree_sitter.Parser.create grammar; query }
+        let categories = Array.init (Tree_sitter.Query.capture_count query) ~f:(fun id ->
+          Option.bind (Tree_sitter.Query.capture_name_for_id query id) ~f:Category.of_capture)
+        in
+        Ready { parser = Tree_sitter.Parser.create grammar; query; categories }
      with
      | Stdlib.Failure message | Invalid_argument message ->
        Unavailable (Initialization message))
@@ -79,7 +90,7 @@ let create ~language =
   { language; configuration = configuration_for_language language
    ; state = initialize language (query_source language)
    ; fail_next_parse = false; parse_count = 0; retained = None
-   ; incremental_count = 0; timings = None
+    ; incremental_count = 0; timings = None; capture_count = 0
   }
 ;;
 let key t ~document ~revision =
@@ -89,24 +100,24 @@ let close t = t.state <- Unavailable Closed; t.retained <- None; t.timings <- No
 let parse_count t = t.parse_count
 let incremental_count t = t.incremental_count
 let last_timings t = t.timings
+let last_capture_count t = t.capture_count
 
 let supported_length length =
   length >= 0 && Int64.(of_int length <= 0xffff_ffffL)
 ;;
 
-let capture_ranges query root =
+let capture_ranges ?max_captures query categories root =
   let cursor = Tree_sitter.Query_cursor.create () in
   Tree_sitter.Query_cursor.exec cursor query root;
-  let rec loop acc =
+  let rec loop count acc =
     (* Passing query on every cursor call keeps it reachable for the entire scan.
        The binding cursor retains the tree but does not retain the query. *)
     match Tree_sitter.Query_cursor.next_capture cursor query with
-    | None -> List.rev acc
+    | None -> Ok (List.rev acc), count
+    | Some _ when Option.exists max_captures ~f:(fun limit -> count >= limit) ->
+      Error (Failure.Capture_limit (Option.value_exn max_captures)), count + 1
     | Some capture ->
-      let category =
-        Option.bind (Tree_sitter.Query.capture_name_for_id query capture.capture_index)
-          ~f:Category.of_capture
-      in
+      let category = categories.(capture.capture_index) in
       let acc =
         match category with
         | None -> acc
@@ -116,13 +127,16 @@ let capture_ranges query root =
           ; category
           } :: acc
       in
-      loop acc
+      loop (count + 1) acc
   in
-  loop []
+  loop 0 []
 ;;
 
-let highlight_impl ~incremental t ~key ~source =
+let highlight_impl ~incremental ?max_captures t ~key ~source =
+  Option.iter max_captures ~f:(fun limit ->
+    if limit < 0 then invalid_arg "Provider.highlight: negative capture limit");
   t.timings <- None;
+  t.capture_count <- 0;
   let plain failure =
     t.retained <- None;
     (* Empty spans need no source validation. This also safely handles invalid
@@ -137,7 +151,7 @@ let highlight_impl ~incremental t ~key ~source =
   else
     match t.state with
     | Unavailable failure -> plain failure
-    | Ready { parser; query } ->
+    | Ready { parser; query; categories } ->
       (try
          if t.fail_next_parse then (
            t.fail_next_parse <- false;
@@ -169,16 +183,20 @@ let highlight_impl ~incremental t ~key ~source =
           if Option.is_some old then t.incremental_count <- t.incremental_count + 1;
           let tree = Tree_sitter.Parser.parse_string ?old parser source in
           let parsed = Stdlib.Sys.time () in
-         let root = Tree_sitter.Tree.root_node tree in
-         let syntax_errors = Tree_sitter.Node.has_error root in
-          let ranges = capture_ranges query root in
-          let queried = Stdlib.Sys.time () in
-          let snapshot = Snapshot.create ~key ~source ranges in
-          let normalized = Stdlib.Sys.time () in
-          t.retained <- (if incremental then Some { key; source; tree } else None);
-          t.timings <- Some { preparation = prepared -. started; parsing = parsed -. prepared
-                           ; querying = queried -. parsed; normalization = normalized -. queried };
-         { snapshot; status = Highlighted { syntax_errors } }
+           let root = Tree_sitter.Tree.root_node tree in
+           let syntax_errors = Tree_sitter.Node.has_error root in
+           let ranges, count = capture_ranges ?max_captures query categories root in
+           t.capture_count <- count;
+           match ranges with
+           | Error failure -> plain failure
+           | Ok ranges ->
+             let queried = Stdlib.Sys.time () in
+             let snapshot = Snapshot.create ~key ~source ranges in
+             let normalized = Stdlib.Sys.time () in
+             t.retained <- (if incremental then Some { key; source; tree } else None);
+             t.timings <- Some { preparation = prepared -. started; parsing = parsed -. prepared
+                              ; querying = queried -. parsed; normalization = normalized -. queried };
+             { snapshot; status = Highlighted { syntax_errors } }
        with
        | Stdlib.Failure message | Invalid_argument message ->
          let failure = Failure.Parsing message in
@@ -193,7 +211,7 @@ module For_testing = struct
   let create_with_query ~language ~query_source =
     { language; configuration = "test-query"; state = initialize language query_source
      ; fail_next_parse = false; parse_count = 0; retained = None
-     ; incremental_count = 0; timings = None
+     ; incremental_count = 0; timings = None; capture_count = 0
     }
   ;;
   let fail_next_parse t = t.fail_next_parse <- true

@@ -79,6 +79,26 @@ val render
   -> height:int
   -> t
 
+(** Explicit workspace cache. Animation and file work with unchanged explicit
+     visual stamps can retain rows/base through [apply_inputs]. All other actions,
+     including empty synchronization turns, invalidate. Dimensions and file content
+     stamps are checked independently; mutable picker equality is never a cache key. [draw_base] is
+    called once per miss, allowing the frontend to retain its base terminal image.
+    Hits only rasterize smear and select the already computed settled cursor. *)
+module Cache : sig
+  type frame = t
+  type 'a t
+  val create : unit -> 'a t
+  val invalidate : 'a t -> unit
+  (** Shared production transition boundary: only already-sized animation/pure file
+      work may retain rows/base, after explicit session/content/preview stamps match.
+      All other inputs invalidate. Effects/after_step still run on work turns. *)
+  val apply_inputs : ?after_step:(Ui_state.t -> Ui_state.t) -> 'a t -> Ui_state.t
+    -> width:int -> height:int -> Ui_state.Input.t list -> Ui_state.t * Ches_app.Controller.Status.t
+  val get : 'a t -> Ui_state.t -> width:int -> height:int
+    -> draw_base:(frame -> 'a) -> frame * 'a
+end
+
 (** The screen as text, one line per row, each ending in [|] to show the width, then
     the cursor. For tests. *)
 val to_string : t -> string

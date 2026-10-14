@@ -42,6 +42,7 @@ module Input : sig
         resource) until Insert ends; started/stopped apply at once. Never reaches the
         editor. *)
     | File_picker_snapshot of Ches_file_picker.Model.Discovery.t
+    | File_picker_update of Ches_file_picker.Model.Discovery.Update.t
     | File_preview of Ches_file_preview_model.Model.snapshot
     | File_picker_work of Ches_file_picker.Model.Discovery.request
     | File_picker_accept of Ches_tile.View_id.t Ches_file_picker.Model.Request.t
@@ -53,6 +54,7 @@ module Input : sig
 end
 
 type t
+val file_picker_visible_stamp : t -> (int * int * int) option
 
 val create
   :  ?prefs:Geometry.Prefs.t
@@ -346,6 +348,9 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     Status commands in zen update saved requests without leaving zen. Document reset
     leaves workspace intent alone.
 
+    Animation ticks change only animation and its clock when dimensions match the
+    last fit/resize; they do not synchronize mutable pickers or refit panes/scroll.
+    A tick at new dimensions still reconciles and fits the workspace.
     The scroll is then fitted to keep the cursor visible (see {!fitted_scroll}). Once an
     input returns [Exit], no later input is applied (see {!exited}). *)
 val apply : t -> width:int -> height:int -> Input.t -> t * Ches_app.Controller.Status.t

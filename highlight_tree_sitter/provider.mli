@@ -15,6 +15,9 @@ module Failure : sig
     | Key_mismatch
     | Invalid_utf8
     | Source_too_large
+    | Source_byte_limit of int
+    | Source_line_limit of int
+    | Capture_limit of int
   [@@deriving sexp_of, equal]
 end
 
@@ -40,7 +43,13 @@ val key : t -> document:Snapshot.Document_id.t -> revision:int -> Snapshot.Key.t
     never a previous result. Expected binding exceptions are caught; process-fatal
     exceptions such as out-of-memory are not hidden. A parse/query failure disables
     the session; recreate it for an explicit retry. No logging or editor feedback. *)
-val highlight : t -> key:Snapshot.Key.t -> source:string -> result
+(** [max_captures] counts ALL cursor results (including unknown/internal and
+    duplicate captures). On the first excess result collection stops, retained
+    state is discarded and the CURRENT snapshot is empty; never partial spans.
+    Exactly the limit is allowed. Omitted means unrestricted, for stage probes
+    and differential references. This bounds collection/normalization, not time
+    inside parsing or a single native cursor call. *)
+val highlight : ?max_captures:int -> t -> key:Snapshot.Key.t -> source:string -> result
 
 (** Retains the last successful source/tree privately. For the same document,
     derives one encompassing UTF-8-safe edit, applies it to a COPY of the old tree,
@@ -48,7 +57,7 @@ val highlight : t -> key:Snapshot.Key.t -> source:string -> result
     First calls/document changes parse fresh; failures discard retained state.
     [highlight] remains the fresh-parse reference and discards retained state.
     Reload/configuration resets should close/recreate the session. *)
-val highlight_incremental : t -> key:Snapshot.Key.t -> source:string -> result
+val highlight_incremental : ?max_captures:int -> t -> key:Snapshot.Key.t -> source:string -> result
 
 (** Drop owned parser/query references. Idempotent; closed sessions return Plain.
     The binding has no explicit parser/query/tree disposal: native release relies
@@ -65,6 +74,10 @@ val incremental_count : t -> int
     includes diff/copy/edit; querying includes capture extraction. Observational. *)
 type timings = { preparation : float; parsing : float; querying : float; normalization : float }
 val last_timings : t -> timings option
+
+(** Cursor results consumed by the last call, including the single excess result
+    on capture fallback. Zero if no querying occurred. Observational. *)
+val last_capture_count : t -> int
 
 module For_testing : sig
   (** Deliberately invalid/missing/predicate queries exercise initialization fallback.

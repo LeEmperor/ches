@@ -16,3 +16,15 @@ let find_first ~markers path =
 ;;
 
 let find = find_first ~markers:[ "dune-project" ]
+
+let find_nearest ~markers path =
+  let directory = Filename.dirname path in
+  let start = try Filename_unix.realpath directory with _ -> directory in
+  let rec up dir =
+    if List.exists markers ~f:(fun marker -> Sys_unix.file_exists_exn (Filename.concat dir marker))
+    then dir
+    else let parent = Filename.dirname dir in
+      if String.equal parent dir then start else up parent
+  in
+  up start
+;;

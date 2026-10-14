@@ -1,4 +1,6 @@
-(* Explicit reproducible CPU-stage benchmark. Never run by editor input/tests.
+(* Unrestricted provider CPU-stage benchmark: intentionally omit max_captures,
+   retaining large-source coverage independently of the controller policy.
+   Never run by editor input/tests.
    Automatic GC is included; forced GC only separates benchmark modes. *)
 open! Core
 open Ches_highlight

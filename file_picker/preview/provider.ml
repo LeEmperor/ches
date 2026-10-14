@@ -78,10 +78,8 @@ let select ?(refresh = false) t ~session candidate =
 ;;
 let follow ?refresh t model =
   match Option.bind model ~f:(fun model ->
-    Option.bind (Ches_file_picker.Model.selected model) ~f:(fun selected ->
-      Option.map (List.find (Ches_file_picker.Model.results model) ~f:(fun result ->
-        Candidate.Id.equal (Candidate.id result.candidate) selected)) ~f:(fun result ->
-        (Ches_file_picker.Model.discovery model).request, result.candidate))) with
+    Option.map (Ches_file_picker.Model.selected_candidate model) ~f:(fun candidate ->
+      Ches_file_picker.Model.discovery_request model, candidate)) with
   | None -> if Option.is_some t.snapshot then clear t; None
   | Some (session, candidate) -> Some (select ?refresh t ~session candidate)
 ;;

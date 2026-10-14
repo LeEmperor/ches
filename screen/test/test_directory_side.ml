@@ -27,6 +27,29 @@ let fixture f =
 
 let create root = Ui_state.create ~tiles_visible:false
   (Startup.open_path ~cell_width:Cell_map.width root |> Or_error.ok_exn)
+
+let%test_unit "animation cache preserves side focus, floats, tabs and size changes" =
+  fixture (fun root ->
+    let cache = Frame.Cache.create () in
+    let builds = ref 0 in
+    let get ui =
+      let frame, _ = Frame.Cache.get cache ui ~width ~height
+          ~draw_base:(fun _ -> incr builds) in
+      assert (Sexp.equal (Frame.sexp_of_t frame)
+        (Frame.sexp_of_t (Frame.render ui ~width ~height))) in
+    let ui = ref (create root) in
+    List.iter [ " ds<CR> vsll"; " dfj"; " cc"; "<Esc>"; "<CR>"; " bp"; " d+" ]
+      ~f:(fun keys ->
+        Frame.Cache.invalidate cache;
+        ui := run !ui keys;
+        get !ui;
+        for i = 1 to 100 do
+          ui := Helpers.run ~width ~height !ui [ Test_animation_cache.tick i ];
+          get !ui
+        done);
+    assert (!builds = 7);
+    Session.dispose (Ui_state.session !ui))
+;;
 let assert_frame ui ~width ~height =
   let frame = Frame.render ui ~width ~height in
   assert (List.length frame.rows = Int.max 0 height);

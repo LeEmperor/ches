@@ -49,22 +49,40 @@ let validate s : (unit, Invalid_text.t) Result.t =
   loop 0
 ;;
 
-(* [line_starts.(i)] is the offset where line [i] begins, so [line_starts.(0) = 0] and
-   the array length is the line count. Rebuilt on every edit, which is O(n) like the
-   string copy itself. *)
+module For_testing = struct
+  type work =
+    { mutable full_scan_bytes : int
+    ; mutable inserted_scan_bytes : int
+    ; mutable destination_bytes : int
+    ; mutable destinations : int
+    }
+  let active = ref None
+  let record f = Option.iter !active ~f
+  let measure f =
+    let work = { full_scan_bytes = 0; inserted_scan_bytes = 0; destination_bytes = 0; destinations = 0 } in
+    let previous = !active in
+    active := Some work;
+    Exn.protect ~f:(fun () -> f (), work) ~finally:(fun () -> active := previous)
+  ;;
+end
+
+(* Immutable starts, updated from the replaced range and inserted bytes. *)
 type t =
   { text : string
   ; line_starts : int array
   ; identity_scope : string option
   ; identities : (int * string) list
+  ; identity_bytes : int
+  ; mutable layouts : (int * Cell_layout.Width.t * Cell_layout.Index.t) list
   }
 
 let sexp_of_t t = [%sexp (t.text : string)]
-let equal t1 t2 = String.equal t1.text t2.text
+let equal t1 t2 = phys_equal t1 t2 || ((phys_equal t1.text t2.text || String.equal t1.text t2.text)
   && Option.equal String.equal t1.identity_scope t2.identity_scope
-  && [%equal: (int * string) list] t1.identities t2.identities
+   && (phys_equal t1.identities t2.identities || [%equal: (int * string) list] t1.identities t2.identities))
 
 let compute_line_starts text =
+  For_testing.record (fun w -> w.full_scan_bytes <- w.full_scan_bytes + 2 * String.length text);
   let line_starts = Array.create ~len:(1 + String.count text ~f:(Char.equal '\n')) 0 in
   let next_line = ref 1 in
   String.iteri text ~f:(fun i c ->
@@ -76,7 +94,7 @@ let compute_line_starts text =
 ;;
 
 (* Only for text already known to be valid. *)
-let of_valid_string text = { text; line_starts = compute_line_starts text; identity_scope = None; identities = [] }
+let of_valid_string text = { text; line_starts = compute_line_starts text; identity_scope = None; identities = []; identity_bytes = 0; layouts = [] }
 let normalize_identities t =
   let line_start offset =
     let rec search lo hi =
@@ -90,7 +108,11 @@ let normalize_identities t =
   let identities = List.map t.identities ~f:(fun (offset, token) -> line_start offset, token)
     |> List.sort ~compare:(fun (offset, token) (offset', token') ->
       match Int.compare offset offset' with 0 -> String.compare token token' | order -> order) in
-  { t with identities }
+  let identity_bytes =
+    Option.value_map t.identity_scope ~default:0 ~f:(fun s -> 24 + String.length s)
+    + List.fold identities ~init:0 ~f:(fun bytes (_, token) -> bytes + 72 + String.length token)
+  in
+  { t with identities; identity_bytes }
 ;;
 let identity_scope t = t.identity_scope
 let identities t = t.identities
@@ -99,6 +121,7 @@ let empty = of_valid_string ""
 let of_string text = Result.map (validate text) ~f:(fun () -> of_valid_string text)
 let to_string t = t.text
 let length t = String.length t.text
+let retained_bytes t = 128 + String.length t.text + (8 * Array.length t.line_starts) + t.identity_bytes
 let is_continuation_byte c = Char.to_int c land 0xC0 = 0x80
 
 let is_boundary t offset =
@@ -132,37 +155,81 @@ let check_range t ~fn ~pos ~len =
   check_boundary t ~fn (pos + len)
 ;;
 
-let insert ?(identities = []) ?(anchor_affinity = `Right) t ~at s =
-  check_boundary t ~fn:"insert" at;
-  Result.map (validate s) ~f:(fun () ->
-    if String.is_empty s
-    then t
-    else
-      let result = of_valid_string
-        (String.concat [ String.prefix t.text at; s; String.drop_prefix t.text at ]) in
-      let crosses_line = String.contains s '\n' in
-      { result with identity_scope = t.identity_scope
-        ; identities = List.map t.identities ~f:(fun (pos, token) ->
-             (if pos > at || (pos = at && crosses_line && Poly.equal anchor_affinity `Right)
-              then pos + String.length s else pos), token)
-            @ List.map identities ~f:(fun (pos, token) -> at + pos, token) }
-      |> normalize_identities)
+let line_index t offset =
+  let rec search lo hi =
+    if lo = hi then lo else
+      let mid = (lo + hi + 1) / 2 in
+      if t.line_starts.(mid) <= offset then search mid hi else search lo (mid - 1)
+  in
+  search 0 (Array.length t.line_starts - 1)
 ;;
 
-let delete ?(linewise = false) ?(preserve_identities = false) t ~pos ~len =
-  check_range t ~fn:"delete" ~pos ~len;
-  if len = 0
-  then if linewise then { t with identities = List.filter t.identities ~f:(fun (anchor, _) -> anchor <> pos) } else t
-  else
-    let result = of_valid_string (String.prefix t.text pos ^ String.drop_prefix t.text (pos + len)) in
+let replace_valid ?(identities = []) ?(anchor_affinity = `Right)
+    ?(linewise = false) ?(preserve_identities = false) t ~pos ~len s =
+  let inserted = String.length s in
+  if len = 0 && inserted = 0
+  then if linewise then normalize_identities { t with identities = List.filter t.identities ~f:(fun (anchor, _) -> anchor <> pos) } else t
+  else (
     let stop = pos + len in
-    { result with identity_scope = t.identity_scope
-      ; identities = List.filter_map t.identities ~f:(fun (anchor, token) ->
-          let line_end = String.index_from t.text anchor '\n' |> Option.value ~default:(length t) in
-          if not preserve_identities && anchor >= pos && anchor < stop && (linewise || line_end < stop)
-          then None
-          else Some ((if anchor >= stop then anchor - len else if anchor >= pos then pos else anchor), token)) }
-    |> normalize_identities
+    if inserted > Sys.max_string_length - (length t - len)
+    then invalid_arg "Text_buffer.replace: result is too large";
+    let first = line_index t pos and last = line_index t stop in
+    let added = String.count s ~f:(Char.equal '\n') in
+    For_testing.record (fun w -> w.inserted_scan_bytes <- w.inserted_scan_bytes + inserted);
+    let delta = inserted - len in
+    let line_starts =
+      if delta = 0 && first = last && added = 0 then t.line_starts
+      else (
+        let starts = Array.create ~len:(Array.length t.line_starts - (last - first) + added) 0 in
+        Array.blit ~src:t.line_starts ~src_pos:0 ~dst:starts ~dst_pos:0 ~len:(first + 1);
+        let next = ref (first + 1) in
+        For_testing.record (fun w -> w.inserted_scan_bytes <- w.inserted_scan_bytes + inserted);
+        String.iteri s ~f:(fun i c -> if Char.equal c '\n' then (starts.(!next) <- pos + i + 1; incr next));
+        for i = last + 1 to Array.length t.line_starts - 1 do
+          starts.(!next) <- t.line_starts.(i) + delta;
+          incr next
+        done;
+        starts)
+    in
+    let size = length t + delta in
+    let dst = Stdlib.Bytes.create size in
+    For_testing.record (fun w -> w.destinations <- w.destinations + 1; w.destination_bytes <- w.destination_bytes + size);
+    Stdlib.Bytes.blit_string t.text 0 dst 0 pos;
+    Stdlib.Bytes.blit_string s 0 dst pos inserted;
+    Stdlib.Bytes.blit_string t.text stop dst (pos + inserted) (length t - stop);
+    let text = Stdlib.Bytes.unsafe_to_string dst in
+    let existing = List.filter_map t.identities ~f:(fun (anchor, token) ->
+      let line = line_index t anchor in
+      let line_end = if line + 1 = Array.length t.line_starts then length t else t.line_starts.(line + 1) - 1 in
+      if (len > 0 && not preserve_identities && anchor >= pos && anchor < stop && (linewise || line_end < stop))
+         || (len = 0 && linewise && anchor = pos)
+      then None
+      else (
+        (* Normalize in the deleted document before applying insertion affinity. *)
+        let anchor = if len > 0 && anchor >= pos && anchor <= stop then t.line_starts.(first)
+          else if anchor > stop then anchor - len else anchor in
+        let anchor = if anchor > pos || (anchor = pos && added > 0 && Poly.equal anchor_affinity `Right)
+          then anchor + inserted else anchor in
+        Some (anchor, token))) in
+    { text; line_starts; identity_scope = t.identity_scope
+    ; identities = existing @ (if inserted = 0 then [] else List.map identities ~f:(fun (offset, token) -> pos + offset, token))
+    ; identity_bytes = 0; layouts = [] }
+    |> normalize_identities)
+;;
+
+let replace ?identities ?anchor_affinity ?linewise ?preserve_identities t ~pos ~len s =
+  check_range t ~fn:"replace" ~pos ~len;
+  Result.map (validate s) ~f:(fun () -> replace_valid ?identities ?anchor_affinity ?linewise ?preserve_identities t ~pos ~len s)
+;;
+
+let insert ?identities ?anchor_affinity t ~at s =
+  check_boundary t ~fn:"insert" at;
+  Result.map (validate s) ~f:(fun () -> replace_valid ?identities ?anchor_affinity t ~pos:at ~len:0 s)
+;;
+
+let delete ?linewise ?preserve_identities t ~pos ~len =
+  check_range t ~fn:"delete" ~pos ~len;
+  replace_valid ?linewise ?preserve_identities t ~pos ~len ""
 ;;
 
 let slice t ~pos ~len =
@@ -196,6 +263,18 @@ let line_end t line =
 let line_text t line =
   let start = line_start t line in
   String.sub t.text ~pos:start ~len:(line_end t line - start)
+;;
+
+let line_layout t ~width line =
+  match List.find t.layouts ~f:(fun (l, w, _) -> l = line && phys_equal w width) with
+  | Some (_, _, layout) -> layout
+  | None ->
+    let layout = Cell_layout.Index.create ~width t.text
+      ~start:(line_start t line) ~stop:(line_end t line) in
+    (* Per immutable text snapshot: 64 lines/width identities, no global roots.
+       Edits construct a new buffer with an empty cache. *)
+    t.layouts <- (line, width, layout) :: List.take t.layouts 63;
+    layout
 ;;
 
 let line_of_offset t offset =
@@ -244,22 +323,18 @@ let uchar_at t offset =
   Stdlib.Uchar.utf_decode_uchar (Stdlib.String.get_utf_8_uchar t.text offset)
 ;;
 
-(* O(line length). A rope storing code-point counts could make these logarithmic. *)
+(* Scalar navigation also uses sparse checkpoints. This stable function is an
+   explicit separate width identity for callers without a frontend width. *)
+let scalar_width _ = 1
+
 let column_of_offset t offset =
-  let start = line_start t (line_of_offset t offset) in
-  let rec count i acc =
-    if i >= offset then acc else count (Option.value_exn (next_boundary t i)) (acc + 1)
-  in
-  count start 0
+  let line = line_of_offset t offset in
+  Cell_layout.Index.scalar_column (line_layout t ~width:scalar_width line)
+    ~pos:(offset - line_start t line)
 ;;
 
 let offset_of_column t ~line column =
   if column < 0 then invalid_argf "Text_buffer.offset_of_column: column %d < 0" column ();
-  let stop = line_end t line in
-  let rec walk i remaining =
-    if remaining = 0 || i >= stop
-    then i
-    else walk (Option.value_exn (next_boundary t i)) (remaining - 1)
-  in
-  walk (line_start t line) column
+  line_start t line + Cell_layout.Index.pos_of_scalar_column
+    (line_layout t ~width:scalar_width line) column
 ;;

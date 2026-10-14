@@ -33,7 +33,7 @@ let command =
        line, Ctrl-d/Ctrl-u half a screen with the cursor, zz/zt/zb put the cursor\n\
        line at the middle/top/bottom.\n\
        Space v c/h/l/H/L/-/+/r: toggle centering, move, resize, reset the layout;\n\
-        Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor;\n\
+         Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor (off by default; --smear opts in);\n\
         Space v t toggles status; Space v p h/l/k/j places it, p -/+ sizes it;\n\
          Space v z toggles zen; Space v e cycles retained problems; idle Escape acknowledges.\n\
          Space v b toggles the problems preview; Space v f filters workspace/current document;\n\
@@ -63,7 +63,9 @@ let command =
      and synthetic_checker = flag "--synthetic-checker" no_arg
        ~doc:" Run a synthetic diagnostic checker (ERROR/TODO lines) for manual review"
      and no_lsp = flag "--no-lsp" no_arg
-       ~doc:" Do not run a language server (ocamllsp or slang-server)"
+        ~doc:" Do not run a language server (ocamllsp or slang-server)"
+     and smear_enabled = flag "--smear" no_arg
+       ~doc:" Enable the animated smear cursor (default off; Space v s toggles)"
      and demo_report = flag "--demo-report" no_arg
        ~doc:" Install a static, error-free report view for manual tile testing"
      and buffer_presentation = flag "--buffers"
@@ -99,13 +101,12 @@ let command =
               if no_lsp && not synthetic_checker
               then None
               else
-                Some (Ches_source.Workspace.start ~create:(fun path ->
-                  if synthetic_checker then Some (Ches_source.Synthetic.start ~root:(Ches_source.Workspace_root.find path) ())
-                  else Option.map (Ches_source.Lsp_client.Config.for_path path) ~f:(fun lsp ->
-                    Ches_source.Lsp_client.start ~config:lsp ~cell_width:Ches_screen.Cell_map.width
-                      ~root:(Ches_source.Lsp_client.Config.root lsp path) ())) ())
+                 Some (if synthetic_checker then
+                   Ches_source.Workspace.start ~create:(fun path ->
+                     Some (Ches_source.Synthetic.start ~root:(Ches_source.Workspace_root.find path) ())) ()
+                 else Ches_source.Lsp_client.start_workspace ~cell_width:Ches_screen.Cell_map.width ())
            in
-           (match%bind Ches_ui.Editor_view.run ~buffer_presentation ?report ?source controller with
+            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~buffer_presentation ?report ?source controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

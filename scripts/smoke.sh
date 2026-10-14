@@ -3,7 +3,7 @@
 # reaches the screen, the cursor, the files written, and the terminal state left for
 # the shell. See README.md, "Terminal smoke test".
 #
-# Usage: scripts/smoke.sh [--palette-only|--line-picker-only] [PATH-TO-CHES]
+# Usage: scripts/smoke.sh [--palette-only|--line-picker-only|--lsp-only] [PATH-TO-CHES]
 #        (default: _build/default/bin/ches.exe)
 #
 # Needs tmux (tested with 3.4) and a UTF-8 locale. Run `dune build` first. It uses a
@@ -18,6 +18,12 @@ set -u
 root=$(cd "$(dirname "$0")/.." && pwd)
 palette_only=false
 line_only=false
+lsp_only=false
+if [ "${1:-}" = --lsp-only ]; then
+  palette_only=true
+  lsp_only=true
+  shift
+fi
 if [ "${1:-}" = --palette-only ]; then
   palette_only=true
   shift
@@ -227,7 +233,8 @@ t set -g window-size manual
 t set -g default-terminal tmux-256color
 shell "cd $work"
 
-if [ "$palette_only" = false ]; then
+if [ "$palette_only" = false ] || [ "$lsp_only" = true ]; then
+if [ "$lsp_only" = false ]; then
 # ---------------------------------------------------------------------------
 section "all installed tiles are shown at startup"
 printf 'startup workspace\n' > "$work/startup.txt"
@@ -786,9 +793,13 @@ expect_screen "  1    ab"
 expect_screen "  2 defabcgh"
 expect_status "1:1"
 keys Space w
+# send-keys only queues input. Wait for this save's successful write outcome before
+# comparing bytes; the preceding cursor assertion cannot acknowledge the save.
+expect_status "Wrote $work/blockop.txt"
 expect_file "$work/blockop.txt" "$work/blockop.expected"
 keys Space q
 expect_exit 0
+expect_file "$work/blockop.txt" "$work/blockop.expected"
 
 # ---------------------------------------------------------------------------
 section "block insert (I, A, c)"
@@ -1526,6 +1537,7 @@ keys Space q
 expect_exit 0
 
 # ---------------------------------------------------------------------------
+fi
 # A scripted server stands in for ocamllsp on PATH (see
 # source/test/fake_lsp/fake_lsp.ml): ERROR/WARN lines are findings, CRASH exits 3.
 fake_lsp=$root/_build/default/source/test/fake_lsp/fake_lsp.exe
@@ -1566,6 +1578,8 @@ keys Escape o C R A S H Escape
 expect_screen "ocamllsp#1 stopped: exited with code 3"
 expect_screen "[ocamllsp#1 stopped] $work/lspproj/sub/a.ml:2:9"
 keys u
+# Undo restores the pre-crash cursor/text before the negative notice assertion.
+expect_cursor_row "let b = ERROR"
 expect_no_screen "ocamllsp#1 stopped:"
 keys Space v R
 expect_screen "error [ocamllsp#1] $work/lspproj/sub/a.ml:2:9: fake error"
@@ -1581,6 +1595,7 @@ else
   fail "a language server outlived ches"
 fi
 
+if [ "$lsp_only" = false ]; then
 section "language server for SystemVerilog: findings, edits, --no-lsp, missing server"
 mkdir -p "$work/svproj/.slang" "$work/svproj/rtl"
 printf 'module top;\n  ERROR\nendmodule\n' > "$work/svproj/rtl/top.sv"
@@ -1807,9 +1822,10 @@ keys Space q
 expect_exit 0
 
 fi
+fi
 
 # ---------------------------------------------------------------------------
-if [ "$line_only" = false ]; then section "floating command palette (Space c c)"; fi
+if [ "$line_only" = false ] && [ "$lsp_only" = false ]; then section "floating command palette (Space c c)"; fi
 # The shell's corner cells prove placement independently of document geometry.
 palette_is() {
   local x=$1 y=$2 width=$3 height=$4 top bottom
@@ -1831,7 +1847,7 @@ expect_restored() {
   if poll screen_matches "$1"; then ok "covered workspace restored exactly";
   else fail "workspace differs after closing the palette"; fi
 }
-if [ "$line_only" = false ]; then
+if [ "$line_only" = false ] && [ "$lsp_only" = false ]; then
 resize 80 24
 printf 'one\ntwo\nthree\n' > "$work/palette.txt"
 cp "$work/palette.txt" "$work/palette.expected"

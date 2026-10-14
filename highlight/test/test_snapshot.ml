@@ -98,6 +98,7 @@ let%test_unit "sweep agrees with independent per-byte overlap oracle" =
       let category = List.nth_exn Category.all (1 + Random.State.int random 14) in
       range start stop category)
     in
+    let input = input @ List.take input 30 in
     let s = snapshot (String.make 40 'x') input in
     for offset = 0 to 40 do
       let covered = List.filter input ~f:(fun r -> r.start <= offset && offset < r.stop) in

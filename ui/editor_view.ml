@@ -40,13 +40,18 @@ let draw_smear ?font (frame : Frame.t) =
          View.transparent_rectangle ~width:0 ~height:(Int.max 0 (y - previous_y - 1)) :: [ row_view row ]))
 ;;
 
-let draw ?font (frame : Frame.t) =
-  let base =
-    View.vcat
-      (List.map frame.rows ~f:(fun spans ->
-         View.hcat (List.map spans ~f:(draw_span ?font))))
-  in
+let draw_base ?font (frame : Frame.t) =
+  View.vcat
+    (List.map frame.rows ~f:(fun spans ->
+       View.hcat (List.map spans ~f:(draw_span ?font))))
+;;
+
+let draw_overlay ?font ~base frame =
   View.zcat [ draw_smear ?font frame; base ]
+;;
+
+let draw ?font frame =
+  draw_overlay ?font ~base:(draw_base ?font frame) frame
 ;;
 
 let cursor (frame : Frame.t) : Cursor.t option =
@@ -98,11 +103,14 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
     | None, None -> Ui_state.create ~smear_enabled ?buffer_presentation ?report
         ~source_attached:(Option.is_some source) controller in
   let current_ui = ref initial_ui in
+  let render_cache = Frame.Cache.create () in
+  let synchronized_dimensions = ref None in
   let preview = Ches_file_preview.Provider.create ~buffer:(fun ~path ->
     Ches_file_preview.Buffer_snapshot.lookup (Ui_state.session !current_ui) ~path) () in
   let preview_pumping = ref false in
   let preview_revision = ref None in
   let clear_preview () =
+    Frame.Cache.invalidate render_cache;
     preview_revision := None;
     Ches_file_preview.Provider.clear preview;
     Option.iter (Ui_state.file_picker !current_ui) ~f:File_picker_tile.clear_preview in
@@ -156,7 +164,7 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
     && Option.exists (Ui_state.file_picker model) ~f:(fun picker ->
       let session = File_picker_tile.session picker in
       Ches_file_picker.Interaction.busy session
-      || match (Ches_file_picker.Model.discovery (Ches_file_picker.Interaction.model session)).status with
+       || match Ches_file_picker.Model.discovery_status (Ches_file_picker.Interaction.model session) with
          | Loading | Partial -> true
          | Complete _ | Failed _ | Cancelled -> false)
   in
@@ -167,6 +175,21 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
         match input with
          | Inactive -> clear_preview (); model
         | Active ({ Dimensions.width; height }, write_to_tty) ->
+           (* Only animation ticks may skip effects. File work still goes through
+              the full effect/synchronization path below; explicit visual stamps
+              let its nonpublishing turns retain workspace and terminal base. *)
+          if not (List.is_empty inputs)
+             && List.for_all inputs ~f:(function Ui_state.Input.Animation_tick _ -> true | _ -> false)
+             && Option.equal [%equal: int * int] !synchronized_dimensions (Some (width, height))
+          then (
+            let model, _ = Ui_state.apply_all model ~width ~height inputs in
+            current_ui := model;
+            model)
+          else (
+            let inputs = if Option.equal [%equal: int * int]
+                !synchronized_dimensions (Some (width, height)) then inputs
+              else Ui_state.Input.Resize :: inputs in
+            synchronized_dimensions := Some (width, height);
            let was_running = not (Ui_state.exited model) in
            if List.exists inputs ~f:(function Ui_state.Input.Resize -> true | _ -> false)
            then clear_preview ();
@@ -185,7 +208,7 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
               | Error error -> Ui_state.with_notice ~source:"content picker" model (Error.to_string_hum error) in
              synchronize_preview model
           in
-           let model, status = Ui_state.apply_all ~after_step:activate_pickers model ~width ~height inputs in
+            let model, status = Frame.Cache.apply_inputs render_cache ~after_step:activate_pickers model ~width ~height inputs in
            let model = synchronize_preview model in
            if not !preview_pumping && Option.is_some (Ches_file_preview.Provider.snapshot preview)
            then (
@@ -258,7 +281,7 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
               Ches_content_picker_host.Runtime.cancel content_runtime;
              Bonsai.Apply_action_context.schedule_event context (exit ())
            | Exit | Running -> ());
-          model)
+           model))
       (let%arr dimensions
        and write_to_tty = Expert.Write_to_tty.write_string_to_tty graph in
        dimensions, write_to_tty)
@@ -324,19 +347,20 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
        else Effect.Ignore)
       graph
   in
-  let frame =
+  let rendered =
     let%arr model
     and { Dimensions.width; height } = dimensions in
-    Frame.render model ~width ~height
+    Frame.Cache.get render_cache model ~width ~height ~draw_base:(draw_base ?font)
   in
+  let frame = let%arr frame, _ = rendered in frame in
   let set_cursor = Effect.set_cursor graph in
   Bonsai.Edge.after_display
     (let%arr frame and set_cursor in
      set_cursor (cursor frame))
     graph;
   let view =
-    let%arr frame in
-    draw ?font frame
+    let%arr frame, base = rendered in
+    draw_overlay ?font ~base frame
   in
   let handler =
     let%arr inject in
@@ -348,7 +372,7 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
   ~view, ~handler
 ;;
 
-let run ?font ?buffer_presentation ?report ?source controller =
+let run ?(smear_enabled = false) ?font ?buffer_presentation ?report ?source controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
@@ -360,7 +384,7 @@ let run ?font ?buffer_presentation ?report ?source controller =
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-       (app ~smear_enabled:true ?buffer_presentation ?report ?source ?font controller))
+        (app ~smear_enabled ?buffer_presentation ?report ?source ?font controller))
     ~f:(fun result ->
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;

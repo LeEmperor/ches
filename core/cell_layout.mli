@@ -82,3 +82,24 @@ val column : Glyph.t array -> pos:int -> tab_end:bool -> int
     zero-width code points; [None] when [col] is at or past {!total_width}. A column
     inside a TAB or wide glyph gives that glyph. *)
 val pos_of_column : Glyph.t array -> int -> int option
+
+(** Sparse lazy layout for valid UTF-8 document lines. At most 256 checkpoints;
+    first distant access scans the intervening prefix, subsequent seeks scan at
+    most one checkpoint interval (plus a code point). Width functions must be
+    stable. Window glyph positions and columns remain relative to the FULL line.
+    Visible zero-width sequences necessarily cost their full length. *)
+module Index : sig
+  type t
+  val create : width:Width.t -> string -> start:int -> stop:int -> t
+  val length : t -> int
+  val cursor_span : t -> pos:int -> insertion:bool -> int * int
+  val column : t -> pos:int -> tab_end:bool -> int
+  val total_width : t -> int
+  val scalar_column : t -> pos:int -> int
+  val pos_of_scalar_column : t -> int -> int
+  val pos_of_column : t -> int -> int option
+  val window : t -> left:int -> cols:int -> Glyph.t array
+  (** Deterministic cumulative decoded-code-point work and retained checkpoints. *)
+  val steps : t -> int
+  val checkpoint_count : t -> int
+end

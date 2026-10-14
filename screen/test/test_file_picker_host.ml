@@ -24,6 +24,38 @@ let open_picker ?(release = fun () -> ()) t discovery =
 ;;
 let text t = Text_buffer.to_string (Editor.text (Controller.editor (Ui_state.controller t)))
 
+let%test_unit "cache invalidation handles same-record mutable picker discovery and preview" =
+  let cache = Frame.Cache.create () in
+  let builds = ref 0 in
+  let get t =
+    let frame, _ = Frame.Cache.get cache t ~width ~height
+        ~draw_base:(fun _ -> incr builds) in
+    assert (Sexp.equal (Frame.sexp_of_t frame)
+      (Frame.sexp_of_t (Frame.render t ~width ~height)));
+    frame in
+  let t = open_picker (Helpers.ui "untouched") (snapshot 92 [ "a.ml" ])
+      |> fun t -> finish t 92 in
+  let before = get t in
+  Frame.Cache.invalidate cache;
+  let updated = apply t [ File_picker_snapshot (snapshot 92 [ "b.ml"; "c.ml" ]) ] in
+  assert (phys_equal t updated);
+  let t = finish updated 92 in
+  let after = get t in
+  assert (not (String.equal (Frame.to_string_styled before) (Frame.to_string_styled after)));
+  let model = Interaction.model (session t) in
+  let request : Ches_file_preview_model.Model.request =
+    { session = (Model.discovery model).request; selected = Option.value_exn (Model.selected model)
+    ; generation = 1 } in
+  File_picker_tile.expect_preview (picker t) (Some request);
+  Frame.Cache.invalidate cache;
+  let updated = apply t [ File_preview { request; state = Missing } ] in
+  assert (phys_equal t updated);
+  let after_preview = get updated in
+  assert (not (String.equal (Frame.to_string_styled after) (Frame.to_string_styled after_preview)));
+  ignore (get (apply updated [ Animation_tick Time_ns.epoch ]) : Frame.t);
+  assert (!builds = 3)
+;;
+
 let%test_unit "file-only responsive floating geometry and screen resize delivery teardown" =
   let t = open_picker (Helpers.ui "untouched") (snapshot 90 [ "a.ml" ])
     |> fun t -> finish t 90 in
@@ -104,7 +136,8 @@ let%test_unit "shared floating host: zen/workspace, query, scroll, cursor and ex
     assert (Option.is_none (Ui_state.palette opened));
     assert (Interaction.prepared_count (session opened) = 0);
     let opened = work opened 1 in
-    assert (Interaction.prepared_count (session opened) = 128);
+    assert (Interaction.prepared_count (session opened) = 0);
+    assert (Interaction.busy (session opened)); (* blank indexing is still budgeted *)
     let opened = finish opened 1 |> fun t -> run t "file<C-n><C-n>" |> fun t -> finish t 1 in
     let opened = run opened "<C-n><C-n>" in
     assert ([%equal: Workspace.t] workspace (Ui_state.workspace opened ~width ~height));

@@ -61,6 +61,11 @@ val of_string : string -> (t, Invalid_text.t) Result.t
 (** The exact bytes of the text. *)
 val to_string : t -> string
 
+(** O(1) conservative retention estimate: text bytes, line-start array (8 bytes per
+    entry), snapshot/string headers and protected identity lists/tokens/scope.
+    Shared storage is charged in full. Excludes the bounded mutable layout cache. *)
+val retained_bytes : t -> int
+
 (** Protected row anchors carried by immutable snapshots, never by visible text.
     Tokens are opaque to the text engine; duplicate anchors remain detectable. *)
 val identity_scope : t -> string option
@@ -71,6 +76,27 @@ val with_identities : t -> scope:string -> (int * string) list -> t
 val length : t -> int
 
 (** {2 Editing} *)
+
+(** Replace a boundary-aligned range, with delete-then-insert identity semantics.
+    Validates inserted text before editing. One exact-size string destination;
+    O(document bytes) blits remain deliberate. Line indexing scans only inserted
+    text and shifts surviving offsets; equal-length/no-newline edits share starts.
+    Empty replacement of an empty range returns the original snapshot, except
+    [linewise] identity deletion. Layouts are invalidated by nonempty edits. *)
+val replace : ?identities:(int * string) list -> ?anchor_affinity:[ `Left | `Right ] -> ?linewise:bool -> ?preserve_identities:bool -> t -> pos:int -> len:int -> string -> (t, Invalid_text.t) Result.t
+
+module For_testing : sig
+  type work =
+    { mutable full_scan_bytes : int
+    ; mutable inserted_scan_bytes : int
+    ; mutable destination_bytes : int
+    ; mutable destinations : int
+    }
+  (** Scoped synchronous instrumentation; includes loading scans if performed inside.
+      Scan counters cover newline indexing, not the required inserted UTF-8 validation.
+      Destination counters cover document string storage, not line arrays/metadata. *)
+  val measure : (unit -> 'a) -> 'a * work
+end
 
 (** [insert t ~at s] inserts [s] at boundary [at]. Returns [Error] if [s] is not
     accepted by {!validate}. Raises if [at] is not a boundary. When inserting LF
@@ -103,6 +129,10 @@ val line_end : t -> int -> int
 
 (** The text of [line], without its LF. *)
 val line_text : t -> int -> string
+
+(** Bounded snapshot-owned layout cache (64 line/physical width-function keys).
+    New text from an edit starts with an empty cache. *)
+val line_layout : t -> width:Cell_layout.Width.t -> int -> Cell_layout.Index.t
 
 (** The line containing boundary [offset]. An offset on an LF byte belongs to the line
     that LF ends; [length t] belongs to the last line. *)

@@ -46,6 +46,79 @@ let copy_row (d : Directory_buffer.t) name destination =
   let entry = List.find_exn d.entries ~f:(fun e -> String.equal e.name name) in
   sprintf "@copy[%d]\t%s%s" entry.id destination (if Directory_identity.Kind.equal entry.kind Directory then "/" else "")
 
+let%test_unit "directory row memo reuses success and errors across presentation changes" =
+  fixture (fun root ->
+    write root "alpha" ""; write root "beta" "";
+    let d = load root in
+    let cached = Directory_buffer.rows d in
+    let moved = Directory_buffer.select d "beta" |> Directory_buffer.toggle_mark in
+    assert (phys_equal cached (Directory_buffer.rows moved));
+    let expected = cached |> Or_error.ok_exn in
+    List.iter expected ~f:(fun row ->
+      assert (phys_equal row (Directory_buffer.row_at moved row.line |> Option.value_exn));
+      assert (Option.is_some (Directory_buffer.backing_entry moved row)));
+    assert (Option.is_none (Directory_buffer.row_at d (-1)));
+    assert (Option.is_none (Directory_buffer.row_at d 2));
+    let invalid = snapshot d "@ches[999]\tunknown" in
+    let error = Directory_buffer.rows invalid in
+    assert (Result.is_error error);
+    for line = 0 to 47 do
+      assert (Option.is_none (Directory_buffer.row_at invalid line));
+      assert (phys_equal error (Directory_buffer.rows invalid))
+    done;
+    (* The one-slot memo is shared by immutable record snapshots. Alternating
+       valid/invalid snapshots must only evict it, never contaminate either. *)
+    assert ([%equal: Directory_identity.Row.t list] expected (Directory_buffer.rows d |> Or_error.ok_exn));
+    assert (Result.is_error (Directory_buffer.rows invalid));
+    let sparse = snapshot d ("\n" ^ row d "beta" "renamed" ^ "\n\nfresh\n") in
+    assert (Option.is_none (Directory_buffer.row_at sparse 0));
+    assert (String.equal (Directory_buffer.row_at sparse 1 |> Option.value_exn).name "renamed");
+    assert (String.equal (Directory_buffer.selected (Directory_buffer.select sparse "beta") |> Option.value_exn).name "beta");
+    assert (Option.is_none (Directory_buffer.row_at sparse 2));
+    assert (Option.is_none (Directory_buffer.backing_entry sparse (Directory_buffer.row_at sparse 3 |> Option.value_exn))))
+;;
+
+let%test_unit "directory memo keys include anchors baseline entries and undo snapshots" =
+  fixture (fun root ->
+    write root "alpha" ""; write root "beta" "";
+    let d = Directory_buffer.load ~id:(Buffer_id.of_int 1) ~path:root ~cell_width:width
+      ~keymap_config:Ches_input.Keymap.Config.default () |> Or_error.ok_exn in
+    let initial = Editor.text (Controller.editor d.controller) in
+    let saved_rows = Directory_buffer.rows d |> Or_error.ok_exn in
+    let replace text = { d with controller = Controller.rebase_text d.controller ~saved:initial ~text } in
+    let metadata_only = Text_buffer.with_identities initial ~scope:d.identity_scope
+      ((0, "@ches[999]") :: Text_buffer.identities initial) |> replace in
+    assert (String.equal (Text_buffer.to_string initial)
+      (Text_buffer.to_string (Editor.text (Controller.editor metadata_only.controller))));
+    assert (Result.is_error (Directory_buffer.rows metadata_only));
+    let entries = List.map d.entries ~f:(fun e -> { e with kind = Directory_identity.Kind.Unsupported }) in
+    let changed_baseline = { d with baseline = Directory_identity.create entries |> Or_error.ok_exn } in
+    assert (List.for_all (Directory_buffer.rows changed_baseline |> Or_error.ok_exn)
+      ~f:(fun r -> Directory_identity.Kind.equal r.kind Unsupported));
+    let changed_entries = { d with entries } in
+    let row = Directory_buffer.row_at changed_entries 0 |> Option.value_exn in
+    assert (Directory_identity.Kind.equal (Directory_buffer.backing_entry changed_entries row |> Option.value_exn).kind Unsupported);
+    assert (Directory_identity.Kind.equal (Directory_buffer.backing_entry d row |> Option.value_exn).kind File);
+    let run d commands =
+      let editor = List.fold commands ~init:(Controller.editor d.Directory_buffer.controller)
+        ~f:(fun editor command -> fst (Editor.dispatch editor command)) in
+      { d with controller = Controller.create ~kind:Directory editor } in
+    let edited = run d [ Enter_insert Before_cursor; Insert_text "new"; Exit_insert ] in
+    assert (String.equal (Directory_buffer.row_at edited 0 |> Option.value_exn).name "newalpha");
+    let undone = run edited [ Undo ] in
+    assert ([%equal: Directory_identity.Row.t list] saved_rows (Directory_buffer.rows undone |> Or_error.ok_exn));
+    let redone = run undone [ Redo ] in
+    assert (String.equal (Directory_buffer.row_at redone 0 |> Option.value_exn).name "newalpha");
+    assert ([%equal: Directory_identity.Row.t list] saved_rows (Directory_buffer.rows d |> Or_error.ok_exn));
+    write root "aardvark" "";
+    let refreshed = Directory_buffer.load ~previous:(Directory_buffer.select d "beta" |> Directory_buffer.toggle_mark)
+      ~id:d.id ~path:root ~cell_width:width ~keymap_config:Ches_input.Keymap.Config.default () |> Or_error.ok_exn in
+    assert (List.length (Directory_buffer.rows refreshed |> Or_error.ok_exn) = 3);
+    assert (String.equal (Directory_buffer.selected refreshed |> Option.value_exn).name "beta");
+    assert (List.equal String.equal (List.map (Directory_buffer.marked_entries refreshed) ~f:(fun e -> e.name)) [ "beta" ]);
+    assert ([%equal: Directory_identity.Row.t list] saved_rows (Directory_buffer.rows d |> Or_error.ok_exn)))
+;;
+
 let%test_unit "many buffers retain identities and providers until actual close or shutdown" =
   fixture (fun root ->
     List.init 48 ~f:Fn.id |> List.iter ~f:(fun n ->
@@ -123,7 +196,15 @@ let%test_unit "phase8 permanent deletion preserves missing clean/dirty buffers a
     let t, b = Session.open_or_activate t (child root "b") |> Or_error.ok_exn in
     let t = Session.show_directory t root |> Or_error.ok_exn in
     let d = snapshot (directory t) "" in
+    let before = t in
+    let labels = Session.buffer_labels t in
+    let t, _ = Session.take_source_changes t in
     let t = Session.replace_active t d.controller |> Session.save_current in
+    assert (phys_equal labels (Session.buffer_labels t));
+    assert (Session.same_file_lifetimes before t);
+    let t, changes = Session.take_source_changes t in
+    assert (List.is_empty changes);
+    assert (not (Controller.is_missing (Session.find before a |> Option.value_exn)));
     assert (not (exists (child root "a")) && not (exists (child root "empty")) && not (exists (child root "link")));
     let ac = Session.find t a |> Option.value_exn and bc = Session.find t b |> Option.value_exn in
     assert (Controller.is_missing ac && Controller.is_missing bc);
@@ -144,6 +225,58 @@ let%test_unit "phase8 permanent deletion preserves missing clean/dirty buffers a
     assert (String.equal (read root "recovered") "BBB");
     assert (Option.is_none (Session.find_resource t (child root "b")));
     assert (Option.is_some (Session.find_resource t (child root "recovered")));
+    Session.dispose t)
+;;
+
+let%test_unit "directory surfaces reuse labels; subtree moves invalidate suffixes and only moved lifetimes" =
+  fixture (fun root ->
+    List.iter [ "left"; "right" ] ~f:(fun side ->
+      Core_unix.mkdir (child root side);
+      Core_unix.mkdir (child (child root side) "deep");
+      write (child (child root side) "deep") "same.txt" "saved");
+    let left = child (child (child root "left") "deep") "same.txt" in
+    let right = child (child (child root "right") "deep") "same.txt" in
+    let t, aid = Session.open_or_activate (start root) left |> Or_error.ok_exn in
+    let t, bid = Session.open_or_activate t right |> Or_error.ok_exn in
+    let t = Session.show_directory t (child root "left") |> Or_error.ok_exn in
+    let t = Session.show_directory t root |> Or_error.ok_exn in
+    let cached = Session.buffer_labels t in
+    let old = t in
+    let old_directory = Session.directory_buffer t |> Option.value_exn in
+    let label t id = List.Assoc.find_exn (Session.buffer_labels t) id ~equal:Buffer_id.equal in
+    assert (String.equal (label t aid) "left/deep/same.txt");
+    assert (String.equal (label t bid) "right/deep/same.txt");
+    List.iter [ Session.surface t ~directory:false; Session.surface t ~directory:true
+      ; Session.focus_directory t false; Session.set_directory_placement t Side ] ~f:(fun surface ->
+        assert (phys_equal cached (Session.buffer_labels surface)));
+    let generation = Session.source_generation t aid |> Option.value_exn in
+    let other_generation = Session.source_generation t bid in
+    let t, _ = Session.take_source_changes t in
+    let t = edit_session t [ "left", "renamed" ] "" |> Session.save_current in
+    let current_directory = Session.directory_buffer t |> Option.value_exn in
+    assert (not (phys_equal old_directory current_directory));
+    for _ = 1 to 3 do
+      assert (phys_equal old_directory (Session.directory_buffer old |> Option.value_exn));
+      assert (phys_equal current_directory (Session.directory_buffer t |> Option.value_exn));
+      assert (match Session.find_resource_buffer old (child root "left") with
+        | Some (Directory_buffer d) -> String.equal d.path (child root "left") | _ -> false);
+      assert (Option.is_none (Session.find_resource_buffer t (child root "left")));
+      assert (match Session.find_resource_buffer t (child root "renamed") with
+        | Some (Directory_buffer d) -> String.equal d.path (child root "renamed") | _ -> false)
+    done;
+    assert (not (phys_equal cached (Session.buffer_labels t)));
+    assert (String.equal (label t aid) "renamed/deep/same.txt");
+    assert (String.equal (label old aid) "left/deep/same.txt");
+    assert (Option.is_some (Session.find_resource old left));
+    assert (Option.is_none (Session.find_resource t left));
+    assert ((Session.source_generation t aid |> Option.value_exn) > generation);
+    assert (Option.equal Int.equal other_generation (Session.source_generation t bid));
+    let t, changes = Session.take_source_changes t in
+    assert (List.length changes = 1 && Buffer_id.equal (fst (List.hd_exn changes)) aid);
+    let _, current = List.hd_exn changes in
+    let _, c = Option.value_exn current in
+    assert (Option.equal String.equal (Editor.path (Controller.editor c))
+      (Some (child (child (child root "renamed") "deep") "same.txt")));
     Session.dispose t)
 ;;
 

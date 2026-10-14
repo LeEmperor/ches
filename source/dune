@@ -8,6 +8,6 @@
 
 (library
  (name ches_source)
- (libraries ches_error ches_core core core_unix core_unix.filename_unix core_unix.sys_unix async lsp jsonrpc)
+  (libraries ches_error ches_core ches_highlight core core_unix core_unix.filename_unix core_unix.sys_unix async lsp jsonrpc)
  (preprocess
   (pps ppx_jane)))

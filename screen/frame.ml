@@ -92,7 +92,7 @@ let overlay_floating rows (layer : Floating_layer.t) ~focused =
     else Span.overlay row ~x:outer.x ~width:outer.width layer_rows.(y - outer.y))
 ;;
 
-let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
+let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
   let screen_width = width in
@@ -280,8 +280,7 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
   in
   (* Blank cells up to and including a point past the line's end, so it can be drawn:
      before anything is typed, [A] can aim past a short line's end. *)
-  let extend_to_point glyphs ~line_length point =
-    let total = Cell_map.total_width glyphs in
+  let extend_to_point glyphs ~line_length ~total point =
     match point with
     | Some col when col >= total ->
       let blank ~kind col width =
@@ -289,8 +288,11 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
       in
       Array.concat
         [ glyphs
-        ; (if col > total then [| blank ~kind:Tab total (col - total) |] else [||])
-        ; [| blank ~kind:Plain col 1 |]
+        ; (let first = Int.max total scroll.left in
+            let stop = Int.min col (scroll.left + viewport.width) in
+            if stop > first then [| blank ~kind:Tab first (stop - first) |] else [||])
+        ; (if col >= scroll.left && col < scroll.left + viewport.width
+            then [| blank ~kind:Plain col 1 |] else [||])
         ]
     | Some _ | None -> glyphs
   in
@@ -376,8 +378,8 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
           in
           let line_start = Text_buffer.line_start text line in
           let search_highlight = search_highlighter line_start in
-          let line_text = Text_buffer.line_text text line in
-          let line_length = String.length line_text in
+          let layout = Text_buffer.line_layout text ~width:Cell_map.width line in
+          let line_length = Cell_layout.Index.length layout in
           let syntax =
             Option.map highlights ~f:(fun snapshot ->
               let lookup = Ches_highlight.Snapshot.lookup_from snapshot line_start in
@@ -385,15 +387,24 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
                 if glyph.pos >= line_length then Style.Syntax.Plain
                 else lookup (line_start + glyph.pos))
           in
-          let glyphs = Cell_map.glyphs line_text in
+          let glyphs = Cell_layout.Index.window layout ~left:scroll.left ~cols:viewport.width in
           let block_columns =
             match block with
             | Some block when line >= block.first_line && line <= block.last_line ->
-              Some (Block.columns block glyphs)
+              (* An open right edge covers every real glyph, without measuring
+                 offscreen EOL. Synthetic insert padding is excluded below. *)
+              Some (block.left, Option.value block.right ~default:Int.max_value)
             | Some _ | None -> None
           in
           let point = List.Assoc.find insert_points line ~equal:Int.equal in
-          let glyphs = extend_to_point glyphs ~line_length (Option.map point ~f:fst) in
+          let glyphs =
+            match point with
+            | None -> glyphs
+            | Some (col, _) when Option.is_none (Cell_layout.Index.pos_of_column layout col) ->
+              extend_to_point glyphs ~line_length
+                ~total:(Cell_layout.Index.total_width layout) (Some col)
+            | Some _ -> glyphs
+          in
           (* A point inside a TAB marks only its own cell. *)
           let edges =
             (match block_columns with
@@ -463,7 +474,6 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
     | Some layer ->
       overlay_floating rows layer ~focused:(Ches_tile.View_id.equal focused_view layer.id)
   in
-  let animation = Ui_state.animation ui in
   let document_cursor =
     Option.exists (Ui_state.cursor_owner ?floating:floating_view ui ~width ~height)
       ~f:(Ches_tile.View_id.equal Ui_state.document_id) in
@@ -472,14 +482,6 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
       let rect = layer.layout.outer in
       x >= rect.x && x < rect.x + rect.width
       && y >= rect.y && y < rect.y + rect.height)
-  in
-  let smear =
-    (if not document_cursor then [] else Animation.cells animation ~width ~height)
-    |> List.filter ~f:(fun (x, y) ->
-      not (covered_by_float (x, y))
-      && (not pane_relative
-          || (x >= viewport.x && x < viewport.x + viewport.width
-              && y >= viewport.y && y < viewport.y + viewport.height)))
   in
   let cursor =
     if not document_cursor
@@ -508,7 +510,7 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
              | Block -> Block
              | Bar -> Bar)
         })
-    else if Animation.active animation || not (List.is_empty insert_points)
+    else if not (List.is_empty insert_points)
     then None
     else
        Option.map (Ui_state.cursor_position_in ~buffers_in_status ui ~allocation ~reserve_status_row) ~f:(fun (x, y) ->
@@ -525,18 +527,29 @@ let render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~wi
       cursor.x >= 0 && cursor.x < width && cursor.y >= 0 && cursor.y < height
       && (not document_cursor || not (covered_by_float (cursor.x, cursor.y))))
   in
-  { width; height; rows; cursor; smear }
+  fun animation ->
+    let smear =
+      (if not document_cursor then [] else Animation.cells animation ~width ~height)
+      |> List.filter ~f:(fun (x, y) ->
+        not (covered_by_float (x, y))
+        && (not pane_relative
+            || (x >= viewport.x && x < viewport.x + viewport.width
+                && y >= viewport.y && y < viewport.y + viewport.height))) in
+    let cursor = if document_cursor && Animation.active animation then None else cursor in
+    { width; height; rows; cursor; smear }
 ;;
 
-let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
+let prepare ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
   if Ui_state.has_document ui then
     match allocation, Ui_state.side_layout ui ~width ~height with
     | None, Some layout ->
       let floating = floating_layer ?floating ui ~width ~height in
-      let file = render_document ?highlights ?floating (Ui_state.surface ui ~directory:false) ~width ~height in
-      let dir = render_document (Ui_state.surface ui ~directory:true)
+      let file_overlay = prepare_document ?highlights ?floating (Ui_state.surface ui ~directory:false) ~width ~height in
+      let file = file_overlay (Animation.create ~enabled:false) in
+      let dir = prepare_document (Ui_state.surface ui ~directory:true)
         ~allocation:{ Geometry.Rect.x = 0; y = 0; width = layout.content.width; height = layout.content.height }
-        ~reserve_status_row:false ~width:layout.content.width ~height:layout.content.height in
+        ~reserve_status_row:false ~width:layout.content.width ~height:layout.content.height
+        (Animation.create ~enabled:false) in
       let focused = Ches_tile.View_id.equal (Ui_state.focused_view ui ~width ~height) Ui_state.directory_id in
       let side = Tile_shell.render layout ~focused { title = "Directory"; footer = None; body = dir.rows } in
       (* The side pane is disjoint from the base document/status/band. Its omitted
@@ -555,9 +568,12 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
       let rows = Option.fold floating ~init:rows ~f:(fun rows layer ->
         let focused_view = Ui_state.focused_view ~floating:(layer.id, Some layer.layout) ui ~width ~height in
         overlay_floating rows layer ~focused:(Ches_tile.View_id.equal focused_view layer.id)) in
-      let cursor = if focused then Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) -> { Cursor.x; y; shape = Block }) else file.cursor in
-      { file with rows; cursor; smear = (if focused then [] else file.smear) }
-    | _ -> render_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height
+      let side_cursor = Option.map (Ui_state.cursor_position ui ~width ~height) ~f:(fun (x, y) -> { Cursor.x; y; shape = Block }) in
+      fun animation ->
+        let file = file_overlay animation in
+        let cursor = if focused then side_cursor else file.cursor in
+        { file with rows; cursor; smear = (if focused then [] else file.smear) }
+    | _ -> prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height
   else
     let width = Int.max 0 width and height = Int.max 0 height in
     let messages =
@@ -566,8 +582,54 @@ let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~heig
     let rows = List.init height ~f:(fun y ->
       let text = Option.value_map (List.nth messages y) ~default:"" ~f:(fun message -> String.prefix message width) in
       [ { Span.text = text ^ String.make (width - String.length text) ' '; width; style = Hint } ]) in
-    { width; height; rows; cursor = None; smear = [] }
+    fun _ -> { width; height; rows; cursor = None; smear = [] }
 ;;
+
+let render ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
+  prepare ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height
+    (Ui_state.animation ui)
+;;
+
+module Cache = struct
+  type frame = t
+
+  type 'a entry =
+    { width : int
+    ; height : int
+    ; overlay : Animation.t -> frame
+    ; base : 'a
+    ; file_stamp : (int * int * int) option
+    }
+
+  type 'a t = { mutable entry : 'a entry option }
+
+  let create () = { entry = None }
+  let invalidate t = t.entry <- None
+
+  let apply_inputs ?after_step t ui ~width ~height inputs =
+    let eligible = not (List.is_empty inputs)
+      && List.for_all inputs ~f:(function Ui_state.Input.File_picker_work _ | Animation_tick _ -> true | _ -> false)
+      && Option.exists t.entry ~f:(fun entry -> entry.width = width && entry.height = height) in
+    let before = Ui_state.file_picker_visible_stamp ui in
+    let next, status = Ui_state.apply_all ?after_step ui ~width ~height inputs in
+    if not eligible || not (Option.equal [%equal: int * int * int] before (Ui_state.file_picker_visible_stamp next)) then
+      invalidate t;
+    next, status
+  ;;
+
+  let get t ui ~width ~height ~draw_base =
+    let entry = match t.entry with
+      | Some entry when entry.width = width && entry.height = height
+          && Option.equal [%equal: int * int * int] entry.file_stamp (Ui_state.file_picker_visible_stamp ui) -> entry
+      | _ ->
+        let overlay = prepare ui ~width ~height in
+        let base = draw_base (overlay (Animation.create ~enabled:false)) in
+        let entry = { width; height; overlay; base; file_stamp = Ui_state.file_picker_visible_stamp ui } in
+        t.entry <- Some entry;
+        entry in
+    entry.overlay (Ui_state.animation ui), entry.base
+  ;;
+end
 
 let to_string t =
   let rows =

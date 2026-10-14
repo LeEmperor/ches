@@ -8,5 +8,8 @@ open! Core
     [path]'s directory itself when no marker is found or it cannot be resolved. *)
 val find_first : markers:string list -> string -> string
 
+(** Searches directories nearest first, accepting any literal marker. *)
+val find_nearest : markers:string list -> string -> string
+
 (** [find_first ~markers:["dune-project"]]: the synthetic checker's root. *)
 val find : string -> string

@@ -279,3 +279,34 @@ let%test_unit "reused sessions equal fresh providers across unrelated documents 
     done;
     Provider.close provider)
 ;;
+
+let%test_unit "capture budget is inclusive, counts ignored duplicates, stops early and drops retained state" =
+  let provider = Provider.For_testing.create_with_query ~language:Ocaml
+      ~query_source:(Some "(value_name) @variable\n(value_name) @unknown\n(value_name) @_internal") in
+  let document = Snapshot.Document_id.create () in
+  let call revision limit source =
+    let key = Provider.key provider ~document ~revision in
+    let result = Provider.highlight_incremental ~max_captures:limit provider ~key ~source in
+    assert (Snapshot.matches result.snapshot key);
+    result
+  in
+  let first = call 0 3 "let x = 1" in
+  successful first;
+  assert (Provider.last_capture_count provider = 3);
+  let saved = Snapshot.ranges first.snapshot in
+  let failed = call 1 2 (String.concat (List.init 1000 ~f:(fun _ -> "let y = 2\n"))) in
+  assert_plain failed;
+  assert (Provider.Status.equal failed.status (Plain (Capture_limit 2)));
+  assert (Provider.last_capture_count provider = 3);
+  assert (Option.is_none (Provider.last_timings provider));
+  assert (Provider.incremental_count provider = 1);
+  successful (call 2 3 "let z = 3");
+  (* No edited tree survives fallback: this recovery parses fresh. *)
+  assert (Provider.incremental_count provider = 1);
+  [%test_result: Snapshot.Range.t list] (Snapshot.ranges first.snapshot) ~expect:saved;
+  successful (call 3 0 "");
+  assert (Provider.last_capture_count provider = 0);
+  assert_plain (call 4 0 "let x = 1");
+  assert (Provider.last_capture_count provider = 1);
+  Provider.close provider
+;;

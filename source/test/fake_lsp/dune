@@ -2,6 +2,6 @@
 
 (executable
  (name fake_lsp)
- (libraries core lsp jsonrpc)
+ (libraries core core_unix lsp jsonrpc)
  (preprocess
   (pps ppx_jane)))

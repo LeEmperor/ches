@@ -90,3 +90,43 @@ val rank
   -> query:string
   -> ('item * 'tag Field.t list) list
   -> ('item, 'tag) Match.t list
+
+module Fast : sig
+  (** Policy-equivalent score-only path. All offsets are in the original shared
+      text. ASCII folding is unconditional, exactly as [rank]; no smart-case mode. *)
+  module Query : sig
+    type t
+    val compile : string -> t
+    val is_empty : t -> bool
+    val equal : t -> t -> bool
+    val retained_bytes : t -> int
+    (** Proof for loose-subsequence token AND only: corresponding folded tokens
+        extend by scalar prefix; additional tokens add constraints. *)
+    val is_extension : previous:t -> next:t -> bool
+  end
+  module Text : sig
+    type t
+    val create : string -> t
+    val retained_bytes : t -> int
+  end
+  module Field : sig
+    type t
+    (** A suffix view; [byte_start] must be a scalar boundary. At a file basename
+        boundary the previous slash supplies the same bonus as a fresh field. *)
+    val create : Text.t -> byte_start:int -> weight:int -> t
+  end
+  module Scratch : sig
+    type t
+    (** Optional lower traceback budget supports bounded equivalence probes. *)
+    val create : ?trace_limit:int -> unit -> t
+    val capacity : t -> int
+    val trace_capacity : t -> int
+    val scoring_calls : t -> int
+    val alignment_calls : t -> int
+  end
+  val no_match : int
+  val score : ?policy:Policy.t -> Scratch.t -> Query.t -> Field.t array -> int
+  (** Only request positions for matching candidates. Ties/alignments equal [rank].
+      Traceback uses at most 262,144 cells; larger cases recompute prefix rows. *)
+  val positions : ?policy:Policy.t -> Scratch.t -> Query.t -> Field.t array -> int list
+end

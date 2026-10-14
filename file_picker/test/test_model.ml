@@ -11,6 +11,55 @@ let snapshot (status : Discovery.status) candidates : Discovery.t =
   { request = { run_id = Run_id.of_int 1; root = "/project" }; candidates; status }
 ;;
 
+let%test_unit "lazy alignment is byte- and count-bounded and returns uncached oversized positions exactly" =
+  let candidates = List.init 3 ~f:(fun i -> candidate (sprintf "abcdefghijklmnopqrstuvwx%d.ml" i)) in
+  let identities = Result_index.Identity.Builder.create () in
+  List.iter candidates ~f:(Result_index.Identity.Builder.append identities);
+  let identity = Result_index.Identity.Builder.finish identities in
+  let builder = Result_index.Builder.create () in
+  List.iteri candidates ~f:(fun ordinal candidate ->
+    Result_index.Builder.append_scored builder ~ordinal ~candidate ~score:10);
+  let align c = if String.is_suffix (Candidate.relative_path c) ~suffix:"2.ml"
+    then List.range 0 26 else List.range 0 10 in
+  let index = Result_index.Builder.finish builder ~identity ~align ~alignment_byte_limit:512 in
+  let model = with_result_index (create ~token:() ~discovery:(snapshot Partial candidates)) ~query:"x" index in
+  ignore (result_at model 0 : Query_result.t option);
+  assert (For_testing.alignment_cache_size model = 1 && For_testing.alignment_cache_bytes model <= 512);
+  ignore (result_at model 1 : Query_result.t option);
+  assert (For_testing.alignment_cache_size model = 1); (* bytes evict before the count cap *)
+  let before = For_testing.alignment_count model in
+  ignore (result_at model 0 : Query_result.t option);
+  assert (For_testing.alignment_count model = before + 1);
+  let bytes = For_testing.alignment_cache_bytes model in
+  let oversized = Option.value_exn (result_at model 2) in
+  [%test_eq: int list] oversized.positions (List.range 0 26);
+  ignore (result_at model 2 : Query_result.t option);
+  assert (For_testing.alignment_count model = before + 3);
+  assert (For_testing.alignment_cache_bytes model = bytes && For_testing.alignment_cache_size model = 1)
+;;
+
+let%test_unit "chunk builder transfers ownership and indexes boundary positions without a final corpus copy" =
+  let builder = Result_index.Builder.create () in
+  let candidates = List.init 257 ~f:(fun n -> candidate (sprintf "%03d.ml" n)) in
+  List.iter candidates ~f:(fun c -> Result_index.Builder.append builder (result c));
+  let index = Result_index.Builder.finish builder in
+  assert (Result_index.length index = 257);
+  assert (Result.is_error (Or_error.try_with (fun () ->
+    Result_index.Builder.append builder (result (candidate "late.ml")))));
+  let t = with_result_index
+    (create ~token:() ~discovery:(snapshot Partial candidates)) ~query:"" index in
+  List.iter [ 0; 127; 128; 255; 256 ] ~f:(fun position ->
+    let t = select_index t position in
+    assert (Option.equal Int.equal (selected_index t) (Some position));
+    [%test_eq: string]
+      (Option.value_exn (selected_result t) |> fun (r : Query_result.t) -> Candidate.relative_path r.candidate)
+      (sprintf "%03d.ml" position));
+  assert (not (For_testing.results_forced t));
+  [%test_eq: int] (List.length (result_slice t ~start:125 ~length:6)) 6;
+  [%test_eq: int] (List.length (results t)) 257;
+  assert (For_testing.results_forced t && phys_equal (results t) (results t))
+;;
+
 let%test_unit "candidate path bytes and safe display stay separate" =
   let raw = "dir/a\n\t\027\127\194\133\255\\xFF-é" in
   let c = candidate ~root:"/project///" raw in
@@ -44,15 +93,26 @@ let%test_unit "selection is identity based across ranking and incremental result
   assert (Option.is_none (accept t));
   let t = with_results t ~query:"main" [ result a; result b ] in
   let t = select t (Candidate.id b) in
-  let t = with_results t ~query:"m" [ result c; result b; result a ] in
+  [%test_eq: int option] (selected_index t) (Some 1);
+  let t = with_results t ~query:"m" [ result c; result a; result b ] in
   [%test_eq: Candidate.Id.t option] (selected t) (Some (Candidate.id b));
+  [%test_eq: int] (result_count t) 3;
+  [%test_eq: int option] (selected_index t) (Some 2);
+  [%test_eq: string list]
+    (List.map (result_slice t ~start:1 ~length:100) ~f:(fun r -> Candidate.path r.candidate))
+    [ "/project/a/main.ml"; "/project/b/main.ml" ];
+  assert (Option.is_none (result_at t (-1)) && Option.is_none (result_at t 3));
+  assert (phys_equal (results t) (results t)); (* compatibility list is cached *)
+  assert (phys_equal t (select_index t 3));
   [%test_eq: string] (query t) "m";
   let t = select t (Candidate.id (candidate "not-a-result")) in
   [%test_eq: Candidate.Id.t option] (selected t) (Some (Candidate.id b));
   let t = with_results t ~query:"c" [ result c; result a ] in
   [%test_eq: Candidate.Id.t option] (selected t) (Some (Candidate.id c));
+  [%test_eq: int option] (selected_index t) (Some 0);
   let t = with_results t ~query:"none" [] in
   assert (Option.is_none (selected t));
+  assert (Option.is_none (selected_index t) && result_count t = 0);
   assert (Option.is_none (accept t))
 ;;
 

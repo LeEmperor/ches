@@ -31,7 +31,7 @@ val create : ?prog:string -> ?limits:Limits.t -> unit -> t
     in Loading state. Absolute roots only, at most 4 KiB. Traversal occurs in the
     subprocess and stream reads are asynchronous. A failed launch is delivered
     as Failed with installation guidance. *)
-val start : t -> root:string -> run Or_error.t
+val start : ?reuse:Model.Discovery.Candidates.t -> t -> root:string -> run Or_error.t
 val request : run -> Model.Discovery.request
 
 (** Kill/close delivery immediately; [finished] acknowledges descriptor closure
@@ -43,8 +43,15 @@ val finished : run -> unit Deferred.t
     Candidate snapshots are deduplicated and sorted by raw relative path bytes.
     No change returns None. Hosts must poll in bounded turns; there are no worker
     callbacks into editor state. A terminal snapshot may retain partial results.
+    Compatibility enumeration materializes the full list on explicit access only.
     Metadata-only changes preserve the candidate list identity, allowing sessions
     to avoid reranking unchanged candidates.
     Truncation must be shown by the future tile, never treated as exhaustive. *)
 val poll : t -> max_batches:int -> Model.Discovery.t option
 val snapshot : t -> Model.Discovery.t option
+
+(** Production path: immutable persistent candidate set + bounded additions, with
+    explicit predecessor stamp/count and revision. No cumulative list rebuilding.
+    Full-list [poll]/[snapshot] above are lazy compatibility adapters. *)
+val poll_update : t -> max_batches:int -> Model.Discovery.Update.t option
+val current : t -> Model.Discovery.Update.t option

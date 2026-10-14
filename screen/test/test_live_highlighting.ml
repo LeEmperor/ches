@@ -181,3 +181,21 @@ let%test_unit "acceptance matrix: live mixed-width text, overlays, clipping and 
           assert (not (Editor.is_dirty editor)));
       Controller.close controller)
 ;;
+
+let%test_unit "size fallback renders current plain syntax under overlays and undo restores colors" =
+  let ui = ui ~path:"f.ml" "let x = 1\n" in
+  let old_key, old_snapshot = Controller.highlights (Ui_state.controller ui) in
+  let ui = run ui (keys "i")
+           |> fun ui -> run ui (paste (String.concat (List.init Highlighting.Policy.max_lines ~f:(fun _ -> "<CR>"))))
+           |> fun ui -> run ui (keys "<Esc>G/let<CR>vll") in
+  assert (count ui = 1);
+  List.iter (syntax_spans (render ui)) ~f:(fun (_, d) -> assert (Category.equal d.syntax Plain));
+  let current_frame = render ui in
+  let stale_frame = Frame.render ~highlights:(old_key, old_snapshot) ui ~width:40 ~height:8 in
+  [%test_result: string] (Frame.to_string current_frame) ~expect:(Frame.to_string stale_frame);
+  List.iter (syntax_spans stale_frame) ~f:(fun (_, d) -> assert (Category.equal d.syntax Plain));
+  let ui = run ui (keys "<Esc>u") in
+  assert (count ui = 2);
+  assert (List.exists (syntax_spans (render ui)) ~f:(fun (_, d) -> Category.equal d.syntax Keyword));
+  Controller.close (Ui_state.controller ui)
+;;

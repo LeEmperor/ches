@@ -38,18 +38,16 @@ module Ranked = struct
     type t = Range.t
     let sexp_of_t = Range.sexp_of_t
     let compare (a : t) (b : t) =
-      let rec first = function
-        | [] -> 0
-        | 0 :: rest -> first rest
-        | c :: _ -> c
-      in
-      first
-        [ Int.compare (a.stop - a.start) (b.stop - b.start)
-        ; Int.compare (Category.priority a.category) (Category.priority b.category)
-        ; Int.compare a.start b.start
-        ; Int.compare a.stop b.stop
-        ; Category.compare a.category b.category
-        ]
+      (* This is the hot active-set comparator. Short-circuit
+         without allocating a list or computing unused tie breakers. *)
+      let c = Int.compare (a.stop - a.start) (b.stop - b.start) in
+      if c <> 0 then c else
+      let c = Int.compare (Category.priority a.category) (Category.priority b.category) in
+      if c <> 0 then c else
+      let c = Int.compare a.start b.start in
+      if c <> 0 then c else
+      let c = Int.compare a.stop b.stop in
+      if c <> 0 then c else Category.compare a.category b.category
     ;;
   end
   include T
@@ -75,7 +73,9 @@ let create ~key ~source ranges =
   in
   let events =
     List.filter ranges ~f:valid
-    |> List.dedup_and_sort ~compare:Ranked.compare
+    (* Identical ranges have identical start/stop events; the active set already
+       deduplicates them. All events at an offset are applied before the next
+       emission, so duplicate removals are harmless too. No preliminary sort. *)
     |> List.concat_map ~f:(fun r -> [ r.start, true, r; r.stop, false, r ])
     |> List.sort ~compare:(fun (a, _, _) (b, _, _) -> Int.compare a b)
   in

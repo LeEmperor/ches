@@ -60,7 +60,7 @@ checks for [Ches](../README.md).
 | Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider |
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
-| Normal | `Space v s` | Toggle the animated smear cursor (on by default) |
+| Normal | `Space v s` | Toggle the animated smear cursor (off by default; launch with `--smear` to opt in) |
 | Normal | `Space v ?` | Show/hide tile hotkey hints (hidden by default) |
 | Normal | `Space v t` | Show/hide the status cell (shown by default) |
 | Normal | `Space v p h/l/k/j` | Place status left/right/above/below and show it |
@@ -299,9 +299,9 @@ dune exec ches -- PATH.sv          # or .svh, .v, .vh; requires slang-server on 
 ```
 
 Like the owner's Neovim setup, ches starts `ocamllsp` from PATH for OCaml files. Its
-root is found the way Neovim's `root_markers` do: the nearest `dune-project`; failing
-any, the nearest `dune-workspace`; then `*.opam` (a literal name, as in Neovim),
-`opam`, `esy.json`, `package.json`, `.git`; else the file's directory. Diagnostics go
+root is the nearest ancestor containing any of `dune-project`, `dune-workspace`,
+`*.opam` (a literal name), `opam`, `esy.json`, `package.json`, or `.git`; else the
+file's directory. Diagnostics go
 to the problems view and status count; Hints are their own, quieter severity.
 
 ches never runs dune. Merlin needs a build's configuration, so in a project that has
@@ -317,17 +317,45 @@ its own. On quit ches asks the server to shut down and waits up to 1 s.
 `--synthetic-checker` replaces it. To check the client against the installed server
 without the UI: `dune exec source/bench/lsp_probe.exe -- -build`.
 
-Each open file uses a separate diagnostic runtime (potentially one server process).
-Switching tabs retains it; actual close, resource reassociation and session shutdown
-stop the old runtime. Events are addressed to the owning buffer/revision, including
-inactive files. `Space v R/K` addresses all managed runtimes, not just the active tab.
-Source names carry `#generation` lifetime suffixes (for example `ocamllsp#1`) to
-keep closed/reassociated resources separate. Directories do not start diagnostic drivers.
+Supported open files share one language-server process per workspace root and server
+configuration. Switching tabs retains it; closing a file sends `didClose` for only
+that document. The last close and session shutdown stop the process. `Space v R`
+restarts each pooled server once and reopens all its current documents; `Space v K`
+remains a synthetic-checker crash command. Document events retain buffer-generation
+ownership, including inactive files. Each document has its own bounded revision/text
+history, and monotonic wire versions map diagnostics back to editor revisions.
+LSP source names carry a stable server-pool suffix (for example `ocamllsp#1`),
+so one root/configuration stopping cannot dim another pool's findings. A restart
+retains that ID; a new pool after the last close gets a new ID.
+Edits keep only the latest pending snapshot per document. The first edit starts a
+25 ms coalescing window; further typing replaces the snapshot without extending
+that window. Diffing and JSON serialization happen at flush, rather than on every
+key. Servers negotiating Full receive whole text; Incremental receives one
+encompassing replacement against the last sent text, with UTF-8/UTF-16/UTF-32
+positions as negotiated. Invalid UTF-8 or unknown position encoding uses a safe
+full-text event; absent/None change support sends no changes. Save flushes its
+document before `didSave`, including text if requested. Close, restart, and shutdown
+cancel pending timers; initialization/restart opens the newest text. If the protocol
+stream closes while the server remains alive, the client allows the configured
+shutdown grace (normally 1 s), then reports the failure, kills and reaps the child.
+Revision
+history contains only sent versions (up to 32 per document).
+
+Symlink paths stay separate LSP URIs and buffers. Two lexical names normalizing to
+the exact same URI cannot independently hold unsaved texts: the second is explicitly
+reported unavailable, and closing it cannot close the first. Late output for closed
+URIs is discarded. A URI reopened while its pooled server survives receives normal
+unversioned diagnostics using its current text and buffer ownership. These messages
+carry neither a revision nor a buffer lifetime: late output from an old lifetime is
+indistinguishable from fresh output and may temporarily replace current findings.
+Versioned diagnostics still require a sent version in the current document's history;
+old sessions and buffer generations remain isolated. The synthetic checker retains per-file
+runtimes and per-file `#generation` source names. Directories do not start diagnostic drivers.
 
 For SystemVerilog (`.sv`, `.svh`) and Verilog (`.v`, `.vh`), ches starts
 `slang-server` from PATH with no arguments, using the same diagnostic and lifecycle
-handling. Its root is the nearest ancestor containing `.slang`; if none, the nearest
-`.git`; else the file's directory. `--no-lsp` disables either server, and
+handling. Its root is the nearest ancestor containing `.slang` or `.git`; else the
+file's directory. `--no-lsp` disables either server, and
 `--synthetic-checker` takes precedence over either.
 
 Set include paths, defines, and file lists in the project's `.slang/server.json`,
@@ -666,12 +694,29 @@ replace editor feedback; a later text change or successful reload retries it.
 The controller caches highlights by document identity, revision, language and query
 version. Text changes use incremental parsing with a private copied/edited prior
 tree; `:e!` resets it. Movement, search, selection, scrolling, resizing, animation
-and saving unchanged text do not parse. The full tree is still queried and all
-ranges normalized after every change. This synchronous work, whole-string editing
-and diff scans remain file-size dependent: a local 205 KB generated OCaml fixture
-took about **70 ms per edit**, down from about 91 ms before incremental parsing.
-These are measurements, not a guarantee; larger files can still lag. Native memory
-release relies on binding GC finalizers, with limited external-memory accounting.
+and saving unchanged text do not parse. Synchronous highlighting is limited to
+**65,536 bytes, 2,000 lines and 16,000 query captures** (inclusive). Lines include
+the empty final line after a trailing LF. Byte/line checks happen before provider
+creation or parsing; capture collection stops at the first excess result, including
+duplicate/ignored captures. Outside this policy the entire current revision renders
+plain, with no stale or partial syntax spans and no repeated warning notifications.
+`Controller.highlight_status` records `Source_byte_limit`, `Source_line_limit` or
+`Capture_limit` with the limit. Search/selection and other overlays still work.
+
+Byte/line fallback recovers automatically when the text fits both limits. Capture
+fallback remains plain across small edits and retries after at least a **25% byte
+or line-count shrink** relative to the failing revision, a successful `:e!` reload,
+or language-association reset. A same-size syntax simplification may therefore stay
+plain until reload. The limits are fixed implementation policy, not user settings.
+
+Within policy, the full tree is still queried and ranges normalized on each edit.
+A local 205 KB generated fixture fell from 83.079 to **0.643 ms/edit** with plain
+fallback; a highlighted 50,707-byte `core/editor.ml` fell from 15.544 to **8.761 ms/edit**
+after capture/normalization improvements. These are measurements, not guarantees.
+There is no parser/query timeout in the binding: a dense source's first parse and
+up to 16,001 capture calls can still delay input before fallback is latched. Whole-string
+editing remains size-dependent. Native memory release relies on binding GC finalizers,
+with limited external-memory accounting. See the [latency handoff](syntax_highlighting_latency_plan.md).
 
 Colors live in `ui/theme.ml`: violet keywords, green strings, orange numbers,
 gray comments, cyan types/properties, blue functions, teal modules, and amber
@@ -704,8 +749,8 @@ verification is not a license-compliance finding.
 Regression tests run with `dune runtest`; explicit performance probes are separate:
 
 ```sh
-opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_incremental_probe/probe.exe
-opam exec --switch=5.2.0+ox -- dune exec ./scripts/syntax_live_probe/probe.exe
+opam exec --switch=5.2.0+ox -- dune exec -j 10 ./scripts/syntax_incremental_probe/probe.exe
+opam exec --switch=5.2.0+ox -- dune exec -j 10 ./scripts/syntax_live_probe/probe.exe
 ```
 
 The terminal checklist below covers visual review. See
@@ -740,7 +785,11 @@ cursor.
   saved text clears it, so a plain `Space q` then works.
 
 History is kept for the session only, as whole-text snapshots (see
-[Storage](#storage)).
+[Storage](#storage)). Each buffer defaults to at most **1,000 complete transactions**
+and **64 MiB of estimated retained bytes**, across undo and redo together. Older
+steps are evicted only when a changed transaction closes. The newest complete step
+always survives even if it exceeds the soft byte budget, so large files still have
+at least one undo step. A no-net-change transaction preserves redo and retention.
 
 ## Screen
 
@@ -1026,16 +1075,66 @@ The smoke script cannot check these, so check them in a real terminal:
 ## Storage
 
 The document is an immutable OCaml string behind the abstract `Text_buffer.t`.
-Every edit copies the string, and line lookups scan it. That is the simplest
-thing that is clearly correct, and it is fast enough for source-sized files.
+Nonempty edits use one exact-size destination and prefix/insert/suffix blits, without
+temporary prefix/suffix strings. The unified replacement path also avoids the former
+delete-then-insert double copy in block editor actions. This remains O(document bytes)
+copying, deliberately not a rope/piece-table implementation.
+
+Line starts update using binary searches at the edited range's endpoints: remove
+covered starts, scan only inserted text for new LFs, and shift later offsets. Changed
+arrays still cost O(line count) allocation/copying; equal-length edits that remove and
+insert no LFs reuse the immutable array. No unchanged document bytes are rescanned for
+newlines. Inserted UTF-8 validation, CRLF/CR/NUL rejection, trailing-LF empty lines and
+protected directory anchor affinities remain intact. New text invalidates its layout
+cache; empty edits retain the original snapshot (except linewise identity removal).
+Line lookup uses
+binary search; bounded snapshot-owned sparse layouts support warm column/viewport
+queries, though first access can still scan a long line.
 Only `Text_buffer` knows how text is stored. Its interface works in byte offsets
 at UTF-8 code-point boundaries and in line numbers, so it can later become a rope
 or piece tree without changing the editor, keymap, or screen code.
 
-The cost is that editing time and undo memory grow with file size. Undo history
-keeps a whole snapshot of the text for each step (neighboring steps share one),
-and it is never trimmed. Very large files will be slow to edit, and a long session
-uses memory roughly in proportion to file size times the number of undo steps.
+Editing time and each undo step's memory still grow with file size. Limits are
+code configuration: `History.Limits.default` and optional
+`Editor.create ~history_limits`; reload/directory rebase preserve the chosen limits.
+1,000 transactions permit substantial small-file work, while the 64 MiB budget
+prevents long sessions retaining unlimited full-document copies. Larger documents
+therefore keep fewer steps. There is no eviction notification or disk-persistent undo.
+
+Each complete step charges 128 bytes for snapshots/step/map storage plus both
+`Text_buffer.retained_bytes` estimates: text length, eight bytes per line-start
+entry, fixed snapshot/string overhead, and protected directory scope/anchor/token
+storage. Shared snapshots, including adjacent after/before texts, are charged in
+full per step, deliberately overestimating shared storage without hashing or byte
+scans. Identity charge is cached when metadata is normalized; history reads it in
+O(1). Undo/redo moves the existing charge, never adding another copy.
+
+After commit, complete-step charge is **at most max(byte budget, newest complete
+step charge)**, with count at most the configured positive transaction limit.
+Undo/redo preserves that bound ("newest" means chronologically newest retained
+transaction, including redo). The active transaction's before snapshot is protected
+and outside this budget until commit; current text, saved text, registers, other
+application ownership and externally retained old editor/history states are also
+outside it. The bounded layout cache is uncharged: up to 64 line/width indexes and
+16,384 checkpoint slots per snapshot, plus index/list overhead (see
+[long-line rendering](long_line_rendering.md)). These are retention estimates,
+**not total RSS or peak-allocation guarantees**; garbage collection releases dropped
+ownership on its own schedule.
+
+History uses persistent ordered maps and incremental byte totals. Undo/redo and a
+commit without eviction cost O(log n); starting an active transaction and reading
+stats cost O(1). Removing k oldest steps costs O(k log n), bounded by the configured
+count; an oversized newest step replaces old roots directly, as does clearing redo
+on a branch. There are no recurring history-length scans or list-reversal spikes.
+Bounded undo retention is complete. Shared snapshots and line arrays remain charged
+in full, so the accounting contract is unchanged by array reuse. Equality now has
+safe physical snapshot/string/list identity guards; distinct snapshots still use
+content-and-identity equality. Dirty state therefore clears on undo-to-saved or a
+separately reconstructed equal saved state, rather than depending on revision equality.
+Comparisons of distinct equal large strings can still be O(document bytes), as can
+transaction no-net-change checks. Whole-string copies, line-array updates and first
+layout access remain architectural costs. See the slice 7b entry in
+[`PERFORMANCE_TEST_PLAN.md`](../PERFORMANCE_TEST_PLAN.md) for bounded probe results.
 
 ## Saving: current limitations
 
@@ -1057,7 +1156,7 @@ and changes made to the file by other programs are not detected.
   prompt. Search and local OCaml/Verilog/SystemVerilog syntax highlighting are supported; semantic tokens,
   other languages and language-server features beyond diagnostics are not. Word motions use the
   simple character classes above, not Unicode word properties.
-- Large files are slow to edit and undo history grows without limit; see
+- Large files are slow to edit and bounded whole-text undo can retain fewer steps; see
   [Storage](#storage) and [Syntax highlighting](#syntax-highlighting). Incremental
   parsing still runs a full-document query and normalization after each text change.
 - No configuration file: tab width, the `j k` escape, and key bindings are set in

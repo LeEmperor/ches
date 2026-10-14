@@ -11,27 +11,36 @@ type 'token t =
   ; mutable view : Model.Candidate.Id.t Selection.t
   ; mutable expected : Preview.request option
   ; mutable preview : Preview.snapshot option
+  ; mutable preview_revision : int
   }
 
 let create ~token ~discovery =
   { session = Interaction.create ~token ~discovery; view = Selection.empty
-  ; expected = None; preview = None }
+  ; expected = None; preview = None; preview_revision = 0 }
 ;;
 
 let session t = t.session
 let view t = t.view
 let preview t = t.preview
+let visible_stamp t = Interaction.instance t.session, Interaction.visible_revision t.session, t.preview_revision
 let expect_preview t expected =
-  if not (Option.equal Preview.equal_request t.expected expected) then t.preview <- None;
+  if not (Option.equal Preview.equal_request t.expected expected) then (
+    t.preview_revision <- t.preview_revision + 1; t.preview <- None);
   t.expected <- expected
 ;;
-let clear_preview t = t.expected <- None; t.preview <- None
+let clear_preview t =
+  if Option.is_some t.expected || Option.is_some t.preview then t.preview_revision <- t.preview_revision + 1;
+  t.expected <- None; t.preview <- None
 let install_preview t snapshot =
   let model = Interaction.model t.session in
   if Preview.accept ~expected:t.expected snapshot
-     && Model.Discovery.equal_request (Model.discovery model).request snapshot.request.session
+      && Model.Discovery.equal_request (Model.discovery_request model) snapshot.request.session
      && Option.equal Model.Candidate.Id.equal (Model.selected model) (Some snapshot.request.selected)
-  then (t.preview <- Some snapshot; true) else false
+  then (
+    if not (Option.exists t.preview ~f:(fun previous ->
+      Preview.equal_snapshot previous snapshot)) then (
+      t.preview_revision <- t.preview_revision + 1; t.preview <- Some snapshot);
+    true) else false
 ;;
 
 (* Minimum useful results/preview widths; the separator has three cells. *)
@@ -42,9 +51,12 @@ let columns ~width =
 
 let fit t ~rows =
   let model = Interaction.model t.session in
-  let ids = List.map (Model.results model) ~f:(fun r -> Model.Candidate.id r.candidate) in
-  t.view <- Selection.fit { t.view with selected = Model.selected model }
-    ids ~equal:Model.Candidate.Id.equal ~rows:(Int.max 1 (rows - 2))
+  let count = Model.result_count model in
+  let index = Option.value (Model.selected_index model) ~default:0 in
+  let rows = Int.max 1 (rows - 2) in
+  let top = Int.min t.view.top (Int.max 0 (count - rows)) in
+  let top = if index < top then index else if index >= top + rows then index - rows + 1 else top in
+  t.view <- { selected = Model.selected model; index; top }
 ;;
 
 type action = Event of Ches_palette.Palette.Event.t | Accept [@@deriving sexp_of]
@@ -59,6 +71,7 @@ let interpret keys =
 
 let update t ~rows event = Interaction.update t.session event; fit t ~rows
 let install t snapshot = Interaction.install t.session snapshot
+let install_update t update = Interaction.install_update t.session update
 let work t ~budget = Interaction.work t.session ~budget
 let accept t ~release ~consume = Interaction.accept t.session ~release ~consume
 let cancel t ~release = clear_preview t; Interaction.cancel t.session ~release
@@ -68,7 +81,15 @@ let cursor t ~width = Picker_text.cursor (Interaction.query t.session) ~width:(f
 let safe = Model.Candidate.display_text
 
 let status t =
-  match (Model.discovery (Interaction.model t.session)).status with
+  let status = Model.discovery_status (Interaction.model t.session) in
+  if Interaction.refreshing t.session then
+    sprintf "Loading / refreshing cached files... %d discovered | Enter disabled" (Interaction.refresh_count t.session)
+  else if Interaction.acceptance_blocked t.session then
+    (match status with
+     | Failed error -> "Refresh failed: " ^ safe error ^ " | Enter disabled; reopen to retry"
+     | Complete { truncated = true } -> "TRUNCATED refresh | Enter disabled; reopen to retry"
+     | _ -> "Validating refreshed files... | Enter disabled")
+  else match status with
   | Loading -> "Loading files..."
   | Partial -> "Discovering files (partial)"
   | Complete { truncated = true } -> "TRUNCATED: discovery limit reached; not all files shown"
@@ -87,29 +108,28 @@ let result_row (result : Model.Query_result.t) ~selected ~width =
 let render_results ~hotkey_hints ?notice t ~width ~rows : Tile_shell.Content.t =
   fit t ~rows;
   let model = Interaction.model t.session in
-  let discovery = Model.discovery model in
-  let results = Model.results model in
-  let count = List.length results in
+  let discovery_status = Model.discovery_status model in
+  let count = Model.result_count model in
   let busy = Interaction.busy t.session in
   let summary = status t ^ if busy then " | Filtering... (Enter waits)" else "" in
   let list =
     if count = 0 then
       [ Tile_text.row Stale
           (if busy then "Filtering files..."
-           else match discovery.status with
+            else match discovery_status with
              | Loading -> "Waiting for discovery"
-             | Complete { truncated = false } when List.is_empty discovery.candidates -> "No project files"
-             | Complete { truncated = true } when List.is_empty discovery.candidates ->
+             | Complete { truncated = false } when Model.discovered_count model = 0 -> "No project files"
+             | Complete { truncated = true } when Model.discovered_count model = 0 ->
                "No files available within discovery limits"
-             | Failed _ when List.is_empty discovery.candidates -> "No files available"
+             | Failed _ when Model.discovered_count model = 0 -> "No files available"
              | Cancelled -> "Discovery cancelled"
              | _ -> "No matching files") ~width ]
-    else List.take (List.drop results t.view.top) (Int.max 0 (rows - 2))
+    else Model.result_slice model ~start:t.view.top ~length:(Int.max 0 (rows - 2))
       |> List.mapi ~f:(fun i result -> result_row result ~selected:(t.view.top + i = t.view.index) ~width)
   in
   let query = Picker_text.query_row (Interaction.query t.session) ~width in
   let query = query @ [ Span.blank Status (Int.max 0 (width - Span.total_width query)) ] in
-  { title = "Files | " ^ safe discovery.request.root
+  { title = "Files | " ^ safe (Model.discovery_request model).root
   (* When requested, keep controls ahead of duplicated discovery metadata so
      narrow layouts still show key guidance. Status is independent of hints. *)
   ; footer = Some (Tile_shell.Label.hint
@@ -117,7 +137,7 @@ let render_results ~hotkey_hints ?notice t ~width ~rows : Tile_shell.Content.t =
        ^ sprintf "%d/%d matches%s | %d discovered | %s"
          (if count = 0 then 0 else t.view.index + 1) count
          (if hotkey_hints then " | Enter, Esc | Tab/Shift-Tab, Ctrl-n/p" else "")
-         (List.length discovery.candidates) summary))
+         (Model.discovered_count model) summary))
   ; body = List.take (query :: Tile_text.row Stale summary ~width :: list) (Int.max 0 rows)
   }
 ;;
@@ -125,9 +145,7 @@ let render_results ~hotkey_hints ?notice t ~width ~rows : Tile_shell.Content.t =
 let preview_rows t ~width ~rows =
   let row style text = Tile_text.row style text ~width in
   let model = Interaction.model t.session in
-  let filename = List.find_map (Model.results model) ~f:(fun result ->
-    if Option.equal Model.Candidate.Id.equal (Some (Model.Candidate.id result.candidate)) (Model.selected model)
-    then Some (Model.Candidate.display_path result.candidate) else None) in
+  let filename = Option.map (Model.selected_candidate model) ~f:Model.Candidate.display_path in
   let title = row Pending ("Preview | " ^ Option.value filename ~default:"No selection") in
   let source = function Preview.Disk -> "disk" | Buffer { revision } -> sprintf "buffer r%d" revision in
   let state = Option.map t.preview ~f:(fun snapshot -> snapshot.Preview.state) in

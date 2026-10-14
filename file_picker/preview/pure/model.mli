@@ -13,7 +13,7 @@ type truncation = { bytes : bool; lines : bool; utf8_boundary : bool }
     [lines] excludes LF and has no extra empty row after a final LF. *)
 type payload = private
   { source : source; text : string; lines : string list; bytes_read : int }
-[@@deriving sexp_of]
+[@@deriving sexp_of, equal]
 type unsupported = Binary | Encoding | Special_file [@@deriving sexp_of, equal]
 type state =
   | Loading
@@ -23,14 +23,14 @@ type state =
   | Missing
   | Unreadable of string
   | Unsupported of unsupported
-[@@deriving sexp_of]
+[@@deriving sexp_of, equal]
 type request =
   { session : Ches_file_picker.Model.Discovery.request
   ; selected : Ches_file_picker.Model.Candidate.Id.t
   ; generation : int
   }
 [@@deriving sexp_of, equal]
-type snapshot = { request : request; state : state } [@@deriving sexp_of]
+type snapshot = { request : request; state : state } [@@deriving sexp_of, equal]
 
 (** A second installation guard for frontend events queued before selection/close.
     [None] means inactive; never install a delivery merely because its path matches. *)

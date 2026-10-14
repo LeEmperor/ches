@@ -12,19 +12,8 @@ type t =
 
 let of_session session =
   let files = Session.buffers session in
-  let parts c = Option.value_map (Editor.path (Controller.editor c))
-    ~default:[ "[unnamed]" ] ~f:(fun p -> String.split p ~on:'/' |> List.filter ~f:(Fn.non String.is_empty)) in
-  let suffix parts n = List.drop parts (Int.max 0 (List.length parts - n)) in
-  List.map files ~f:(fun (id, c) ->
-    let path = parts c in
-    let rec label n =
-      let candidate = suffix path n in
-      if n < List.length path && List.exists files ~f:(fun (other, c) ->
-        not (Buffer_id.equal id other) && [%equal: string list] candidate (suffix (parts c) n))
-      then label (n + 1)
-      else String.concat ~sep:"/" (List.map candidate ~f:Directory_identity.encode_name)
-    in
-    { id; label = label 1
+  List.map2_exn files (Session.buffer_labels session) ~f:(fun (id, c) (_, label) ->
+    { id; label
     ; active = Option.equal Buffer_id.equal (Some id) (Session.active_id session)
     ; modified = Editor.is_dirty (Controller.editor c)
     ; missing = Controller.is_missing c })

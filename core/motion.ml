@@ -346,7 +346,7 @@ let clamp_line text line = Int.clamp_exn line ~min:0 ~max:(B.line_count text - 1
    shorter. *)
 let offset_of_display_column text ~cell_width ~line column =
   let start = B.line_start text line in
-  match Cell_layout.pos_of_column (Cell_layout.glyphs ~width:cell_width (B.line_text text line)) column with
+  match Cell_layout.Index.pos_of_column (B.line_layout text ~width:cell_width line) column with
   | Some pos -> start + pos
   | None -> B.line_end text line
 ;;
