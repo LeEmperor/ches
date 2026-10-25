@@ -71,6 +71,36 @@ let floating_layer ?allocation ?floating ui ~width ~height =
                picker ~width:content.width ~rows:content.height
            ; cursor = Some (File_picker_tile.cursor picker ~width:content.width)
            }))
+     | None when Option.is_some (Ui_state.help ui) ->
+       Option.bind (Ui_state.help_layout ui ~width ~height) ~f:(fun layout ->
+         Option.map (Ui_state.help ui) ~f:(fun help ->
+           let content = layout.content in
+           { Floating_layer.id = Help_tile.id
+           ; layout
+           ; content = Help_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+               help ~width:content.width ~rows:content.height
+           ; cursor = None
+           }))
+     | None when Option.is_some (Ui_state.confirm ui) ->
+       Option.bind (Ui_state.confirm_layout ui ~width ~height) ~f:(fun layout ->
+         Option.map (Ui_state.confirm ui) ~f:(fun confirm ->
+           let content = layout.content in
+           { Floating_layer.id = Confirm_tile.id
+           ; layout
+           ; content = Confirm_tile.render ?notice:(Ui_state.capture_notice ui)
+               confirm ~width:content.width ~rows:content.height
+           ; cursor = None
+           }))
+     | None when Option.is_some (Ui_state.prompt ui) ->
+       Option.bind (Ui_state.prompt_layout ui ~width ~height) ~f:(fun layout ->
+         Option.map (Ui_state.prompt ui) ~f:(fun prompt ->
+           let content = layout.content in
+           { Floating_layer.id = Prompt_tile.id
+           ; layout
+           ; content = Prompt_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+               prompt ~width:content.width ~rows:content.height
+           ; cursor = Some (Prompt_tile.cursor prompt ~width:content.width)
+           }))
      | None ->
       Option.bind (Ui_state.palette_layout ui ~width ~height) ~f:(fun layout ->
         Option.map (Ui_state.palette ui) ~f:(fun palette ->
@@ -95,7 +125,6 @@ let overlay_floating rows (layer : Floating_layer.t) ~focused =
 let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~width ~height =
   let width = Int.max 0 width
   and height = Int.max 0 height in
-  let screen_width = width in
   let floating = floating_layer ?allocation ?floating ui ~width ~height in
   let floating_view =
     match floating with
@@ -103,7 +132,10 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
      | None when Option.is_some allocation ->
          Some ((if Option.is_some (Ui_state.content_picker ui) then Content_picker_tile.id
            else if Option.is_some (Ui_state.line_picker ui) then Line_picker_tile.id
-          else if Option.is_some (Ui_state.file_picker ui) then File_picker_tile.id else Palette_tile.id), None)
+          else if Option.is_some (Ui_state.file_picker ui) then File_picker_tile.id
+          else if Option.is_some (Ui_state.help ui) then Help_tile.id
+          else if Option.is_some (Ui_state.confirm ui) then Confirm_tile.id
+          else if Option.is_some (Ui_state.prompt ui) then Prompt_tile.id else Palette_tile.id), None)
     | None -> None
   in
   let explicit_allocation = Option.is_some allocation in
@@ -152,9 +184,9 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
     geometry
   in
   let fields = Status.fields ui in
-  let buffers = Open_buffers.of_session (Ui_state.session ui) in
+  let buffers = Ui_state.tab_items ui in
   let tab_row = Option.map (Ui_state.tab_rect ~buffers_in_status ui ~allocation) ~f:(fun rect ->
-    rect, File_tabs.render buffers ~width:rect.width) in
+    rect, File_tabs.render_items buffers ~width:rect.width) in
   let directory = Session.input_directory (Ui_state.session ui) in
   let header = Option.map (Ui_state.directory_rect ~buffers_in_status ui ~allocation) ~f:(fun rect ->
     let d = Option.value_exn directory in
@@ -178,38 +210,29 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
      host's capture notice and pending prefix. *)
   let focused_view = Ui_state.focused_view ?floating:floating_view ui ~width ~height in
   let hotkey_hints = Ui_state.hotkey_hints ui in
-  let minor_tiles = List.filter_map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
+  let view_tile id (layout : Tile_shell.Layout.t) =
+    let width = layout.content.width and rows = layout.content.height in
+    let focused = Ches_tile.View_id.equal focused_view id in
+    let notice, pending =
+      if focused then Ui_state.capture_notice ui, Ui_state.capture_pending ui else None, None in
+    let content : Tile_shell.Content.t =
+      match
+        View_registry.render (Ui_state.views ui) id (Ui_state.controller ui)
+          ~hotkey_hints ~focused ~notice ~pending ~width ~rows
+      with
+      | Some content -> content
+      | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }
+    in
+    layout.outer, Array.of_list (Tile_shell.render layout ~focused content) in
+  (* The active view tab covers the document's tile; the split view is a minor pane. *)
+  let tab_view = if explicit_allocation then None else
+    Option.bind (Ui_state.active_tab_view ui) ~f:(fun id ->
+      Option.map (Ui_state.minor_layout ui ~width ~height id) ~f:(view_tile id)) in
+  let minor_tiles = Option.to_list tab_view @ List.filter_map minor_panes ~f:(fun (pane : Workspace.Pane.t) ->
     match pane.id with
     | Document | Status -> None
     | Minor id when Ches_tile.View_id.equal id Ui_state.directory_id -> None
-    | Minor id ->
-      let layout =
-        Option.value_exn (Ui_state.minor_layout ui ~width ~height id) in
-      let width = layout.content.width and rows = layout.content.height in
-      let focused = Ches_tile.View_id.equal focused_view id in
-      let notice, pending =
-        if focused then Ui_state.capture_notice ui, Ui_state.capture_pending ui else None, None in
-      let content : Tile_shell.Content.t =
-        match Ui_state.report ui with
-        | _ when Ches_tile.View_id.equal id Problems_tile.id ->
-          let tile = Ui_state.problems_tile ui in
-          Problems.render
-            ~hotkey_hints ~focused
-            ~navigation:(Ui_state.problem_navigation ui ~width:screen_width ~height)
-            ?details:(Problems_tile.text_view tile)
-            ?notice ?pending
-            (Controller.feedback (Ui_state.controller ui))
-            ~current_document:(Problems_tile.current_document tile)
-            ~document:(Problems_tile.document tile editor) ~width ~rows
-        | _ when Ches_tile.View_id.equal id History_tile.id ->
-          History_tile.render ~hotkey_hints ~focused ?notice ?pending (Ui_state.history_tile ui)
-            (Ches_error.Error.history (Controller.feedback (Ui_state.controller ui)))
-            ~width ~rows
-        | Some report when Ches_tile.View_id.equal id Report_tile.id ->
-          Report_tile.render ~hotkey_hints ~focused ?notice ?pending report ~width ~rows
-        | Some _ | None -> { title = Ches_tile.View_id.to_string id; footer = None; body = [] }
-      in
-      Some (layout.outer, Array.of_list (Tile_shell.render layout ~focused content))) in
+    | Minor id -> Some (view_tile id (Option.value_exn (Ui_state.minor_layout ui ~width ~height id)))) in
   let search =
     match Keymap.search_preview (Controller.keymap (Ui_state.controller ui)) with
     | Some query when not (String.is_empty query) -> Some (query, false, Editor.Search_case.(match Editor.search_case editor with Sensitive -> true | Insensitive -> false | Smart -> String.exists query ~f:(fun c -> Char.(c >= 'A' && c <= 'Z'))), None)
@@ -452,6 +475,8 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
         | _ -> match tab_row, area_on_row Status_row y with
         | Some (rect, spans), _ when y = rect.y -> [ rect, spans ]
         | _, Some area -> [ area.rect, Status.render area fields ]
+        | _, None when Option.exists tab_view ~f:(fun ((rect : Geometry.Rect.t), _) ->
+            y >= rect.y && y < rect.y + rect.height) -> []
         | _, None when y >= tile.y && y < tile.y + tile.height -> [ tile, tile_row y ]
         | _, None -> []
       in

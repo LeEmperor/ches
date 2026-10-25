@@ -93,3 +93,15 @@ val perform
   -> width:int
   -> action
   -> Outcome.t
+
+(** In the list: [inspect] ([e]), [acknowledge] ([a]), [jump] (Enter), [copy-item],
+    and the shared list motions; with details open: [inspect] (closing them),
+    [acknowledge], [jump], and the read-only text's commands. *)
+val commands : t -> Ches_tile.Local_command.t list
+
+(** Typed access to this view's state in a {!View_registry}. *)
+val key : t Type_equal.Id.t
+
+(** The registry adapter: this module's functions over shared feedback and the
+    controller's document, and {!Problems.render}. *)
+val adapter : (t, action) View_registry.Adapter.t

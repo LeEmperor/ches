@@ -75,3 +75,13 @@ val render
   -> width:int
   -> rows:int
   -> Tile_shell.Content.t
+
+(** [toggle-details] ([e]); then [copy-item] and the shared list motions in the
+    list, or the read-only text's commands in details. *)
+val commands : t -> Ches_tile.Local_command.t list
+
+(** Typed access to this view's state in a {!View_registry}. *)
+val key : t Type_equal.Id.t
+
+(** The registry adapter; it never reads or changes the controller. *)
+val adapter : (t, action) View_registry.Adapter.t

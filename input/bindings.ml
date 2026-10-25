@@ -102,6 +102,17 @@ let default =
   let status c (command : View_command.t) =
     [ leader; Key.char 'v'; Key.char 'p'; Key.char c ], Target.View command
   in
+  (* Placement of the focused registered view, and the major split. *)
+  let split c (command : View_command.t) =
+    [ leader; Key.char 's'; Key.char c ], Target.View command
+  in
+  let place c (placement : View_command.Placement.t) =
+    split c (Place_view { view = None; placement })
+  in
+  (* The registered views these defaults bind; the screen installs them by these ids. *)
+  let problems = View_id.of_string "problems"
+  and history = View_id.of_string "history"
+  and demo_report = View_id.of_string "demo-report" in
   create
     [ move [ 'h' ] Left
     ; move [ 'j' ] Down
@@ -195,13 +206,13 @@ let default =
     ; view 'N' Toggle_relative_numbers
     ; view 's' Toggle_smear
     ; view 'e' Inspect_problems
-    ; view 'b' Toggle_problems
+    ; view 'b' (Toggle_view problems)
     ; view 'f' Toggle_problems_filter
-    ; view 'o' Focus_problems
-    ; view 'd' Toggle_demo_report
-    ; view 'D' Focus_demo_report
-    ; view 'm' Toggle_history
-    ; view 'M' Focus_history
+    ; view 'o' (Focus_view problems)
+    ; view 'd' (Toggle_view demo_report)
+    ; view 'D' (Focus_view demo_report)
+    ; view 'm' (Toggle_view history)
+    ; view 'M' (Focus_view history)
     ; view 'R' Restart_source
     ; view 'K' Kill_source
     ; view 't' Toggle_status
@@ -215,6 +226,15 @@ let default =
     ; status '+' (Adjust_status_size 2)
     ; status '=' (Adjust_status_size 2)
     ; view 'r' Reset
+    ; place 't' Tab
+    ; place 's' Split
+    ; place 'b' Band
+    ; place 'h' Hidden
+    ; split 'f' Focus_other_pane
+    ; split 'x' Swap_split
+    ; split '-' (Adjust_split (-10))
+    ; split '+' (Adjust_split 10)
+    ; split '=' (Adjust_split 10)
     ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
     ; [ leader; Key.char 'f'; Key.char 'l' ], View Open_line_picker
     ; [ leader; Key.char 'f'; Key.char 'f' ], View Open_file_picker

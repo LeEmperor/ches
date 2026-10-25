@@ -49,7 +49,7 @@ checks for [Ches](../README.md).
 | Normal | `Space b t` / `Space b s` | Show file buffers in the top strip / as passive status rows |
 | Normal/Visual | `Space m m/s/u/c/o` (directory) | Toggle mark / mark / unmark selection / clear marks / open marked files |
 | Normal/Visual | `Space d m/s/h/f` | Major / side / hide / focus browser or editor |
-| Normal/Visual | `Space d +` / `Space d -` | Grow / shrink side width by four columns |
+| Normal/Visual | `Space d +` / `Space d -` | Grow / shrink side width by four columns; a count repeats (`3 Space d +`) |
 | Normal/Visual | `Tab` (side directory) | Return focus to editor (Insert Tab edits normally) |
 | Visual | `Enter` (directory) | Open files in intersected rows |
 | Normal | `Space q` | Quit; refused for dirty/missing files and hidden dirty directories |
@@ -57,14 +57,14 @@ checks for [Ches](../README.md).
 | Normal | `Space v c` | Toggle the centered tile / full width |
 | Normal | `Space v h` / `Space v l` | Move the tile 2 cells left / right |
 | Normal | `Space v H` / `Space v L` | Move the tile 10 cells left / right |
-| Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider |
+| Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider; a count repeats (`3 Space v +` is 30) |
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
 | Normal | `Space v s` | Toggle the animated smear cursor (off by default; launch with `--smear` to opt in) |
 | Normal | `Space v ?` | Show/hide tile hotkey hints (hidden by default) |
 | Normal | `Space v t` | Show/hide the status cell (shown by default) |
 | Normal | `Space v p h/l/k/j` | Place status left/right/above/below and show it |
-| Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`) |
+| Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`); a count repeats |
 | Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
 | Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
 | Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
@@ -491,7 +491,7 @@ In Normal mode, digits before a movement key repeat it: `20j` moves down 20
 lines, `5l` moves right 5 characters, and `3w` moves 3 words. A count stops at the
 edge rather than failing: `999j` near the end goes to the last line, and `20l` on a
 short line goes to its last character. The status line shows a count while you
-type it, with any keys of the sequence after it (`20 g`).
+type it, with any keys of the sequence after it (`20 g`, `3 Space v`).
 
 - `1`–`9` start a count, and any digit, including `0`, extends it. A bare `0` is
   the line-start motion: `10j` moves 10 lines, and `0` then goes to the line start.
@@ -500,8 +500,11 @@ type it, with any keys of the sequence after it (`20 g`).
   as the first. `G` and `gg` with a count go to that line.
 - `0`, `^`, `%`, and `zz`/`zt`/`zb` take no count. `x`, `X`, `p`, and `P` take a
   count; operator and motion counts multiply (`2d3w` deletes and `2y3w` yanks six
-  words). A count before
-  an unsupported command, such as `3^` or `2 Space w`, is rejected with a message.
+  words). A count repeats a resize step as that many presses would: `3 Space v +`
+  widens the text by 30 cells, and `Space s +`/`-`, `Space v p +`/`-`, and
+  `Space d +`/`-` work the same way, stopping at their usual limits. A count before
+  an unsupported command, such as `3^`, `2 Space w`, or `2 Space v c`, is rejected
+  with a message.
 - `Escape` cancels a pending count silently. A key that is not bound after a count,
   `Ctrl-c`, or a paste also cancels it. Nothing typed before a cancellation
   carries over to the next key.

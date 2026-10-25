@@ -27,7 +27,7 @@ let%test_unit "palette Tab/Shift-Tab clamp and reveal; query refinement and acce
   let first = selected t in
   let t = run t "<S-Tab>" in
   assert ([%equal: Ches_palette.Catalog.Id.t option] first (selected t));
-  let t = run t (String.concat (List.init 60 ~f:(fun _ -> "<Tab>"))) in
+  let t = run t (String.concat (List.init 80 ~f:(fun _ -> "<Tab>"))) in
   let tile = Option.value_exn (Ui_state.palette t) in
   let view = Palette_tile.view tile in
   let layout = Option.value_exn (Ui_state.palette_layout t ~width ~height) in
@@ -192,7 +192,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     ││ >                                                                          ││|
     ││ > Save buffer                                                      Space w ││|
     ││   Next file tab                                                  Space b n ││|
-    ╰╰─ 1/55 ─────────────────────────────────────────────────────────────────────╯╯|
+    ╰╰─ 1/63 ─────────────────────────────────────────────────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;

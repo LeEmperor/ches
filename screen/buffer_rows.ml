@@ -1,10 +1,9 @@
 open! Core
-open Ches_app
 
 (** Passive rows, centered around the active buffer without retained scroll state.
     Overflow is indicated in the row's leading cell, never at the expense of the
     active row. Badges precede labels so they survive narrow allocations. *)
-let render (buffers : Open_buffers.t list) ~width ~rows =
+let render_items (buffers : Tab_strip.Item.t list) ~width ~rows =
   let width = Int.max 0 width and rows = Int.max 0 rows in
   let count = List.length buffers in
   let active = Option.value (List.findi buffers ~f:(fun _ b -> b.active) |> Option.map ~f:fst) ~default:0 in
@@ -23,4 +22,8 @@ let render (buffers : Open_buffers.t list) ~width ~rows =
       let spans = Span.of_text label ~style ~special:Status_special
         |> Span.keep_left ~n:width ~marker_style:style in
       spans @ [ Span.blank Status (width - Span.total_width spans) ])
+;;
+
+let render buffers ~width ~rows =
+  render_items (List.map buffers ~f:Tab_strip.Item.of_file) ~width ~rows
 ;;

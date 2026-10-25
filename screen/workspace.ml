@@ -26,6 +26,38 @@ module Split = struct
   let default = { axis = Horizontal; first = Document; status_size = 28 }
 end
 
+module Major_split = struct
+  module Side = struct
+    type t =
+      | Left
+      | Right
+    [@@deriving sexp_of, equal]
+  end
+
+  type t =
+    { view_side : Side.t
+    ; percent : int
+    }
+  [@@deriving sexp_of, equal]
+
+  let min_percent = 20
+  let max_percent = 80
+  let default = { view_side = Right; percent = 50 }
+
+  let swap t =
+    { t with
+      view_side =
+        (match t.view_side with
+         | Left -> Right
+         | Right -> Left)
+    }
+  ;;
+
+  let adjust t points =
+    { t with percent = Int.clamp_exn (t.percent + points) ~min:min_percent ~max:max_percent }
+  ;;
+end
+
 module Prefs = struct
   type t =
     { status_visible : bool
@@ -58,6 +90,7 @@ let min_document_height = 1
 let min_status_width = 8
 let min_status_height = 3
 let min_minor_width = 16
+let min_split_width = 24
 let gap = 1
 let min_band_height = 3
 let preferred_band_height = 10
@@ -168,8 +201,31 @@ let allocate_band ?(minors = []) prefs ~(allocation : Geometry.Rect.t) =
     { workspace with minors; gaps = workspace.gaps @ gaps })
 ;;
 
-let allocate ?(minors = []) ?side prefs ~(allocation : Geometry.Rect.t) =
-  let allocation = { allocation with width = Int.max 0 allocation.width; height = Int.max 0 allocation.height } in
+(* Divide the document's allocation between the active tab and the split view. *)
+let allocate_split t (id, (request : Major_split.t)) =
+  let area = t.document.rect in
+  let available = area.width - gap in
+  if available < min_document_width + min_split_width || area.height < min_band_height
+  then t
+  else (
+    let size =
+      Int.clamp_exn (available * request.percent / 100) ~min:min_split_width
+        ~max:(available - min_document_width)
+    in
+    let document_width = available - size in
+    let view_x, document_x, gap_x =
+      match request.view_side with
+      | Right -> area.x + document_width + gap, area.x, area.x + document_width
+      | Left -> area.x, area.x + size + gap, area.x + size
+    in
+    { t with
+      document = { t.document with rect = { area with x = document_x; width = document_width } }
+    ; minors = t.minors @ [ { Pane.id = Minor id; rect = { area with x = view_x; width = size } } ]
+    ; gaps = t.gaps @ [ { area with x = gap_x; width = gap } ]
+    })
+;;
+
+let allocate_side ~minors ?side prefs ~(allocation : Geometry.Rect.t) =
   match side with
   | Some (id, preferred) when allocation.width >= 16 + gap + min_document_width && allocation.height >= 4 ->
     let size = Int.clamp_exn preferred ~min:16 ~max:(allocation.width - gap - min_document_width) in
@@ -179,6 +235,11 @@ let allocate ?(minors = []) ?side prefs ~(allocation : Geometry.Rect.t) =
     { workspace with minors = { Pane.id = Minor id; rect } :: workspace.minors
       ; gaps = { allocation with x = allocation.x + size; width = gap } :: workspace.gaps }
   | _ -> allocate_band ~minors prefs ~allocation
+;;
+
+let allocate ?(minors = []) ?side ?split prefs ~(allocation : Geometry.Rect.t) =
+  let allocation = { allocation with width = Int.max 0 allocation.width; height = Int.max 0 allocation.height } in
+  Option.fold split ~init:(allocate_side ~minors ?side prefs ~allocation) ~f:allocate_split
 ;;
 
 let minor t id =

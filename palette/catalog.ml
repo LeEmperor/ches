@@ -75,6 +75,9 @@ let default =
     Entry.create ~id ~title ?keywords (View command)
   in
   let numbers = [ "gutter"; "numbering"; "line numbers" ] in
+  let problems = View_id.of_string "problems"
+  and history = View_id.of_string "history"
+  and demo_report = View_id.of_string "demo-report" in
   create
      [ editor ~id:"file.save" ~title:"Save buffer" ~keywords:[ "write"; "w"; "file"; "directory"; "apply"; "permanent delete" ] Save
     ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab
@@ -205,15 +208,55 @@ let default =
         ~keywords:[ "distraction free"; "focus"; "hide" ]
         Toggle_zen
     ; view
+        ~id:"views.to-tab"
+        ~title:"Move focused view to a tab"
+        ~keywords:[ "placement"; "tab strip"; "major" ]
+        (Place_view { view = None; placement = Tab })
+    ; view
+        ~id:"views.to-split"
+        ~title:"Move focused view to the split"
+        ~keywords:[ "placement"; "pane"; "side by side" ]
+        (Place_view { view = None; placement = Split })
+    ; view
+        ~id:"views.to-band"
+        ~title:"Move focused view to the bottom band"
+        ~keywords:[ "placement"; "minor" ]
+        (Place_view { view = None; placement = Band })
+    ; view
+        ~id:"views.close"
+        ~title:"Close focused view"
+        ~keywords:[ "placement"; "hide" ]
+        (Place_view { view = None; placement = Hidden })
+    ; view
+        ~id:"split.focus-other"
+        ~title:"Focus other split pane"
+        ~keywords:[ "pane"; "switch"; "window" ]
+        Focus_other_pane
+    ; view
+        ~id:"split.swap"
+        ~title:"Swap split sides"
+        ~keywords:[ "pane"; "left"; "right" ]
+        Swap_split
+    ; view
+        ~id:"split.grow-view"
+        ~title:"Grow split view by 10%"
+        ~keywords:[ "pane"; "ratio"; "size"; "wider" ]
+        (Adjust_split 10)
+    ; view
+        ~id:"split.shrink-view"
+        ~title:"Shrink split view by 10%"
+        ~keywords:[ "pane"; "ratio"; "size"; "narrower" ]
+        (Adjust_split (-10))
+    ; view
         ~id:"problems.toggle"
         ~title:"Toggle problems tile"
         ~keywords:[ "errors"; "diagnostics"; "warnings" ]
-        Toggle_problems
+        (Toggle_view problems)
     ; view
         ~id:"problems.focus"
         ~title:"Focus problems"
         ~keywords:[ "errors"; "diagnostics"; "warnings" ]
-        Focus_problems
+        (Focus_view problems)
     ; view
         ~id:"problems.toggle-filter"
         ~title:"Toggle problems filter (workspace / current document)"
@@ -228,22 +271,22 @@ let default =
         ~id:"history.toggle"
         ~title:"Toggle notification history"
         ~keywords:[ "messages"; "log"; "notifications" ]
-        Toggle_history
+        (Toggle_view history)
     ; view
         ~id:"history.focus"
         ~title:"Focus notification history"
         ~keywords:[ "messages"; "log"; "notifications" ]
-        Focus_history
+        (Focus_view history)
     ; view
         ~id:"report.toggle"
         ~title:"Toggle demo report"
         ~keywords:[ "demo" ]
-        Toggle_demo_report
+        (Toggle_view demo_report)
     ; view
         ~id:"report.focus"
         ~title:"Focus demo report"
         ~keywords:[ "demo" ]
-        Focus_demo_report
+        (Focus_view demo_report)
     ; view
         ~id:"source.restart"
         ~title:"Restart diagnostic source"

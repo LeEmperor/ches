@@ -185,3 +185,53 @@ let perform t controller ~rows ~width action : Outcome.t =
          | Error error -> post (Error.to_string_hum error)
          | Ok controller -> outcome t ~controller ~return:true))
 ;;
+
+let commands t =
+  let c name keys description = Ches_tile.Local_command.create name ~keys description in
+  let k = Ches_input.Key.char in
+  let acknowledge = c "acknowledge" [ k 'a' ] "Acknowledge the selected problem" in
+  let jump = c "jump" [ Enter ] "Jump to the selected problem and return" in
+  match t.details with
+  | None ->
+    [ c "inspect" [ k 'e' ] "Open details (inspect)"; acknowledge; jump ]
+    @ Text_view.item_commands
+    @ Navigation.commands
+  | Some view ->
+    [ c "inspect" [ k 'e' ] "Close details"; acknowledge; jump ] @ Text_view.commands view
+;;
+
+let key = Type_equal.Id.create ~name:"problems" sexp_of_t
+
+let adapter : (t, action) View_registry.Adapter.t =
+  { spec
+  ; key
+  ; fit =
+      (fun t controller ~rows ~width ->
+        fit t (Controller.feedback controller)
+          ~document:(document t (Controller.editor controller)) ~rows ~width)
+  ; leave
+  ; text_view
+  ; interpret
+  ; escape
+  ; hint
+  ; perform =
+      (fun t controller ~rows ~width action ->
+        let { Outcome.tile; controller; notice; effect; return } =
+          perform t controller ~rows ~width action
+        in
+        tile, { View_registry.Outcome.controller; effect; notice; return; ask = None })
+  ; commands
+  ; render =
+      (fun t controller ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
+        let feedback = Controller.feedback controller in
+        let document = document t (Controller.editor controller) in
+        Problems.render
+          ~hotkey_hints ~focused
+          ~navigation:(selection (fit t feedback ~document ~rows ~width))
+          ?details:(text_view t)
+          ?notice ?pending
+          feedback
+          ~current_document:t.current_document
+          ~document ~width ~rows)
+  }
+;;

@@ -6,9 +6,11 @@
     preferences, the scroll position, the shared {!Ches_tile.Host} (focus, capture, and a
     bracketed paste's owner), and the minor views' adapter states. Workspace requests and
     zen suppression are UI state, not editor state. This module is application assembly:
-    it wires the generic host to the problems adapter ({!Problems_tile}), the static
-    demo report ({!Report_tile}), and the notification history ({!History_tile});
-    status remains non-focusable. *)
+    it installs the problems adapter ({!Problems_tile}), the static demo report
+    ({!Report_tile}), and the notification history ({!History_tile}) in a
+    {!View_registry}, which every generic path (allocation, focus and leaving, fitting,
+    key routing, [?] help, palette local commands) goes through by view id; status
+    remains non-focusable. *)
 
 open! Core
 open Ches_input
@@ -74,6 +76,12 @@ val create
   -> ?source_attached:bool
        (** A diagnostic source runs, so {!take_source_requests} reports to it.
            Default [false]. *)
+  -> ?views:View_registry.Entry.t list
+       (** Further registered views, after problems, the demo report and history. Their
+           ids must be new; their commands are {!View_command.t.Toggle_view},
+           {!View_command.t.Focus_view}, {!View_command.t.Place_view} and
+           {!View_command.t.Run_view_command}. An entry installed [Tab] is a tab
+           (inactive until activated); one installed [Split] is the split view. *)
   -> Ches_app.Controller.t
   -> t
 
@@ -106,6 +114,32 @@ val buffer_presentation : t -> View_command.Buffer_presentation.t
 (** Effective placement: false in zen or when status cannot fit/is hidden. *)
 val buffers_in_status : t -> width:int -> height:int -> bool
 val zen : t -> bool
+
+(** The registered views and their placements. *)
+val views : t -> View_registry.t
+
+(** Whether a registered view is placed (requested), even if zen or a small screen
+    leaves it without an allocation, or it is an inactive tab. *)
+val view_visible : t -> Ches_tile.View_id.t -> bool
+
+(** A view's title (its spec's), which also labels its tab. *)
+val view_title : t -> Ches_tile.View_id.t -> string
+
+(** The tab strip: the session's file tabs and the views placed [Tab], in order. *)
+val tab_entries : t -> Tab_strip.Entry.t list
+
+(** {!tab_entries} as drawn, in the top strip or the status rows: a file's label and
+    flags, or a view's title. Exactly one is active when any is: the active view
+    tab, else the session's active file. *)
+val tab_items : t -> Tab_strip.Item.t list
+
+(** The active view tab, which fills the editor area instead of the active file tab
+    (or a major directory) until a file is shown again. *)
+val active_tab_view : t -> Ches_tile.View_id.t option
+
+(** The requested side and share of the major split's view. *)
+val split : t -> Workspace.Major_split.t
+
 val problems_visible : t -> bool
 val problems_current_document : t -> bool
 val problems_tile : t -> Problems_tile.t
@@ -116,6 +150,26 @@ val history_tile : t -> History_tile.t
 
 (** The command palette, while open (it is then focused). *)
 val palette : t -> Palette_tile.t option
+
+(** The [?] help float, while open (it is then focused). *)
+val help : t -> Help_tile.t option
+
+(** The open help's centered floating shell; [None] when closed or unfit. *)
+val help_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+
+(** A registered view's question ({!View_registry.Ask}), asked on the single float
+    slot over the view that asked when its outcome carries one: a confirmation or a
+    prompt, while open (it is then focused). The view is not left meanwhile. An
+    answer closes the float, refocuses the view (or returns to the document when it
+    is gone) and performs the action the view named for it. A question that cannot
+    fit is refused with a notice; one whose float loses its room or its view, or is
+    left another way (another float, a return to the document), is withdrawn with
+    nothing run. *)
+val confirm : t -> Confirm_tile.t option
+
+val confirm_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+val prompt : t -> Prompt_tile.t option
+val prompt_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 
 (** Provider assembly boundary (also used by the production frontend).
     Only one transient float exists. Refusal calls [release]; all closing paths
@@ -277,8 +331,8 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
 
     {2 Minor view capture}
 
-    Routing for a focused minor view is {!Ches_tile.Host.key}; the focused view's
-    adapter performs its content actions. The problems bindings below are the
+    Routing for a focused registered view is {!View_registry.key}, through
+    {!Ches_tile.Host.key}; the focused view's adapter performs its content actions. The problems bindings below are the
     problems adapter's; the demo report ([Space v d] shows/hides, [Space v D]
     focuses/returns) uses the same host with [j/k], [gg/G], [Ctrl-d/u], and [e]/Enter
     for details. So does the notification history ([Space v m] shows/hides,
@@ -300,6 +354,47 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     Selection follows identity; removal/filtering chooses the previous index's next
     neighbor, falling back to the last item. An empty list retains pane focus until
     explicitly returned/hidden. No editor smear is drawn in capture.
+
+    {2 View tabs and the major split}
+
+    A registered view has one placement ({!View_registry.Placement.t}): hidden, the
+    bottom band, a tab, or the split. [Place_view] moves it ([Space s t/s/b/h] move
+    the focused view to a tab, the split, the band, or close it); [Toggle_view]
+    shows a hidden view in the band and closes it from any placement.
+
+    A view tab is added after the active entry and activated. While active it fills
+    the editor area below the strip and is the editor area's input owner: returning
+    from a captured view (Escape, Tab, closing a float) comes back to it, and the
+    hidden document never has focus. [Space b n/p] cycle file and view tabs
+    together. [Space b c]/[Space b C] on an active view tab close the view (through
+    the registry: hidden, then left), showing the active file tab, whose dirty checks
+    are unaffected. [Focus_view] activates a view tab, and on the focused active tab
+    shows the active file tab instead. Showing a file also leaves the view tab:
+    activating or opening one (tabs, pickers, a directory entry, a problem jump), a
+    major directory, or [Space o] back from a directory.
+
+    The split view shares the editor area beside the active tab (file or view),
+    side by side, separated by a gap: [Space s f] focuses the other pane, [Space s x]
+    swaps sides, [Space s +]/[Space s -] change its share by 10% (20%..80%). Placing
+    a view there closes the previous split view and focuses the new one. It is not
+    allocated in zen, or when the editor area (after a side directory and status)
+    cannot keep {!Workspace.min_document_width} beside {!Workspace.min_split_width};
+    it then stays in the split placement, a resize saying when it is hidden and
+    restored.
+
+    {2 View-local commands and help}
+
+    A registered view declares local commands for its current state
+    ({!View_registry.Adapter.t.commands}). [?], when the view's own keys leave it
+    unbound, opens a read-only help float listing them over the view, which is not
+    left; [j/k], [gg/G] and [Ctrl-d/u] scroll it, and [q], [?], Escape or Tab return
+    to the view. [?] in the editor (backward search) and in text-input floats (query
+    text) is unchanged. The command palette opened over a registered view (or its
+    help) lists that view's commands first, titled [<Title>: <description>] with
+    their keys as shortcuts, and does not leave the view; accepting one closes the
+    palette, refocuses the view and runs it as its keys would
+    ({!View_command.t.Run_view_command}). Any other command, or closing, returns to
+    the document as before.
 
     {2 Read-only text in minor views}
 
@@ -392,7 +487,7 @@ val fitted_scroll : t -> width:int -> height:int -> Scroll.t
     same allocation and explicit status policy; scroll positions remain document
     coordinates and cursor positions are terminal coordinates. These queries do not change
     the model or editor. *)
-(** File strip above the document; single-file, zen and tiny allocations hide it.
+(** Tab strip above the document; a single entry, zen and tiny allocations hide it.
     Explicit allocations have no status tile by default. Assembly passes the same
     effective [buffers_in_status] to all queries when a status tile is present. *)
 val tab_rect : ?buffers_in_status:bool -> t -> allocation:Geometry.Rect.t -> Geometry.Rect.t option

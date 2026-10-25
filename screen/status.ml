@@ -16,7 +16,14 @@ let fields ui : Status_field.t list =
       else sprintf " %s " (Mode.to_string mode) in
     field Mode ~priority:0 [ Span.create (Mode mode) label ~width:(String.length label) ]
   in
+  (* An active view tab covers the file: name the view, not the hidden file. *)
+  let view_tab = Ui_state.active_tab_view ui in
   let filename =
+    match view_tab with
+    | Some id ->
+      field Filename ~priority:5 ~fit:Cut_left
+        (Span.of_text (Ui_state.view_title ui id) ~style:Status ~special:Status_special)
+    | None ->
      Option.bind (Controller.display_path (Ui_state.controller ui)) ~f:(fun path ->
       let path = if Option.is_some (Session.input_directory (Ui_state.session ui))
         then Directory_identity.encode_name path else path in
@@ -27,7 +34,8 @@ let fields ui : Status_field.t list =
         (Span.of_text path ~style:Status ~special:Status_special))
   in
   let dirty =
-    if Controller.is_missing (Ui_state.controller ui) then field Dirty ~priority:1 [ Span.create Dirty "[missing]" ~width:9 ]
+    if Option.is_some view_tab then None
+    else if Controller.is_missing (Ui_state.controller ui) then field Dirty ~priority:1 [ Span.create Dirty "[missing]" ~width:9 ]
     else if Editor.is_dirty editor
     then field Dirty ~priority:3 [ Span.create Dirty "[+]" ~width:3 ]
     else None
@@ -62,6 +70,7 @@ let fields ui : Status_field.t list =
         (Span.of_text keys ~style:Pending ~special:Status_special))
   in
   let position =
+    if Option.is_some view_tab then None else
     let s =
       sprintf "%d:%d" (Editor.cursor_line editor + 1) (Editor.cursor_column editor + 1)
     in

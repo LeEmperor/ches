@@ -179,3 +179,35 @@ let render ?(hotkey_hints = false) ?(focused = false) ?notice ?pending
              Tile_text.row Status item.title ~width))
     }
 ;;
+
+let commands t =
+  let toggle description =
+    Ches_tile.Local_command.create "toggle-details" ~keys:[ Ches_input.Key.char 'e' ]
+      description
+  in
+  match t.details with
+  | None -> (toggle "Open details" :: Text_view.item_commands) @ Navigation.commands
+  | Some view -> toggle "Close details" :: Text_view.commands view
+;;
+
+let key = Type_equal.Id.create ~name:"demo-report" sexp_of_t
+
+let adapter : (t, action) View_registry.Adapter.t =
+  { spec
+  ; key
+  ; fit = (fun t _ ~rows ~width -> fit t ~rows ~width)
+  ; leave
+  ; text_view
+  ; interpret
+  ; escape
+  ; hint
+  ; perform =
+      (fun t controller ~rows ~width action ->
+        let t, effect = perform t ~rows ~width action in
+        t, View_registry.Outcome.create ?effect controller)
+  ; commands
+  ; render =
+      (fun t _ ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
+        render ~hotkey_hints ~focused ?notice ?pending t ~width ~rows)
+  }
+;;

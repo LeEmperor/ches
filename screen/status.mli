@@ -6,7 +6,8 @@ open! Core
 (** The mode badge, filename, dirty indicator, message, pending keys, and position, in
     that order; absent fields are omitted. Priorities, most important first: mode,
     an error message, pending keys, dirty indicator, position, filename, any other
-    message. *)
+    message. While a view tab is active ({!Ui_state.active_tab_view}) the filename is
+    the view's title, and the dirty indicator and position are omitted. *)
 val fields : Ui_state.t -> Status_field.t list
 
 (** The spans for [area], exactly [area.rect.width] cells wide, from those [fields]

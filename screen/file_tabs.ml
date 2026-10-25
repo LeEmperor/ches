@@ -1,7 +1,6 @@
 open! Core
-open Ches_app
 
-let render (tabs : Open_buffers.t list) ~width =
+let render_items (tabs : Tab_strip.Item.t list) ~width =
   let width = Int.max 0 width in
   if width = 0 then [] else
   let tabs = Array.of_list tabs in
@@ -37,4 +36,7 @@ let render (tabs : Open_buffers.t list) ~width =
   (if left = 1 then [ Span.create Hint "<" ~width:1 ] else [])
   @ body @ [ Span.blank Status (available - used) ]
   @ (if right = 1 then [ Span.create Hint ">" ~width:1 ] else [])
+;;
+
+let render tabs ~width = render_items (List.map tabs ~f:Tab_strip.Item.of_file) ~width
 ;;

@@ -114,6 +114,13 @@ val interpret_item : Key.t list -> [ `Copy | `Edit ] Content_key.t
 (** A whole item's text, linewise. *)
 val copy_item : string -> Effect.t
 
+(** Local commands for open text in its current state (see {!Local_command}):
+    cursor movement, Visual, and copying, with [swap-ends] only in Visual. *)
+val commands : t -> Local_command.t list
+
+(** {!interpret_item}'s copy as a local command: [copy-item] ([y y]). *)
+val item_commands : Local_command.t list
+
 (** The notice for a rejected edit or paste. *)
 val read_only : string
 

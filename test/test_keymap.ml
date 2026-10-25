@@ -1294,6 +1294,66 @@ let%expect_test "a count above 999999 is rejected and reset" =
     |}]
 ;;
 
+let%expect_test "a count repeats a resize step; other view commands refuse it" =
+  let t = run (create "abc") (keys "3 v") in
+  show_position t;
+  [%expect {| NORMAL 0:0 pending="3 Space v" |}];
+  let t = run t (keys "+") in
+  show_position t;
+  [%expect {|
+    (View(Adjust_width 30))
+    NORMAL 0:0
+    |}];
+  let t = run t (keys "2 v-4 v=2 s+3 s-10 s=5 vp+2 vp-3 vp=2 d+6 d-") in
+  show_position t;
+  [%expect {|
+    (View(Adjust_width -20))
+    (View(Adjust_width 40))
+    (View(Adjust_split 20))
+    (View(Adjust_split -30))
+    (View(Adjust_split 100))
+    (View(Adjust_status_size 10))
+    (View(Adjust_status_size -4))
+    (View(Adjust_status_size 6))
+    (View(Adjust_directory_size 8))
+    (View(Adjust_directory_size -24))
+    NORMAL 0:0
+    |}];
+  (* A count of 1 is one press; the largest count multiplies without overflow. *)
+  let t = run t (keys "1 v+999999 s-") in
+  show_position t;
+  [%expect {|
+    (View(Adjust_width 10))
+    (View(Adjust_split -9999990))
+    NORMAL 0:0
+    |}];
+  let t = run t (keys "3 vp") in
+  show_position t;
+  [%expect {| NORMAL 0:0 pending="3 Space v p" |}];
+  let t = run t (keys "l") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space v p l does not take a count" |}];
+  let t = run t (keys "2 vc") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space v c does not take a count" |}];
+  let t = run t (keys "4 vl") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space v l does not take a count" |}];
+  let t = run t (keys "2 sx") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space s x does not take a count" |}];
+  let t = run t (keys "1000000") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Count is too large: the maximum is 999999" |}];
+  (* The rejected count does not carry over to the next resize. *)
+  let t = run t (keys " s+") in
+  show_position t;
+  [%expect {|
+    (View(Adjust_split 10))
+    NORMAL 0:0
+    |}]
+;;
+
 let%expect_test "Ctrl-c and paste cancel a pending count" =
   let t = run (create (lines 30)) (keys "5<C-c>j") in
   show_position t;

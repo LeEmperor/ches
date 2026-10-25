@@ -10,14 +10,48 @@ phase 10. Moved verbatim from [`workspace_tiles_design.md`](../workspace_tiles_d
 - the read-only text cursor, selection, and copying.
 
 Problems, history, and the demo report are minor tiles on it. The editor is the only
-major tile. The role and boundary contract that remains in force is in the [design doc](../workspace_tiles_design.md)
+major tile.
+
+**Done in VCS workspace phase 0A (2026-10-14):** the generic view registry.
+- `screen/view_registry.ml` holds the installed views, each an adapter
+  (`View_registry.Adapter.t`: spec, typed state key, fit, leave, text view,
+  interpret/escape/hint, perform, local commands, render) with its state and a
+  placement (`Hidden | Band`). `Ui_state` allocation, leaving, synchronizing,
+  key routing (`feed_capture`), the shared cursor/text-view queries, and `Frame`'s
+  minor rendering all go through it by view id. Problems, history and the demo report
+  are migrated; `Ui_state.create ~views` installs further views with no per-name code.
+- `View_command` has `Toggle_view`, `Focus_view` and `Run_view_command` parameterized
+  by `View_id` (now defined in `ches_input` and re-exported by `ches_tile`) instead of
+  `Toggle_problems`, `Focus_problems`, `Toggle_demo_report`, `Focus_demo_report`,
+  `Toggle_history` and `Focus_history`. Bindings and palette ids/titles are unchanged.
+- View-local commands (`Ches_tile.Local_command`): adapters declare them per state;
+  `?` opens a read-only help float listing them, and the command palette lists the
+  focused view's commands first and runs them in that view.
+- Still per-name, by design: the problems-specific commands (`Toggle_problems_filter`,
+  `Inspect_problems`), diagnostic anchoring hooks, and the floats (palette, pickers,
+  help), which are not registered views. The role and boundary contract that remains in force is in the [design doc](../workspace_tiles_design.md)
 under "Shared tile direction — Major/minor roles and consumer-independent plumbing".
 
+**Done in VCS workspace phase 0B (2026-10-14):** view tabs and the major split.
+- `View_registry.Placement.t` (= `View_command.Placement.t`) is
+  `Hidden | Band | Tab | Split`; a view has exactly one. `screen/tab_strip.ml`
+  interleaves view tabs with the session's file tabs and remembers the active view
+  tab; the session's file tabs, directory presentation and quit/dirty checks are
+  untouched. An active view tab fills the editor area and is drawn by
+  `View_registry.render`, in both buffer presentations.
+- `Workspace.allocate ?split` divides the editor area between the active tab and
+  one split view (`Workspace.Major_split`: side and percent).
+- Generic commands: `Place_view` (by id, or the focused view), `Focus_other_pane`,
+  `Swap_split`, `Adjust_split`, bound under `Space s` with palette entries.
+
+**Done in VCS workspace phase 0C (2026-10-18):** questions a view asks.
+- An adapter's outcome may carry a `View_registry.Ask.t`: a confirmation (`y` only;
+  `screen/confirm_tile.ml`) or a single-line prompt with validation
+  (`screen/prompt_tile.ml`), each naming the view's own action per answer. The
+  registry keeps the pending question; `Ui_state` opens it on the single float slot
+  over the view and delivers the answer back through `View_registry.answer`.
+
 **What is not done:**
-- A generic minor-view registry. `Ui_state` still wires each minor tile by name
-  (visibility flags, `leave`, `synchronize`, `feed_capture`, `text_view`), and
-  `View_command` has per-consumer commands such as `Focus_problems` and
-  `Focus_demo_report`.
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.
 - Any specialized major tile, such as a Hardcaml report or workbench.
@@ -39,11 +73,8 @@ not blockers for phase 7C; revisit them when the owner next reviews tile comfort
   rows) right on each display?
 - **Shell boundary.** `Tile_shell` stays error-free only by convention inside
   `ches_screen`. Moving it into a library that dune keeps away from `ches_error`
-  (as `ches_tile` is) is still open. Also open: `Ui_state` still wires each minor
-  tile by name (visibility flags, `leave`, `synchronize`, `feed_capture`), and
-  `View_command` still has commands named per consumer (`Focus_problems`,
-  `Focus_demo_report`). Adding a third minor tile, or the per-view state 7C needs,
-  means editing each of these.
+  (as `ches_tile` is) is still open. (The per-name wiring noted here originally was
+  replaced by the view registry in VCS workspace phase 0A.)
 
 ## Later major-tile specialization
 

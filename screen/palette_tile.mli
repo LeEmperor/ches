@@ -18,9 +18,12 @@ val spec : Ches_tile.Spec.t
 type t [@@deriving sexp_of]
 
 (** An open palette over [catalog] for [token], the view a command will apply to.
-    [bindings] are the active Normal bindings ({!Bindings.to_list}), for shortcuts. *)
+    [bindings] are the active Normal bindings ({!Bindings.to_list}), for shortcuts.
+    [shortcuts] are keys for entries that no binding runs, such as a focused view's
+    local commands; they take precedence. *)
 val create
-  :  Catalog.t
+  :  ?shortcuts:(Catalog.Id.t * Key.t list) list
+  -> Catalog.t
   -> Catalog.Context.t
   -> token:Ches_tile.View_id.t
   -> bindings:(Key.t list * Bindings.Target.t) list

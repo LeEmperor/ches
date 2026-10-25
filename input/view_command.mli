@@ -36,6 +36,18 @@ module Buffer_presentation : sig
   type t = Top | Status_rows [@@deriving sexp_of, equal]
 end
 
+(** Where a registered view is shown. A view has exactly one placement at a time. *)
+module Placement : sig
+  type t =
+    | Hidden (** Closed. The view keeps its state, and is shown again where asked. *)
+    | Band (** The bottom band of minor views. *)
+    | Tab
+    (** An entry in the tab strip, added after the active entry; while active it fills
+        the editor area. *)
+    | Split (** The major split: a peer pane beside the active tab. At most one view. *)
+  [@@deriving sexp_of, equal]
+end
+
 type t =
   | Toggle_directory
   | Directory_major
@@ -73,13 +85,34 @@ type t =
   | Position_status of Status_position.t (** Place status and request visibility. *)
   | Adjust_status_size of int (** Adjust requested status cells along its split axis. *)
   | Inspect_problems (** Cycle retained problem details, without retrying. *)
-  | Toggle_problems (** Show/hide the read-only bottom preview. *)
   | Toggle_problems_filter (** Workspace/current-document preview filter. *)
-  | Focus_problems (** Show/focus problems, or return to the document. *)
-  | Toggle_demo_report (** Show/hide the static demo report, when installed. *)
-  | Focus_demo_report (** Show/focus the demo report, or return to the document. *)
-  | Toggle_history (** Show/hide the notification history. *)
-  | Focus_history (** Show/focus the notification history, or return to the document. *)
+  | Toggle_view of View_id.t
+  (** Show a hidden registered view (problems, history, the demo report, ...) in the
+      bottom band, or hide (close) it from any placement. A view that is not
+      installed only reports why. *)
+  | Focus_view of View_id.t
+  (** Show/focus a registered view, or return to the document when it is focused. A
+      hidden view is shown in the band; a view tab is activated, and when it is
+      already the focused active tab, the active file tab is shown instead. *)
+  | Place_view of
+      { view : View_id.t option (** [None]: the focused registered view. *)
+      ; placement : Placement.t
+      }
+  (** Move a registered view out of its placement into [placement]. [Tab] and
+      [Split] also focus it; a view already in the split is closed by another's
+      arrival. [Hidden] closes it. *)
+  | Focus_other_pane
+  (** In the major split, focus the split view, or return to the active tab when it
+      is focused. *)
+  | Swap_split (** Put the split view on the other side of the editor area. *)
+  | Adjust_split of int
+  (** Change the split view's requested share of the editor area, in percent. *)
+  | Run_view_command of
+      { view : View_id.t
+      ; command : string (** A name the view declares among its local commands. *)
+      }
+  (** Run one of a focused view's local commands, as its keys would. Refused, with a
+      notice, unless [view] is focused and currently declares [command]. *)
   | Restart_source (** Restart the diagnostic source ([--synthetic-checker]). *)
   | Kill_source (** Crash the synthetic diagnostic source, to test the stopped state. *)
   | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)
@@ -94,3 +127,10 @@ type t =
       (** [None] when none was given; only when [Scroll.takes_count]. *)
       }
 [@@deriving sexp_of, equal]
+
+(** [scale t ~count] repeats a resize step [count] times, for a Normal-mode count:
+    [Adjust_width], [Adjust_split], [Adjust_status_size], and [Adjust_directory_size]
+    with their step multiplied by [count] (positive, at most [Command.max_count]).
+    Each result is clamped where it is applied, like repeated presses. [None] for
+    every other command, which takes no count ([Scroll] carries its own). *)
+val scale : t -> count:int -> t option

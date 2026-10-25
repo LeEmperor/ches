@@ -447,6 +447,38 @@ let interpret_item (keys : Key.t list) : [ `Copy | `Edit ] Content_key.t =
   | _ -> Unbound
 ;;
 
+let commands t =
+  let c name keys description = Local_command.create name ~keys description in
+  let k = Key.char in
+  let movement =
+    [ c "cursor-down" [ k 'j' ] "Move down a row"
+    ; c "cursor-up" [ k 'k' ] "Move up a row"
+    ; c "word-forward" [ k 'w' ] "Move to the next word"
+    ; c "word-backward" [ k 'b' ] "Move to the previous word"
+    ; c "cursor-first" [ k 'g'; k 'g' ] "Move to the first row"
+    ; c "cursor-last" [ k 'G' ] "Move to the last row"
+    ]
+  in
+  match t.visual with
+  | None ->
+    movement
+    @ [ c "visual" [ k 'v' ] "Start Visual selection"
+      ; c "visual-line" [ k 'V' ] "Start linewise Visual selection"
+      ; c "copy-line" [ k 'y'; k 'y' ] "Copy the cursor's line"
+      ]
+  | Some _ ->
+    movement
+    @ [ c "visual" [ k 'v' ] "Switch to or end characterwise Visual"
+      ; c "visual-line" [ k 'V' ] "Switch to or end linewise Visual"
+      ; c "swap-ends" [ k 'o' ] "Swap the selection's ends"
+      ; c "copy-selection" [ k 'y' ] "Copy the selection"
+      ]
+;;
+
+let item_commands =
+  [ Local_command.create "copy-item" ~keys:[ Key.char 'y'; Key.char 'y' ] "Copy the selected item" ]
+;;
+
 (* {1 Actions} *)
 
 let move t ~width ~rows:viewport (motion : Motion.t) =

@@ -93,6 +93,14 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     workspace.shrink-status        Shrink status tile by 2
     workspace.grow-status          Grow status tile by 2
     workspace.toggle-zen           Toggle zen mode
+    views.to-tab                   Move focused view to a tab
+    views.to-split                 Move focused view to the split
+    views.to-band                  Move focused view to the bottom band
+    views.close                    Close focused view
+    split.focus-other              Focus other split pane
+    split.swap                     Swap split sides
+    split.grow-view                Grow split view by 10%
+    split.shrink-view              Shrink split view by 10%
     problems.toggle                Toggle problems tile
     problems.focus                 Focus problems
     problems.toggle-filter         Toggle problems filter (workspace / current document)

@@ -36,6 +36,36 @@ module Split : sig
   val default : t
 end
 
+(** The major split: the editor area (the document's allocation) shared side by
+    side between the active tab and one registered view. *)
+module Major_split : sig
+  module Side : sig
+    type t =
+      | Left
+      | Right
+    [@@deriving sexp_of, equal]
+  end
+
+  type t =
+    { view_side : Side.t (** The split view's side; the active tab takes the other. *)
+    ; percent : int
+    (** The split view's requested share of the editor area, between {!min_percent}
+        and {!max_percent}, before clamping to both panes' minimum widths. *)
+    }
+  [@@deriving sexp_of, equal]
+
+  val min_percent : int
+  val max_percent : int
+
+  (** The view on the right, at 50%. *)
+  val default : t
+
+  val swap : t -> t
+
+  (** Adjust [percent] by [points], kept within {!min_percent}..{!max_percent}. *)
+  val adjust : t -> int -> t
+end
+
 module Prefs : sig
   type t =
     { status_visible : bool
@@ -59,7 +89,8 @@ type t =
   { document : Pane.t
   ; status : Pane.t option
   ; minors : Pane.t list
-  (** Requested minor views that fit, left to right in the bottom band. *)
+  (** Requested minor views that fit: the side view first, then the bottom band left
+      to right, then the major split's view. *)
   ; gaps : Geometry.Rect.t list
   (** The {!gap} cells between side-by-side panes, which belong to no pane. *)
   ; reserve_status_row : bool
@@ -73,6 +104,9 @@ val min_document_height : int
 val min_status_width : int
 val min_status_height : int
 val min_minor_width : int
+
+(** The narrowest split view; the active tab beside it keeps {!min_document_width}. *)
+val min_split_width : int
 
 (** Backdrop cells between side-by-side panes (document/status and minor views).
     Stacked panes have none: their frames' border rows already separate them. *)
@@ -98,10 +132,17 @@ val preferred_band_height : int
     [side] requests a full-height left minor, with a preferred outer width clamped
     to at least 16 and leaving 16 document cells plus the gap. It is omitted below
     33 columns or four rows; requests are never modified. The status and bottom
-    band are then allocated within the remaining right-hand rectangle. *)
+    band are then allocated within the remaining right-hand rectangle.
+    [split] then divides the document's allocation side by side, separated by a
+    {!gap}: the view gets its requested percentage of the width, clamped to leave
+    each side its minimum width, and the document keeps the rest. The split view is
+    left out (the document keeps the whole area) when the area is narrower than
+    {!min_document_width} plus the gap plus {!min_split_width}, or lower than
+    {!min_band_height}. *)
 val allocate
   :  ?minors:Ches_tile.View_id.t list
   -> ?side:(Ches_tile.View_id.t * int)
+  -> ?split:(Ches_tile.View_id.t * Major_split.t)
   -> Prefs.t
   -> allocation:Geometry.Rect.t
   -> t

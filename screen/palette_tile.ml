@@ -13,9 +13,10 @@ type t =
   }
 [@@deriving sexp_of]
 
-let create catalog context ~token ~bindings =
+let create ?(shortcuts = []) catalog context ~token ~bindings =
   let shortcuts =
-    List.filter_map (Catalog.entries catalog) ~f:(fun entry ->
+    List.map shortcuts ~f:(fun (id, keys) -> id, Shortcut.to_string_hum keys)
+    @ List.filter_map (Catalog.entries catalog) ~f:(fun entry ->
       match Shortcut.sequences bindings (Catalog.Entry.action entry) with
       | [] -> None
       | keys :: _ -> Some (Catalog.Entry.id entry, Shortcut.to_string_hum keys))

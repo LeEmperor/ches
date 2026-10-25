@@ -19,6 +19,11 @@ end
 (** [j], [k], [G], [Ctrl-d], [Ctrl-u], and [gg]; [g] alone is a prefix. *)
 val interpret : Key.t list -> Motion.t Content_key.t
 
+(** {!interpret}'s list motions as local commands that select items, for an adapter's
+    help and palette entries: [next], [previous], [first], [last], [half-page-down],
+    [half-page-up]. *)
+val commands : Local_command.t list
+
 (** Selection over a list of opaque item keys, with a viewport of [rows]. *)
 module Selection : sig
   type 'key t =

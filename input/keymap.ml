@@ -130,7 +130,11 @@ let resolve t ~keys (target : Bindings.Target.t) =
   | Search_word _, Some _ -> cancel t (keys_to_string keys ^ " does not take a count")
   | Visual kind, None -> reset t, [ Editor (Command.Enter_visual kind) ]
   | Visual _, Some _ -> cancel t (keys_to_string keys ^ " does not take a count")
-  | (Editor _ | View _), Some _ ->
+  | View command, Some count ->
+    (match View_command.scale command ~count with
+     | Some command -> reset t, [ View command ]
+     | None -> cancel t (keys_to_string keys ^ " does not take a count"))
+  | Editor _, Some _ ->
     cancel t (keys_to_string keys ^ " does not take a count")
 ;;
 

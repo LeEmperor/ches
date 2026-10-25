@@ -218,6 +218,40 @@ let%expect_test "Space v commands: feedback, centering, and clamped requests" =
     |}]
 ;;
 
+let%expect_test "a count repeats a width, status or directory step, clamped like \
+                 repeated presses"
+  =
+  let step t k = run ~width:160 ~height:48 t (keys k) in
+  let t = step (ui "abc") "3 v+" in
+  layout t;
+  let t = step t "999999 v+" in
+  layout t;
+  let t = step t "999999 v-" in
+  layout t;
+  let t = step t "3 vc" in
+  layout t;
+  [%expect {|
+    ((centered true) (width 130) (offset 0) (line_numbers Off) (left_padding 2)) Width 130 | tile x=13 w=134, text w=130
+    ((centered true) (width 500) (offset 0) (line_numbers Off) (left_padding 2)) Width 500 (156 fit) | tile x=0 w=160, text w=156
+    ((centered true) (width 20) (offset 0) (line_numbers Off) (left_padding 2)) Width 20 | tile x=68 w=24, text w=20
+    ((centered true) (width 20) (offset 0) (line_numbers Off) (left_padding 2)) Space v c does not take a count | tile x=68 w=24, text w=20
+    |}];
+  let t = step t " vph999999 vp+" in
+  message t;
+  let t = step t "999999 vp-" in
+  message t;
+  let t = step t "999999 d+" in
+  message t;
+  let t = step t "999999 d-" in
+  message t;
+  [%expect {|
+    (((kind Info) (text "Status left 500 (143 fit) (shown)")))
+    (((kind Info) (text "Status left 8 (shown)")))
+    (((kind Info) (text "Directory width 500 (requested)")))
+    (((kind Info) (text "Directory width 16 (requested)")))
+    |}]
+;;
+
 let%expect_test "requests that do not fit are kept, and restored on a larger screen" =
   let t = run (ui "abc") (keys " vr") in
   let t =

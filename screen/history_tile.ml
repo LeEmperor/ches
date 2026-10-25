@@ -254,3 +254,47 @@ let render ?(hotkey_hints = false) ?(focused = false) ?notice ?pending
              Tile_text.row (style entry) (description entry) ~width))
     })
 ;;
+
+let commands t =
+  let c name keys description = Ches_tile.Local_command.create name ~keys description in
+  let k = Ches_input.Key.char in
+  let clear = c "clear" [ k 'X' ] "Clear the history (active problems stay)" in
+  match t.details with
+  | None ->
+    [ c "toggle-details" [ k 'e' ] "Open details"; clear ]
+    @ Text_view.item_commands
+    @ Navigation.commands
+  | Some view -> [ c "toggle-details" [ k 'e' ] "Close details"; clear ] @ Text_view.commands view
+;;
+
+let key = Type_equal.Id.create ~name:"history" sexp_of_t
+let history controller = Feedback.history (Ches_app.Controller.feedback controller)
+
+let adapter : (t, action) View_registry.Adapter.t =
+  { spec
+  ; key
+  ; fit = (fun t controller ~rows ~width -> fit t (history controller) ~rows ~width)
+  ; leave
+  ; text_view
+  ; interpret
+  ; escape
+  ; hint
+  ; perform =
+      (fun t controller ~rows ~width action ->
+        let { Outcome.tile; effect; clear } =
+          perform t (history controller) ~rows ~width action
+        in
+        if clear
+        then
+          ( tile
+          , View_registry.Outcome.create
+              ?effect
+              ~notice:(`Show "History cleared; active problems unchanged")
+              (Ches_app.Controller.update_feedback controller Clear_history) )
+        else tile, View_registry.Outcome.create ?effect controller)
+  ; commands
+  ; render =
+      (fun t controller ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
+        render ~hotkey_hints ~focused ?notice ?pending t (history controller) ~width ~rows)
+  }
+;;

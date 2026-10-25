@@ -211,7 +211,7 @@ let%expect_test "Normal pending input has precedence and pane workspace routing 
   assert (Option.is_none (Ches_input.Keymap.pending (Controller.keymap (Ui_state.controller t))));
   let open Ches_input in
   let bindings = Bindings.create
-    [ [Key.char 'o'], Bindings.Target.View Focus_problems
+    [ [Key.char 'o'], Bindings.Target.View (Focus_view Problems_tile.id)
     ; [Key.char ' '; Key.char 'v'; Key.char 'h'], View Toggle_status
     ; [Key.char ' '; Key.char 'x'], Editor (Insert_text "UNSAFE")
     ; [Key.char ' '; Key.char 's'], Scroll Line_down

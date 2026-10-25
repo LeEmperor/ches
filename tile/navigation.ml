@@ -85,3 +85,15 @@ let move_offset top ~total ~rows (motion : Motion.t) =
   | Down | Up | Half_down | Half_up ->
     Int.clamp_exn (top + Motion.delta motion ~rows) ~min:0 ~max:maximum
 ;;
+
+let commands =
+  let c name keys description = Local_command.create name ~keys description in
+  let k = Key.char in
+  [ c "next" [ k 'j' ] "Select next item"
+  ; c "previous" [ k 'k' ] "Select previous item"
+  ; c "first" [ k 'g'; k 'g' ] "Select first item"
+  ; c "last" [ k 'G' ] "Select last item"
+  ; c "half-page-down" [ Ctrl 'd' ] "Select half a page down"
+  ; c "half-page-up" [ Ctrl 'u' ] "Select half a page up"
+  ]
+;;

@@ -73,7 +73,7 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | Visual `Enter` (directory) | Open intersected file rows |
 | `Space m m` / `Space m o` | Toggle entry mark / open marked files |
 | `Space d m/s/h/f` | Major / side / hide / focus directory browser |
-| `Space b n/p/c/C` | Next / previous / close / discard file tab |
+| `Space b n/p/c/C` | Next / previous / close / discard tab (a view tab's close closes the view) |
 | `Space b r` | Exclusively recreate a missing file from retained text |
 | `Space q` | Quit if all buffers are clean and no files are marked missing |
 | `Space Q` | Quit and discard unsaved changes |
@@ -83,6 +83,8 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space f g` | Search project contents on disk literally; Enter validates and jumps |
 | `Space v o` | Focus the problems view or return to the document |
 | `Space v M` | Show and focus notification history |
+| `Space s t/s/b/h` | Move the focused view to a tab / the split / the bottom band, or close it |
+| `Space s f/x/+/-` | Split: focus the other pane / swap sides / grow / shrink the view's share (a count repeats `+`/`-`) |
 
 See the [editor reference](docs/editor_reference.md) for the complete keybindings,
 editing semantics, workspace controls, and diagnostic-source behavior.
