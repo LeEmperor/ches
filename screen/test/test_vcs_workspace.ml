@@ -342,3 +342,195 @@ let%expect_test "without a runner the view is unavailable, and Space g says why"
       " gh" VCS unavailable in this session
       |}])
 ;;
+
+(* {2 Phase 3: stage, unstage and discard with git's own plans} *)
+
+(* Keys, quietly: the jobs they cause run to completion. *)
+let act repo t keys =
+  let t = Helpers.run ~width ~height t (Helpers.keys keys) in
+  fst (Vcs_driver.settle repo t ~width ~height)
+;;
+
+(* The question, the footer notice, the feedback, the selection and git's status. *)
+let outcome (repo : Fixture.t) t =
+  let v = vcs t in
+  Option.iter (Ui_state.confirm t) ~f:(fun confirm ->
+    printf "confirm: %s: %s\n" (Confirm_tile.title confirm) (Confirm_tile.message confirm));
+  Option.iter (Ui_state.capture_notice t) ~f:(printf "notice: %s\n");
+  Option.iter (Ui_state.message t) ~f:(fun message ->
+    if not (String.equal message.text "VCS focused") then printf "message: %s\n" message.text);
+  printf "%s at %s\n"
+    (Sexp.to_string [%sexp (Vcs_view.focus v : Vcs_view.Focus.t)])
+    (Sexp.to_string
+       [%sexp
+         ((Vcs_view.cursor v (Vcs_view.list_focus v)).selected
+          : Ches_vcs.Panel.Position.t option)]);
+  printf "status: %s\n"
+    (String.concat ~sep:", " (String.split_lines (Fixture.git repo [ "status"; "--short" ])))
+;;
+
+(* The log's mutations since [after] entries. *)
+let mutations ?(after = 0) t =
+  List.drop (Vcs_view.log (vcs t)) after
+  |> List.iter ~f:(fun (entry : Vcs_view.Log_entry.t) ->
+    let command =
+      String.chop_prefix_if_exists entry.command
+        ~prefix:(String.concat ~sep:" " ("git" :: Ches_vcs_git.Cli.prefix) ^ " ")
+    in
+    if List.exists [ "add"; "restore"; "apply"; "clean"; "reset"; "rm" ] ~f:(fun sub ->
+         String.is_prefix command ~prefix:("--literal-pathspecs " ^ sub))
+    then printf "log: [%s] git %s\n" (Option.value entry.status ~default:"running") command)
+;;
+
+let%expect_test "s and u stage and unstage a file; S and U everything" =
+  with_repo (fun repo ->
+    Fixture.write repo "new.txt" "new\n";
+    let t = act repo (create ~cwd:repo.work (Fixture.path repo "a.txt")) " gg" in
+    (* Rows: untracked header, new.txt, unstaged header, a.txt. *)
+    let t = act repo t "jjjs" in
+    outcome repo t;
+    (* Rows now: untracked header, new.txt, staged header, a.txt. *)
+    let t = act repo t "jjju" in
+    outcome repo t;
+    let t = act repo t "S" in
+    outcome repo t;
+    let t = act repo t "U" in
+    outcome repo t;
+    mutations t;
+    [%expect {|
+      Files at ((Header untracked))
+      status: M  a.txt, ?? new.txt
+      Files at ((Header untracked))
+      status:  M a.txt, ?? new.txt
+      Files at ((Header staged))
+      status: M  a.txt, A  new.txt
+      Files at ((Header untracked))
+      status:  M a.txt, ?? new.txt
+      log: [exit 0] git --literal-pathspecs add --all -- a.txt
+      log: [exit 0] git --literal-pathspecs restore --staged -- a.txt
+      log: [exit 0] git --literal-pathspecs add --all -- a.txt new.txt
+      log: [exit 0] git --literal-pathspecs restore --staged -- a.txt new.txt
+      |}])
+;;
+
+let%expect_test "a hunk of a two-hunk file is staged from the diff; one is discarded \
+                 after y; an untracked file is deleted after y"
+  =
+  Fixture.with_repo (fun repo ->
+    let lines = List.init 12 ~f:(fun i -> sprintf "line %d\n" (i + 1)) in
+    Fixture.write repo "a.txt" (String.concat lines);
+    ignore (Fixture.commit_all repo "first" : string);
+    Fixture.write repo "a.txt"
+      (String.concat
+         (List.mapi lines ~f:(fun i line ->
+            if i = 0 || i = 11 then String.uppercase line else line)));
+    Fixture.write repo "junk.txt" "junk\n";
+    let t = act repo (create ~cwd:repo.work (Fixture.path repo "a.txt")) " gg" in
+    (* a.txt's diff: stage its first hunk. *)
+    let t = act repo (act repo t "jjj<Tab>") "]s" in
+    outcome repo t;
+    print_string (Fixture.git repo [ "diff"; "--cached" ]);
+    (* The cursor is on its other hunk: discard it, declining first. *)
+    let t = act repo t "x" in
+    outcome repo t;
+    let t = act repo t "n" in
+    let t = act repo t "xy" in
+    outcome repo t;
+    print_string (Fixture.git repo [ "diff" ]);
+    (* The untracked file. *)
+    let t = act repo (act repo t "<Tab>ggj") "x" in
+    outcome repo t;
+    let t = act repo t "y" in
+    outcome repo t;
+    printf "junk.txt exists: %b\n" (Sys_unix.file_exists_exn (Fixture.path repo "junk.txt"));
+    mutations t;
+    [%expect {|
+      Diff at ((Item(section unstaged)(key a.txt)))
+      status: MM a.txt, ?? junk.txt
+      diff --git a/a.txt b/a.txt
+      index 624b469..56727ea 100644
+      --- a/a.txt
+      +++ b/a.txt
+      @@ -1,4 +1,4 @@
+      -line 1
+      +LINE 1
+       line 2
+       line 3
+       line 4
+      confirm: Discard hunk: Discard hunk 1/1 of a.txt? Its unstaged lines are lost.
+      Diff at ((Item(section unstaged)(key a.txt)))
+      status: MM a.txt, ?? junk.txt
+      message: Reloaded from disk: a.txt
+      Diff at ((Header staged))
+      status: M  a.txt, ?? junk.txt
+      confirm: Delete untracked file: Delete junk.txt? It is not in git and cannot be recovered.
+      message: Reloaded from disk: a.txt
+      Files at ((Item(section untracked)(key junk.txt)))
+      status: M  a.txt, ?? junk.txt
+      message: Reloaded from disk: a.txt
+      Files at ((Header staged))
+      status: M  a.txt
+      junk.txt exists: false
+      log: [exit 0] git --literal-pathspecs apply --cached --whitespace=nowarn --check
+      log: [exit 0] git --literal-pathspecs apply --cached --whitespace=nowarn
+      log: [exit 0] git --literal-pathspecs apply --reverse --whitespace=nowarn --check
+      log: [exit 0] git --literal-pathspecs apply --reverse --whitespace=nowarn
+      log: [exit 0] git --literal-pathspecs clean --force --quiet -- junk.txt
+      |}])
+;;
+
+let%expect_test "a discard is refused while a buffer in the repository is dirty" =
+  with_repo (fun repo ->
+    let t = create ~cwd:repo.work (Fixture.path repo "a.txt") in
+    let t = act repo t "Ax<Esc> gg" in
+    let t = act repo t "jx" in
+    outcome repo t;
+    (* Staging warns instead. *)
+    let t = act repo t "s" in
+    outcome repo t;
+    [%expect {|
+      notice: Discard unstaged changes to a.txt refused: unsaved changes in a.txt; save or undo them first; nothing ran
+      message: Discard unstaged changes to a.txt refused: unsaved changes in a.txt; save or undo them first; nothing ran
+      Files at ((Item(section unstaged)(key a.txt)))
+      status:  M a.txt
+      notice: a.txt has unsaved changes: the saved files were staged, not the buffers
+      message: a.txt has unsaved changes: the saved files were staged, not the buffers
+      Files at ((Header staged))
+      status: M  a.txt
+      |}])
+;;
+
+let%expect_test "s on a conflicted file marks it resolved; u and x are refused" =
+  Fixture.with_repo (fun repo ->
+    let git args = ignore (Fixture.git repo args : string) in
+    Fixture.write repo "a.txt" "base\n";
+    ignore (Fixture.commit_all repo "base" : string);
+    git [ "checkout"; "-q"; "-b"; "other" ];
+    Fixture.write repo "a.txt" "other\n";
+    ignore (Fixture.commit_all repo "other" : string);
+    git [ "checkout"; "-q"; "main" ];
+    Fixture.write repo "a.txt" "main\n";
+    ignore (Fixture.commit_all repo "main" : string);
+    (match Or_error.try_with (fun () -> git [ "merge"; "-q"; "other" ]) with
+     | Ok () -> print_endline "merged?"
+     | Error _ -> ());
+    let t = act repo (create ~cwd:repo.work (Fixture.path repo "a.txt")) " gg" in
+    let t = act repo t "ju" in
+    outcome repo t;
+    let t = act repo t "x" in
+    outcome repo t;
+    let t = act repo t "s" in
+    outcome repo t;
+    mutations t;
+    [%expect {|
+      notice: a.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
+      Files at ((Item(section conflicted)(key a.txt)))
+      status: UU a.txt
+      notice: a.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
+      Files at ((Item(section conflicted)(key a.txt)))
+      status: UU a.txt
+      Files at ((Header staged))
+      status: M  a.txt
+      log: [exit 0] git --literal-pathspecs add --all -- a.txt
+      |}])
+;;

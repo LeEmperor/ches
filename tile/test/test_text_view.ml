@@ -343,3 +343,25 @@ let%expect_test "count digits: a lone 0 is the line start, a 0 after a digit ext
     ("Copied 1 line" (clipboard "one two\n"))
     |}]
 ;;
+
+let%expect_test "jump puts the cursor at an offset, ends Visual, and fits into view" =
+  let t = Text_view.create ~cell_width "ab\ncd\nef\ngh\nij" in
+  let t = type_ t "vl" in
+  let t = Text_view.jump t 10 in
+  printf "cursor %d, visual %b\n" (Text_view.cursor t) (Option.is_some (Text_view.visual t));
+  show t;
+  (* Past the end clamps to the last position; a line break offset is its line's end. *)
+  let t = Text_view.jump t 99 in
+  printf "cursor %d\n" (Text_view.cursor t);
+  let t = Text_view.jump t 2 in
+  printf "cursor %d\n" (Text_view.cursor t);
+  [%expect {|
+    cursor 10, visual false
+     1 |cd|
+     2 |ef|
+     3 |g#h|
+    top 1 cursor 10
+    cursor 13
+    cursor 1
+    |}]
+;;

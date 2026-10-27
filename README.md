@@ -32,11 +32,14 @@ for general distribution.
 - **Diagnostics:** `ocamllsp` for OCaml and `slang-server` for Verilog and
   SystemVerilog, with a problems view, freshness tracking, and explicit restart
   controls.
-- **VCS view (read-only so far):** a lazygit/Magit-style git view (`Space g g`) in
-  a tab or the split: files by section, branches, recent commits, a diff panel that
-  follows the selection, and a command log. `e` in the diff opens the file at that
-  line. Git runs in the background, never prompting on the terminal; saving a file
-  in the repository refreshes it.
+- **VCS view:** a lazygit/Magit-style git view (`Space g g`) in a tab or the split:
+  files by section, branches, recent commits, a diff panel that follows the
+  selection, and a command log. `s` `u` `x` stage, unstage and discard the selected
+  file or section, or the hunk at the diff's cursor (`S` `U`: everything; `]` `[`
+  move between hunks). Discards ask first (only `y` confirms) and are refused while
+  a file in the repository has unsaved changes; open buffers reload afterwards. `e`
+  in the diff opens the file at that line. Git runs in the background, never
+  prompting on the terminal; saving a file in the repository refreshes it.
 
 Ches retains multiple files and visited directories per session. Files accept UTF-8 text with LF line endings
 and preserves the file's contents, including whether it ends with a newline.
@@ -216,8 +219,9 @@ acceptance remain separate and unperformed.
   servers are shared by workspace root and configuration; document changes are
   coalesced and use incremental synchronization when supported. The synthetic
   checker retains per-file runtimes. No session persistence or multiple editor groups.
-- **Version control:** the VCS view reads state only (stage, commit, and remotes
-  are planned); it refreshes on open, `g r`, and saves, never by watching files.
+- **Version control:** the VCS view stages, unstages and discards files and hunks
+  (line staging, commits, branches and remotes are planned); it refreshes on open,
+  `g r`, saves and its own commands, never by watching files.
 - **Editing and tooling:** literal search, an unnamed
   register, and a limited `:` prompt. Language-server integration currently
   consumes diagnostics only.

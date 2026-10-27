@@ -224,6 +224,8 @@ let valid t offset =
   Array.fold positions ~init:positions.(0) ~f:(fun best p -> if p <= offset then p else best)
 ;;
 
+let jump t offset = { t with cursor = valid t offset; visual = None; want = None }
+
 let fit t ~width ~rows:viewport =
   let rows = layout t ~width in
   let t = { t with cursor = valid t t.cursor } in

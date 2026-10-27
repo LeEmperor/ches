@@ -522,7 +522,7 @@ let%expect_test "panel and focus keys: 1 2 3 0 Tab Escape, moves, folds, Enter" 
     j      Files: header staged; diff (Staged()), 2 file(s)
     <CR>   Files: header staged; diff (Staged()), 2 file(s)
     2j     Branches: local "main"; diff no diff
-    notice: VCS: 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
     3j<CR> Diff (follows Commits): recent "10cf1aeab695c84699dfd610ebd22b42a8e06666"; diff (Commit 10cf1aeab695c84699dfd610ebd22b42a8e06666), 3 file(s)
     |}]
 ;;
@@ -603,6 +603,11 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     0        focus-diff      Focus the diff
     Tab      toggle-diff     Focus the diff
     Enter    select          Focus the diff of the selection
+    s        stage           Stage the file or section (a conflict: mark it resolved)
+    u        unstage         Unstage the file or section
+    x        discard         Discard the file's or section's changes; confirmed
+    S        stage-all       Stage all changes (not conflicts)
+    U        unstage-all     Unstage all changes
     y        copy            Copy the file's path
     j        next            Select next item
     k        previous        Select previous item
@@ -615,6 +620,13 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     q        leave           Leave the VCS view
     Tab      toggle-diff     Back to the list
     e        open-file       Open the file at the cursor's line
+    s        stage           Stage the hunk at the cursor (on a file header: the file)
+    u        unstage         Unstage the hunk at the cursor (or the file)
+    x        discard         Discard the hunk at the cursor (or the file); confirmed
+    S        stage-all       Stage all changes (not conflicts)
+    U        unstage-all     Unstage all changes
+    ]        next-hunk       Next hunk
+    [        previous-hunk   Previous hunk
     j        cursor-down     Move down a row
     k        cursor-up       Move up a row
     w        word-forward    Move to the next word
@@ -867,7 +879,7 @@ let%expect_test "the diff's text keys, Visual and copying; edits are refused" =
     let t = clipboard t in
     let t = run env t "yy" in
     let t = clipboard t in
-    let t = run env t "x" in
+    let t = run env t "d" in
     notice t;
     (* Escape ends Visual, then goes back to the list. *)
     let t = run env t "v<Esc>" in
@@ -1212,7 +1224,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      NORMAL  VCS VCS focused                                                                            |
     cursor: none
     (Not_a_repository(cwd $DIR/plain))
-    notice: VCS: 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
     g r refresh
     @ toggle-log
     q leave
@@ -1228,7 +1240,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
     │                                                                                                  │|
     │                                                                                                  │|
     ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS: 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help                      |
+     NORMAL  VCS VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q leave> |
     cursor: none
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: no work tree ──────────────────────────────────────────────────────────────────────────────╮|

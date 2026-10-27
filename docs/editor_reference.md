@@ -434,8 +434,9 @@ behave as in problems.
 ### VCS view
 
 `Space g g` opens a git view of the repository around the startup file (or the
-directory opened), in the spirit of lazygit and Magit. It is read-only for now:
-staging, commits, branches and remotes are planned. The view is a tab the first
+directory opened), in the spirit of lazygit and Magit. It stages, unstages and
+discards files and hunks; staging selected lines, commits, branches and remotes are
+planned. The view is a tab the first
 time; `Space g s` moves it into the split beside the editor, `Space g t` back
 into the tab strip, and `Space g h` closes it (its state is simply re-read when it
 opens again). It occupies one place at a time. `Space g g` and `Space g f` are the
@@ -460,6 +461,10 @@ command with its exit status and, on failure, its output.
 | `j` `k`, `gg` `G`, `Ctrl-d` `Ctrl-u` | Move in a list (headers included); the diff follows |
 | `Enter` (list) | Fold or unfold a section header; on a file or commit, focus the diff |
 | `y` (list) | Copy the selected path, branch name or abbreviated commit hash |
+| `s` / `u` / `x` (Files) | Stage / unstage / discard the selected file, or every file of the selected section |
+| `s` / `u` / `x` (diff) | Stage / unstage / discard the hunk at the cursor; on a file's header lines, the whole file |
+| `S` / `U` (Files, diff) | Stage all changes (not conflicts) / unstage all changes |
+| `]` / `[` (diff) | Next / previous hunk; with a count, `3]` moves three, stopping at the last |
 | Read-only text keys (diff) | Move, select and copy, as in [Read-only text](#read-only-text-in-supporting-views), with counts: `10j`, `5k`, `12G` |
 | `e`, `Enter` (diff) | Open the file at the cursor's line |
 | `g r` | Refresh (or look for a repository again) |
@@ -471,6 +476,38 @@ command with its exit status and, on failure, its output.
 In the diff, digits belong to the text: `10j` scrolls ten rows and `0` is the line
 start, so `1`/`2`/`3` do not switch panels there. `Tab` or `Escape` returns to the
 lists, where they do.
+
+**Staging and discarding.** Each action runs as one git command (two for a hunk:
+`git apply --check`, then the apply, with the patch on stdin), shown in the command
+log, then the view refreshes. The selection stays on its row when the row is still
+listed; a file that left its section (staged, discarded) gives way to the next file
+of that section, else the previous one, else the section's header. After a hunk
+action the diff cursor goes to the hunk that took its place in the same file (or the
+file's last hunk). Specifics:
+
+- A section header acts on every file of the section; `S` stages every unstaged and
+  untracked file. What an action cannot apply to (a nested repository, a submodule's
+  discard, ...) is left out and named in the title or question.
+- `s` on a conflicted file (or the Conflicted header) runs `git add`, marking it
+  resolved, without checking for leftover markers. `u`, `x` and hunk actions on
+  conflicts are refused: resolve the conflict in the editor, then stage it.
+- `x` always asks first; the default answer is No and only `y` confirms. Discarding
+  unstaged changes restores the file from the index; discarding an untracked file
+  deletes it (`git clean`); discarding staged changes returns the file to HEAD in the
+  index and the work tree, and is refused while the file also has unstaged changes.
+- While any file buffer inside the repository has unsaved changes, a discard is
+  refused before the question, naming the buffers ("... refused: unsaved changes in
+  a.txt; save or undo them first; nothing ran"), and checked again on `y`. Staging a
+  file whose buffer has unsaved changes stages the saved file and says so.
+- After a discard (even a failed one), open buffers inside the repository are
+  compared with disk: unchanged buffers whose file changed are reloaded (cursor and
+  scroll kept), those whose file is gone are marked missing. Staging and unstaging
+  never touch the work tree.
+- While an action runs and until the refresh after it arrives, further actions say
+  "Busy: <action>; nothing ran". A failed command is reported with git's message and
+  its full output is in the command log (`@`).
+- In a commit's diff there is nothing to stage; in Visual, `s u x` say that staging
+  selected lines is not supported yet. `]` and `[` do not move in Visual.
 
 `e` in the diff opens the work-tree file at the line the cursor is on (for a removed
 line, the next line that survives; for a hunk header, its first line). From a tab, the

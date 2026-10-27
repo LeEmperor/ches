@@ -413,6 +413,13 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     picker would, the file tab replaces an active view tab and focus returns to the
     editor area, which beside a split view is the other pane.
 
+    It may ask for open-buffer reconciliation ({!View_registry.Outcome.t.reconcile}),
+    from a key or a signal: the session rereads the retained file buffers within
+    those paths at once ([Session.reconcile]), and the result is adopted without
+    moving focus or leaving a view tab (buffer ids, hence scrolls, are unchanged).
+    Every action the view performs gets a {!View_registry.Context.t} built from the
+    session with the active buffer's latest state.
+
     {2 View-local commands and help}
 
     A registered view declares local commands for its current state

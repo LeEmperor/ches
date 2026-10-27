@@ -68,7 +68,37 @@ type diff_target =
   | Commit of string
 [@@deriving sexp, equal]
 
-type action = | [@@deriving sexp_of]
+let diff_section : diff_target -> Section.t option = function
+  | Unstaged _ -> Some Unstaged
+  | Staged _ -> Some Staged
+  | Untracked _ -> Some Untracked
+  | Conflicted _ -> Some Conflicted
+  | Commit _ -> None
+;;
+
+module Target = struct
+  type t =
+    | File of
+        { section : Section.t
+        ; path : string
+        }
+    | Section of Section.t
+    | Hunk of
+        { section : Section.t
+        ; file : Diff.File.t
+        ; hunk : int
+        ; selection : Patch.Selection.t
+        }
+  [@@deriving sexp_of]
+end
+
+type action =
+  | Stage of Target.t
+  | Unstage of Target.t
+  | Discard of Target.t
+  | Stage_all
+  | Unstage_all
+[@@deriving sexp_of]
 
 let name = "git"
 
@@ -384,9 +414,456 @@ let parse_diff target limits (reports : Job.Step_report.t list) =
       [%message "git diff: expected one step report" ~got:(List.length reports : int)]
 ;;
 
-let plan (_ : Repository.t) (_ : snapshot) (action : action)
-  : Ches_vcs.Backend.Plan.Decision.t
+(* Phase 3 plans: stage, unstage and discard. Every rule and text is in the contract
+   comment of backend.mli; [plan] only looks at the snapshot. *)
+module Decision = Ches_vcs.Backend.Plan.Decision
+
+type verb =
+  | Stage_verb
+  | Unstage_verb
+  | Discard_verb
+
+let count ?(noun = "file") n = if n = 1 then "1 " ^ noun else sprintf "%d %ss" n noun
+
+let entries_in (snapshot : snapshot) section =
+  List.filter snapshot.status.entries ~f:(fun entry ->
+    List.mem (sections_of entry) section ~equal:Section.equal)
+;;
+
+let find_entry snapshot section key =
+  List.find (entries_in snapshot section) ~f:(fun entry ->
+    String.equal (Status.Entry.path entry) key)
+;;
+
+let unborn (snapshot : snapshot) = Option.is_none snapshot.status.branch.oid
+
+(* An untracked key ending in "/" is a directory git did not descend into: a nested
+   repository (status lists every other untracked file by itself). *)
+let nested key = String.is_suffix key ~suffix:"/"
+
+let has_submodule : Status.Entry.t -> bool = function
+  | Changed { submodule; _ }
+  | Renamed_or_copied { submodule; _ }
+  | Unmerged { submodule; _ } -> Option.is_some submodule
+  | Untracked _ | Ignored _ -> false
+;;
+
+let worktree_change : Status.Entry.t -> Status.Change.t = function
+  | Changed { worktree; _ } | Renamed_or_copied { worktree; _ } -> worktree
+  | Unmerged _ | Untracked _ | Ignored _ -> Unmodified
+;;
+
+(* Intent-to-add ([git add -N]): an index entry without content, shown as added in the
+   work tree. *)
+let intent_to_add entry = Status.Change.equal (worktree_change entry) Added
+
+(* The paths naming an entry's index side: a rename or copy's original, then its path. *)
+let index_paths : Status.Entry.t -> string list = function
+  | Renamed_or_copied { original; path; _ } -> [ original; path ]
+  | entry -> [ Status.Entry.path entry ]
+;;
+
+let git ?stdin (repository : Repository.t) args =
+  Job.Step.Run (Cli.mutate ?stdin ~cwd:repository.root ("--literal-pathspecs" :: args))
+;;
+
+let add repository paths = [ git repository ("add" :: "--all" :: "--" :: paths) ]
+
+let restore_staged repository snapshot paths =
+  if unborn snapshot
+  then [ git repository ("reset" :: "--quiet" :: "--" :: paths) ]
+  else [ git repository ("restore" :: "--staged" :: "--" :: paths) ]
+;;
+
+let restore_worktree repository paths =
+  [ git repository ("restore" :: "--worktree" :: "--" :: paths) ]
+;;
+
+let restore_head repository snapshot paths =
+  if unborn snapshot
+  then [ git repository ("rm" :: "--force" :: "--quiet" :: "--" :: paths) ]
+  else
+    [ git
+        repository
+        ("restore" :: "--source=HEAD" :: "--staged" :: "--worktree" :: "--" :: paths)
+    ]
+;;
+
+let clean repository paths =
+  [ git repository ("clean" :: "--force" :: "--quiet" :: "--" :: paths) ]
+;;
+
+(* The check, then the apply: a mutation stops at its first failed step. *)
+let apply repository flags patch =
+  let args = ("apply" :: flags) @ [ "--whitespace=nowarn" ] in
+  [ git ~stdin:(Data patch) repository (args @ [ "--check" ])
+  ; git ~stdin:(Data patch) repository args
+  ]
+;;
+
+let run title steps : Decision.t =
+  Run { Ches_vcs.Backend.Plan.title; steps; rewrites_worktree = false }
+;;
+
+let confirm ~title ~message plan_title steps : Decision.t =
+  Confirm
+    { title
+    ; message
+    ; plan = { Ches_vcs.Backend.Plan.title = plan_title; steps; rewrites_worktree = true }
+    }
+;;
+
+let refused fmt = ksprintf (fun message : Decision.t -> Refused message) fmt
+
+let conflicted path =
+  sprintf
+    "%s is conflicted: conflict resolution is not supported yet; resolve it in the \
+     editor, then stage it (s) to mark it resolved; nothing ran"
+    path
+;;
+
+(* An entry a section or [S]/[U] action leaves out: [label] for the confirmation's "Left
+   out:" list, [refusal] when nothing else remains. *)
+type left_out =
+  { path : string
+  ; label : string
+  ; refusal : string
+  }
+
+let leave entry ~label (refusal : (string -> string, unit, string) format) =
+  let path = Status.Entry.path entry in
+  Either.Second { path; label; refusal = sprintf refusal path }
+;;
+
+(* How each action takes an entry: [First paths], or [Second] when left out. *)
+let take_key entry = Either.First [ Status.Entry.path entry ]
+let take_index entry = Either.First (index_paths entry)
+
+let stage_untracked entry =
+  if nested (Status.Entry.path entry)
+  then
+    leave
+      entry
+      ~label:"nested repository"
+      "%s is a nested repository: Ches does not stage it; nothing ran"
+  else take_key entry
+;;
+
+let discard_unstaged entry =
+  if has_submodule entry
+  then
+    leave
+      entry
+      ~label:"submodule"
+      "%s is a submodule: discard is not supported; nothing ran"
+  else if intent_to_add entry
+  then
+    leave
+      entry
+      ~label:"intent-to-add"
+      "%s is intent-to-add (git add -N): discarding would empty it; nothing ran"
+  else take_key entry
+;;
+
+let discard_untracked entry =
+  if nested (Status.Entry.path entry)
+  then
+    leave
+      entry
+      ~label:"nested repository"
+      "%s is a nested repository: delete it outside Ches; nothing ran"
+  else take_key entry
+;;
+
+let discard_staged entry =
+  if has_submodule entry
+  then
+    leave
+      entry
+      ~label:"submodule"
+      "%s is a submodule: discard is not supported; nothing ran"
+  else if not (Status.Change.equal (worktree_change entry) Unmodified)
+  then
+    leave
+      entry
+      ~label:"also has unstaged changes"
+      "%s also has unstaged changes: discard or stage them first; nothing ran"
+  else take_index entry
+;;
+
+(* A section header or [S]/[U]: [make ~n ~paths ~title_suffix ~message_suffix] over the
+   [n] entries taken, naming the left-out ones; refused with [empty] when there is no
+   entry at all, or with the first left-out entry's refusal when none is taken. *)
+let collective entries ~classify ~empty ~make : Decision.t =
+  let taken, left = List.partition_map entries ~f:classify in
+  match taken, left with
+  | [], [] -> Refused empty
+  | [], first :: _ -> Refused first.refusal
+  | _ :: _, _ ->
+    let title_suffix, message_suffix =
+      match left with
+      | [] -> "", ""
+      | _ :: _ ->
+        ( sprintf
+            " (left out: %s)"
+            (String.concat ~sep:", " (List.map left ~f:(fun left -> left.path)))
+        , sprintf
+            " Left out: %s."
+            (String.concat
+               ~sep:", "
+               (List.map left ~f:(fun left -> sprintf "%s (%s)" left.path left.label))) )
+    in
+    make ~n:(List.length taken) ~paths:(List.concat taken) ~title_suffix ~message_suffix
+;;
+
+let file_plan repository snapshot verb (section : Section.t) key : Decision.t =
+  match find_entry snapshot section key with
+  | None -> refused "%s is no longer listed; refresh (g r); nothing ran" key
+  | Some entry ->
+    let single classify ~f =
+      match classify entry with
+      | Either.First paths -> f paths
+      | Second left -> Decision.Refused left.refusal
+    in
+    (match verb, section with
+     | Stage_verb, Unstaged -> run ("Stage " ^ key) (add repository [ key ])
+     | Stage_verb, Untracked ->
+       single stage_untracked ~f:(fun paths ->
+         run ("Stage " ^ key) (add repository paths))
+     | Stage_verb, Conflicted ->
+       run (sprintf "Mark %s resolved" key) (add repository [ key ])
+     | Stage_verb, Staged -> refused "%s is already staged; nothing ran" key
+     | (Stage_verb | Discard_verb), Ignored -> refused "%s is ignored; nothing ran" key
+     | Unstage_verb, Staged ->
+       run ("Unstage " ^ key) (restore_staged repository snapshot (index_paths entry))
+     | Unstage_verb, (Unstaged | Untracked | Ignored) ->
+       refused "%s is not staged; nothing ran" key
+     | (Unstage_verb | Discard_verb), Conflicted -> Refused (conflicted key)
+     | Discard_verb, Unstaged ->
+       single discard_unstaged ~f:(fun paths ->
+         confirm
+           ~title:"Discard changes"
+           ~message:
+             (sprintf
+                "Discard the unstaged changes to %s? They are lost; staged changes are \
+                 kept."
+                key)
+           ("Discard unstaged changes to " ^ key)
+           (restore_worktree repository paths))
+     | Discard_verb, Untracked ->
+       single discard_untracked ~f:(fun paths ->
+         confirm
+           ~title:"Delete untracked file"
+           ~message:(sprintf "Delete %s? It is not in git and cannot be recovered." key)
+           ("Delete " ^ key)
+           (clean repository paths))
+     | Discard_verb, Staged ->
+       single discard_staged ~f:(fun paths ->
+         let message =
+           match entry with
+           | _ when unborn snapshot ->
+             sprintf "Delete %s? It is new and only staged: its content is lost." key
+           | Changed { index = Added; _ } | Renamed_or_copied { index = Copied; _ } ->
+             sprintf "Delete %s? It is new and only staged: its content is lost." key
+           | Renamed_or_copied { original; _ } ->
+             sprintf
+               "Undo the rename of %s to %s? %s is deleted with its staged changes and \
+                %s is restored from HEAD."
+               original
+               key
+               key
+               original
+           | Changed { index = Deleted; _ } ->
+             sprintf "Restore %s from HEAD? Its staged deletion is undone." key
+           | _ ->
+             sprintf
+               "Discard the staged changes to %s? They are lost: it returns to HEAD in \
+                the index and the work tree."
+               key
+         in
+         confirm
+           ~title:"Discard changes"
+           ~message
+           ("Discard staged changes to " ^ key)
+           (restore_head repository snapshot paths)))
+;;
+
+let section_plan repository snapshot verb (section : Section.t) : Decision.t =
+  let collective =
+    collective (entries_in snapshot section) ~empty:"Nothing here; nothing ran"
+  in
+  match verb, section with
+  | Stage_verb, Unstaged ->
+    collective ~classify:take_key ~make:(fun ~n ~paths ~title_suffix ~message_suffix:_ ->
+      run
+        (sprintf "Stage unstaged changes (%s)%s" (count n) title_suffix)
+        (add repository paths))
+  | Stage_verb, Untracked ->
+    collective
+      ~classify:stage_untracked
+      ~make:(fun ~n ~paths ~title_suffix ~message_suffix:_ ->
+        run
+          (sprintf "Stage untracked files (%s)%s" (count n) title_suffix)
+          (add repository paths))
+  | Stage_verb, Conflicted ->
+    collective ~classify:take_key ~make:(fun ~n ~paths ~title_suffix ~message_suffix:_ ->
+      run (sprintf "Mark %s resolved%s" (count n) title_suffix) (add repository paths))
+  | Stage_verb, Staged -> Refused "Already staged; nothing ran"
+  | Stage_verb, Ignored -> Refused "Ignored files are not staged; nothing ran"
+  | Unstage_verb, Staged ->
+    collective
+      ~classify:take_index
+      ~make:(fun ~n ~paths ~title_suffix ~message_suffix:_ ->
+        run
+          (sprintf "Unstage staged changes (%s)%s" (count n) title_suffix)
+          (restore_staged repository snapshot paths))
+  | Unstage_verb, (Unstaged | Untracked | Ignored) ->
+    Refused "Nothing staged here; nothing ran"
+  | (Unstage_verb | Discard_verb), Conflicted ->
+    Refused "Conflict resolution is not supported yet; nothing ran"
+  | Discard_verb, Unstaged ->
+    collective
+      ~classify:discard_unstaged
+      ~make:(fun ~n ~paths ~title_suffix ~message_suffix ->
+        confirm
+          ~title:"Discard changes"
+          ~message:
+            (sprintf
+               "Discard the unstaged changes to %s? They are lost; staged changes are \
+                kept.%s"
+               (count n)
+               message_suffix)
+          (sprintf "Discard unstaged changes (%s)%s" (count n) title_suffix)
+          (restore_worktree repository paths))
+  | Discard_verb, Untracked ->
+    collective
+      ~classify:discard_untracked
+      ~make:(fun ~n ~paths ~title_suffix ~message_suffix ->
+        confirm
+          ~title:"Delete untracked files"
+          ~message:
+            (sprintf
+               "Delete %s? They are not in git and cannot be recovered.%s"
+               (count ~noun:"untracked file" n)
+               message_suffix)
+          (sprintf "Delete untracked files (%s)%s" (count n) title_suffix)
+          (clean repository paths))
+  | Discard_verb, Staged ->
+    collective
+      ~classify:discard_staged
+      ~make:(fun ~n ~paths ~title_suffix ~message_suffix ->
+        confirm
+          ~title:"Discard changes"
+          ~message:
+            (sprintf
+               "Discard the staged changes to %s? They are lost: the files return to \
+                HEAD in the index and the work tree (new files are deleted).%s"
+               (count n)
+               message_suffix)
+          (sprintf "Discard staged changes (%s)%s" (count n) title_suffix)
+          (restore_head repository snapshot paths))
+  | Discard_verb, Ignored -> Refused "Ignored files are not discarded; nothing ran"
+;;
+
+let hunk_plan
+  repository
+  snapshot
+  verb
+  (section : Section.t)
+  (file : Diff.File.t)
+  ~hunk
+  selection
+  : Decision.t
   =
+  let path = Diff.File.path file in
+  match section with
+  | Conflicted -> Refused (conflicted path)
+  | Untracked | Ignored ->
+    (* An untracked file's diff is one hunk: the whole file. *)
+    file_plan repository snapshot verb section path
+  | Unstaged | Staged ->
+    let reverse =
+      match verb with
+      | Stage_verb -> false
+      | Unstage_verb | Discard_verb -> true
+    in
+    (match Patch.hunk file ~hunk selection ~reverse with
+     | Error error -> Refused (Error.to_string_hum error)
+     | Ok patch ->
+       (match find_entry snapshot section path with
+        | None -> refused "%s is no longer listed; refresh (g r); nothing ran" path
+        | Some entry ->
+          let which =
+            sprintf "hunk %d/%d of %s" (hunk + 1) (List.length file.hunks) path
+          in
+          (match verb, section with
+           | Stage_verb, Unstaged ->
+             run ("Stage " ^ which) (apply repository [ "--cached" ] patch)
+           | Stage_verb, _ -> refused "%s is already staged; nothing ran" path
+           | Unstage_verb, Staged ->
+             run ("Unstage " ^ which) (apply repository [ "--cached"; "--reverse" ] patch)
+           | Unstage_verb, _ -> refused "%s is not staged; nothing ran" path
+           | Discard_verb, Unstaged ->
+             (match discard_unstaged entry with
+              | Either.Second left -> Refused left.refusal
+              | First _ ->
+                confirm
+                  ~title:"Discard hunk"
+                  ~message:(sprintf "Discard %s? Its unstaged lines are lost." which)
+                  ("Discard " ^ which)
+                  (apply repository [ "--reverse" ] patch))
+           | Discard_verb, _ ->
+             (match discard_staged entry with
+              | Either.Second left -> Refused left.refusal
+              | First _ ->
+                confirm
+                  ~title:"Discard hunk"
+                  ~message:
+                    (sprintf
+                       "Discard staged %s? It is removed from the index and the work \
+                        tree and lost."
+                       which)
+                  ("Discard staged " ^ which)
+                  (apply repository [ "--index"; "--reverse" ] patch)))))
+;;
+
+let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : Decision.t =
+  let target verb : Target.t -> Decision.t = function
+    | File { section; path } -> file_plan repository snapshot verb section path
+    | Section section -> section_plan repository snapshot verb section
+    | Hunk { section; file; hunk; selection } ->
+      hunk_plan repository snapshot verb section file ~hunk selection
+  in
   match action with
-  | _ -> .
+  | Stage t -> target Stage_verb t
+  | Unstage t -> target Unstage_verb t
+  | Discard t -> target Discard_verb t
+  | Stage_all ->
+    (* Conflicted entries are marked resolved one by one, deliberately ([s]). *)
+    let entries =
+      List.filter snapshot.status.entries ~f:(fun entry ->
+        List.exists (sections_of entry) ~f:(function
+          | Unstaged | Untracked -> true
+          | Conflicted | Staged | Ignored -> false))
+    in
+    collective
+      entries
+      ~classify:(fun (entry : Status.Entry.t) ->
+        match entry with
+        | Untracked _ -> stage_untracked entry
+        | _ -> take_key entry)
+      ~empty:"Nothing to stage; nothing ran"
+      ~make:(fun ~n ~paths ~title_suffix ~message_suffix:_ ->
+        run
+          (sprintf "Stage all changes (%s)%s" (count n) title_suffix)
+          (add repository paths))
+  | Unstage_all ->
+    collective
+      (entries_in snapshot Staged)
+      ~classify:take_index
+      ~empty:"Nothing staged; nothing ran"
+      ~make:(fun ~n ~paths ~title_suffix ~message_suffix:_ ->
+        run
+          (sprintf "Unstage all changes (%s)%s" (count n) title_suffix)
+          (restore_staged repository snapshot paths))
 ;;

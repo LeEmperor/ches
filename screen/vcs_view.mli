@@ -1,4 +1,4 @@
-(** The VCS view (phase 2: read-only), a registered view ({!View_registry}) over the
+(** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard), a registered view ({!View_registry}) over the
     git backend ([Ches_vcs_git.Backend], a {!Ches_vcs.Backend.S}). Lazygit's layout
     and Magit's context keys: the Files, Branches and Commits list panels beside a diff
     panel that follows the selection, a head summary above the lists, and a
@@ -39,6 +39,81 @@
     reports change nothing but the log. Failures never raise: a failed detection or
     refresh is shown in the view (the last snapshot kept), a failed diff in the diff
     panel, each with its one-line message, and logged.
+
+    {2 Actions (phase 3)}
+
+    [s] [u] [x] stage, unstage and discard; [S] [U] stage all and unstage all. In the
+    Files panel they act on the selected row: an item is
+    [Target.File { section; path = key }], a section header [Target.Section]. In the
+    diff (while its diff is [Loaded] and not in Visual) they act on the line at the
+    cursor ({!Vcs_diff_text.position_at}): on a hunk's [@@] line or one of its lines,
+    [Target.Hunk { section; file; hunk; selection = Whole }] with
+    [section = Git.Backend.diff_section target] and [file] the [Loaded] diff's file;
+    on a file's header lines (or a header-only file's note), [Target.File] of that
+    file ({!Ches_vcs.Diff.File.path}) in that section. A commit's diff, the preamble,
+    notes outside any file, a loading or failed diff, give a [`Show] notice ("Nothing
+    to stage here: a commit's diff", "No change at the cursor", "The diff is still
+    loading") and run nothing; in Visual, ["Staging selected lines is not supported
+    yet; nothing ran"] (phase 4 replaces it). [S] and [U] work from the Files panel
+    and the diff. The Branches and Commits panels leave all five unbound.
+
+    The action goes to the backend's [plan] (the [?plan] given to {!create}, by
+    default [Git.Backend.plan]) with the current repository and snapshot:
+    - [Refused message]: a [`Show] notice; nothing runs.
+    - A plan with [rewrites_worktree] (every discard) while any file buffer within
+      the repository root is dirty ({!View_registry.Context.dirty_within}, from the
+      perform context) is refused before any question: [`Post] ["<plan title>
+      refused: unsaved changes in <label>, <label>; save or undo them first; nothing
+      ran"], labels as the tab strip shows them, in tab order.
+    - [Confirm { title; message; plan }]: an {!View_registry.Ask.t.Confirm} with that
+      title and message (the default answer is No; only [y] confirms), [yes] running
+      the plan and [no = None]. On [y] the dirty check runs again (the answer's
+      context) before anything runs.
+    - [Run plan], or a confirmed plan: its steps go out as one [Mutate] job (no
+      lane; an id from the view's stamps), submitted through
+      {!View_registry.Outcome.t.jobs}; the runner serializes it with every other
+      mutation. When the action stages ([Stage], [Stage_all]) and a dirty file
+      buffer's path is among the paths it stages (a [File]'s key, a [Hunk]'s file
+      path, a [Section]'s or [Stage_all]'s keys from the Files panel; a key ending in
+      ["/"] covers the paths under it), the outcome also posts [`Post] ["<label>,
+      <label> have unsaved changes: the saved files were staged, not the buffers"]
+      ("<label> has ..." for one): a warning, it still runs.
+    - While a mutation of this view is in flight or the refresh that follows it has
+      not been applied ({!mutation}), [s u x S U] give the [`Show] notice ["Busy:
+      <title>; nothing ran"] instead of planning.
+    When the mutation's [Finished] report arrives (signalled; current or stale,
+    cancelled or not): every [Run] step is logged as refresh commands are (the
+    command, its status, a failed step's stderr tail; [--check] steps included);
+    a failure ({!Ches_vcs.Job.Report.first_failure}) posts [`Post] ["<title> failed:
+    <one-line failure>"] (feedback only, as for any signalled outcome), a success
+    posts nothing; a plan with [rewrites_worktree] asks the application to reconcile
+    open buffers within the root ({!View_registry.Outcome.t.reconcile} [= [root]]),
+    whatever the outcome (a failed step may have rewritten some files); and a refresh
+    follows when the report is of the current generation (a stale one was overtaken
+    by a newer detection, which refreshes anyway). {!mutation} clears when that
+    refresh's snapshot is applied (or fails).
+
+    Selection after an action: the refresh reconciles each cursor
+    ({!Ches_vcs.Panel.Cursor.reconcile}): an item still listed stays selected; one
+    that left its section (staged, discarded) gives way to the next item of that
+    section, else the previous, else the section's header, else the nearest
+    section's header. Focus stays where it was.
+
+    The diff cursor after a hunk action: the view remembers the target, the file's
+    path and the hunk's index. When the next [Loaded] diff for the same target
+    arrives, the cursor goes to the [@@] line of the hunk with that index in that
+    file (the next hunk now that the acted one left), else the file's last hunk, else
+    its first line, else the first line ({!Ches_tile.Text_view.jump}). A different target (the
+    file left the section and the selection moved) starts at the top as any new
+    selection does.
+
+    Also in the diff: [\]] and [\[] move the cursor to the next and previous [@@]
+    line ({!Vcs_diff_text.hunk_starts}); nothing beyond the last or first.
+
+    Local commands (help and palette) in the states where they work: [stage] ([s]),
+    [unstage] ([u]), [discard] ([x]), [stage-all] ([S]), [unstage-all] ([U]) in the
+    Files panel and the diff while a snapshot is loaded; [next-hunk] ([\]]) and
+    [previous-hunk] ([\[]) in the diff. The hint mentions [s u x].
 
     {2 Layout}
 
@@ -221,14 +296,24 @@ end
 
 type t [@@deriving sexp_of]
 
+(** The backend's planner: [Git.Backend.plan] by default. Tests may give another
+    (canned decisions over real fixture commands), so the view's action flow is
+    testable apart from the git backend's plans. *)
+type planner =
+  Git.Repository.t
+  -> Git.Backend.snapshot
+  -> Git.Backend.action
+  -> Backend.Plan.Decision.t
+
 (** Nothing run, [Unknown], focus on Files, empty cursors, log hidden. [cwd] is
     absolute. *)
-val create : cwd:string -> t
+val create : ?plan:planner -> cwd:string -> unit -> t
 
-(** [View_registry.Entry.install ~placement ~opens_in:Tab adapter (create ~cwd)];
-    [placement] defaults to [Hidden]. *)
+(** [View_registry.Entry.install ~placement ~opens_in:Tab adapter (create ?plan ~cwd
+    ())]; [placement] defaults to [Hidden]. *)
 val entry
   :  ?placement:View_registry.Placement.t
+  -> ?plan:planner
   -> cwd:string
   -> unit
   -> View_registry.Entry.t
@@ -272,6 +357,11 @@ val log : t -> Log_entry.t list
 (** The current generation's stamps (ids and lanes the view issued). *)
 val stamps : t -> Stamps.t
 
+(** The title of this view's mutation ({!Backend.Plan.t.title}) from its submission
+    until the refresh after its [Finished] report is applied: actions are refused as
+    busy meanwhile. *)
+val mutation : t -> string option
+
 (** {2 The adapter} *)
 
 type action [@@deriving sexp_of]
@@ -290,6 +380,7 @@ val signal : t -> View_registry.Signal.t -> action option
 val perform
   :  t
   -> Ches_app.Controller.t
+  -> context:View_registry.Context.t
   -> rows:int
   -> width:int
   -> action

@@ -46,7 +46,7 @@ module Counter = struct
     ; escape = (fun _ -> None)
     ; hint = "Counter: + adds, r resets"
     ; perform =
-        (fun t controller ~rows:_ ~width:_ action ->
+        (fun t controller ~context:_ ~rows:_ ~width:_ action ->
           match action with
           | Increment -> { count = t.count + 1 }, View_registry.Outcome.create controller
           | Reset ->

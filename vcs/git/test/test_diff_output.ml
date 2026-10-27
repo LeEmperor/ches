@@ -25,23 +25,25 @@ let%expect_test "Diff_output.command and ok_exits for each source" =
           , (spec.kind : Exec.Kind.t)]);
   [%expect
     {|
-    ((diff --no-color --no-ext-diff --no-relative --src-prefix=a/ --dst-prefix=b/
-      --find-renames --submodule=short --)
+    ((--literal-pathspecs diff --no-color --no-ext-diff --no-relative
+      --src-prefix=a/ --dst-prefix=b/ --find-renames --submodule=short --)
      (0) Read)
-    ((diff --no-color --no-ext-diff --no-relative --src-prefix=a/ --dst-prefix=b/
-      --find-renames --submodule=short -- -a "b c")
+    ((--literal-pathspecs diff --no-color --no-ext-diff --no-relative
+      --src-prefix=a/ --dst-prefix=b/ --find-renames --submodule=short -- -a
+      "b c")
      (0) Read)
-    ((diff --cached --no-color --no-ext-diff --no-relative --src-prefix=a/
-      --dst-prefix=b/ --find-renames --submodule=short -- old new)
+    ((--literal-pathspecs diff --cached --no-color --no-ext-diff --no-relative
+      --src-prefix=a/ --dst-prefix=b/ --find-renames --submodule=short -- old
+      new)
      (0) Read)
-    ((diff --no-index --no-color --no-ext-diff --no-relative --src-prefix=a/
-      --dst-prefix=b/ --find-renames --submodule=short -- /dev/null
-      "dir/new file")
+    ((--literal-pathspecs diff --no-index --no-color --no-ext-diff --no-relative
+      --src-prefix=a/ --dst-prefix=b/ --find-renames --submodule=short --
+      /dev/null "dir/new file")
      (0 1) Read)
-    ((show --no-color --no-ext-diff --no-relative --src-prefix=a/ --dst-prefix=b/
-      --find-renames --submodule=short --no-show-signature --format=fuller
-      --date=iso-strict --end-of-options a757577ac7f79aa5fd48614f00553a6319b37a4a
-      --)
+    ((--literal-pathspecs show --no-color --no-ext-diff --no-relative
+      --src-prefix=a/ --dst-prefix=b/ --find-renames --submodule=short
+      --no-show-signature --format=fuller --date=iso-strict --end-of-options
+      a757577ac7f79aa5fd48614f00553a6319b37a4a --)
      (0) Read)
     |}]
 ;;

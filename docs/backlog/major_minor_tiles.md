@@ -66,6 +66,15 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   by `ui/vcs_host.ml`, whose events come back as `Input.Vcs`), signals (`Shown`,
   `Saved`, `Job`), `Outcome.open_file`, and `Adapter.text_area`.
 
+**Done in VCS workspace phase 3 (2026-10-27):** the view acts on the repository.
+- `s u x S U` in the Files panel and the diff, `]`/`[` between hunks; the backend
+  plans each action, the view submits it as one `Mutate` job, asks first with
+  `Ask.Confirm` for discards, and refuses work-tree rewrites while a file buffer
+  in the repository is dirty.
+- Generic seams it introduced: `View_registry.Context` (the session's file buffers,
+  dirty or missing, in every `perform`) and `Outcome.reconcile` (reload clean
+  buffers under a root from disk, mark deleted ones missing).
+
 **What is not done:**
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.

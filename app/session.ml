@@ -685,6 +685,67 @@ let close_buffer t id ~force =
       match show_directory t path with Ok t -> t | Error error -> notify t (Error.to_string_hum error) in
     t, true
 ;;
+module Reconciled = struct
+  type t =
+    { reloaded : Buffer_id.t list
+    ; missing : Buffer_id.t list
+    ; dirty : Buffer_id.t list
+    ; busy : Buffer_id.t list
+    ; failed : (Buffer_id.t * Error.t) list
+    }
+  [@@deriving sexp_of]
+
+  let empty = { reloaded = []; missing = []; dirty = []; busy = []; failed = [] }
+end
+
+let reconcile t ~under =
+  let within path = List.exists under ~f:(fun root -> Resource.within ~root path) in
+  let report = ref Reconciled.empty in
+  let note f = report := f !report in
+  let changed = ref t.source_changes in
+  let buffers = List.map (ordered_buffers t) ~f:(fun b ->
+    match Editor.path (Controller.editor b.controller) with
+    | Some path when within path ->
+      let controller, (disk : Controller.Disk.t) = Controller.reconcile_with_disk b.controller in
+      (match disk with
+       | Unchanged -> ()
+       | Reloaded ->
+         changed := Set.add !changed b.id;
+         note (fun r -> { r with reloaded = r.reloaded @ [ b.id ] })
+       | Missing -> note (fun r -> { r with missing = r.missing @ [ b.id ] })
+       | Dirty -> note (fun r -> { r with dirty = r.dirty @ [ b.id ] })
+       | Busy -> note (fun r -> { r with busy = r.busy @ [ b.id ] })
+       | Failed error -> note (fun r -> { r with failed = r.failed @ [ b.id, error ] }));
+      { b with controller }
+    | Some _ | None -> b) in
+  let report = !report in
+  if [%equal: Buffer_id.t list] (report.reloaded @ report.missing @ report.dirty @ report.busy
+       @ List.map report.failed ~f:fst) []
+  then t, report
+  else (
+    let t = reindex t buffers in
+    let t = { t with source_changes = !changed } in
+    let label id = Option.value (List.Assoc.find (buffer_labels t) id ~equal:Buffer_id.equal) ~default:"[unnamed]" in
+    let path id = Option.value_map (find t id) ~default:"" ~f:(fun c -> Option.value (Editor.path (Controller.editor c)) ~default:"") in
+    let identity id = { Feedback.Identity.source = "file"; kind = Reload; resource = path id } in
+    let feedback = List.fold report.reloaded ~init:t.feedback ~f:(fun feedback id ->
+      Feedback.apply feedback (Resolve (identity id))) in
+    let feedback = List.fold report.failed ~init:feedback ~f:(fun feedback (id, error) ->
+      Feedback.apply feedback (Failed (identity id, Error,
+        sprintf "Failed to reload %s: %s" (path id) (Error.to_string_hum error)))) in
+    let part title ids = if List.is_empty ids then [] else
+      [ title ^ ": " ^ String.concat ~sep:", " (List.map ids ~f:label) ] in
+    let parts = part "Reloaded from disk" report.reloaded
+      @ part "Deleted on disk (kept, marked missing)" report.missing
+      @ part "Not reloaded, unsaved changes" report.dirty
+      @ part "Not reloaded in Insert/Visual mode" report.busy in
+    let feedback = if List.is_empty parts then feedback else
+      Feedback.apply feedback (Notify { source = "session"; scope = None
+        ; severity = (if List.is_empty (report.missing @ report.dirty @ report.busy) then Info else Warning)
+        ; text = String.concat ~sep:"; " parts; history = true }) in
+    { t with feedback }, report)
+;;
+
 let close_current t ~force = match t.active with None -> t, false | Some id -> close_buffer t id ~force
 let feedback t = t.feedback
 let take_clipboard t = { t with clipboard = None }, t.clipboard

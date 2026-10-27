@@ -20,7 +20,8 @@ module Source : sig
   [@@deriving sexp, equal]
 end
 
-(** [Cli.read ~cwd] of the source's command with [--no-color --no-ext-diff
+(** [Cli.read ~cwd] of [--literal-pathspecs] (a global option, so paths such as
+    [a*.txt] are never globs) and the source's command with [--no-color --no-ext-diff
     --no-relative --src-prefix=a/ --dst-prefix=b/ --find-renames --submodule=short],
     paths after [--]. [Commit] adds [--no-show-signature --format=fuller
     --date=iso-strict] and passes the hash after [--end-of-options], then [--]. *)

@@ -42,8 +42,18 @@ module Line = struct
   [@@deriving sexp_of]
 end
 
+module Position = struct
+  type t =
+    { file : int
+    ; hunk : int option
+    ; line : int option
+    }
+  [@@deriving sexp_of, equal]
+end
+
 type t =
   { lines : Line.t array
+  ; positions : Position.t option array (** Each line's place in the [Diff.t]. *)
   ; starts : int array (** Byte offset of each line in [text]. *)
   ; text : string
   }
@@ -53,9 +63,12 @@ let lines t = Array.to_list t.lines
 let text t = t.text
 let one_line s = String.concat ~sep:"^J" (String.split s ~on:'\n')
 
-let create (lines : Line.t list) =
+(* Lines, each with its position in the diff ([None] outside any file). *)
+let create (lines : (Line.t * Position.t option) list) =
+  let positions = Array.of_list (List.map lines ~f:snd) in
   let lines =
-    Array.of_list (List.map lines ~f:(fun line -> { line with text = one_line line.text }))
+    Array.of_list
+      (List.map lines ~f:(fun (line, _) -> { line with text = one_line line.text }))
   in
   let starts = Array.create ~len:(Array.length lines) 0 in
   let _ =
@@ -64,18 +77,20 @@ let create (lines : Line.t list) =
       offset + String.length line.text + 1)
   in
   { lines
+  ; positions
   ; starts
   ; text = String.concat ~sep:"\n" (Array.to_list (Array.map lines ~f:(fun l -> l.text)))
   }
 ;;
 
 let note text : Line.t = { text; kind = Note; target = None }
-let of_message message = create [ note message ]
+let of_message message = create [ note message, None ]
 
 (* The lines of one hunk, each with the line [e] opens: an added or context line's
    [new_line]; a removed line's next new-side line in the hunk, else [new_start]; a
-   "\ No newline" marker the line of the line it is about (the one before it). *)
-let hunk_lines (hunk : Diff.Hunk.t) ~target =
+   "\ No newline" marker the line of the line it is about (the one before it). [at]
+   is a line's position ([None]: the [@@] line). *)
+let hunk_lines (hunk : Diff.Hunk.t) ~target ~at =
   let start = Int.max 1 hunk.new_start in
   let lines = Array.of_list hunk.lines in
   let n = Array.length lines in
@@ -93,17 +108,21 @@ let hunk_lines (hunk : Diff.Hunk.t) ~target =
       | Added | Context -> Option.value line.new_line ~default:start
       | Removed -> Option.value next_new.(i + 1) ~default:start
       | No_newline -> if i = 0 then start else resolved.(i - 1)));
-  ({ Line.text = hunk.header; kind = Hunk; target = Some (target (Some start)) } : Line.t)
-  :: List.mapi hunk.lines ~f:(fun i (line : Diff.Line.t) : Line.t ->
-    { text = line.prefix ^ line.text
-    ; kind =
-        (match line.kind with
-         | Added -> Added
-         | Removed -> Removed
-         | Context -> Context
-         | No_newline -> No_newline)
-    ; target = Some (target (Some resolved.(i)))
-    })
+  ( ({ Line.text = hunk.header; kind = Hunk; target = Some (target (Some start)) }
+      : Line.t)
+  , Some (at None) )
+  :: List.mapi hunk.lines ~f:(fun i (line : Diff.Line.t) ->
+    ( ({ text = line.prefix ^ line.text
+       ; kind =
+           (match line.kind with
+            | Added -> Added
+            | Removed -> Removed
+            | Context -> Context
+            | No_newline -> No_newline)
+       ; target = Some (target (Some resolved.(i)))
+       }
+       : Line.t)
+    , Some (at (Some i)) ))
 ;;
 
 let subproject (line : Diff.Line.t) =
@@ -121,11 +140,14 @@ let header_only (file : Diff.File.t) =
   || List.is_empty file.hunks
 ;;
 
-let file_lines (file : Diff.File.t) =
+(* The lines of file [index] of the diff. *)
+let file_lines index (file : Diff.File.t) =
   let display = Diff.File.path file in
   let target line = { Target.path = file.new_path; display; line } in
   let meta text : Line.t = { text; kind = Meta; target = Some (target None) } in
-  let header = List.map file.header ~f:meta in
+  (* Header lines, notes and the placeholder belong to the file, not a hunk. *)
+  let of_file line = line, Some { Position.file = index; hunk = None; line = None } in
+  let header = List.map file.header ~f:(fun text -> of_file (meta text)) in
   let body =
     if file.submodule
     then (
@@ -137,18 +159,22 @@ let file_lines (file : Diff.File.t) =
       match commits Removed, commits Added with
       | [], [] -> []
       | old, new_ ->
-        [ { (note
-               (sprintf
-                  "(submodule: %s -> %s)"
-                  (Option.value (List.hd old) ~default:"none")
-                  (Option.value (List.hd new_) ~default:"none")))
-            with
-            target = Some (target None)
-          }
+        [ of_file
+            { (note
+                 (sprintf
+                    "(submodule: %s -> %s)"
+                    (Option.value (List.hd old) ~default:"none")
+                    (Option.value (List.hd new_) ~default:"none")))
+              with
+              target = Some (target None)
+            }
         ])
     else if header_only file
     then []
-    else List.concat_map file.hunks ~f:(hunk_lines ~target)
+    else
+      List.concat_mapi file.hunks ~f:(fun h hunk ->
+        hunk_lines hunk ~target ~at:(fun line ->
+          { Position.file = index; hunk = Some h; line }))
   in
   let truncated =
     match file.truncated with
@@ -168,10 +194,11 @@ let file_lines (file : Diff.File.t) =
           ]
       in
       let cut = if cut then [ "the diff output was cut inside this file" ] else [] in
-      [ { (note (sprintf "... %s" (String.concat ~sep:"; " (omitted @ cut))))
-          with
-          target = Some (target None)
-        }
+      [ of_file
+          { (note (sprintf "... %s" (String.concat ~sep:"; " (omitted @ cut))))
+            with
+            target = Some (target None)
+          }
       ]
   in
   header @ body @ truncated
@@ -179,18 +206,20 @@ let file_lines (file : Diff.File.t) =
 
 let of_diff (diff : Diff.t) =
   let preamble =
-    List.map diff.preamble ~f:(fun text : Line.t ->
-      { text
-      ; kind =
-          (if String.is_empty text || String.is_prefix text ~prefix:"    "
-           then Message
-           else Preamble)
-      ; target = None
-      })
+    List.map diff.preamble ~f:(fun text ->
+      ( ({ text
+         ; kind =
+             (if String.is_empty text || String.is_prefix text ~prefix:"    "
+              then Message
+              else Preamble)
+         ; target = None
+         }
+         : Line.t)
+      , None ))
   in
-  let files = List.concat_map diff.files ~f:file_lines in
+  let files = List.concat_mapi diff.files ~f:file_lines in
   let cut =
-    if diff.cut then [ note "(the diff output was cut at its size limit)" ] else []
+    if diff.cut then [ note "(the diff output was cut at its size limit)", None ] else []
   in
   match preamble, files, cut with
   | [], [], [] -> of_message "No changes"
@@ -218,4 +247,22 @@ let kind_at_start t offset =
   match index_at t offset with
   | Some i when t.starts.(i) = offset -> Some t.lines.(i).kind
   | Some _ | None -> None
+;;
+
+let position_at t offset = Option.bind (index_at t offset) ~f:(fun i -> t.positions.(i))
+
+let start_of t ~file ~hunk =
+  Array.findi t.positions ~f:(fun _ position ->
+    match position, hunk with
+    | Some p, None -> p.file = file
+    | Some p, Some hunk ->
+      p.file = file && Option.equal Int.equal p.hunk (Some hunk) && Option.is_none p.line
+    | None, _ -> false)
+  |> Option.map ~f:(fun (i, _) -> t.starts.(i))
+;;
+
+let hunk_starts t =
+  Array.filter_mapi t.lines ~f:(fun i line ->
+    Option.some_if (Kind.equal line.kind Hunk) t.starts.(i))
+  |> Array.to_list
 ;;

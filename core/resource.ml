@@ -12,3 +12,8 @@ let normalize ~cwd path =
   in
   "/" ^ String.concat ~sep:"/" (List.rev parts)
 ;;
+
+let within ~root path =
+  String.equal path root
+  || String.is_prefix path ~prefix:(if String.is_suffix root ~suffix:"/" then root else root ^ "/")
+;;

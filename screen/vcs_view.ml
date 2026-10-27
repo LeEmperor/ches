@@ -1,5 +1,6 @@
-(* The VCS view (phase 2, read-only): see vcs_view.mli. The diff panel's text and
-   its per-line open targets are [Vcs_diff_text]'s. *)
+(* The VCS view (phase 2: read-only; phase 3: stage, unstage, discard): see
+   vcs_view.mli. The diff panel's text, its per-line open targets and positions are
+   [Vcs_diff_text]'s; the command plans are the backend's ([plan]). *)
 
 open! Core
 open Ches_vcs
@@ -142,13 +143,39 @@ module Purpose = struct
     | Detect
     | Refresh of Git.Repository.t
     | Diff of B.diff_target
+    | Mutate (** A plan's steps; see [Mutation]. *)
   [@@deriving sexp_of]
 
   let lane = function
-    | Detect -> "detect"
-    | Refresh _ -> "refresh"
-    | Diff _ -> "diff"
+    | Detect -> Some "detect"
+    | Refresh _ -> Some "refresh"
+    | Diff _ -> Some "diff"
+    | Mutate -> None
   ;;
+end
+
+(* Where the diff cursor goes after a hunk action: hunk [hunk] of the file [path] in
+   the next [Loaded] diff of [target]. *)
+module Anchor = struct
+  type t =
+    { target : B.diff_target
+    ; path : string
+    ; hunk : int
+    }
+  [@@deriving sexp_of]
+end
+
+(* The view's mutation, from its submission until the refresh after its report. *)
+module Mutation = struct
+  type t =
+    { job : Job.Id.t
+    ; title : string
+    ; root : string (** Reconciled after a work-tree rewrite. *)
+    ; rewrites_worktree : bool
+    ; anchor : Anchor.t option
+    ; settling : bool (** Finished: waiting for the refresh after it. *)
+    }
+  [@@deriving sexp_of]
 end
 
 (* A list panel's cursor (selection identity and folds) and its first visible row. *)
@@ -173,6 +200,12 @@ end
 
 let log_limit = 200
 
+type planner =
+  Git.Repository.t
+  -> Git.Backend.snapshot
+  -> Git.Backend.action
+  -> Backend.Plan.Decision.t
+
 type t =
   { cwd : string
   ; stamps : Stamps.t
@@ -193,12 +226,15 @@ type t =
   ; log_visible : bool
   ; log : Record.t list (** Newest first. *)
   ; in_flight : Purpose.t Job.Id.Map.t
+  ; plan : (planner[@sexp.opaque])
+  ; mutation : Mutation.t option
+  ; anchor : Anchor.t option (** Applied to the next [Loaded] diff of its target. *)
   }
 [@@deriving sexp_of]
 
 let text_view_of text = Text_view.create ~cell_width:Cell_map.width (Vcs_diff_text.text text)
 
-let create ~cwd =
+let create ?(plan = B.plan) ~cwd () =
   let diff_text = Vcs_diff_text.of_message "" in
   { cwd
   ; stamps = Stamps.create ()
@@ -219,6 +255,9 @@ let create ~cwd =
   ; log_visible = false
   ; log = []
   ; in_flight = Job.Id.Map.empty
+  ; plan
+  ; mutation = None
+  ; anchor = None
   }
 ;;
 
@@ -233,12 +272,13 @@ let diff t = t.diff
 let log_visible t = t.log_visible
 let log t = List.rev_map t.log ~f:(fun record -> record.entry)
 let stamps t = t.stamps
+let mutation t = Option.map t.mutation ~f:(fun mutation -> mutation.title)
 
 let loading t =
   Map.existsi t.in_flight ~f:(fun ~key ~data ->
     match (data : Purpose.t) with
-    | Detect | Refresh _ -> Stamps.is_current t.stamps ~lane:(Purpose.lane data) key
-    | Diff _ -> false)
+    | Detect | Refresh _ -> Stamps.is_current t.stamps ?lane:(Purpose.lane data) key
+    | Diff _ | Mutate -> false)
 ;;
 
 (* Whether the panels are drawn (and their keys work): a repository was found, or is
@@ -682,9 +722,9 @@ let set_diff_text t ~shown text =
 
 let issue t (purpose : Purpose.t) steps =
   let lane = Purpose.lane purpose in
-  let stamps, id = Stamps.issue ~lane t.stamps in
+  let stamps, id = Stamps.issue ?lane t.stamps in
   let t = { t with stamps } in
-  match Job.create ~id ~lane steps with
+  match Job.create ~id ?lane steps with
   | Ok job -> { t with in_flight = Map.set t.in_flight ~key:id ~data:purpose }, [ job ]
   | Error error ->
     let message = one_line (Error.to_string_hum error) in
@@ -696,7 +736,8 @@ let issue t (purpose : Purpose.t) steps =
            { t with diff = Failed (target, message) }
            ~shown:(Some target)
            (Vcs_diff_text.of_message ("Diff failed: " ^ message))
-       , [] ))
+       , [] )
+     | Mutate -> t, [])
 ;;
 
 (* The diff for the followed list's selection: fetched when its target changes, or
@@ -712,10 +753,14 @@ let request_diff ?(force = false) t =
   in
   match desired with
   | `Empty ->
-    set_diff_text { t with diff = Empty } ~shown:None (Vcs_diff_text.of_message ""), []
+    ( set_diff_text
+        { t with diff = Empty; anchor = None }
+        ~shown:None
+        (Vcs_diff_text.of_message "")
+    , [] )
   | `No_diff ->
     ( set_diff_text
-        { t with diff = No_diff }
+        { t with diff = No_diff; anchor = None }
         ~shown:None
         (Vcs_diff_text.of_message "No diff for this row")
     , [] )
@@ -794,6 +839,35 @@ let detected t (report : Job.Report.t) =
   | Failed message -> { (end_visual t) with repository = Failed message }, []
 ;;
 
+(* A settling mutation ends with the current refresh's report, whatever its fate,
+   or when no repository is left to refresh. *)
+let end_settled_mutation t ~(purpose : Purpose.t) ~current =
+  match t.mutation, purpose, t.repository with
+  | Some { settling = true; _ }, Refresh _, _ when current -> { t with mutation = None }
+  | Some { settling = true; _ }, Detect, (Not_a_repository _ | No_work_tree _ | Failed _) ->
+    { t with mutation = None }
+  | _ -> t
+;;
+
+(* The cursor's offset for [anchor] in a diff just laid out: the [@@] line of hunk
+   [anchor.hunk] of its file, else the file's last hunk, else its first line, else
+   the text's first line. *)
+let anchor_offset text (diff : Diff.t) (anchor : Anchor.t) =
+  match
+    List.findi diff.files ~f:(fun _ file -> String.equal (Diff.File.path file) anchor.path)
+  with
+  | None -> 0
+  | Some (file, (found : Diff.File.t)) ->
+    let last = List.length found.hunks - 1 in
+    let hunk =
+      if last < 0
+      then None
+      else Vcs_diff_text.start_of text ~file ~hunk:(Some (Int.min anchor.hunk last))
+    in
+    Option.first_some hunk (Vcs_diff_text.start_of text ~file ~hunk:None)
+    |> Option.value ~default:0
+;;
+
 let finished t (report : Job.Report.t) =
   match Map.find t.in_flight report.id with
   | None -> t, []
@@ -804,21 +878,33 @@ let finished t (report : Job.Report.t) =
     (match purpose with
      | Detect | Refresh _ ->
        let t = log_report t report ~stale:(not used) in
-       (match purpose, used with
-        | _, false when current && report.cancelled ->
-          (* The current detection or refresh will not answer: say so instead of
-             loading forever. *)
-          (match purpose with
-           | Detect -> { t with repository = Failed "repository detection was cancelled" }, []
-           | Refresh _ | Diff _ -> { t with refresh_error = Some "refresh cancelled" }, [])
-        | _, false -> t, []
-        | Detect, true -> detected t report
-        | Refresh repository, true ->
-          (match B.snapshot repository Backend.Refresh.default report.steps with
-           | Ok snapshot -> apply_snapshot (log_problems t report snapshot) snapshot
-           | Error error ->
-             { t with refresh_error = Some (one_line (Error.to_string_hum error)) }, [])
-        | Diff _, true -> t, [])
+       let anchor =
+         match t.mutation with
+         | Some { settling = true; anchor; _ } when current -> anchor
+         | Some _ | None -> None
+       in
+       let t, jobs =
+         match purpose, used with
+         | _, false when current && report.cancelled ->
+           (* The current detection or refresh will not answer: say so instead of
+              loading forever. *)
+           (match purpose with
+            | Detect ->
+              { t with repository = Failed "repository detection was cancelled" }, []
+            | Refresh _ | Diff _ | Mutate ->
+              { t with refresh_error = Some "refresh cancelled" }, [])
+         | _, false -> t, []
+         | Detect, true -> detected t report
+         | Refresh repository, true ->
+           (match B.snapshot repository Backend.Refresh.default report.steps with
+            | Ok snapshot ->
+              apply_snapshot { (log_problems t report snapshot) with anchor } snapshot
+            | Error error ->
+              { t with refresh_error = Some (one_line (Error.to_string_hum error)) }, [])
+         | (Diff _ | Mutate), true -> t, []
+       in
+       end_settled_mutation t ~purpose ~current, jobs
+     | Mutate -> t, []
      | Diff target ->
        let parsed =
          if report.cancelled
@@ -834,6 +920,8 @@ let finished t (report : Job.Report.t) =
        if not current
        then t, []
        else (
+         let anchor = t.anchor in
+         let t = { t with anchor = None } in
          match parsed with
          | None ->
            ( set_diff_text
@@ -842,11 +930,15 @@ let finished t (report : Job.Report.t) =
                (Vcs_diff_text.of_message "Diff cancelled; g r reads it again")
            , [] )
          | Some (Ok diff) ->
-           ( set_diff_text
-               { t with diff = Loaded (target, diff) }
-               ~shown:(Some target)
-               (Vcs_diff_text.of_diff diff)
-           , [] )
+           let text = Vcs_diff_text.of_diff diff in
+           let t =
+             set_diff_text { t with diff = Loaded (target, diff) } ~shown:(Some target) text
+           in
+           (match anchor with
+            | Some anchor when B.equal_diff_target anchor.target target ->
+              let offset = anchor_offset text diff anchor in
+              { t with diff_view = Text_view.jump t.diff_view offset }, []
+            | Some _ | None -> t, [])
          | Some (Error error) ->
            let message = one_line (Error.to_string_hum error) in
            ( set_diff_text
@@ -872,14 +964,114 @@ let event t (event : Event.t) =
                ; status = None
                ; output = []
                ; stale =
-                   not (Stamps.is_current t.stamps ~lane:(Purpose.lane purpose) job)
+                   not (Stamps.is_current t.stamps ?lane:(Purpose.lane purpose) job)
                }
            }
        , [] ))
   | Finished report -> finished t report
 ;;
 
+(* {2 Mutations} *)
+
+(* One line for a mutation's failed step: git's first stderr line and the status. *)
+let failure_line (step_report : Job.Step_report.t) =
+  match step_report.outcome with
+  | Ran result ->
+    let status = Exec.Result.status_hum result in
+    (match
+       List.find_map (String.split_lines result.stderr) ~f:(fun line ->
+         Option.some_if (not (String.is_empty (String.strip line))) (String.strip line))
+     with
+     | Some line -> sprintf "%s (%s)" line status
+     | None -> status)
+  | Skipped -> "cancelled"
+  | Read _ -> "a file read failed"
+;;
+
+let is_mutation t id =
+  match Map.find t.in_flight id with
+  | Some Mutate -> true
+  | Some (Detect | Refresh _ | Diff _) | None -> false
+;;
+
+(* The mutation's report: logged; a failure noticed; open buffers reconciled after a
+   work-tree rewrite, whatever the outcome; then a refresh, which ends the mutation
+   (a stale report's repository is refreshed too, or its new detection's refresh
+   ends it). Returns the jobs, the failure and the roots to reconcile. *)
+let mutation_finished t (report : Job.Report.t) =
+  let t = { t with in_flight = Map.remove t.in_flight report.id } in
+  let t = log_report t report ~stale:(not (Stamps.accepts t.stamps report)) in
+  match t.mutation with
+  | Some mutation when Job.Id.equal mutation.job report.id ->
+    let failure =
+      Option.map (Job.Report.first_failure report) ~f:(fun step_report ->
+        sprintf "%s failed: %s" mutation.title (failure_line step_report))
+    in
+    let reconcile = if mutation.rewrites_worktree then [ mutation.root ] else [] in
+    let settling = Some { mutation with settling = true } in
+    let t, jobs =
+      match t.repository with
+      | Found _ ->
+        let t, jobs = refresh { t with mutation = settling } in
+        (* A refresh that could not be issued cannot end it. *)
+        (if List.is_empty jobs then { t with mutation = None } else t), jobs
+      | Detecting -> { t with mutation = settling }, []
+      | Unknown | Not_a_repository _ | No_work_tree _ | Failed _ ->
+        { t with mutation = None }, []
+    in
+    t, jobs, failure, reconcile
+  | Some _ | None -> t, [], None, []
+;;
+
 (* {2 Actions} *)
+
+(* What [s u x S U] ask for. *)
+module Verb = struct
+  type t =
+    | Stage
+    | Unstage
+    | Discard
+    | Stage_all
+    | Unstage_all
+  [@@deriving sexp_of]
+
+  let of_key key =
+    List.find_map
+      [ 's', Stage; 'u', Unstage; 'x', Discard; 'S', Stage_all; 'U', Unstage_all ]
+      ~f:(fun (c, verb) -> Option.some_if (Key.equal key (Key.char c)) verb)
+  ;;
+
+  (* [S] and [U] need no target. *)
+  let targeted = function
+    | Stage | Unstage | Discard -> true
+    | Stage_all | Unstage_all -> false
+  ;;
+
+  let word = function
+    | Stage | Stage_all -> "stage"
+    | Unstage | Unstage_all -> "unstage"
+    | Discard -> "discard"
+  ;;
+
+  let action verb (target : B.Target.t) : B.action =
+    match verb with
+    | Stage -> Stage target
+    | Unstage -> Unstage target
+    | Discard -> Discard target
+    | Stage_all -> Stage_all
+    | Unstage_all -> Unstage_all
+  ;;
+end
+
+(* A plan to run (planned, or confirmed with [y]): its steps go out as one job. *)
+module Submission = struct
+  type t =
+    { plan : Backend.Plan.t
+    ; root : string
+    ; anchor : Anchor.t option
+    }
+  [@@deriving sexp_of]
+end
 
 type action =
   | Shown
@@ -897,9 +1089,28 @@ type action =
   | Open_file
   | Toggle_log
   | Leave
+  | Act of Verb.t
+  | Act_on_lines (** [s u x] in Visual: phase 4. *)
+  | Submit of Submission.t (** A confirmed plan. *)
+  | Next_hunk of
+      { forward : bool
+      ; count : int
+      }
 [@@deriving sexp_of]
 
 let is c key = Key.equal key (Key.char c)
+
+(* A count before a key, as {!Text_view} reads it: [1]-[9], then any digits. *)
+let split_count (keys : Key.t list) =
+  match keys with
+  | first :: _ when Option.exists (Key.digit first) ~f:(fun d -> d > 0) ->
+    let digits, rest = List.split_while keys ~f:(fun key -> Option.is_some (Key.digit key)) in
+    ( Some
+        (List.fold digits ~init:0 ~f:(fun n key ->
+           Int.min Ches_core.Command.max_count ((n * 10) + Option.value_exn (Key.digit key))))
+    , rest )
+  | _ -> None, keys
+;;
 
 let interpret t (keys : Key.t list) : action Content_key.t =
   let loaded = loaded t in
@@ -911,16 +1122,25 @@ let interpret t (keys : Key.t list) : action Content_key.t =
   | _ when not loaded -> Unbound
   | [ Tab ] -> Action Toggle_diff
   | keys when Focus.equal t.focus Diff ->
-    (* Digits are the text's count ([10j]) or line start here, not panel keys. *)
-    (match keys with
-     | [ Enter ] -> Action Open_file
-     | [ key ] when is 'e' key -> Action Open_file
-     | keys -> Content_key.map (Text_view.interpret t.diff_view keys) ~f:(fun a -> Text a))
+    (* Digits are the text's count ([10j], [3\]]) or line start here, not panel keys;
+       a count before [s u x S U] is dropped, as the text drops it before other keys. *)
+    let visual = Option.is_some (Text_view.visual t.diff_view) in
+    (match keys, split_count keys with
+     | [ Enter ], _ -> Action Open_file
+     | [ key ], _ when is 'e' key -> Action Open_file
+     | _, (_, [ key ]) when Option.is_some (Verb.of_key key) ->
+       let verb = Option.value_exn (Verb.of_key key) in
+       if visual && Verb.targeted verb then Action Act_on_lines else Action (Act verb)
+     | _, (count, [ key ]) when (is ']' key || is '[' key) && not visual ->
+       Action (Next_hunk { forward = is ']' key; count = Option.value count ~default:1 })
+     | keys, _ -> Content_key.map (Text_view.interpret t.diff_view keys) ~f:(fun a -> Text a))
   | [ key ] when is '1' key -> Action (Focus_list Files)
   | [ key ] when is '2' key -> Action (Focus_list Branches)
   | [ key ] when is '3' key -> Action (Focus_list Commits)
   | [ key ] when is '0' key -> Action Focus_diff
   | [ key ] when is 'y' key -> Action Copy
+  | [ key ] when Focus.equal t.focus Files && Option.is_some (Verb.of_key key) ->
+    Action (Act (Option.value_exn (Verb.of_key key)))
   | [ Enter ] ->
     (match selected t t.focus with
      | Some (Header section) -> Action (Toggle_fold section)
@@ -1004,17 +1224,235 @@ let open_target t =
   | _ -> `Notice "No file at the cursor"
 ;;
 
-let perform t controller ~rows ~width action =
+(* What [s u x] act on: the Files panel's selected row, or the diff's line at the
+   cursor; [S U] on everything. [Error] is the notice instead. The anchor is where
+   the diff cursor goes after a hunk action. *)
+let action_of t (verb : Verb.t) : (B.action * Anchor.t option, string) Result.t =
+  let act target = Ok (Verb.action verb target, None) in
+  let section id =
+    Result.of_option (B.Section.of_id id) ~error:"No change at the cursor"
+  in
+  match verb with
+  | Stage_all -> Ok (Stage_all, None)
+  | Unstage_all -> Ok (Unstage_all, None)
+  | Stage | Unstage | Discard ->
+    (match t.focus with
+    | Files ->
+      (match selected t Files with
+       | Some (Header id) -> Result.bind (section id) ~f:(fun section -> act (Section section))
+       | Some (Item { section = id; key }) ->
+         Result.bind (section id) ~f:(fun section -> act (File { section; path = key }))
+       | None -> Error "Nothing selected")
+    | Branches | Commits -> Error "Nothing selected"
+    | Diff ->
+      (match t.diff with
+       | Loading _ -> Error "The diff is still loading"
+       | Empty | No_diff | Failed _ -> Error "No change at the cursor"
+       | Loaded (target, diff) ->
+         (match B.diff_section target with
+          | None -> Error (sprintf "Nothing to %s here: a commit's diff" (Verb.word verb))
+          | Some section ->
+            (match
+               Option.bind
+                 (Vcs_diff_text.position_at t.diff_text (Text_view.cursor t.diff_view))
+                 ~f:(fun position ->
+                   Option.map (List.nth diff.files position.file) ~f:(fun file ->
+                     position, file))
+             with
+             | None -> Error "No change at the cursor"
+             | Some ({ hunk = None; _ }, file) ->
+               act (File { section; path = Diff.File.path file })
+             | Some ({ hunk = Some hunk; _ }, file) ->
+               let path = Diff.File.path file in
+               Ok
+                 ( Verb.action verb (Hunk { section; file; hunk; selection = Whole })
+                 , Some { Anchor.target; path; hunk } )))))
+;;
+
+let join root path =
+  if String.is_suffix root ~suffix:"/" then root ^ path else root ^ "/" ^ path
+;;
+
+(* The Files keys an action stages (a key ending in "/" covers what is under it);
+   [] for an action that does not stage. *)
+let staged_keys t (action : B.action) =
+  let keys sections =
+    match find_panel t.panels B.files_panel with
+    | None -> []
+    | Some panel ->
+      List.concat_map panel.sections ~f:(fun (section : _ Panel.Section.t) ->
+        if List.exists sections ~f:(fun s ->
+             Panel.Section_id.equal (B.Section.id s) section.id)
+        then List.map section.items ~f:(fun item -> item.key)
+        else [])
+  in
+  match action with
+  | Stage (File { path; _ }) -> [ path ]
+  | Stage (Hunk { file; _ }) -> [ Diff.File.path file ]
+  | Stage (Section section) -> keys [ section ]
+  | Stage_all -> keys [ Unstaged; Untracked ]
+  | Unstage _ | Discard _ | Unstage_all -> []
+;;
+
+(* The warning for staging paths whose buffers have unsaved text. *)
+let staging_warning t context ~root action =
+  let keys = List.map (staged_keys t action) ~f:(join root) in
+  let dirty =
+    View_registry.Context.dirty_within context ~root
+    |> List.filter ~f:(fun (file : View_registry.Context.File.t) ->
+      List.exists keys ~f:(fun key ->
+        if String.is_suffix key ~suffix:"/"
+        then String.is_prefix file.path ~prefix:key
+        else String.equal file.path key))
+  in
+  match dirty with
+  | [] -> None
+  | files ->
+    Some
+      (sprintf
+         "%s %s unsaved changes: the saved files were staged, not the buffers"
+         (String.concat
+            ~sep:", "
+            (List.map files ~f:(fun (file : View_registry.Context.File.t) -> file.label)))
+         (if List.length files = 1 then "has" else "have"))
+;;
+
+(* The refusal of a work-tree rewrite while file buffers within the root are dirty. *)
+let dirty_refusal context (submission : Submission.t) =
+  if not submission.plan.rewrites_worktree
+  then None
+  else (
+    match View_registry.Context.dirty_within context ~root:submission.root with
+    | [] -> None
+    | files ->
+      Some
+        (sprintf
+           "%s refused: unsaved changes in %s; save or undo them first; nothing ran"
+           submission.plan.title
+           (String.concat
+              ~sep:", "
+              (List.map files ~f:(fun (file : View_registry.Context.File.t) -> file.label)))))
+;;
+
+let busy t =
+  Option.map t.mutation ~f:(fun mutation -> sprintf "Busy: %s; nothing ran" mutation.title)
+;;
+
+(* The plan's steps as one mutation job. [Error] is the failure notice. *)
+let submit t (submission : Submission.t) =
+  let stamps, id = Stamps.issue t.stamps in
+  match Job.create ~id submission.plan.steps with
+  | Ok job ->
+    Ok
+      ( { t with
+          stamps
+        ; in_flight = Map.set t.in_flight ~key:id ~data:Mutate
+        ; mutation =
+            Some
+              { job = id
+              ; title = submission.plan.title
+              ; root = submission.root
+              ; rewrites_worktree = submission.plan.rewrites_worktree
+              ; anchor = submission.anchor
+              ; settling = false
+              }
+        }
+      , job )
+  | Error error ->
+    Error
+      (sprintf "%s failed: %s" submission.plan.title (one_line (Error.to_string_hum error)))
+;;
+
+(* The next or previous [@@] line, [count] times, stopping at the last or first. *)
+let next_hunk t ~forward ~count =
+  let starts = Vcs_diff_text.hunk_starts t.diff_text in
+  let cursor = Text_view.cursor t.diff_view in
+  let text = Text_view.text t.diff_view in
+  let line_start offset =
+    if offset <= 0
+    then 0
+    else (
+      match String.rindex_from text (offset - 1) '\n' with
+      | Some i -> i + 1
+      | None -> 0)
+  in
+  let step offset =
+    if forward
+    then List.find starts ~f:(fun start -> start > offset)
+    else List.find (List.rev starts) ~f:(fun start -> start < line_start offset)
+  in
+  let rec go offset count =
+    if count <= 0
+    then offset
+    else (
+      match step offset with
+      | None -> offset
+      | Some offset -> go offset (count - 1))
+  in
+  let target = go cursor count in
+  if target = cursor then t else { t with diff_view = Text_view.jump t.diff_view target }
+;;
+
+let perform t controller ~context ~rows ~width action =
   let t = fit t ~rows ~width in
-  let outcome ?effect ?notice ?(return = false) ?open_file ?(jobs = []) t =
+  let outcome ?effect ?notice ?(return = false) ?open_file ?(jobs = []) ?reconcile ?ask t =
     ( fit t ~rows ~width
-    , View_registry.Outcome.create ?effect ?notice ~return ?open_file ~jobs controller )
+    , View_registry.Outcome.create
+        ?effect
+        ?notice
+        ~return
+        ?open_file
+        ~jobs
+        ?reconcile
+        ?ask
+        controller )
   in
   let with_jobs (t, jobs) = outcome t ~jobs in
+  let run ?warning t submission =
+    match dirty_refusal context submission with
+    | Some refusal -> outcome t ~notice:(`Post refusal)
+    | None ->
+      (match submit t submission with
+       | Error failure -> outcome t ~notice:(`Post failure)
+       | Ok (t, job) ->
+         outcome t ~jobs:[ job ] ?notice:(Option.map warning ~f:(fun w -> `Post w)))
+  in
   match action with
   | Shown -> with_jobs (detect t)
   | Refresh -> with_jobs (refresh t)
+  | Event (Finished report) when is_mutation t report.id ->
+    let t, jobs, failure, reconcile = mutation_finished t report in
+    outcome t ~jobs ~reconcile ?notice:(Option.map failure ~f:(fun f -> `Post f))
   | Event e -> with_jobs (event t e)
+  | Act verb ->
+    (match busy t, t.snapshot with
+     | Some busy, _ -> outcome t ~notice:(`Show busy)
+     | None, None -> outcome t ~notice:(`Show "Nothing loaded yet")
+     | None, Some snapshot ->
+       (match action_of t verb with
+        | Error notice -> outcome t ~notice:(`Show notice)
+        | Ok (action, anchor) ->
+          let root = Git.Repository.root snapshot.repository in
+          (match t.plan snapshot.repository snapshot action with
+           | Refused message -> outcome t ~notice:(`Show message)
+           | Run plan ->
+             run t { plan; root; anchor } ?warning:(staging_warning t context ~root action)
+           | Confirm { title; message; plan } ->
+             let submission = { Submission.plan; root; anchor } in
+             (match dirty_refusal context submission with
+              | Some refusal -> outcome t ~notice:(`Post refusal)
+              | None ->
+                outcome
+                  t
+                  ~ask:(View_registry.Ask.Confirm
+                          { title; message; yes = Submit submission; no = None })))))
+  | Submit submission ->
+    (match busy t with
+     | Some busy -> outcome t ~notice:(`Show busy)
+     | None -> run t submission)
+  | Act_on_lines ->
+    outcome t ~notice:(`Show "Staging selected lines is not supported yet; nothing ran")
+  | Next_hunk { forward; count } -> outcome (next_hunk t ~forward ~count)
   | Focus_list focus ->
     let t = end_visual t in
     with_jobs (request_diff { t with focus; list_focus = focus })
@@ -1084,12 +1522,40 @@ let commands t =
       ; c "focus-commits" [ k '3' ] "Focus the Commits panel"
       ]
     in
+    let all =
+      [ c "stage-all" [ k 'S' ] "Stage all changes (not conflicts)"
+      ; c "unstage-all" [ k 'U' ] "Unstage all changes"
+      ]
+    in
     match t.focus with
     | Diff ->
+      let visual = Option.is_some (Text_view.visual t.diff_view) in
+      (* [s u x] act on the cursor's hunk in a diff of the work tree or index, not in
+         Visual (phase 4) or a commit's diff. *)
+      let at_cursor =
+        match t.diff with
+        | Loaded (target, _) when (not visual) && Option.is_some (B.diff_section target) ->
+          [ c "stage" [ k 's' ] "Stage the hunk at the cursor (on a file header: the file)"
+          ; c "unstage" [ k 'u' ] "Unstage the hunk at the cursor (or the file)"
+          ; c "discard" [ k 'x' ] "Discard the hunk at the cursor (or the file); confirmed"
+          ]
+        | Empty | No_diff | Loading _ | Loaded _ | Failed _ -> []
+      in
+      let hunks =
+        if visual
+        then []
+        else
+          [ c "next-hunk" [ k ']' ] "Next hunk"
+          ; c "previous-hunk" [ k '[' ] "Previous hunk"
+          ]
+      in
       always
       @ [ c "toggle-diff" [ Tab ] "Back to the list"
         ; c "open-file" [ k 'e' ] "Open the file at the cursor's line"
         ]
+      @ at_cursor
+      @ all
+      @ hunks
       @ Text_view.commands t.diff_view
     | Files | Branches | Commits ->
       let enter =
@@ -1105,12 +1571,23 @@ let commands t =
         | Branches -> "Copy the branch name"
         | Commits | Diff -> "Copy the abbreviated hash"
       in
+      let actions =
+        match t.focus with
+        | Files ->
+          [ c "stage" [ k 's' ] "Stage the file or section (a conflict: mark it resolved)"
+          ; c "unstage" [ k 'u' ] "Unstage the file or section"
+          ; c "discard" [ k 'x' ] "Discard the file's or section's changes; confirmed"
+          ]
+          @ all
+        | Branches | Commits | Diff -> []
+      in
       always
       @ panels
       @ [ c "focus-diff" [ k '0' ] "Focus the diff"
         ; c "toggle-diff" [ Tab ] "Focus the diff"
         ]
       @ enter
+      @ actions
       @ [ c "copy" [ k 'y' ] copy ]
       @ Navigation.commands)
 ;;
@@ -1414,7 +1891,10 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
           | Some Linewise -> " | VISUAL LINE"
         in
         sprintf "Diff %d-%d/%d%s" (top + 1) (Int.min total (top + h)) total visual
-        ^ hints "e open, 10j counts, v V y, Tab/Esc list, g r, @, q"
+        ^ hints
+            (if String.is_empty visual
+             then "s u x hunk, ] [ hunks, e open, 10j, v V y, Tab/Esc list, g r, @, q"
+             else "S U, y copy, Esc ends, g r, @, q")
       | (Files | Branches | Commits) as focus ->
         let count = List.length (rows_of t focus) in
         let name =
@@ -1425,7 +1905,10 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
           name
           (Option.value_map (selected_index t focus) ~default:0 ~f:succ)
           count
-        ^ hints "1 2 3 panels, Tab diff, Enter, y copy, g r, @, q")
+        ^ hints
+            (match focus with
+             | Files -> "s u x S U, 1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"
+             | Branches | Commits | Diff -> "1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"))
   in
   { title = title t
   ; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default)
@@ -1449,7 +1932,9 @@ let adapter : (t, action) View_registry.Adapter.t =
   ; text_view
   ; interpret
   ; escape
-  ; hint = "VCS: 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help"
+  ; hint =
+      "VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q \
+       leaves, ? help"
   ; perform
   ; commands
   ; signal
@@ -1460,6 +1945,6 @@ let adapter : (t, action) View_registry.Adapter.t =
   }
 ;;
 
-let entry ?(placement = View_registry.Placement.Hidden) ~cwd () =
-  View_registry.Entry.install ~placement ~opens_in:Tab adapter (create ~cwd)
+let entry ?(placement = View_registry.Placement.Hidden) ?plan ~cwd () =
+  View_registry.Entry.install ~placement ~opens_in:Tab adapter (create ?plan ~cwd ())
 ;;

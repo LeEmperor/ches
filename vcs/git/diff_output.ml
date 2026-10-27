@@ -37,7 +37,9 @@ let command ~cwd (source : Source.t) =
         ; "--"
         ]
   in
-  Cli.read ~cwd args
+  (* A global option: paths are never globs or pathspec magic (a file named [a*.txt] must
+     not show [ab.txt] too). *)
+  Cli.read ~cwd ("--literal-pathspecs" :: args)
 ;;
 
 let ok_exits : Source.t -> int list = function

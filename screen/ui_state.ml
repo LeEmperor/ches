@@ -222,6 +222,19 @@ let buffer_presentation t = t.buffer_presentation
 let zen t = t.zen
 let views t = t.views
 
+(* What a view may know when it performs an action ([View_registry.Context]): the
+   session's file buffers, the active one's latest state included, computed only if
+   the view asks. *)
+let view_context t =
+  View_registry.Context.create (fun () ->
+    let session = session t in
+    List.filter_map (Open_buffers.of_session session)
+      ~f:(fun ({ id; label; modified; missing; active = _ } : Open_buffers.t) ->
+        Option.bind (Session.find session id) ~f:(fun controller ->
+          Option.map (Editor.path (Controller.editor controller)) ~f:(fun path ->
+            { View_registry.Context.File.path; label; dirty = modified; missing }))))
+;;
+
 let view_visible t id =
   Option.exists (View_registry.placement t.views id) ~f:(fun placement ->
     not (View_registry.Placement.equal placement Hidden))
@@ -1421,17 +1434,35 @@ let open_location t ~width ~height ~source ({ path; line } : View_registry.Locat
     adopt_session_state (return_to_document (file_tab t)) session ~width ~height
 ;;
 
+(* A view's [Outcome.reconcile]: the session rereads the retained file buffers within
+   [roots] ([Session.reconcile], synchronous). Adopting the result keeps focus, the
+   active tab and the scroll (buffer ids are unchanged); nothing is adopted when
+   nothing changed. *)
+let reconcile_buffers t ~width ~height roots =
+  if List.is_empty roots
+  then t
+  else (
+    let session, (reconciled : Session.Reconciled.t) =
+      Session.reconcile (session t) ~under:roots
+    in
+    if List.is_empty
+         (reconciled.reloaded @ reconciled.missing @ reconciled.dirty @ reconciled.busy
+          @ List.map reconciled.failed ~f:fst)
+    then t
+    else adopt_session_state ~keep_view_tab:true t session ~width ~height)
+;;
+
 (* A signalled action's outcome ([View_registry.Signal]): applied without moving focus
    or touching the focused view's capture state. A [`Post] notice goes to feedback
-   only; [`Show], the effect, [return] and [open_file] are ignored; a question opens
-   only over the focused view that asked, and is withdrawn otherwise. Jobs whose id is
-   in flight are answered at once with their never-started report. Returns whether
-   any signal was acted on. *)
+   only; [`Show], the effect, [return] and [open_file] are ignored; buffers are
+   reconciled right after the controller; a question opens only over the focused view
+   that asked, and is withdrawn otherwise. Jobs whose id is in flight are answered at
+   once with their never-started report. *)
 let rec apply_signal_outcome t ~width ~height ~source
-          ({ View_registry.Outcome.controller; notice; jobs; ask; effect = _; return = _
-           ; open_file = _ } : _ View_registry.Outcome.t)
+          ({ View_registry.Outcome.controller; notice; jobs; reconcile; ask; effect = _
+           ; return = _; open_file = _ } : _ View_registry.Outcome.t)
   =
-  let t = { t with controller } in
+  let t = reconcile_buffers { t with controller } ~width ~height reconcile in
   let t =
     match notice with
     | Some (`Post text) ->
@@ -1470,7 +1501,7 @@ and submit_jobs t ~width ~height ~source jobs =
 (* Tell view [id] a signal; its action is performed in its own viewport. *)
 and signal_view t ~width ~height id (signal : View_registry.Signal.t) =
   match
-    View_registry.signal t.views id signal ~controller:t.controller
+    View_registry.signal t.views id signal ~controller:t.controller ~context:(view_context t)
       ~rows:(minor_rows t ~width ~height id) ~width:(minor_width t ~width ~height id)
   with
   | views, None -> { t with views }
@@ -1478,13 +1509,22 @@ and signal_view t ~width ~height id (signal : View_registry.Signal.t) =
     apply_signal_outcome { t with views } ~width ~height ~source:id outcome
 ;;
 
-(* What an adapter's action asks for, in order: the controller, a text effect, a
-   notice, then returning to the document, showing its file tab over a view tab, then
-   opening a file, then its jobs, then its question. *)
+(* What an adapter's action asks for, in order: the controller, reconciling buffers, a
+   text effect, a notice, then returning to the document, showing its file tab over a
+   view tab, then opening a file, then its jobs, then its question. *)
 let apply_outcome t ~width ~height ~source
-      { View_registry.Outcome.controller; effect; notice; return; open_file; jobs; ask }
+      { View_registry.Outcome.controller
+      ; effect
+      ; notice
+      ; return
+      ; open_file
+      ; jobs
+      ; reconcile
+      ; ask
+      }
   =
-  let t = text_effect { t with controller } ~source effect in
+  let t = reconcile_buffers { t with controller } ~width ~height reconcile in
+  let t = text_effect t ~source effect in
   let t =
     match notice with
     | None -> t
@@ -1578,7 +1618,7 @@ let answer_ask t ~width ~height answer =
       else return_to_document t
     in
     (match
-       View_registry.answer t.views origin answer ~controller:t.controller
+       View_registry.answer t.views origin answer ~controller:t.controller ~context:(view_context t)
          ~rows:(minor_rows t ~width ~height origin) ~width:(minor_width t ~width ~height origin)
      with
      | views, None -> { t with views }
@@ -1595,7 +1635,7 @@ let run_view_command t ~width ~height id command =
   then { t with host = Host.with_notice t.host (sprintf "%s is not focused; nothing ran" title) }
   else (
     match
-      View_registry.run t.views id command ~controller:t.controller
+      View_registry.run t.views id command ~controller:t.controller ~context:(view_context t)
         ~rows:(minor_rows t ~width ~height id) ~width:(minor_width t ~width ~height id)
     with
     | Error error -> pane_notice t ~source:id (Error.to_string_hum error)
@@ -2118,6 +2158,7 @@ let feed_capture t ~width ~height id key =
     View_registry.key t.views id t.host key
       ~lookup:(Keymap.lookup (Controller.keymap t.controller))
       ~controller:t.controller
+      ~context:(view_context t)
       ~rows:(minor_rows t ~width ~height id)
       ~width:(minor_width t ~width ~height id)
   with

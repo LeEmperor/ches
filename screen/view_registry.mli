@@ -86,6 +86,41 @@ module Location : sig
   [@@deriving sexp_of, equal]
 end
 
+(** What a view may know of the application when it performs an action, besides the
+    input controller: read-only, computed when the action is performed (keys, palette,
+    answers and signals alike), and lazily, so a view that never looks costs nothing.
+    Generic: views decide what it means to them (the VCS view refuses work-tree
+    rewrites while a file buffer inside its repository is dirty). *)
+module Context : sig
+  (** A retained file buffer of the session (not a directory buffer, not one without a
+      path). *)
+  module File : sig
+    type t =
+      { path : string (** Absolute and normalized (lexical, as the session keys it). *)
+      ; label : string
+      (** As the tab strip shows it (shortest disambiguating suffix, unsafe bytes
+          escaped): for notices. *)
+      ; dirty : bool (** Unsaved changes. *)
+      ; missing : bool (** Its backing file is gone (marked missing). *)
+      }
+    [@@deriving sexp_of, equal]
+  end
+
+  type t
+
+  (** [files] runs at most once, when first asked. *)
+  val create : (unit -> File.t list) -> t
+
+  (** No files. *)
+  val empty : t
+
+  (** In tab order, the active buffer's latest state included. *)
+  val files : t -> File.t list
+
+  (** The dirty files within [root] ({!Ches_core.Resource.within}), in tab order. *)
+  val dirty_within : t -> root:string -> File.t list
+end
+
 (** What performing an action asks of the application, besides the view's new
     state. An adapter's ['ask] is an {!Ask.t} of its own actions; the application
     receives only its {!Ask.Question.t}. *)
@@ -108,18 +143,28 @@ module Outcome : sig
         {!Signal.t.Job}. A job whose id is still in flight (submitted by any view and
         not yet [Finished]) is not submitted: the view is signalled its
         {!Ches_vcs.Job.never_started} report at once instead. *)
+    ; reconcile : string list
+    (** Absolute paths (directories or files) whose retained file buffers the
+        application reconciles with disk ([Session.reconcile]): clean buffers whose
+        file changed are reloaded (cursor and scroll kept), clean ones whose file is
+        gone are marked missing, dirty ones are untouched. For a view whose work may
+        have rewritten files (a VCS discard: the repository root, once the job has
+        finished). Applied right after [controller], from key and signal outcomes
+        alike; its feedback goes to the feedback line. *)
     ; ask : 'ask option
     (** A question to ask on a float over the view, applied last; it replaces any
         question still pending. *)
     }
 
-  (** No effect, notice, return, file, jobs, or question; [controller] unchanged. *)
+  (** No effect, notice, return, file, jobs, reconciliation or question; [controller]
+      unchanged. *)
   val create
     :  ?effect:Ches_tile.Text_view.Effect.t
     -> ?notice:[ `Post of string | `Show of string ]
     -> ?return:bool
     -> ?open_file:Location.t
     -> ?jobs:Ches_vcs.Job.t list
+    -> ?reconcile:string list
     -> ?ask:'ask
     -> Ches_app.Controller.t
     -> 'ask t
@@ -129,8 +174,8 @@ end
     turns each into one of its own actions (or ignores it), which is performed like a
     key's action, focused or not. The outcome of a signalled action is applied
     without moving focus or disturbing the focused view (its prefix and footer
-    notice): its [controller] and [jobs] apply; a [`Post] notice goes to the feedback
-    line only; [`Show] notices, [effect], [return] and [open_file] are ignored; [ask]
+    notice): its [controller], [reconcile] and [jobs] apply; a [`Post] notice goes to
+    the feedback line only; [`Show] notices, [effect], [return] and [open_file] are ignored; [ask]
     opens only while the asking view itself is focused, and is otherwise withdrawn
     (nothing runs). A pending question survives a signalled action that asks
     nothing. The view's [fit] follows once per input or batch. *)
@@ -173,6 +218,7 @@ module Adapter : sig
     ; perform
       :  'state
       -> Ches_app.Controller.t
+      -> context:Context.t
       -> rows:int
       -> width:int
       -> 'action
@@ -308,6 +354,7 @@ val key
   -> Key.t
   -> lookup:(Key.t list -> Bindings.lookup)
   -> controller:Ches_app.Controller.t
+  -> context:Context.t
   -> rows:int
   -> width:int
   -> (t * Ches_tile.Host.t * Step.t) option
@@ -319,6 +366,7 @@ val run
   -> View_id.t
   -> string
   -> controller:Ches_app.Controller.t
+  -> context:Context.t
   -> rows:int
   -> width:int
   -> (t * Ask.Question.t Outcome.t) Or_error.t
@@ -335,6 +383,7 @@ val answer
   -> View_id.t
   -> Answer.t
   -> controller:Ches_app.Controller.t
+  -> context:Context.t
   -> rows:int
   -> width:int
   -> t * Ask.Question.t Outcome.t option
@@ -351,6 +400,7 @@ val signal
   -> View_id.t
   -> Signal.t
   -> controller:Ches_app.Controller.t
+  -> context:Context.t
   -> rows:int
   -> width:int
   -> t * Ask.Question.t Outcome.t option

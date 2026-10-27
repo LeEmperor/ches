@@ -58,7 +58,7 @@ module Worker = struct
 
   let id_hum = Job.Id.to_string_hum
 
-  let perform t controller ~rows:_ ~width:_ action =
+  let perform t controller ~context:_ ~rows:_ ~width:_ action =
     let outcome ?notice ?open_file ?jobs ?ask () =
       View_registry.Outcome.create ?notice ?open_file ?jobs ?ask controller
     in

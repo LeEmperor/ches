@@ -10,8 +10,8 @@
     - Branches (["branches"]): one section ["local"], keyed by branch name.
     - Commits (["commits"]): one section ["recent"], keyed by full hash.
 
-    Actions arrive with the phases that need them (stage/unstage/discard in 3, line
-    staging in 4, commit in 5, push/pull/fetch/checkout in 6); phase 1 has none. *)
+    Actions arrive with the phases that need them: stage/unstage/discard in 3
+    ({!action}), line staging in 4, commit in 5, push/pull/fetch/checkout in 6. *)
 
 open! Core
 open Ches_vcs
@@ -72,8 +72,40 @@ type diff_target =
   | Commit of string (** Full hash. *)
 [@@deriving sexp, equal]
 
-(** Empty in phase 1: later phases add constructors with their command plans. *)
-type action = | [@@deriving sexp_of]
+(** The Files section whose changes a diff target shows, for hunk actions:
+    [Unstaged _] -> [Unstaged], [Staged _] -> [Staged], [Untracked _] -> [Untracked],
+    [Conflicted _] -> [Conflicted], [Commit _] -> [None] (a commit's diff has no
+    actions). *)
+val diff_section : diff_target -> Section.t option
+
+(** What a Files action acts on. *)
+module Target : sig
+  type t =
+    | File of
+        { section : Section.t
+        ; path : string
+        (** The item's key in that section: a rename's new path; a key ending in
+            ["/"] is an untracked nested repository. *)
+        } (** One Files item (the selected row, or the file at the diff's cursor). *)
+    | Section of Section.t (** A section header: every item of the section. *)
+    | Hunk of
+        { section : Section.t (** {!diff_section} of the diff it was chosen in. *)
+        ; file : Diff.File.t (** As parsed from that diff. *)
+        ; hunk : int (** 0-based, into [file.hunks]. *)
+        ; selection : Patch.Selection.t (** [Whole] in phase 3. *)
+        } (** The hunk at the diff's cursor. *)
+  [@@deriving sexp_of]
+end
+
+(** The phase 3 actions. Line staging (phase 4) is a {!Patch.Selection.t} of a
+    [Hunk] target, not a new action. *)
+type action =
+  | Stage of Target.t (** [s] *)
+  | Unstage of Target.t (** [u] *)
+  | Discard of Target.t (** [x] *)
+  | Stage_all (** [S]: every Unstaged and Untracked item (not Conflicted). *)
+  | Unstage_all (** [U]: every Staged item. *)
+[@@deriving sexp_of]
 
 (** Contract details beyond {!Ches_vcs.Backend.S}:
 
@@ -107,7 +139,162 @@ type action = | [@@deriving sexp_of]
       [Commit].
     - [parse_diff]: Error unless the step exited with one of
       {!Diff_output.ok_exits} or was cut at its limit; then {!Diff_output.parse}.
-    - [plan]: no actions yet. *)
+    - [plan]: below.
+
+    {2 [plan]: the phase 3 command plans}
+
+    [plan repo snapshot action] decides against [snapshot] (the one the action was
+    chosen in) and never reads anything. Entries are looked up in
+    [snapshot.status.entries] by section ({!Section}, as the Files panel places them)
+    and key.
+
+    {3 Commands}
+
+    Every step is [Run (Cli.mutate ~cwd:repo.root args)] whose [args] start with
+    ["--literal-pathspecs"] (git's global option, so a path such as [a*.txt] is never
+    a glob), then the subcommand; paths follow ["--"], in [status] order. So a log
+    line reads [git --no-pager -c color.ui=false -c core.quotepath=false
+    --literal-pathspecs add --all -- a.txt]. The commands:
+    - add: [add --all -- P...] ([--all] also stages a deletion, and a both-deleted
+      conflict's resolution).
+    - restore-staged: [restore --staged -- P...]; on an unborn branch (no HEAD:
+      [status.branch.oid = None]), [reset --quiet -- P...] instead (restore needs HEAD;
+      [rm --cached] refuses a partially staged file).
+    - restore-worktree: [restore --worktree -- P...] (the work tree from the index).
+    - restore-head: [restore --source=HEAD --staged --worktree -- P...] (a file not
+      in HEAD is removed from both); on an unborn branch [rm --force --quiet -- P...].
+    - clean: [clean --force --quiet -- P...] (untracked files only).
+    - apply: two steps, [apply <flags> --whitespace=nowarn --check] then [apply
+      <flags> --whitespace=nowarn], both with [~stdin:(Data patch)] where [patch] is
+      {!Patch.hunk} [file ~hunk selection ~reverse:(flags has --reverse)]; flags are
+      [--cached] (stage), [--cached --reverse] (unstage), [--reverse] (discard
+      unstaged), [--index --reverse] (discard staged). A failed check skips the apply.
+    For a [Renamed_or_copied] entry, the commands that touch the index side name both
+    paths, [original] then [path] (restore-staged, restore-head); everything else
+    names an entry by its key.
+
+    {3 Decisions}
+
+    [rewrites_worktree] is true exactly for [Discard] plans. Every [Discard] that is
+    not refused is a [Confirm]; [Stage], [Unstage], [Stage_all] and [Unstage_all] that
+    are not refused are [Run]. In the texts below, [<path>] is the key (a rename's new
+    path), [<i>/<n>] is the hunk's 1-based index and the file's number of kept hunks,
+    and [<N> files] is a count ("1 file", "2 files"). Paths are raw bytes: the view
+    escapes them for display.
+
+    Stage:
+    - [File Unstaged]: add. Title ["Stage <path>"].
+    - [File Untracked]: add; a key ending in ["/"] is refused: ["<path> is a nested
+      repository: Ches does not stage it; nothing ran"] (git would add a bare gitlink
+      without [.gitmodules]). Title ["Stage <path>"].
+    - [File Conflicted] (owner decision, Magit's way): add, which marks it resolved;
+      no confirmation, no check for leftover conflict markers. Title ["Mark <path>
+      resolved"].
+    - [Section Unstaged]: add of every Unstaged key. ["Stage unstaged changes (<N>
+      files)"]. [Section Untracked]: add of every Untracked key except nested
+      repositories (left out, see below). ["Stage untracked files (<N> files)"].
+      [Section Conflicted]: add of every Conflicted key. ["Mark <N> files
+      resolved"].
+    - [Hunk Unstaged]: apply [--cached]. ["Stage hunk <i>/<n> of <path>"]. (An
+      intent-to-add file's hunk stages its content; verified.)
+    - [Hunk Untracked]: as [File Untracked] of the file's path (an untracked file's
+      diff is one hunk: the whole file).
+    - [Stage_all]: add of every Unstaged key and every Untracked key except nested
+      repositories (left out); Conflicted items are not included (each is marked
+      resolved deliberately, with [s]). ["Stage all changes (<N> files)"].
+    - Refused: [File]/[Section]/[Hunk] in Staged: ["<path> is already staged; nothing
+      ran"] (a section: ["Already staged; nothing ran"]); Ignored: ["<path> is
+      ignored; nothing ran"] (["Ignored files are not staged; nothing ran"]); a
+      [Hunk] in Conflicted: the conflict refusal below; [Stage_all] with nothing to
+      include: ["Nothing to stage; nothing ran"].
+
+    Unstage:
+    - [File Staged]: restore-staged (both paths of a rename or copy, so the original
+      returns to the index and the new path becomes untracked). ["Unstage <path>"].
+    - [Section Staged] and [Unstage_all]: restore-staged of every Staged entry (both
+      paths of renames and copies). ["Unstage staged changes (<N> files)"] /
+      ["Unstage all changes (<N> files)"].
+    - [Hunk Staged]: apply [--cached --reverse]. A renamed file's hunk is a change of
+      the new path ({!Patch.hunk}), so the rename stays staged; a new file's only
+      hunk unstages the file (it becomes untracked). ["Unstage hunk <i>/<n> of
+      <path>"].
+    - Refused: Unstaged, Untracked or Ignored targets: ["<path> is not staged; nothing
+      ran"] (a section: ["Nothing staged here; nothing ran"]); [Unstage_all] with no
+      Staged entry: ["Nothing staged; nothing ran"].
+
+    Discard (every one confirmed, default No; the [Confirm.message] says what is lost):
+    - [File Unstaged]: restore-worktree. Confirm title ["Discard changes"], message
+      ["Discard the unstaged changes to <path>? They are lost; staged changes are
+      kept."]. Plan title ["Discard unstaged changes to <path>"].
+    - [File Untracked]: clean. Title ["Delete untracked file"], message ["Delete
+      <path>? It is not in git and cannot be recovered."]. Plan ["Delete <path>"].
+    - [File Staged] (decision: the staged change is thrown away in the index and the
+      work tree, i.e. the file returns to HEAD; refused when the file also has
+      unstaged changes, so nothing unshown is lost): restore-head (both paths of a
+      rename or copy). Title ["Discard changes"]; message by the entry's index
+      change: [Added] or [Copied], or any entry on an unborn branch: ["Delete <path>?
+      It is new and only staged: its content is lost."]; [Renamed]: ["Undo the rename
+      of <original> to <path>? <path> is deleted with its staged changes and
+      <original> is restored from HEAD."]; [Deleted]: ["Restore <path> from HEAD? Its
+      staged deletion is undone."]; otherwise ["Discard the staged changes to <path>?
+      They are lost: it returns to HEAD in the index and the work tree."]. Plan
+      ["Discard staged changes to <path>"].
+    - [Section Unstaged]: restore-worktree of every applicable Unstaged key. Title
+      ["Discard changes"], message ["Discard the unstaged changes to <N> files? They
+      are lost; staged changes are kept."]. Plan ["Discard unstaged changes (<N>
+      files)"].
+    - [Section Untracked]: clean of every untracked file (nested repositories left
+      out). ["Delete untracked files"], ["Delete <N> untracked files? They are not in
+      git and cannot be recovered."]. Plan ["Delete untracked files (<N> files)"].
+    - [Section Staged]: restore-head of every applicable Staged entry. ["Discard
+      changes"], ["Discard the staged changes to <N> files? They are lost: the files
+      return to HEAD in the index and the work tree (new files are deleted)."]. Plan
+      ["Discard staged changes (<N> files)"].
+    - [Hunk Unstaged]: apply [--reverse]. ["Discard hunk"], ["Discard hunk <i>/<n> of
+      <path>? Its unstaged lines are lost."]. Plan ["Discard hunk <i>/<n> of
+      <path>"].
+    - [Hunk Staged]: apply [--index --reverse]; refused when the file also has
+      unstaged changes (as [File Staged]). ["Discard hunk"], ["Discard staged hunk
+      <i>/<n> of <path>? It is removed from the index and the work tree and lost."].
+      Plan ["Discard staged hunk <i>/<n> of <path>"].
+    - [Hunk Untracked]: as [File Untracked] of the file's path.
+    - Refused: an Unstaged intent-to-add entry (worktree side [Added]): ["<path> is
+      intent-to-add (git add -N): discarding would empty it; nothing ran"] (git
+      restore truncates such a file: verified); any entry with a submodule:
+      ["<path> is a submodule: discard is not supported; nothing ran"]; a nested
+      repository: ["<path> is a nested repository: delete it outside Ches; nothing
+      ran"] (git clean silently keeps it); a Staged entry that also has unstaged
+      changes: ["<path> also has unstaged changes: discard or stage them first;
+      nothing ran"]; Ignored: ["<path> is ignored; nothing ran"] (the section:
+      ["Ignored files are not discarded; nothing ran"]).
+
+    Conflicted (owner decision): [Unstage], [Discard] and every [Hunk] action on a
+    Conflicted file or section are refused with ["<path> is conflicted: conflict
+    resolution is not supported yet; resolve it in the editor, then stage it (s) to
+    mark it resolved; nothing ran"] (a section: ["Conflict resolution is not
+    supported yet; nothing ran"]). Only [Stage] (add) applies.
+
+    Hunk targets, before the rules above: a file without line actions
+    ({!Diff.File.line_actions}), an out-of-range index, or any other {!Patch.hunk}
+    error is refused with that error's message; [Hunk] in Untracked never builds a
+    patch.
+
+    Sections and [S]/[U]: entries an action does not apply to (the refusals above:
+    nested repositories, intent-to-add entries for discard, submodules for discard,
+    partially staged entries for discarding staged changes) are left out, and every
+    text names them once, appended: plan title [" (left out: <path>, <path>)"], and
+    the confirmation message [" Left out: <path> (nested repository), <path>
+    (submodule)."], with the labels [nested repository], [submodule],
+    [intent-to-add] and [also has unstaged changes]. Counts in texts are singular
+    for one ("1 file"). When nothing remains, the action is refused with the first
+    left-out entry's refusal (so [S] with only nested repositories gives the nested
+    repository's refusal, not "Nothing to stage"). A section absent from the
+    snapshot is refused: ["Nothing here; nothing ran"].
+
+    A [File] or [Hunk] target whose path is not in that section of the snapshot is
+    refused: ["<path> is no longer listed; refresh (g r); nothing ran"]. The
+    intent-to-add discard refusal covers an Unstaged hunk too: reverse-applying its
+    "new file" patch would delete the file. *)
 include
   Ches_vcs.Backend.S
   with type Repository.t = Repository.t

@@ -215,7 +215,7 @@ let adapter : (t, action) View_registry.Adapter.t =
   ; escape
   ; hint
   ; perform =
-      (fun t controller ~rows ~width action ->
+      (fun t controller ~context:_ ~rows ~width action ->
         let { Outcome.tile; controller; notice; effect; return } =
           perform t controller ~rows ~width action
         in

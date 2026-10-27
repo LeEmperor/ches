@@ -49,7 +49,7 @@ module Shelf = struct
     | _ -> Unbound
   ;;
 
-  let perform t controller ~rows:_ ~width:_ action =
+  let perform t controller ~context:_ ~rows:_ ~width:_ action =
     let outcome ?notice ?ask () = View_registry.Outcome.create ?notice ?ask controller in
     let prompt ~accept =
       Ask.Prompt { title = "New name"; initial = ""; validate; accept; cancel = Some Kept }

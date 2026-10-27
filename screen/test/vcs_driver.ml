@@ -3,7 +3,9 @@
    feeds their events back as [Ui_state.Input.Vcs]: a [Started] per command step,
    then the [Finished] report. Every job runs to completion, in submission order: a
    real runner would cancel a job superseded in its lane, and the view drops it as
-   stale either way. Shared by the VCS view's tests (phase 2 agent V) and the
+   stale either way. As in the runner, a mutation's steps stop at the first that
+   does not succeed (a failed [apply --check] skips the apply); the rest are
+   [Skipped] and get no [Started]. Shared by the VCS view's tests (phase 2 agent V) and the
    end-to-end tests (agent W); frozen for both. *)
 
 open! Core
@@ -14,12 +16,22 @@ module Fixture = Ches_vcs_fixture.Fixture_repo
 
 (* What a runner would report for [job], run to completion now. *)
 let events repo (job : Job.t) : Event.t list =
-  let steps = Fixture.run_steps repo job.steps in
+  let steps =
+    match Job.kind job with
+    | Read -> Fixture.run_steps repo job.steps
+    | Mutate | Network ->
+      List.folding_map job.steps ~init:true ~f:(fun running step ->
+        if running
+        then (
+          let report = List.hd_exn (Fixture.run_steps repo [ step ]) in
+          Job.Step_report.succeeded report, report)
+        else false, { Job.Step_report.step; outcome = Skipped })
+  in
   let started =
-    List.filter_mapi job.steps ~f:(fun step (job_step : Job.Step.t) : Event.t option ->
-      match job_step with
-      | Run spec -> Some (Started { job = job.id; step; spec })
-      | Read_file _ -> None)
+    List.filter_mapi steps ~f:(fun step (report : Job.Step_report.t) : Event.t option ->
+      match report.step, report.outcome with
+      | Run spec, (Ran _ | Read _) -> Some (Started { job = job.id; step; spec })
+      | Run _, Skipped | Read_file _, _ -> None)
   in
   started
   @ [ Finished { id = job.id; lane = job.lane; kind = Job.kind job; steps; cancelled = false } ]

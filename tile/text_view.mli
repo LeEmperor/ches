@@ -142,6 +142,11 @@ val fit : t -> width:int -> rows:int -> t
 
 val perform : t -> width:int -> rows:int -> Action.t -> t * Effect.t option
 
+(** Put the cursor at byte [offset] of {!text} (clamped, then the nearest cursor
+    position at or before it on its line), ending Visual. The next {!fit} scrolls it
+    into view. For a view that moves the cursor itself (the VCS diff to a hunk). *)
+val jump : t -> int -> t
+
 (** A new snapshot from the source. When [text] differs, Visual ends and the cursor
     stays on the same logical line and display column where they still exist; it is
     never moved onto content the user did not reach. [`Changed true] says a selection

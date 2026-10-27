@@ -8,8 +8,9 @@ requester until phase 3. Follow-ups after acceptance (2026-10-25..27): counts re
 the resize and shift steps, `Space s c` closes the split from either pane, and
 placement/close notices typed inside a view reach the status line. Phase 1 (VCS
 core, git parsing, async runner) and phase 2 (the read-only VCS view, Space g)
-complete and uncommitted (2026-10-27), owner terminal acceptance of phase 2 pending.
-Phases 3-6 not started.
+complete; the owner accepted phase 2 (with the post-phase-2 tweaks) and committed
+phases 1-2 as fe0f087 (2026-10-27). Phase 3 (stage/unstage/discard) complete and
+uncommitted (2026-10-27), owner terminal acceptance pending. Phases 4-6 not started.
 
 ## Goal
 
@@ -669,6 +670,209 @@ Notes for V and W beyond the `.mli` files:
   the previous is determined; `stop` on Exit (the `was_running` branch) as for the
   source; the pump must not keep exit waiting.
 
+## Phase 3 contracts (stage 1, 2026-10-27)
+
+Stage 1 built and tested the two generic seams phase 3 needs (dirty buffers visible
+to views; open-buffer reconciliation), and fixed the contracts so that agent G3 (git
+actions and patches, `vcs/git/`) and agent V3 (the view's actions, docs, end-to-end
+tests, `screen/`) can work in parallel. Stubs fail with `"TODO phase 3: agent G3"` /
+`"... agent V3"` (grep `TODO phase 3`; one comment marks where V3 keeps the planner);
+no test reaches them.
+
+Seams (implemented and tested):
+- `View_registry.Context` (`screen/view_registry.mli`): a read-only, lazily built
+  snapshot of the session's file buffers, `File.t = { path; label; dirty; missing }`
+  (absolute normalized path, the tab-strip label for notices), with `files` and
+  `dirty_within ~root`. `Adapter.t.perform` takes `~context:Context.t` after the
+  controller, and so do `View_registry.key/run/answer/signal`; `Ui_state` builds it
+  from `Session.replace_active` of the current controller (the active buffer's latest
+  text counts), so keys, palette runs, answers and signals all see it. Existing
+  adapters (problems, history, report, the VCS view, test views) only gained
+  `~context:_`. Test: `screen/test/test_view_context.ml` ("keeper" view: key and
+  answer contexts).
+- `Outcome.reconcile : string list` (absolute directories or files; `Outcome.create
+  ?reconcile`, default `[]`). `Ui_state` applies it right after `controller`, for key
+  outcomes (order now controller, reconcile, effect, notice, return, open_file, jobs,
+  ask) and for signalled ones (the phase 2 rule "signals apply only controller and
+  jobs" becomes "controller, reconcile and jobs"; a `` `Post `` still goes to feedback
+  only). It calls `Session.reconcile (session t) ~under` and adopts the result with
+  `adopt_session_state ~keep_view_tab:true` (no focus move, the view tab stays;
+  nothing is adopted when nothing changed). Test: the keeper view reconciling from a
+  key and from a job's `Finished` signal while the editor keeps focus, and a deleted
+  file marked missing.
+- `Session.reconcile : t -> under:string list -> t * Reconciled.t` (`app/session.mli`)
+  over `Controller.reconcile_with_disk : t -> t * Disk.t` (`Unchanged | Reloaded |
+  Missing | Dirty | Busy | Failed`). Synchronous IO in the transition, as save and
+  open already are: each retained file buffer within a root is read once
+  (`File_io.read`). Clean and changed: reloaded through the forced-reload path
+  (`Editor.handle_outcome Read_file_finished`: cursor line clamped and display
+  column kept, history reset, highlighting restarted, new document id), same buffer
+  id, so `Ui_state` keeps its scroll; counted as a source change. Clean and gone:
+  `mark_missing`. A missing clean buffer whose file is back: reloaded, no longer
+  missing. Dirty: untouched and not read. Busy (the active buffer in Insert/Visual):
+  untouched (a reload under an open Insert transaction or a Visual selection is not
+  safe). Unreadable: a `Failed` reload problem. One `session` notification lists the
+  rest by label (Info; Warning when something was not reloaded). Test:
+  `test/test_session_reconcile.ml`.
+- Small generic additions: `Ches_core.Resource.within ~root path` (lexical
+  containment, shared by the session and `Context.dirty_within`);
+  `Ches_tile.Text_view.jump` (cursor to an offset, Visual ended; tested in
+  `tile/test/test_text_view.ml`) so the view can put its diff cursor on a hunk.
+
+Contracts (stubs):
+- `vcs/git/backend.mli`: `diff_section : diff_target -> Section.t option`
+  (implemented), `Target.t = File { section; path } | Section of Section.t | Hunk {
+  section; file : Diff.File.t; hunk : int; selection : Patch.Selection.t }`, `action =
+  Stage of Target.t | Unstage of Target.t | Discard of Target.t | Stage_all |
+  Unstage_all`, and the full `plan` contract (commands, `rewrites_worktree`, Run vs
+  Confirm, exact titles, confirmation texts and refusals) in the module's contract
+  comment. `plan` is G3's stub.
+- `vcs/git/patch.mli` (new): `Selection.t = Whole` (phase 4 adds `Lines of int list`),
+  `hunk : Diff.File.t -> hunk:int -> Selection.t -> reverse:bool -> string Or_error.t`
+  (the synthesized header and line rules), `quote ~prefix path`. G3's stubs.
+- `screen/vcs_diff_text.mli`: `Position.t = { file; hunk; line }` (indices into the
+  `Diff.t`), `position_at`, `start_of ~file ~hunk`, `hunk_starts`. V3's stubs.
+- `screen/vcs_view.mli`: "Actions (phase 3)" section; `type planner`, `create ?plan
+  ~cwd ()` (now takes unit), `entry ?placement ?plan ~cwd ()`, `mutation : t -> string
+  option`. V3's stubs (`create` ignores `?plan` until V3 keeps it).
+
+Git decisions (verified with git 2.43 in isolated temp repositories, see `patch.mli`
+and the `plan` contract):
+- Every phase 3 command carries `--literal-pathspecs` (a file named `a*.txt` must not
+  glob); staging is `add --all -- P` (stages deletions and a both-deleted
+  resolution); unstaging is `restore --staged`, but `reset --quiet` on an unborn
+  branch (restore needs HEAD; `rm --cached` refuses partially staged files);
+  discarding unstaged changes is `restore --worktree`; deleting untracked files is
+  `clean --force --quiet`; hunks use `apply` with `--check` first and
+  `--whitespace=nowarn` (a user's `apply.whitespace=error` would refuse a line with
+  trailing whitespace), patch on stdin.
+- Discard of a Staged file or hunk (decision): the staged change is thrown away in
+  the index and the work tree (`restore --source=HEAD --staged --worktree`, `rm
+  --force` on an unborn branch; a hunk: `apply --index --reverse`), confirmed with
+  what is lost (a new file is deleted, a rename undone, a deletion restored). Refused
+  when the file also has unstaged changes, so nothing the user is not looking at is
+  lost, and because `apply --index` fails then anyway.
+- Conflicted files (owner decision, 2026-10-27): Magit's way. `s` on a Conflicted
+  file or the Conflicted header runs `git add` and marks it resolved, with no
+  confirmation and no marker check. `u`, `x` and any hunk action on conflicted files
+  are refused: "conflict resolution is not supported yet; resolve it in the editor,
+  then stage it (s) to mark it resolved". `S` does not include Conflicted items.
+- A hunk of a renamed or copied file is patched as a change of the new path alone,
+  so unstaging or discarding it keeps the rename (verified). Mode changes are never
+  part of a hunk patch. Files without line actions (binary, submodule, mode-only,
+  rename-only, combined, unmerged) have no hunk actions; in the diff, `s u x` on a
+  file's header lines act on the whole file instead (Magit's behavior), which is how
+  such files are staged from the diff.
+- Untracked: a hunk action acts on the whole file (its diff is one hunk). Nested
+  repositories (keys ending in `/`) are refused for stage (git would add a bare
+  gitlink without `.gitmodules`) and discard (`git clean` silently keeps them).
+  Intent-to-add entries cannot be discarded (`git restore` truncates them, verified);
+  their hunks stage normally. Submodules cannot be discarded.
+- Section headers and `S`/`U` leave out the entries a rule refuses and name them
+  (plan title " (left out: ...)", confirmation " Left out: ..."); refused when
+  nothing remains. `S`/`U` with nothing to do are refused.
+
+View decisions (V3's contract in `vcs_view.mli`):
+- Keys: `s u x` in the Files panel (item or header) and in the diff (hunk, or the
+  file on its header lines); `S U` in the Files panel and the diff; Visual `s u x`
+  is a notice until phase 4; `]`/`[` move between hunks (the table's diff keys, not
+  assigned to a phase before). Branches and Commits leave them unbound.
+- Refusal before any question: `Refused` is a `` `Show `` notice; a
+  `rewrites_worktree` plan while a file buffer within the root is dirty is refused
+  with a `` `Post `` naming the buffers (checked again on `y`). Confirmations through
+  `Ask.Confirm` (default No). Staging a path whose buffer is dirty warns and runs.
+- One `Mutate` job per plan; actions are refused as busy until the refresh after it
+  is applied (prevents re-applying a stale hunk or re-staging the same row before
+  the snapshot moves). On `Finished`: log every step, `` `Post `` a failure,
+  `reconcile = [root]` for `rewrites_worktree` plans whatever the outcome, refresh
+  when current. Selection anchoring is the existing `Panel.Cursor.reconcile`
+  (next in section, else previous, else header), which already implements the policy.
+  After a hunk action the diff cursor goes to the hunk with the same index in the
+  same file (the next hunk), clamped.
+- `?plan` on `Vcs_view.create`/`entry` is a test hook so V3 can test the action flow
+  with canned decisions while G3's `plan` is a stub.
+
+Deviations, with reasons:
+- `perform` gained a labeled argument rather than a context replacing the controller,
+  so existing adapters changed by one `~context:_` each and outcomes still carry the
+  controller.
+- `Outcome.reconcile` is a list of roots, not a root: generic (files or directories)
+  and checkout/pull (phase 6) can name the root alike. Reconciliation reads only the
+  retained buffers within the roots, so its cost is bounded by open buffers.
+- `Text_view.jump` and `Resource.within` are small additions outside `screen/`; both
+  are generic.
+- Known gaps for the orchestrator: read-side diff commands still pass paths without
+  `--literal-pathspecs` (a path containing `*`, `?` or `[` can show extra files in
+  the diff panel; fixing it changes logged command lines in existing expectations);
+  directory buffers are not reconciled; the dirty refusal and reconciliation compare
+  lexical paths (no symlink resolution); a busy (Insert/Visual) active buffer stays
+  stale until reloaded by hand.
+
+Ownership.
+- G3: `vcs/git/backend.ml` (`plan`), `vcs/git/patch.ml`, new private modules in
+  `vcs/git/` if wanted, and everything under `vcs/git/test/` (new test files such as
+  `test_patch.ml`, `test_plan.ml`). `ches_vcs_git` stays pure (no Unix, no Async).
+- V3: `screen/vcs_view.ml`, `screen/vcs_diff_text.ml`, new private
+  `screen/vcs_*.ml(i)` (other than the two `.mli` contracts), `screen/test/
+  test_vcs_*.ml` (new files and the existing `test_vcs_view.ml`,
+  `test_vcs_workspace.ml`), README.md, docs/editor_reference.md (the "VCS view"
+  section) and docs/backlog/major_minor_tiles.md if it mentions the view.
+- Frozen for both (changes go to the orchestrator): every `.mli` under `vcs/`,
+  `vcs/*.ml`, `vcs/fixture/`, `screen/view_registry.ml(i)`, `screen/ui_state.ml(i)`,
+  `screen/vcs_view.mli`, `screen/vcs_diff_text.mli`, `tile/`, `app/`, `core/`, `ui/`,
+  every `dune` file, `screen/test/{helpers,vcs_driver,test_view_jobs,
+  test_view_context}.ml`, `test/test_session_reconcile.ml`.
+
+Testing and builds while parallel.
+- G3 tests the backend alone: pure `Patch` tests over diffs parsed by `Diff_output`
+  (names with spaces, tabs, quotes and backslashes; CRLF; no newline at end; new,
+  deleted, renamed files; out-of-range and header-only refusals), and `plan` tests
+  that print decisions and then run them with `Fixture_repo.run_steps` in fixture
+  repositories and print `git status` (and `git diff --cached` where hunks matter):
+  every row of the contract, the unborn branch, a rename, intent-to-add, a nested
+  repository, a both-deleted conflict, left-out entries, `--check` failure skipping
+  the apply. G3 builds `dune build -j 10 @vcs/git/runtest` (and `@vcs/runtest`).
+- V3 cannot run `plan` or `Patch.hunk` until G3 lands. Meanwhile V3's tests install
+  `Vcs_view.entry ~plan:fake ~cwd ()` with a fake planner that records the
+  `Git.Backend.action` it received (so key-to-target mapping is tested) and returns
+  canned decisions whose steps are real fixture commands built with
+  `Ches_vcs_git.Cli.mutate` (e.g. `add --all -- a.txt`, `restore --worktree -- a.txt`
+  in a `Confirm` with `rewrites_worktree`), through `Vcs_driver`: refusal notices,
+  the dirty refusal and staging warning (an editor buffer on a fixture file, edited),
+  confirm/decline, busy, failure notice, reconciliation of an open buffer after a
+  discard, refresh and selection anchoring, the diff cursor after a hunk action,
+  `]`/`[`. The fake must not call `Git.Backend.plan` or `Patch`. Last, after G3's
+  report, V3 adds end-to-end tests with the default planner (no `?plan`): stage and
+  unstage a file and a hunk, discard with confirmation, `S`/`U`, a refused discard
+  over a dirty buffer, as `test_vcs_workspace.ml` does with default bindings. V3
+  builds `dune build -j 10 @screen/runtest` (which compiles `ches_vcs_git` too).
+- Both build inside the shared lock; leave no non-compiling file between dune runs;
+  if a build fails in the other agent's files, wait and rerun instead of editing
+  them. Expect output is accepted only with `dune runtest <own dir> --auto-promote`
+  after reading the diff, never a bare `dune promote`.
+
+Notes for G3 beyond the `.mli` files:
+- Build every step with `Cli.mutate ~cwd:repo.root` (patch steps with `~stdin:(Data
+  patch)`); the `args` start with `"--literal-pathspecs"`. `rewrites_worktree` is
+  true exactly for Discard. The plan never reads files and never fails with an
+  exception: anything unexpected is `Refused` with a one-line message.
+- Texts are part of the contract (V3's end-to-end tests and the docs quote them);
+  a wording change goes to the orchestrator.
+- Fixture repositories: commit with `Fixture_repo.commit_all`; replace `t.dir` in
+  printed output. git 2.43's `restore --staged` fails on an unborn branch ("could not
+  resolve HEAD"); `reset --quiet -- P` works there with exit 0.
+
+Notes for V3 beyond the `.mli` files:
+- The root for `dirty_within` and `reconcile` is `Git.Repository.root` of the
+  snapshot's repository. The dirty-buffer notice lists `File.label`s in tab order.
+- Keep `Vcs_diff_text` positions next to its lines (its `Line.t` is unchanged); the
+  view finds the file and hunk in its `Loaded` diff by index.
+- `fit` must still never change the diff text; the hunk anchor is applied when the
+  diff's `Loaded` report is performed. Use `Text_view.jump`.
+- Add `s u x S U ] [` to the hint, help (local commands) and the docs' key table; the
+  README and docs/editor_reference.md describe the actions, confirmations, the dirty
+  refusal and reconciliation.
+
 ## Implementation handoffs
 
 ```text
@@ -1194,7 +1398,82 @@ Next-phase integration notes (phase 3):
     mapped back to Diff lines.
 ```
 
-### Post-phase-2 tweaks (owner feedback, uncommitted)
+```text
+Phase / date / status:
+  3, 2026-10-27, complete (headless checks only; owner terminal acceptance pending).
+  Uncommitted, on fe0f087. Run as stage 1 (contracts and seams; see "Phase 3
+  contracts"), then G3 (git plan + patch) and V3 (the view) in parallel.
+
+Implemented behavior:
+  - Files panel: s/u/x on the selected file or section header; S/U stage/unstage
+    all. Diff: s/u/x on the hunk at the cursor, or the whole file from its header
+    lines; ]/[ (with counts) move between hunks; Visual s/u/x is a "not supported
+    yet" notice (phase 4).
+  - Every discard confirmed (Ask.Confirm, default No). Work-tree-rewriting plans are
+    refused while a file buffer in the repository is dirty, before any question and
+    again on y; staging a path with a dirty buffer warns and proceeds.
+  - One Mutate job per plan; "Busy: <title>" until the follow-up refresh lands;
+    every step logged; failures posted with the first stderr line; reconcile
+    (reload clean changed buffers, mark deleted ones missing) after any rewrite,
+    whatever the outcome; refresh after every action; selection by
+    Panel.Cursor.reconcile; after a hunk action the diff cursor lands on the
+    same-index hunk (else the last, else the file's first line).
+  - Conflicted (owner decision, Magit): s = git add marks resolved, no confirm;
+    u/x/hunk actions refused ("conflict resolution is not supported yet"); S
+    leaves conflicted files out.
+  - --literal-pathspecs on every mutation and every diff read.
+
+Changed modules and new public contracts:
+  - Stage 1: View_registry.Context (dirty_within) and perform ~context;
+    Outcome.reconcile (applied after the controller, for signalled outcomes too);
+    Session.reconcile / Controller.reconcile_with_disk (synchronous IO in the
+    transition); Ches_core.Resource.within; Text_view.jump; git Target/action types,
+    diff_section, the plan contract; vcs/git/patch.mli (Selection.t = Whole, ready
+    for phase 4's Lines); vcs_view.mli "Actions (phase 3)"; Vcs_diff_text.Position.
+  - G3: vcs/git/{backend,patch,diff_output}.ml; tests test_patch.ml, test_plan.ml.
+  - V3: screen/vcs_view.ml, screen/vcs_diff_text.ml; tests test_vcs_actions.ml (fake
+    planner) and four end-to-end tests in test_vcs_workspace.ml (real planner);
+    README, docs/editor_reference.md ("Staging and discarding"), backlog.
+  - Orchestrator: backend.mli/diff_output.mli docs for G3's clarifications (Ignored
+    section discard text, singular counts, left-out labels, S with only nested
+    repositories, Hunk "no longer listed", intent-to-add hunk discard refused,
+    --literal-pathspecs on reads); screen/test/vcs_driver.ml now stops a mutation's
+    steps at the first failure (rest Skipped, no Started), as the runner does.
+
+Policy decisions settled (stage 1/agents; owner may reverse):
+  - Discarding a staged file/hunk restores HEAD in index and work tree (confirmed),
+    refused when the file also has unstaged changes.
+  - Busy refusal while the previous action settles (no stale hunk re-applied).
+  - Nested repositories refused for stage and discard (no submodule add).
+  - Intent-to-add entries cannot be discarded (git restore would empty them).
+  - A hunk of a renamed file patches the new path only (the rename is kept).
+  - V3: commit-diff notice uses the key's verb; ]/[ unbound in Visual (jump would
+    drop the selection); counts before s/u/x/S/U ignored; a stale mutation report
+    still refreshes when the repository is Found.
+
+Checks run and results:
+  - Stage 1 baseline and final full build/runtest -> 0. G3: @vcs/git/runtest,
+    @vcs/runtest. V3 final: full build/runtest -> 0.
+  - Orchestrator final (2026-10-27): dune build -j 10 -> 0; dune runtest -j 10 -> 0;
+    after the vcs_driver change @screen/runtest -> 0; git diff --check clean; no
+    TODO phase stubs; no stray git processes or /tmp/ches-vcs* dirs; HEAD fe0f087.
+
+Known gaps or blockers:
+  - No owner terminal acceptance yet (checklist in the session report).
+  - Not testable headlessly: dirtying a buffer while the confirm float is open
+    (tested by answering with a hand-built Context), real async Busy timing, the
+    confirm float in a split, an active buffer in Insert/Visual during reconcile
+    (left stale until reloaded by hand).
+  - Directory buffers are not reconciled; paths compared lexically (no symlink
+    resolution).
+
+Next-phase integration notes (phase 4):
+  - Patch.Selection gains Lines; Vcs_diff_text.Position maps cursor/Visual offsets to
+    (file, hunk, line); V3's Visual notice is the hook to replace. Refuse line
+    actions where Diff.File.line_actions is false (already refused for hunks).
+```
+
+### Post-phase-2 tweaks (owner feedback, committed in fe0f087)
 
 - Counts in every read-only Text_view (`Action.Move_count`): `N` before
   `h l j k w b Ctrl-d Ctrl-u` repeats, `N G` / `N gg` go to line N. Inside the VCS

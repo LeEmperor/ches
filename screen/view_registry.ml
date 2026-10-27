@@ -63,6 +63,29 @@ module Location = struct
   [@@deriving sexp_of, equal]
 end
 
+module Context = struct
+  module File = struct
+    type t =
+      { path : string
+      ; label : string
+      ; dirty : bool
+      ; missing : bool
+      }
+    [@@deriving sexp_of, equal]
+  end
+
+  type t = File.t list Lazy.t
+
+  let create files = Lazy.from_fun files
+  let empty = lazy []
+  let files = Lazy.force
+
+  let dirty_within t ~root =
+    List.filter (files t) ~f:(fun (file : File.t) ->
+      file.dirty && Ches_core.Resource.within ~root file.path)
+  ;;
+end
+
 module Outcome = struct
   type 'ask t =
     { controller : Ches_app.Controller.t
@@ -71,11 +94,21 @@ module Outcome = struct
     ; return : bool
     ; open_file : Location.t option
     ; jobs : Ches_vcs.Job.t list
+    ; reconcile : string list
     ; ask : 'ask option
     }
 
-  let create ?effect ?notice ?(return = false) ?open_file ?(jobs = []) ?ask controller =
-    { controller; effect; notice; return; open_file; jobs; ask }
+  let create
+        ?effect
+        ?notice
+        ?(return = false)
+        ?open_file
+        ?(jobs = [])
+        ?(reconcile = [])
+        ?ask
+        controller
+    =
+    { controller; effect; notice; return; open_file; jobs; reconcile; ask }
   ;;
 end
 
@@ -100,6 +133,7 @@ module Adapter = struct
     ; perform
       :  'state
       -> Ches_app.Controller.t
+      -> context:Context.t
       -> rows:int
       -> width:int
       -> 'action
@@ -320,7 +354,7 @@ let is_help = function
   | _ -> false
 ;;
 
-let key t id host key ~lookup ~controller ~rows ~width =
+let key t id host key ~lookup ~controller ~context ~rows ~width =
   Option.map (find_installed t id) ~f:(function
     | Unavailable _ -> t, host, Step.Return
     | Installed ({ adapter; state; _ } as entry) ->
@@ -345,12 +379,12 @@ let key t id host key ~lookup ~controller ~rows ~width =
        | Workspace view -> t, host, Step.Workspace view
        | Content Help -> t, host, Step.Help
        | Content (Act action) ->
-         let state, outcome = adapter.perform state controller ~rows ~width action in
+         let state, outcome = adapter.perform state controller ~context ~rows ~width action in
          let t = update t id ~f:(fun _ -> Installed { entry with state; pending = outcome.ask }) in
          t, host, Step.Performed (question outcome)))
 ;;
 
-let run t id name ~controller ~rows ~width =
+let run t id name ~controller ~context ~rows ~width =
   match find_installed t id with
   | None | Some (Unavailable _) ->
     Or_error.error_s [%message "View not installed" (id : View_id.t)]
@@ -368,13 +402,13 @@ let run t id name ~controller ~rows ~width =
        (match adapter.interpret state command.keys with
         | Prefix | Unbound -> unavailable ()
         | Action action ->
-          let state, outcome = adapter.perform state controller ~rows ~width action in
+          let state, outcome = adapter.perform state controller ~context ~rows ~width action in
           Ok
             ( update t id ~f:(fun _ -> Installed { entry with state; pending = outcome.ask })
             , question outcome )))
 ;;
 
-let answer t id (answer : Answer.t) ~controller ~rows ~width =
+let answer t id (answer : Answer.t) ~controller ~context ~rows ~width =
   match find_installed t id with
   | None | Some (Unavailable _) -> t, None
   | Some (Installed ({ adapter; state; pending; _ } as entry)) ->
@@ -391,19 +425,19 @@ let answer t id (answer : Answer.t) ~controller ~rows ~width =
      | `Keep -> t, None
      | `Perform None -> update t id ~f:(fun _ -> Installed { entry with pending = None }), None
      | `Perform (Some action) ->
-       let state, outcome = adapter.perform state controller ~rows ~width action in
+       let state, outcome = adapter.perform state controller ~context ~rows ~width action in
        ( update t id ~f:(fun _ -> Installed { entry with state; pending = outcome.ask })
        , Some (question outcome) ))
 ;;
 
-let signal t id signal ~controller ~rows ~width =
+let signal t id signal ~controller ~context ~rows ~width =
   match find_installed t id with
   | None | Some (Unavailable _) -> t, None
   | Some (Installed ({ adapter; state; pending; _ } as entry)) ->
     (match adapter.signal state signal with
      | None -> t, None
      | Some action ->
-       let state, outcome = adapter.perform state controller ~rows ~width action in
+       let state, outcome = adapter.perform state controller ~context ~rows ~width action in
        let pending = Option.first_some outcome.ask pending in
        ( update t id ~f:(fun _ -> Installed { entry with state; pending })
        , Some (question outcome) ))

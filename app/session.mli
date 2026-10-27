@@ -64,6 +64,31 @@ val save_as : t -> Buffer_id.t -> string -> t Or_error.t
 (** Dirty file and retained directory buffers in ID order; continue on error. *)
 val save_all : t -> t * (Buffer_id.t * bool) list
 val quit : t -> force:bool -> t * Controller.Status.t
+(** What {!reconcile} did, per retained file buffer (tab order); unchanged buffers
+    are not listed. *)
+module Reconciled : sig
+  type t =
+    { reloaded : Buffer_id.t list (** Clean, changed on disk (or back from missing). *)
+    ; missing : Buffer_id.t list (** Clean, file gone: marked missing. *)
+    ; dirty : Buffer_id.t list (** Unsaved changes: untouched, not read. *)
+    ; busy : Buffer_id.t list (** The active buffer in Insert/Visual: untouched. *)
+    ; failed : (Buffer_id.t * Error.t) list (** Unreadable: untouched. *)
+    }
+  [@@deriving sexp_of]
+end
+
+(** Open-buffer reconciliation after something outside Ches may have rewritten files
+    (a VCS discard, checkout or pull): every retained file buffer whose path is within
+    one of [under] (absolute, lexical: {!Resource.within}) is passed through
+    {!Controller.reconcile_with_disk}, the active one included. Synchronous: reads
+    each such file once in the transition, as save and open already do; nothing is
+    watched. Reloads keep the buffer's id (so the UI keeps its scroll), cursor line
+    and column, and count as source changes ({!take_source_changes}). Feedback: a
+    reload failure is a [Failed] reload problem (a success resolves it, as [:e!]
+    does), and one [session] notification lists the reloaded, missing, dirty and
+    busy buffers by label (Info, or Warning when any were not reloaded); nothing is
+    posted when nothing changed, and the session is then returned unchanged. *)
+val reconcile : t -> under:string list -> t * Reconciled.t
 val dispatch : t -> Keymap.Action.t list -> t * View_command.t list * Controller.Status.t
 val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Controller.Status.t
 val feedback : t -> Ches_error.Error.t

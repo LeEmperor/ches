@@ -121,6 +121,28 @@ val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Status.t
     {!last_input_dispatched} afterwards reports whether [actions] ran an editor command. *)
 val dispatch : t -> Keymap.Action.t list -> t * View_command.t list * Status.t
 
+(** What {!reconcile_with_disk} found. *)
+module Disk : sig
+  type t =
+    | Unchanged (** Same text on disk (or not a file buffer, or already missing). *)
+    | Reloaded (** Clean, and the file's text changed (or a missing file came back). *)
+    | Missing (** Clean, and the file is gone: now {!is_missing}. *)
+    | Dirty (** Unsaved changes: untouched, the file not read. *)
+    | Busy (** Clean, but not in Normal mode (Insert, Visual): untouched. *)
+    | Failed of Error.t (** The file could not be read: untouched. *)
+  [@@deriving sexp_of]
+end
+
+(** Bring a clean file buffer up to date with its backing file after something
+    outside Ches may have rewritten it (a VCS discard or checkout). Reads the file
+    synchronously ({!File_io.read}). A changed file is reloaded as a forced reload
+    ([:e!]) does: the cursor keeps its line (clamped) and display column, undo history
+    is reset, highlighting restarts, and a successful reload starts a new
+    {!document_id}; a missing buffer whose file exists again is reloaded and no longer
+    missing. Feedback is left alone (the caller reports). Directory buffers and
+    buffers without a path are [Unchanged]. *)
+val reconcile_with_disk : t -> t * Disk.t
+
 (** Dispatches [Move { motion; count }] to the editor, for a frontend whose view command
     must bring the cursor along (scrolling the cursor line out of view). Moves request no
     effects. It leaves the keymap and {!last_input_dispatched} alone. *)

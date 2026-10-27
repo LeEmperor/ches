@@ -336,6 +336,46 @@ let recreate t =
   match Editor.path t.editor with None -> Or_error.error_string "No backing path; use save-as" | Some path -> save_as t path
 ;;
 
+module Disk = struct
+  type t =
+    | Unchanged
+    | Reloaded
+    | Missing
+    | Dirty
+    | Busy
+    | Failed of Error.t
+  [@@deriving sexp_of]
+end
+
+let reconcile_with_disk t : t * Disk.t =
+  match Kind.equal t.kind File, Editor.path t.editor with
+  | false, _ | true, None -> t, Unchanged
+  | true, Some path ->
+    if Editor.is_dirty t.editor
+    then t, Dirty
+    else if not (Mode.equal (Editor.mode t.editor) Normal)
+    then t, Busy
+    else (
+      match File_io.read path with
+      | Error error -> t, Failed error
+      | Ok Missing -> if t.missing then t, Unchanged else mark_missing t, Missing
+      | Ok (Existing text) ->
+        if (not t.missing) && Text_buffer.equal text (Editor.text t.editor)
+        then t, Unchanged
+        else (
+          (* The forced reload's path ([:e!]): cursor line and display column kept,
+             history reset. Feedback is the caller's (the session's). *)
+          let editor = Editor.handle_outcome t.editor (Read_file_finished { path; result = Ok text }) in
+          ( { t with
+              editor
+            ; document_id = ref ()
+            ; highlighting = Highlighting.update t.highlighting editor ~reset:true
+            ; missing = false
+            ; had_backing = true
+            }
+          , Reloaded )))
+;;
+
 let move t motion ~count =
   match Editor.dispatch t.editor (Move { motion; count }) with
   | editor, [] ->

@@ -71,5 +71,30 @@ val of_message : string -> t
 (** The line containing byte [offset] of {!text}. *)
 val line_at : t -> int -> Line.t option
 
+(** Where a line came from in the {!Diff.t} it was laid out from ({!of_diff}): what
+    the VCS view's hunk actions (phase 3) and line selections (phase 4) act on. *)
+module Position : sig
+  type t =
+    { file : int (** Index into [Diff.t.files]. *)
+    ; hunk : int option
+    (** Index into that file's [hunks]; [None] for its header lines, a submodule's
+        note and the truncation placeholder. *)
+    ; line : int option
+    (** Index into that hunk's [lines]; [None] for the [@@] header line. *)
+    }
+  [@@deriving sexp_of, equal]
+end
+
+(** The position of the line containing byte [offset]; [None] outside any file (a
+    commit's preamble, the cut note, an {!of_message} text). *)
+val position_at : t -> int -> Position.t option
+
+(** The byte offset of a file's first line ([hunk = None]) or of a hunk's [@@] line;
+    [None] when it is not laid out (out of range, or a header-only file's hunks). *)
+val start_of : t -> file:int -> hunk:int option -> int option
+
+(** The byte offsets of every [@@] line, in order ([\]] and [\[] in the view). *)
+val hunk_starts : t -> int list
+
 (** The kind of the line starting at byte [offset], if one starts there. *)
 val kind_at_start : t -> int -> Kind.t option
