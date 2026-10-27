@@ -55,18 +55,36 @@ module Answer = struct
   [@@deriving sexp_of, equal]
 end
 
+module Location = struct
+  type t =
+    { path : string
+    ; line : int option
+    }
+  [@@deriving sexp_of, equal]
+end
+
 module Outcome = struct
   type 'ask t =
     { controller : Ches_app.Controller.t
     ; effect : Ches_tile.Text_view.Effect.t option
     ; notice : [ `Post of string | `Show of string ] option
     ; return : bool
+    ; open_file : Location.t option
+    ; jobs : Ches_vcs.Job.t list
     ; ask : 'ask option
     }
 
-  let create ?effect ?notice ?(return = false) ?ask controller =
-    { controller; effect; notice; return; ask }
+  let create ?effect ?notice ?(return = false) ?open_file ?(jobs = []) ?ask controller =
+    { controller; effect; notice; return; open_file; jobs; ask }
   ;;
+end
+
+module Signal = struct
+  type t =
+    | Shown
+    | Saved of string list
+    | Job of Ches_vcs.Event.t
+  [@@deriving sexp_of]
 end
 
 module Adapter = struct
@@ -87,6 +105,8 @@ module Adapter = struct
       -> 'action
       -> 'state * 'action Ask.t Outcome.t
     ; commands : 'state -> Ches_tile.Local_command.t list
+    ; signal : 'state -> Signal.t -> 'action option
+    ; text_area : 'state -> rows:int -> width:int -> Geometry.Rect.t option
     ; render
       :  'state
       -> Ches_app.Controller.t
@@ -106,6 +126,7 @@ module Entry = struct
         { adapter : ('state, 'action) Adapter.t
         ; state : 'state
         ; placement : Placement.t
+        ; opens_in : Placement.t
         ; pending : 'action Ask.t option
         }
         -> t
@@ -115,8 +136,15 @@ module Entry = struct
         ; notice : string
         }
 
-  let install ?(placement = Placement.Hidden) adapter state =
-    Installed { adapter; state; placement; pending = None }
+  let install ?(placement = Placement.Hidden) ?(opens_in = Placement.Band) adapter state =
+    (match opens_in with
+     | Hidden ->
+       raise_s
+         [%message
+           "View_registry.Entry.install: opens_in Hidden"
+             ~view:(adapter.Adapter.spec.id : View_id.t)]
+     | Band | Tab | Split -> ());
+    Installed { adapter; state; placement; opens_in; pending = None }
   ;;
 
   let unavailable id ~title ~notice = Unavailable { id; title; notice }
@@ -163,6 +191,14 @@ let placements t =
 ;;
 
 let placement t id = List.Assoc.find (placements t) id ~equal:View_id.equal
+
+let opens_in t id =
+  List.find_map t ~f:(function
+    | Entry.Installed { adapter; opens_in; _ } when View_id.equal adapter.spec.id id ->
+      Some opens_in
+    | Installed _ | Unavailable _ -> None)
+  |> Option.value ~default:Placement.Band
+;;
 
 let placed t wanted =
   List.filter_map (placements t) ~f:(fun (id, placement) ->
@@ -235,6 +271,12 @@ let find_installed = find_installed_entry
 let text_view t id =
   Option.bind (find_installed t id) ~f:(function
     | Installed { adapter; state; _ } -> adapter.text_view state
+    | Unavailable _ -> None)
+;;
+
+let text_area t id ~rows ~width =
+  Option.bind (find_installed t id) ~f:(function
+    | Installed { adapter; state; _ } -> adapter.text_area state ~rows ~width
     | Unavailable _ -> None)
 ;;
 
@@ -351,6 +393,19 @@ let answer t id (answer : Answer.t) ~controller ~rows ~width =
      | `Perform (Some action) ->
        let state, outcome = adapter.perform state controller ~rows ~width action in
        ( update t id ~f:(fun _ -> Installed { entry with state; pending = outcome.ask })
+       , Some (question outcome) ))
+;;
+
+let signal t id signal ~controller ~rows ~width =
+  match find_installed t id with
+  | None | Some (Unavailable _) -> t, None
+  | Some (Installed ({ adapter; state; pending; _ } as entry)) ->
+    (match adapter.signal state signal with
+     | None -> t, None
+     | Some action ->
+       let state, outcome = adapter.perform state controller ~rows ~width action in
+       let pending = Option.first_some outcome.ask pending in
+       ( update t id ~f:(fun _ -> Installed { entry with state; pending })
        , Some (question outcome) ))
 ;;
 

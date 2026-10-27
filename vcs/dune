@@ -1,0 +1,13 @@
+; ches_vcs is the backend-agnostic VCS model: command specs and their results, jobs
+; and the events a runner reports, consumer-side staleness, panel/section models with
+; stable selection, the popup ("transient") model, the diff model, and the backend
+; signature. It is pure: no Async, no Unix, no ches_app or ches_screen, and it never
+; mentions an index or staging (backends declare their own sections and actions).
+; ches_vcs_git (vcs/git) implements the signature for git; ches_vcs_host (vcs/host)
+; runs the specs under Async. See VCS_WORKSPACE_PLAN.md, "Phase 1 contracts".
+
+(library
+ (name ches_vcs)
+ (libraries core)
+ (preprocess
+  (pps ppx_jane)))

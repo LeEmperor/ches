@@ -53,6 +53,8 @@ module Counter = struct
             ( { count = 0 }
             , View_registry.Outcome.create controller ~notice:(`Show "Counter reset") ))
     ; commands
+    ; signal = (fun _ _ -> None)
+    ; text_area = (fun _ ~rows:_ ~width:_ -> None)
     ; render =
         (fun t _ ~hotkey_hints:_ ~focused:_ ~notice ~pending ~width ~rows:_ ->
           { title = sprintf "Counter: %d" t.count

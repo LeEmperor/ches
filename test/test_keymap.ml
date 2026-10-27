@@ -1251,7 +1251,7 @@ let%expect_test "counted x works while unsupported commands reject a count" =
     NORMAL 0:0 dirty notice="Space w does not take a count"
     > |
     |}];
-  let t = run t (keys "4 vl2<C-r>5 Q") in
+  let t = run t (keys "4 vn2<C-r>5 Q") in
   show t;
   [%expect
     {|
@@ -1319,6 +1319,23 @@ let%expect_test "a count repeats a resize step; other view commands refuse it" =
     (View(Adjust_directory_size -24))
     NORMAL 0:0
     |}];
+  (* Moving the centered tile repeats too, either way, by 2 or 10 cells a press. *)
+  let t = run t (keys "3 vl2 vh4 vL5 vH") in
+  show_position t;
+  [%expect {|
+    (View(Shift 6))
+    (View(Shift -4))
+    (View(Shift 40))
+    (View(Shift -50))
+    NORMAL 0:0
+    |}];
+  (* Uncounted, [Space s c] closes the split. *)
+  let t = run t (keys " sc") in
+  show_position t;
+  [%expect {|
+    (View Close_split)
+    NORMAL 0:0
+    |}];
   (* A count of 1 is one press; the largest count multiplies without overflow. *)
   let t = run t (keys "1 v+999999 s-") in
   show_position t;
@@ -1336,9 +1353,12 @@ let%expect_test "a count repeats a resize step; other view commands refuse it" =
   let t = run t (keys "2 vc") in
   show_position t;
   [%expect {| NORMAL 0:0 notice="Space v c does not take a count" |}];
-  let t = run t (keys "4 vl") in
+  let t = run t (keys "4 vn") in
   show_position t;
-  [%expect {| NORMAL 0:0 notice="Space v l does not take a count" |}];
+  [%expect {| NORMAL 0:0 notice="Space v n does not take a count" |}];
+  let t = run t (keys "3 sc") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space s c does not take a count" |}];
   let t = run t (keys "2 sx") in
   show_position t;
   [%expect {| NORMAL 0:0 notice="Space s x does not take a count" |}];
@@ -1764,4 +1784,46 @@ let%expect_test "% is a motion that rejects a count, even a huge one" =
     NORMAL 0:1
     > (|a)
     |}]
+;;
+
+let%expect_test "Space g places and focuses the VCS view; g c and g a stay unbound" =
+  (* Every default binding under Space g: the five workspace keys, nothing else. *)
+  List.iter (Bindings.to_list Bindings.default) ~f:(fun (sequence, target) ->
+    if List.is_prefix sequence ~prefix:[ Key.char ' '; Key.char 'g' ] ~equal:Key.equal
+    then
+      printf
+        "%-10s %s\n"
+        (String.concat ~sep:" " (List.map sequence ~f:Key.to_string_hum))
+        (Sexp.to_string [%sexp (target : Bindings.Target.t)]));
+  [%expect {|
+    Space g g  (View(Focus_view vcs))
+    Space g f  (View(Focus_view vcs))
+    Space g t  (View(Place_view(view(vcs))(placement Tab)))
+    Space g s  (View(Place_view(view(vcs))(placement Split)))
+    Space g h  (View(Place_view(view(vcs))(placement Hidden)))
+    |}];
+  let t = run (create "abc") (keys " g") in
+  show_position t;
+  [%expect {| NORMAL 0:0 pending="Space g" |}];
+  let t = run t (keys "g gf gt gs gh") in
+  show_position t;
+  [%expect {|
+    (View(Focus_view vcs))
+    (View(Focus_view vcs))
+    (View(Place_view(view(vcs))(placement Tab)))
+    (View(Place_view(view(vcs))(placement Split)))
+    (View(Place_view(view(vcs))(placement Hidden)))
+    NORMAL 0:0
+    |}];
+  (* The commit flow's keys arrive in phase 5. *)
+  let t = run t (keys " gc") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space g c is not bound" |}];
+  let t = run t (keys " ga") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space g a is not bound" |}];
+  (* Placement commands take no count. *)
+  let t = run t (keys "2 gg") in
+  show_position t;
+  [%expect {| NORMAL 0:0 notice="Space g g does not take a count" |}]
 ;;

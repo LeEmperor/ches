@@ -58,6 +58,10 @@ type t =
   | Severity_hint (** A Hint-severity row; not {!Hint}, the frame's key hints. *)
   | Stale (** A diagnostic row that is behind the text or from a stopped checker. *)
   | Smear (** The foreground-only animated cursor overlay. *)
+  | Diff_added (** A diff's added line, in a supporting view (the VCS view). *)
+  | Diff_removed (** A diff's removed line. *)
+  | Diff_hunk (** A hunk header ([@@ ... @@]). *)
+  | Diff_meta (** A file or commit header line of a diff. *)
 [@@deriving sexp_of, equal]
 
 val document

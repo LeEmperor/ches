@@ -206,6 +206,8 @@ let adapter : (t, action) View_registry.Adapter.t =
         let t, effect = perform t ~rows ~width action in
         t, View_registry.Outcome.create ?effect controller)
   ; commands
+  ; signal = (fun _ _ -> None)
+  ; text_area = (fun _ ~rows:_ ~width:_ -> None)
   ; render =
       (fun t _ ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
         render ~hotkey_hints ~focused ?notice ?pending t ~width ~rows)

@@ -106,7 +106,10 @@ let command =
                      Some (Ches_source.Synthetic.start ~root:(Ches_source.Workspace_root.find path) ())) ()
                  else Ches_source.Lsp_client.start_workspace ~cell_width:Ches_screen.Cell_map.width ())
            in
-            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~buffer_presentation ?report ?source controller with
+           (* One runner for the VCS view's git commands (Space g g); it inherits this
+              process's environment and never prompts on the terminal. *)
+           let vcs = Ches_ui.Vcs_host.create () in
+            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~buffer_presentation ?report ?source ~vcs controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

@@ -44,8 +44,8 @@
       Normal  Space q                Quit
       Normal  Space Q                Force_quit
       Normal  Space v c              View Toggle_centered
-      Normal  Space v h / l          View (Shift -2) / (Shift 2)
-      Normal  Space v H / L          View (Shift -10) / (Shift 10)
+      Normal  Space v h / l          View (Shift -2) / (Shift 2); count repeats
+      Normal  Space v H / L          View (Shift -10) / (Shift 10); count repeats
       Normal  Space v -              View (Adjust_width -10); count repeats
       Normal  Space v + / =          View (Adjust_width 10); count repeats
       Normal  Space v n              View Toggle_absolute_numbers
@@ -54,6 +54,7 @@
       Normal  Space v p h/l/k/j      View Position_status Left/Right/Above/Below
       Normal  Space v p - / + / =    View Adjust_status_size -2 / 2 / 2; count repeats
       Normal  Space s - / + / =      View Adjust_split -10 / 10 / 10; count repeats
+      Normal  Space s c              View Close_split
       Normal  Space d - / +          View Adjust_directory_size -4 / 4; count repeats
       Normal  Space v z              View Toggle_zen
       Normal  Space v r              View Reset
@@ -80,10 +81,11 @@
     produces one counted command, e.g. [2 0 j] produces
     [Move { motion = Down; count = Some 20 }]; without a count, [count] is [None], so
     the editor can tell bare [G] from [1 G]. [x], [X], [p], and [P] accept a count.
-    A count before a resize step ([Adjust_width], [Adjust_split],
+    A count before a resize step ([Shift], [Adjust_width], [Adjust_split],
     [Adjust_status_size], [Adjust_directory_size]) repeats it by multiplying the
     step ({!View_command.scale}), so [3 Space v +] produces
-    [View (Adjust_width 30)], like three presses; the frontend clamps the result.
+    [View (Adjust_width 30)] and [3 Space v l] produces [View (Shift 6)], like three
+    presses; the frontend clamps the result.
     [d] and [y] keep their own count while waiting for a motion; operator and motion
     counts multiply (so [2d3w] deletes and [2y3w] yanks six words). While a count is pending, {!pending}
     shows it, followed by any keys of the sequence (["20"], ["20 g"], ["3 Space v"]).

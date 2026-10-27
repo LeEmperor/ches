@@ -192,7 +192,11 @@ module Font = struct
     | Warning
     | Severity_hint
     | Stale
-    | Smear -> []
+    | Smear
+    | Diff_added
+    | Diff_removed
+    | Diff_hunk -> []
+    | Diff_meta -> [ Bold ]
   ;;
 end
 
@@ -246,6 +250,12 @@ let colors (style : Ches_screen.Style.t) =
   | Severity_hint -> colors Syntax_comment Surface
   | Stale -> colors Muted Surface
   | Smear -> [ Attr.fg (Role.color Smear) ]
+  (* Diff lines sit on the supporting views' surface, colored like Insert (added),
+     errors (removed) and specials (hunk headers). *)
+  | Diff_added -> colors Insert_accent Surface
+  | Diff_removed -> colors Error Surface
+  | Diff_hunk -> colors Special Surface
+  | Diff_meta -> colors Foreground Surface
 ;;
 
 let attrs ?(font = Font.default) style = colors style @ List.map (font style) ~f:Font.attr

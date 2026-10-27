@@ -1,0 +1,15 @@
+; Tests of the Async runner against real child processes: git in isolated fixture
+; repositories (Ches_vcs_fixture.Fixture_repo, with a local bare remote for network
+; commands) and small /bin/sh scripts. Never the Ches repository, never a network.
+
+(library
+ (name ches_vcs_host_test)
+ (libraries ches_vcs ches_vcs_host ches_vcs_fixture core core_unix
+  core_unix.filename_unix core_unix.signal_unix core_unix.sys_unix async
+  expect_test_helpers_core expect_test_helpers_async)
+ ; See core/dune for why this flag is needed.
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

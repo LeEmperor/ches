@@ -94,6 +94,8 @@ module Shelf = struct
     ; perform
     ; commands =
         (fun _ -> [ Ches_tile.Local_command.create "delete" ~keys:[ Key.char 'd' ] "Delete the last" ])
+    ; signal = (fun _ _ -> None)
+    ; text_area = (fun _ ~rows:_ ~width:_ -> None)
     ; render =
         (fun t _ ~hotkey_hints:_ ~focused:_ ~notice ~pending ~width ~rows:_ ->
           { title = "Shelf"
@@ -284,6 +286,22 @@ let%expect_test "leaving the question another way withdraws it; nothing runs" =
   let t = run t "<Esc>" in
   show t;
   [%expect {| no float; focused document; items [ash elm]; pending false; notice (none) |}]
+;;
+
+let%expect_test "closing the split view under its question: the feedback line says so" =
+  (* [Space s c] typed into the confirmation closes the view, which withdraws the
+     question; the view's notice cannot show in a footer, so the feedback line has it. *)
+  let t = run (create ()) " vx ssd" in
+  show t;
+  let t = run t " sc" in
+  show t;
+  print_endline (Option.value_map (Ui_state.message t) ~default:"(none)" ~f:(fun m -> m.text));
+  [%expect
+    {|
+    confirm "Delete elm from the shelf?"; focused confirm; items [ash elm]; pending true; notice (none)
+    no float; focused document; items [ash elm]; pending false; notice Delete closed; nothing ran
+    Shelf closed
+    |}]
 ;;
 
 let%expect_test "a local command run from the palette asks over its view" =

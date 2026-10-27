@@ -1,0 +1,12 @@
+; Checks the fixture itself: isolation, the bare remote, and the synchronous step
+; runner that backend tests use in place of the Async runner.
+
+(library
+ (name ches_vcs_fixture_test)
+ (libraries ches_vcs ches_vcs_fixture core core_unix expect_test_helpers_core)
+ ; See core/dune for why this flag is needed.
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

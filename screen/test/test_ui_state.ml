@@ -252,6 +252,36 @@ let%expect_test "a count repeats a width, status or directory step, clamped like
     |}]
 ;;
 
+let%expect_test "a count repeats a tile shift, clamped like repeated presses" =
+  let step t k =
+    let t = run ~width:160 ~height:48 t (keys k) in
+    printf "%-11S " k;
+    layout t;
+    t
+  in
+  let t = ui "abc" in
+  let t = List.fold [ "3 vl"; "2 vh"; "4 vL"; "5 vH" ] ~init:t ~f:step in
+  [%expect {|
+    "3 vl"      ((centered true) (width 100) (offset 6) (line_numbers Off) (left_padding 2)) Offset +6 | tile x=34 w=104, text w=100
+    "2 vh"      ((centered true) (width 100) (offset 2) (line_numbers Off) (left_padding 2)) Offset +2 | tile x=30 w=104, text w=100
+    "4 vL"      ((centered true) (width 100) (offset 42) (line_numbers Off) (left_padding 2)) Offset +42 (+28 fit) | tile x=56 w=104, text w=100
+    "5 vH"      ((centered true) (width 100) (offset -8) (line_numbers Off) (left_padding 2)) Offset -8 | tile x=20 w=104, text w=100
+    |}];
+  (* The largest count is a far larger request than the bounds, -500..500. *)
+  let t = List.fold [ "999999 vL"; "999999 vl"; "999999 vH"; "999999 vh" ] ~init:t ~f:step in
+  [%expect {|
+    "999999 vL" ((centered true) (width 100) (offset 500) (line_numbers Off)
+     (left_padding 2)) Offset +500 (+28 fit) | tile x=56 w=104, text w=100
+    "999999 vl" ((centered true) (width 100) (offset 500) (line_numbers Off)
+     (left_padding 2)) Offset +500 (+28 fit) | tile x=56 w=104, text w=100
+    "999999 vH" ((centered true) (width 100) (offset -500) (line_numbers Off)
+     (left_padding 2)) Offset -500 (-28 fit) | tile x=0 w=104, text w=100
+    "999999 vh" ((centered true) (width 100) (offset -500) (line_numbers Off)
+     (left_padding 2)) Offset -500 (-28 fit) | tile x=0 w=104, text w=100
+    |}];
+  ignore (t : Ui_state.t)
+;;
+
 let%expect_test "requests that do not fit are kept, and restored on a larger screen" =
   let t = run (ui "abc") (keys " vr") in
   let t =

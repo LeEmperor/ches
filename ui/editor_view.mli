@@ -48,6 +48,13 @@ val app
        (** A running diagnostic source: its events become [Source] inputs, and
            {!Ches_screen.Ui_state.take_source_requests} is sent to it after each
            transition. *)
+  -> ?vcs:Vcs_host.t
+       (** The runner for registered views' jobs: the default initial state installs
+           the VCS view ({!Ches_screen.Vcs_view.entry}, from the startup directory),
+           {!Ches_screen.Ui_state.take_vcs_jobs} is submitted to it after each
+           transition, its batches become [Vcs] inputs, and it is stopped on exit.
+           Without it the VCS view is unavailable ("VCS unavailable in this
+           session") and any job is answered as never started. *)
    -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
     -> ?file_picker:File_picker_host.t
     -> ?content_picker:Content_picker_host.t
@@ -66,14 +73,16 @@ val draw_base : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.
 val draw_overlay : ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> base:View.t -> Ches_screen.Frame.t -> View.t
 
-(** Runs the editor in the terminal until it exits, then stops [source]. SIGTERM and
+(** Runs the editor in the terminal until it exits, then stops [source] and waits for
+    [vcs]'s children ({!Vcs_host.shutdown}, at most its default cap). SIGTERM and
     SIGHUP end the process with status 1, discarding unsaved changes, after restoring the
-    terminal. *)
+    terminal (and after the same bounded wait for [vcs]). *)
 val run
   :  ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
   -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t
   -> ?report:Ches_screen.Report_tile.Item.t list
   -> ?source:Ches_source.Source.t
+  -> ?vcs:Vcs_host.t
   -> Ches_app.Controller.t
   -> unit Async.Deferred.Or_error.t

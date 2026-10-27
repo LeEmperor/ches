@@ -47,6 +47,10 @@ type t =
   | Severity_hint
   | Stale
   | Smear
+  | Diff_added
+  | Diff_removed
+  | Diff_hunk
+  | Diff_meta
 [@@deriving sexp_of, equal]
 
 let document ?syntax ?current_line ?special ?overlay () =

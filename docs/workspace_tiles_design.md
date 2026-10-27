@@ -2513,7 +2513,8 @@ primary-editor undo/dirty state remain unchanged by these interactions.
   an empty line's start. Lines wrap by display cells to the content width, as
   before; a TAB keeps its width from the unwrapped line. Controls and invalid bytes
   are drawn as their escape forms but copied as their source bytes.
-- **Movement (no counts).** `h/l` by glyph within a logical line; `0`, `^`, `$` to
+- **Movement (no counts at first; Vim-style counts such as `10j` and `12G` came
+  later, see `tile/text_view.mli`).** `h/l` by glyph within a logical line; `0`, `^`, `$` to
   its start, first non-blank, and last glyph (logical line, not wrapped row, as in
   Vim; in a one-line description `$` is its end); `w/b` to small-word starts across
   lines (the editor's word classes; empty lines stop). `j/k` move by wrapped row with
@@ -2559,8 +2560,8 @@ primary-editor undo/dirty state remain unchanged by these interactions.
   `… | VISUAL: y copy, o swap; Esc cancel` (`VISUAL LINE`). Lists add `yy`:
   `j/k e yy Esc` and `j/k e Enter a yy Esc`. Bindings are provisional, like 7A's,
   pending the command palette.
-- **Known limits.** No counts, `e`/`E`/`W`/`B`, search, or blockwise selection in
-  details. Layout is recomputed per action (fine for details-sized text). `Ui_state`
+- **Known limits.** No counts (since added), `e`/`E`/`W`/`B`, search, or blockwise
+  selection in details. Layout is recomputed per action (fine for details-sized text). `Ui_state`
   gained one more per-view dispatch (`text_view`), which adds to the 7B open question
   about wiring minor tiles by name.
 

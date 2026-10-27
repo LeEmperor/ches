@@ -20,7 +20,14 @@
     non-blank, and last glyph; [w]/[b] go to the next/previous small-word start (as in
     the editor: identifier runs, punctuation runs, empty lines) across lines. [j]/[k]
     move by display row, keeping a preferred display column; [gg]/[G] go to the first
-    and last row; [Ctrl-d]/[Ctrl-u] scroll and move by half the viewport. No counts.
+    and last row; [Ctrl-d]/[Ctrl-u] scroll and move by half the viewport.
+
+    A count, as in Vim, is [1]-[9] then any digits (a leading [0] is still the line
+    start), at most [Ches_core.Command.max_count]. Before [h l j k w b Ctrl-d Ctrl-u]
+    it repeats the motion, stopping at the text's ends ([10j] is ten rows down,
+    [2 Ctrl-d] a whole viewport); before [G] or [gg] it names a logical line ([12G],
+    [3gg]; past the last line is the last), whose start the cursor goes to. Before
+    any other key it is dropped and the key acts once.
 
     {2 Selection and copying}
 
@@ -63,6 +70,10 @@ end
 module Action : sig
   type t =
     | Move of Motion.t
+    | Move_count of int * Motion.t
+    (** A counted motion, see Movement: [Move_count (3, Down)] is [3j], and
+        [Move_count (12, Last)] is [12G], logical line 12. The count is from 1 to
+        [Ches_core.Command.max_count]. *)
     | Visual of Kind.t (** Start, switch to, or (the same kind) end Visual. *)
     | Swap_ends
     | Yank (** The Visual selection. *)
@@ -101,7 +112,8 @@ val selection : t -> (int * int) option
 
 (** Keys typed into the view. [o] means Swap_ends and [y]/[Y] Yank only in Visual;
     otherwise [o] is an edit key, [y] is a prefix of [yy], and [Y] is Yank_line. Edit keys ([i a o x d c s r p u J ~ < >], their
-    capitals, [.], and [Ctrl-r]) are [Edit]. *)
+    capitals, [.], and [Ctrl-r]) are [Edit]. Digits that start a count are a
+    [Prefix] until the key they count. *)
 val interpret : t -> Key.t list -> Action.t Content_key.t
 
 (** Escape ends Visual; otherwise the adapter decides. *)

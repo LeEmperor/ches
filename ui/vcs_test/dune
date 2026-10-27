@@ -1,0 +1,15 @@
+; Async tests of Ches_ui.Vcs_host, the frontend's runner for registered views' jobs:
+; a real Ches_vcs_host runner against git in isolated fixture repositories
+; (Ches_vcs_fixture.Fixture_repo) and small /bin/sh children. Never the Ches
+; repository, never a network; every host is shut down and every child reaped.
+
+(library
+ (name ches_ui_vcs_test)
+ (libraries ches_ui ches_screen ches_vcs ches_vcs_git ches_vcs_host
+  ches_vcs_fixture core core_unix core_unix.signal_unix async)
+ ; See core/dune for why this flag is needed.
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

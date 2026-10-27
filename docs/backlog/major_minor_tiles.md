@@ -9,8 +9,8 @@ phase 10. Moved verbatim from [`workspace_tiles_design.md`](../workspace_tiles_d
 - the comfortable allocation;
 - the read-only text cursor, selection, and copying.
 
-Problems, history, and the demo report are minor tiles on it. The editor is the only
-major tile.
+Problems, history, and the demo report are minor tiles on it. The editor was the only
+major tile until the VCS view (phase 2, below).
 
 **Done in VCS workspace phase 0A (2026-10-14):** the generic view registry.
 - `screen/view_registry.ml` holds the installed views, each an adapter
@@ -43,6 +43,9 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   one split view (`Workspace.Major_split`: side and percent).
 - Generic commands: `Place_view` (by id, or the focused view), `Focus_other_pane`,
   `Swap_split`, `Adjust_split`, bound under `Space s` with palette entries.
+- Later (2026-10-27): `Close_split` (`Space s c`, `split.close`) closes the split
+  view from either pane, through the same path as `Place_view` to `Hidden`, even
+  while zen or a narrow editor area keeps it from being shown.
 
 **Done in VCS workspace phase 0C (2026-10-18):** questions a view asks.
 - An adapter's outcome may carry a `View_registry.Ask.t`: a confirmation (`y` only;
@@ -51,10 +54,22 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   registry keeps the pending question; `Ui_state` opens it on the single float slot
   over the view and delivers the answer back through `View_registry.answer`.
 
+**Done in VCS workspace phase 2 (2026-10-27):** the first Major registered view.
+- `screen/vcs_view.ml` (id `vcs`, role `Major`, `accepts_tab`) is installed by the
+  frontend through `Ui_state.create ~views`, hidden and opening in a tab, with no
+  per-name code in `Ui_state`: `Space g g/f` are `Focus_view vcs` and
+  `Space g t/s/h` are `Place_view { view = Some vcs; ... }` (palette `vcs.open`,
+  `vcs.to-tab`, `vcs.to-split`, `vcs.close`). Without a runner the frontend installs
+  it as `View_registry.Entry.unavailable` ("VCS unavailable in this session").
+- Generic seams it introduced, usable by any later view: background jobs in an
+  outcome (`Outcome.jobs`, handed to the frontend by `Ui_state.take_vcs_jobs` and run
+  by `ui/vcs_host.ml`, whose events come back as `Input.Vcs`), signals (`Shown`,
+  `Saved`, `Job`), `Outcome.open_file`, and `Adapter.text_area`.
+
 **What is not done:**
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.
-- Any specialized major tile, such as a Hardcaml report or workbench.
+- Any other specialized major tile, such as a Hardcaml report or workbench.
 - Unanswered comfort questions from 7B.
 
 The command palette (being built on another branch) is expected to replace the

@@ -1,0 +1,13 @@
+; Tests of the git backend: pure parser tests over captured output, and fixture
+; tests that run the backend's specs against real repositories in isolated temp
+; directories (Ches_vcs_fixture.Fixture_repo.run_steps, synchronous; no Async).
+
+(library
+ (name ches_vcs_git_test)
+ (libraries ches_vcs ches_vcs_git ches_vcs_fixture core core_unix expect_test_helpers_core)
+ ; See core/dune for why this flag is needed.
+ (inline_tests
+  (flags
+   (:standard -source-tree-root .)))
+ (preprocess
+  (pps ppx_jane)))

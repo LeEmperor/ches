@@ -69,6 +69,10 @@ val handle_input : t -> Keymap.Input.t -> t * View_command.t list * Controller.S
 val feedback : t -> Ches_error.Error.t
 val take_clipboard : t -> t * string option
 val take_saved : t -> t * Controller.Saved.t list
+
+(** What {!take_saved} would return now (oldest first), without taking it. Saves of
+    the active controller count once it is passed to {!replace_active}. *)
+val saved : t -> Controller.Saved.t list
 val take_closed : t -> t * string list
 val exited : t -> bool
 val dispose : t -> unit

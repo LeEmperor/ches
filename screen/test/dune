@@ -1,11 +1,12 @@
 ; Headless tests of the screen model. Like ches_screen, must not depend on bonsai or
-; bonsai_term.
+; bonsai_term. VCS view tests may run real git synchronously through the test-only
+; ches_vcs_fixture (isolated temp repositories); never ches_vcs_host or Async.
 
 (copy_files# ../../test/key_notation.ml)
 
 (library
  (name ches_screen_test)
- (libraries ches_error ches_app ches_core ches_input ches_palette ches_file_picker ches_line_picker ches_content_picker ches_tile ches_screen ches_highlight core expect_test_helpers_core)
+ (libraries ches_error ches_app ches_core ches_input ches_palette ches_file_picker ches_line_picker ches_content_picker ches_tile ches_screen ches_highlight ches_vcs ches_vcs_git ches_vcs_fixture core expect_test_helpers_core)
  ; See core/dune for why this flag is needed.
  (inline_tests
   (flags

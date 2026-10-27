@@ -262,3 +262,84 @@ let%expect_test "an updated snapshot never retargets a selection silently" =
   print_s [%sexp (result : [ `Same | `Changed of bool ]), (Text_view.cursor t : int)];
   [%expect {| ((Changed false) 3) |}]
 ;;
+
+let%expect_test "counts repeat motions, clamp at the text's ends, and name lines" =
+  let lines = List.init 30 ~f:(fun i -> sprintf "l%02d a b" (i + 1)) in
+  let t = create (String.concat ~sep:"\n" lines) in
+  let at s t =
+    let t = type_ ~width:20 ~rows:4 t s in
+    let row, col = Text_view.cursor_cell t ~width:20 in
+    printf "%-8s row %2d col %d top %2d\n" s row col (Text_view.top t);
+    t
+  in
+  let t = at "10j" t in
+  let t = at "3k" t in
+  let t = at "5w" t in
+  let t = at "2b" t in
+  let t = at "3l" t in
+  let t = at "2h" t in
+  let t = at "2<C-d>" t in
+  let t = at "<C-u>" t in
+  let t = at "12G" t in
+  let t = at "3gg" t in
+  (* Clamped: past the last row, line, glyph, or word; and back past the first. *)
+  let t = at "100j" t in
+  let t = at "999999k" t in
+  let t = at "99G" t in
+  let t = at "50gg" t in
+  let t = at "20l" t in
+  let t = at "40w" t in
+  let t = at "999999b" t in
+  let (_ : Text_view.t) = at "1G" t in
+  [%expect
+    {|
+    10j      row 10 col 0 top  7
+    3k       row  7 col 0 top  7
+    5w       row  8 col 6 top  7
+    2b       row  8 col 0 top  7
+    3l       row  8 col 3 top  7
+    2h       row  8 col 1 top  7
+    2<C-d>   row 12 col 1 top 11
+    <C-u>    row 10 col 1 top  9
+    12G      row 11 col 0 top  9
+    3gg      row  2 col 0 top  2
+    100j     row 29 col 0 top 26
+    999999k  row  0 col 0 top  0
+    99G      row 29 col 0 top 26
+    50gg     row 29 col 0 top 26
+    20l      row 29 col 6 top 26
+    40w      row 29 col 6 top 26
+    999999b  row  0 col 0 top  0
+    1G       row  0 col 0 top  0
+    |}]
+;;
+
+let%expect_test "count digits: a lone 0 is the line start, a 0 after a digit extends" =
+  let interpret s = Text_view.interpret (create "text") (keys s) in
+  print_s
+    [%sexp
+      (List.map
+         [ "0"; "1"; "10"; "10j"; "20G"; "3g"; "3gg"; "1000000j"; "2v"; "3$"; "2x"; "4q" ]
+         ~f:(fun s -> s, interpret s)
+       : (string * Text_view.Action.t Content_key.t) list)];
+  [%expect
+    {|
+    ((0 (Action (Move Line_start))) (1 Prefix) (10 Prefix)
+     (10j (Action (Move_count 10 Down))) (20G (Action (Move_count 20 Last)))
+     (3g Prefix) (3gg (Action (Move_count 3 First)))
+     (1000000j (Action (Move_count 999999 Down)))
+     (2v (Action (Visual Characterwise))) (3$ (Action (Move Line_end)))
+     (2x (Action Edit)) (4q Unbound))
+    |}];
+  (* [10] then a key that is not a counted motion acts once: [10$], [10yy]. *)
+  let t = type_ (create "one two\nthree") "10$" in
+  show t;
+  let (_ : Text_view.t) = type_ t "10yy" in
+  [%expect
+    {|
+     0 |one tw#o|
+     1 |three|
+    top 0 cursor 6
+    ("Copied 1 line" (clipboard "one two\n"))
+    |}]
+;;

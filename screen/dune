@@ -3,9 +3,11 @@
 ; spans. It must not depend on bonsai or bonsai_term, so headless tests can drive it.
 ; It uses notty only for [Notty.Tty_width_hint], the width table notty itself draws
 ; with, so that our cell counts agree with what reaches the terminal.
+; It may use the pure VCS libraries (ches_vcs, ches_vcs_git: core only, no Async, no
+; Unix) for the VCS view; never ches_vcs_host, which runs processes (ches_ui owns it).
 
 (library
  (name ches_screen)
- (libraries ches_error ches_app ches_core ches_input ches_highlight ches_palette ches_file_picker ches_file_preview_model ches_line_picker ches_content_picker ches_tile core notty-community)
+ (libraries ches_error ches_app ches_core ches_input ches_highlight ches_palette ches_file_picker ches_file_preview_model ches_line_picker ches_content_picker ches_tile ches_vcs ches_vcs_git core notty-community)
  (preprocess
   (pps ppx_jane)))

@@ -32,6 +32,11 @@ for general distribution.
 - **Diagnostics:** `ocamllsp` for OCaml and `slang-server` for Verilog and
   SystemVerilog, with a problems view, freshness tracking, and explicit restart
   controls.
+- **VCS view (read-only so far):** a lazygit/Magit-style git view (`Space g g`) in
+  a tab or the split: files by section, branches, recent commits, a diff panel that
+  follows the selection, and a command log. `e` in the diff opens the file at that
+  line. Git runs in the background, never prompting on the terminal; saving a file
+  in the repository refreshes it.
 
 Ches retains multiple files and visited directories per session. Files accept UTF-8 text with LF line endings
 and preserves the file's contents, including whether it ends with a newline.
@@ -84,7 +89,9 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space v o` | Focus the problems view or return to the document |
 | `Space v M` | Show and focus notification history |
 | `Space s t/s/b/h` | Move the focused view to a tab / the split / the bottom band, or close it |
-| `Space s f/x/+/-` | Split: focus the other pane / swap sides / grow / shrink the view's share (a count repeats `+`/`-`) |
+| `Space s f/x/c/+/-` | Split: focus the other pane / swap sides / close the split view / grow / shrink the view's share (a count repeats `+`/`-`) |
+| `Space g g` / `Space g f` | Open the VCS view as a tab, or focus it where it is / toggle focus with the editor |
+| `Space g t/s/h` | Move the VCS view to a tab / the split, or close it |
 
 See the [editor reference](docs/editor_reference.md) for the complete keybindings,
 editing semantics, workspace controls, and diagnostic-source behavior.
@@ -129,8 +136,9 @@ those frames.
 | `file_picker/` | Project file discovery/matching and Async floating-picker runtime |
 | `line_picker/` | Bounded fuzzy search over current in-memory document lines |
 | `content_picker/` | On-disk literal search provider and Async floating-picker runtime |
+| `vcs/` | VCS model, git command builders and parsers, and the Async job runner |
 | `screen/` | Screen geometry, workspace state, and frame rendering |
-| `ui/` | Bonsai_term frontend, event adapter, and theme |
+| `ui/` | Bonsai_term frontend, event adapter, theme, and the VCS runner's host |
 | `bin/` | Command-line entry point |
 
 The editing core, input layer, and application controller have no Bonsai or
@@ -208,6 +216,8 @@ acceptance remain separate and unperformed.
   servers are shared by workspace root and configuration; document changes are
   coalesced and use incremental synchronization when supported. The synthetic
   checker retains per-file runtimes. No session persistence or multiple editor groups.
+- **Version control:** the VCS view reads state only (stage, commit, and remotes
+  are planned); it refreshes on open, `g r`, and saves, never by watching files.
 - **Editing and tooling:** literal search, an unnamed
   register, and a limited `:` prompt. Language-server integration currently
   consumes diagnostics only.

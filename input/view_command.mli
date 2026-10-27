@@ -107,6 +107,10 @@ type t =
   | Swap_split (** Put the split view on the other side of the editor area. *)
   | Adjust_split of int
   (** Change the split view's requested share of the editor area, in percent. *)
+  | Close_split
+  (** Close the split view from either pane, as [Place_view] to [Hidden] would, even
+      while zen or a narrow editor area keeps it from being shown. Focus in it
+      returns to the active tab. With no split view, only says so. *)
   | Run_view_command of
       { view : View_id.t
       ; command : string (** A name the view declares among its local commands. *)
@@ -129,8 +133,9 @@ type t =
 [@@deriving sexp_of, equal]
 
 (** [scale t ~count] repeats a resize step [count] times, for a Normal-mode count:
-    [Adjust_width], [Adjust_split], [Adjust_status_size], and [Adjust_directory_size]
-    with their step multiplied by [count] (positive, at most [Command.max_count]).
-    Each result is clamped where it is applied, like repeated presses. [None] for
-    every other command, which takes no count ([Scroll] carries its own). *)
+    [Shift], [Adjust_width], [Adjust_split], [Adjust_status_size], and
+    [Adjust_directory_size] with their step multiplied by [count] (positive, at most
+    [Command.max_count]). Each result is clamped where it is applied, like repeated
+    presses. [None] for every other command, which takes no count ([Scroll] carries
+    its own). *)
 val scale : t -> count:int -> t option

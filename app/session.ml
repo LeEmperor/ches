@@ -689,6 +689,7 @@ let close_current t ~force = match t.active with None -> t, false | Some id -> c
 let feedback t = t.feedback
 let take_clipboard t = { t with clipboard = None }, t.clipboard
 let take_saved t = { t with saved = [] }, t.saved
+let saved t = t.saved
 let take_closed t = { t with closed = [] }, t.closed
 
 module For_testing = struct

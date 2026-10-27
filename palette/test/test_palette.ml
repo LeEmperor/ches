@@ -40,7 +40,7 @@ let%expect_test "opening lists available commands and selects the first" =
       tabs.next
       tabs.previous
       tabs.close
-      ... 59 more
+      ... 64 more
     |}]
 ;;
 
@@ -146,7 +146,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 62 more
+      ... 67 more
     |}]
 ;;
 

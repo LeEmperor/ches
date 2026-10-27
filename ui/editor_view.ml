@@ -80,7 +80,7 @@ module Content_picker_host = struct
     }
 end
 
-let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
@@ -96,12 +96,23 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
     (Filename.concat starting_directory "__picker_scope__") in
   let file_runtime = Option.value_map file_picker ~default:production_runtime
     ~f:(fun host -> host.File_picker_host.runtime) in
+  (* The VCS view looks for a repository from the startup directory. Without a
+     runner it is known only by id, so Space g reports why nothing opens. *)
+  let vcs_entry = match vcs with
+    | Some _ ->
+      let cwd = if Filename.is_relative starting_directory
+        then Filename.concat (Core_unix.getcwd ()) starting_directory
+        else starting_directory in
+      Vcs_view.entry ~cwd ()
+    | None ->
+      View_registry.Entry.unavailable Vcs_view.id ~title:"VCS"
+        ~notice:"VCS unavailable in this session" in
   let initial_ui = match content_picker, file_picker with
     | Some _, Some _ -> invalid_arg "Only one initial picker host is allowed"
     | Some host, None -> host.Content_picker_host.initial_ui
     | None, Some host -> host.File_picker_host.initial_ui
     | None, None -> Ui_state.create ~smear_enabled ?buffer_presentation ?report
-        ~source_attached:(Option.is_some source) controller in
+        ~source_attached:(Option.is_some source) ~views:[ vcs_entry ] controller in
   let current_ui = ref initial_ui in
   let render_cache = Frame.Cache.create () in
   let synchronized_dimensions = ref None in
@@ -241,6 +252,16 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
               Bonsai.Apply_action_context.schedule_event
                 context
                 (Effect.of_thunk (fun () -> Ches_source.Source.send source request))));
+          (* Views' jobs leave as data too: the runner gets them after this transition.
+             Without a runner, each is answered as never started, so no view waits. *)
+          let model, jobs = Ui_state.take_vcs_jobs model in
+          if not (List.is_empty jobs) then
+            Bonsai.Apply_action_context.schedule_event context
+              (match vcs with
+               | Some host -> Effect.of_thunk (fun () -> Vcs_host.submit host jobs)
+               | None -> Bonsai.Apply_action_context.inject context
+                   (List.map jobs ~f:(fun job ->
+                      Ui_state.Input.Vcs (Finished (Ches_vcs.Job.never_started job)))));
           let model, requests = Ui_state.take_file_requests model in
           List.iter requests ~f:(fun request ->
             Bonsai.Apply_action_context.schedule_event context
@@ -277,6 +298,9 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
           (match status with
            | Exit when was_running ->
               Option.iter source ~f:Ches_source.Source.stop;
+              (* Children get SIGTERM now; [run] waits for them after the terminal
+                 closes ([Vcs_host.shutdown]), never here. *)
+              Option.iter vcs ~f:Vcs_host.stop;
               Ches_file_picker_host.Runtime.cancel file_runtime;
               Ches_content_picker_host.Runtime.cancel content_runtime;
              Bonsai.Apply_action_context.schedule_event context (exit ())
@@ -322,6 +346,23 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
            let%bind.Effect () =
              inject (List.map events ~f:(fun event -> Ui_state.Input.Source event))
            in
+           pump ()
+         in
+         pump ())
+      graph);
+  (* The runner's events enter the same way, one batch per transition. The next batch
+     is asked for only once the previous one is injected; after [stop] none comes, so
+     this loop never holds exit open. *)
+  Option.iter vcs ~f:(fun host ->
+    Bonsai.Edge.lifecycle
+      ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Vcs_host.stop host)))
+      ~on_activate:
+        (let%arr inject in
+         let rec pump () =
+           let%bind.Effect inputs =
+             Effect.of_deferred_thunk (fun () -> Vcs_host.next_inputs host)
+           in
+           let%bind.Effect () = inject inputs in
            pump ()
          in
          pump ())
@@ -372,21 +413,31 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?font ?fil
   ~view, ~handler
 ;;
 
-let run ?(smear_enabled = false) ?font ?buffer_presentation ?report ?source controller =
+let run ?(smear_enabled = false) ?font ?buffer_presentation ?report ?source ?vcs controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
   Async.Signal.handle
     [ Async.Signal.term; Async.Signal.hup ]
     ~f:(fun (_ : Signal.t) -> Async.shutdown 1);
-  Async.Deferred.map
+  (* However the process ends, git children get their termination grace, so none is
+     left holding [index.lock]. Idempotent with the wait below. *)
+  Option.iter vcs ~f:(fun host ->
+    Async.Shutdown.at_shutdown (fun () ->
+      Async.Deferred.ignore_m (Vcs_host.shutdown host)));
+  Async.Deferred.bind
     (Bonsai_term.start_with_exit
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-        (app ~smear_enabled ?buffer_presentation ?report ?source ?font controller))
+        (app ~smear_enabled ?buffer_presentation ?report ?source ?vcs ?font controller))
     ~f:(fun result ->
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;
+      let%map.Async.Deferred (_ : [ `Finished | `Timed_out ]) =
+        match vcs with
+        | None -> Async.return `Finished
+        | Some host -> Vcs_host.shutdown host
+      in
       result)
 ;;

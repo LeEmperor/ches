@@ -76,6 +76,16 @@ module Answer : sig
   [@@deriving sexp_of, equal]
 end
 
+(** A file to show in the editor area ({!Outcome.t.open_file}). *)
+module Location : sig
+  type t =
+    { path : string (** Absolute. *)
+    ; line : int option
+    (** 1-based, at the line's first column; past the end means the last line. *)
+    }
+  [@@deriving sexp_of, equal]
+end
+
 (** What performing an action asks of the application, besides the view's new
     state. An adapter's ['ask] is an {!Ask.t} of its own actions; the application
     receives only its {!Ask.Question.t}. *)
@@ -86,19 +96,61 @@ module Outcome : sig
     ; notice : [ `Post of string | `Show of string ] option
     (** [`Post] also reports the notice as feedback; [`Show] only displays it. *)
     ; return : bool (** Return focus to the document afterwards. *)
+    ; open_file : Location.t option
+    (** Open (or activate) the file and show it, as a picker does: the active file
+        tab replaces an active view tab, focus returns to the editor area (the other
+        pane when the view is in the split), and the cursor goes to [line]. A file
+        that cannot be opened (missing, a directory) gives the view a notice and
+        leaves focus where it was. *)
+    ; jobs : Ches_vcs.Job.t list
+    (** Background work for the frontend's runner, in submission order
+        ([Ui_state.take_vcs_jobs]). The job's events come back to this view as
+        {!Signal.t.Job}. A job whose id is still in flight (submitted by any view and
+        not yet [Finished]) is not submitted: the view is signalled its
+        {!Ches_vcs.Job.never_started} report at once instead. *)
     ; ask : 'ask option
     (** A question to ask on a float over the view, applied last; it replaces any
         question still pending. *)
     }
 
-  (** No effect, notice, return, or question; [controller] unchanged. *)
+  (** No effect, notice, return, file, jobs, or question; [controller] unchanged. *)
   val create
     :  ?effect:Ches_tile.Text_view.Effect.t
     -> ?notice:[ `Post of string | `Show of string ]
     -> ?return:bool
+    -> ?open_file:Location.t
+    -> ?jobs:Ches_vcs.Job.t list
     -> ?ask:'ask
     -> Ches_app.Controller.t
     -> 'ask t
+end
+
+(** What the application tells a view without a key: the view's {!Adapter.t.signal}
+    turns each into one of its own actions (or ignores it), which is performed like a
+    key's action, focused or not. The outcome of a signalled action is applied
+    without moving focus or disturbing the focused view (its prefix and footer
+    notice): its [controller] and [jobs] apply; a [`Post] notice goes to the feedback
+    line only; [`Show] notices, [effect], [return] and [open_file] are ignored; [ask]
+    opens only while the asking view itself is focused, and is otherwise withdrawn
+    (nothing runs). A pending question survives a signalled action that asks
+    nothing. The view's [fit] follows once per input or batch. *)
+module Signal : sig
+  type t =
+    | Shown
+    (** The view has a placement again: after the input that moved it out of
+        [Hidden], or after the first input for a view installed placed. Moving
+        between [Band], [Tab] and [Split] is not signalled; closing and reopening
+        is. *)
+    | Saved of string list
+    (** The session wrote these files (absolute paths, oldest first; at least one)
+        during the last input: one signal for all of an input's saves (e.g. a save
+        all). Directory-buffer applies are not included. Every installed view gets
+        it, placed or hidden. *)
+    | Job of Ches_vcs.Event.t
+    (** An event of a job this view submitted ({!Outcome.t.jobs}), in the runner's
+        order; nothing after its [Finished]. Delivered placed or hidden. Staleness
+        is the view's to decide ({!Ches_vcs.Stamps}). *)
+  [@@deriving sexp_of]
 end
 
 module Adapter : sig
@@ -128,6 +180,14 @@ module Adapter : sig
     ; commands : 'state -> Ches_tile.Local_command.t list
     (** The local commands in this state, for [?] help and the palette. Each one's
         keys must {!interpret} to an action in the state that lists it. *)
+    ; signal : 'state -> Signal.t -> 'action option
+    (** The action a {!Signal.t} means in this state; [None] ignores it. Views
+        without background work return [None]. *)
+    ; text_area : 'state -> rows:int -> width:int -> Geometry.Rect.t option
+    (** Where open {!text_view} text is drawn within the [width] by [rows] content
+        viewport, relative to its top-left corner; [None] is the whole viewport. The
+        terminal cursor is the text cursor fitted to this area, so a view that draws
+        its text in a part of its content (a diff panel beside lists) says which. *)
     ; render
       :  'state
       -> Ches_app.Controller.t
@@ -144,8 +204,16 @@ end
 module Entry : sig
   type t
 
-  (** [placement] defaults to [Hidden]. *)
-  val install : ?placement:Placement.t -> ('state, _) Adapter.t -> 'state -> t
+  (** [placement] defaults to [Hidden]. [opens_in] (default [Band]; not [Hidden]) is
+      where {!View_command.t.Focus_view} and {!View_command.t.Toggle_view} show the
+      view when it is hidden: [Tab] adds and activates a tab, [Split] replaces the
+      split view. *)
+  val install
+    :  ?placement:Placement.t
+    -> ?opens_in:Placement.t
+    -> ('state, _) Adapter.t
+    -> 'state
+    -> t
 
   (** A view that is known by id but not installed in this session. *)
   val unavailable : View_id.t -> title:string -> notice:string -> t
@@ -169,6 +237,10 @@ val unavailable_notice : t -> View_id.t -> string option
 
 (** Installed views and their placements, in order. *)
 val placements : t -> (View_id.t * Placement.t) list
+
+(** Where a hidden view is shown by focusing or toggling it ({!Entry.install});
+    [Band] for a view that is not installed. *)
+val opens_in : t -> View_id.t -> Placement.t
 
 val placement : t -> View_id.t -> Placement.t option
 
@@ -196,6 +268,10 @@ val close : t -> View_id.t -> t
 val fit : t -> Ches_app.Controller.t -> viewport:(View_id.t -> int * int) -> t
 
 val text_view : t -> View_id.t -> Ches_tile.Text_view.t option
+
+(** The adapter's {!Adapter.t.text_area}; [None] also when not installed. *)
+val text_area : t -> View_id.t -> rows:int -> width:int -> Geometry.Rect.t option
+
 val commands : t -> View_id.t -> Ches_tile.Local_command.t list
 
 val render
@@ -265,6 +341,19 @@ val answer
 
 (** Drop [id]'s pending question without performing anything. *)
 val withdraw : t -> View_id.t -> t
+
+(** Tell [id] a {!Signal.t}, performing the action its adapter names for it. [None]
+    when nothing ran (not installed, or the adapter ignored it). A pending question
+    is kept unless the outcome asks another. See {!Signal} for how the application
+    applies the outcome. *)
+val signal
+  :  t
+  -> View_id.t
+  -> Signal.t
+  -> controller:Ches_app.Controller.t
+  -> rows:int
+  -> width:int
+  -> t * Ask.Question.t Outcome.t option
 
 (** Typed access to an installed view's state by its adapter's key. *)
 val find : t -> 'state Type_equal.Id.t -> 'state option

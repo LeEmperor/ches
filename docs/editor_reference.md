@@ -34,6 +34,8 @@ checks for [Ches](../README.md).
 | Normal | `Space v o` | Show/focus problems, or return to the document |
 | Normal | `Space v d` / `Space v D` | Show/hide, or show/focus, the static demo report (`--demo-report` only) |
 | Normal | `Space v m` / `Space v M` | Show/hide, or show/focus, the notification history |
+| Normal | `Space g g` / `Space g f` | Open the VCS view as a tab, or focus it where it is; from the focused view, back to the editor (see [VCS view](#vcs-view)) |
+| Normal | `Space g t` / `Space g s` / `Space g h` | Move the VCS view to a tab / the split, or close it |
 | Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp, slang-server, or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
@@ -55,8 +57,8 @@ checks for [Ches](../README.md).
 | Normal | `Space q` | Quit; refused for dirty/missing files and hidden dirty directories |
 | Normal | `Space Q` | Quit, discarding unsaved changes |
 | Normal | `Space v c` | Toggle the centered tile / full width |
-| Normal | `Space v h` / `Space v l` | Move the tile 2 cells left / right |
-| Normal | `Space v H` / `Space v L` | Move the tile 10 cells left / right |
+| Normal | `Space v h` / `Space v l` | Move the tile 2 cells left / right; a count repeats (`3 Space v l` is 6) |
+| Normal | `Space v H` / `Space v L` | Move the tile 10 cells left / right; a count repeats |
 | Normal | `Space v -` / `Space v +` (or `=`) | Text width 10 cells narrower / wider; a count repeats (`3 Space v +` is 30) |
 | Normal | `Space v n` | Toggle absolute line numbers (Vim's `number`) |
 | Normal | `Space v N` | Toggle relative line numbers (Vim's `relativenumber`) |
@@ -429,6 +431,61 @@ leaves active problems alone. The focused list follows the newest entry until yo
 read-only text (below), and `X` clears the history. Escape, Tab, and `Space v …`
 behave as in problems.
 
+### VCS view
+
+`Space g g` opens a git view of the repository around the startup file (or the
+directory opened), in the spirit of lazygit and Magit. It is read-only for now:
+staging, commits, branches and remotes are planned. The view is a tab the first
+time; `Space g s` moves it into the split beside the editor, `Space g t` back
+into the tab strip, and `Space g h` closes it (its state is simply re-read when it
+opens again). It occupies one place at a time. `Space g g` and `Space g f` are the
+same command: they open the view, activate its tab, or move focus between it and
+the editor. The palette lists them as `VCS: open or focus` (`vcs.open`),
+`VCS: move to a tab`, `VCS: move to the split` and `VCS: close` (`vcs.to-tab`,
+`vcs.to-split`, `vcs.close`). `Space s t/s/h` also move it while it has focus.
+
+The left column holds a head summary (branch, upstream and ahead/behind, and any
+merge or rebase in progress) above three list panels: **Files** (Conflicted,
+Untracked, Unstaged and Staged sections), **Branches** and **Commits** (the latest
+200). The diff panel beside them follows the selection: a file's unstaged or staged
+diff, a section's combined diff, or a commit's `git show`. In a narrow placement,
+such as the split, the lists stack above the diff; when even that does not fit,
+only the focused part shows. `@` shows the command log at the bottom: each git
+command with its exit status and, on failure, its output.
+
+| VCS keys | Action |
+| --- | --- |
+| `1` / `2` / `3` (list) | Focus the Files / Branches / Commits panel |
+| `0` (list), `Tab` | Focus the diff; `Tab` again returns to the list it follows |
+| `j` `k`, `gg` `G`, `Ctrl-d` `Ctrl-u` | Move in a list (headers included); the diff follows |
+| `Enter` (list) | Fold or unfold a section header; on a file or commit, focus the diff |
+| `y` (list) | Copy the selected path, branch name or abbreviated commit hash |
+| Read-only text keys (diff) | Move, select and copy, as in [Read-only text](#read-only-text-in-supporting-views), with counts: `10j`, `5k`, `12G` |
+| `e`, `Enter` (diff) | Open the file at the cursor's line |
+| `g r` | Refresh (or look for a repository again) |
+| `@` | Show or hide the command log |
+| `?` | List the keys that work where the cursor is (also in the palette, first) |
+| `q` | Leave: show the file tab, or return focus to the editor beside the split |
+| `Escape` | In the diff: end a selection, then back to the list; in a list: return |
+
+In the diff, digits belong to the text: `10j` scrolls ten rows and `0` is the line
+start, so `1`/`2`/`3` do not switch panels there. `Tab` or `Escape` returns to the
+lists, where they do.
+
+`e` in the diff opens the work-tree file at the line the cursor is on (for a removed
+line, the next line that survives; for a hunk header, its first line). From a tab, the
+file's tab replaces the view's; beside the split, the file shows in the editor pane,
+which gets focus. A commit's diff opens today's file at the commit's line numbers.
+
+The view refreshes when it opens, on `g r`, and after a save of a file inside the
+repository (at most once per save); it never polls or watches files. Its git
+commands run in the background, so the editor never waits for them; while one runs,
+the last state stays drawn. Git never prompts on the terminal
+(`GIT_TERMINAL_PROMPT=0`), and git's lock files are released on quit: Ches waits up
+to three seconds after the terminal closes for its git children to end. Outside a
+repository the view says `VCS: not a repository`; `g r` looks again. Paths,
+subjects and output from git are shown with control bytes escaped.
+
 ### Read-only text in supporting views
 
 Open details (problems, the demo report, and history) are read-only text, like a read-only
@@ -438,6 +495,7 @@ buffer in a Neovim split, with the terminal cursor on the text cursor:
 | --- | --- |
 | `h/l`, `0` `^` `$`, `w/b` | Move within the text (`0`/`$` and `^` use the whole logical line, not the wrapped row) |
 | `j/k`, `gg/G`, `Ctrl-d/u` | Move by wrapped row, to the first/last row, or by half the view |
+| Count, e.g. `10j` | Repeat `h` `j` `k` `l` `w` `b` `Ctrl-d` `Ctrl-u` (`10j`, `3w`, `2 Ctrl-d`), stopping at the ends; `12G` or `12gg` goes to line 12 |
 | `v` / `V` | Characterwise / linewise Visual selection; again to end it, `o` swaps ends |
 | `y` (Visual), `yy` / `Y` | Copy the selection, or the cursor's whole line |
 | `e` | Close details (`Enter` also jumps in problems, `a` acknowledges) |
@@ -501,10 +559,10 @@ type it, with any keys of the sequence after it (`20 g`, `3 Space v`).
 - `0`, `^`, `%`, and `zz`/`zt`/`zb` take no count. `x`, `X`, `p`, and `P` take a
   count; operator and motion counts multiply (`2d3w` deletes and `2y3w` yanks six
   words). A count repeats a resize step as that many presses would: `3 Space v +`
-  widens the text by 30 cells, and `Space s +`/`-`, `Space v p +`/`-`, and
-  `Space d +`/`-` work the same way, stopping at their usual limits. A count before
-  an unsupported command, such as `3^`, `2 Space w`, or `2 Space v c`, is rejected
-  with a message.
+  widens the text by 30 cells, and `Space v h`/`l`/`H`/`L`, `Space s +`/`-`,
+  `Space v p +`/`-`, and `Space d +`/`-` work the same way, stopping at their usual
+  limits. A count before an unsupported command, such as `3^`, `2 Space w`, or
+  `2 Space v c`, is rejected with a message.
 - `Escape` cancels a pending count silently. A key that is not bound after a count,
   `Ctrl-c`, or a paste also cancels it. Nothing typed before a cancellation
   carries over to the next key.

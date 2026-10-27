@@ -219,8 +219,10 @@ let adapter : (t, action) View_registry.Adapter.t =
         let { Outcome.tile; controller; notice; effect; return } =
           perform t controller ~rows ~width action
         in
-        tile, { View_registry.Outcome.controller; effect; notice; return; ask = None })
+        tile, View_registry.Outcome.create ?effect ?notice ~return controller)
   ; commands
+  ; signal = (fun _ _ -> None)
+  ; text_area = (fun _ ~rows:_ ~width:_ -> None)
   ; render =
       (fun t controller ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
         let feedback = Controller.feedback controller in

@@ -1,0 +1,11 @@
+; ches_vcs_host runs ches_vcs jobs as child processes under Async: the mutation
+; queue, concurrent reads, streaming output, timeouts, cancellation, and the
+; non-interactive authentication environment. Like ches_source it must not depend on
+; ches_screen, ches_ui or any terminal library; ches_ui connects it to the UI state
+; (phase 2). Implemented by phase 1 agent H against the .mli contracts.
+
+(library
+ (name ches_vcs_host)
+ (libraries ches_vcs core core_unix core_unix.signal_unix async)
+ (preprocess
+  (pps ppx_jane)))

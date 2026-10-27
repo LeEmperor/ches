@@ -81,6 +81,7 @@ type t =
   | Focus_other_pane
   | Swap_split
   | Adjust_split of int
+  | Close_split
   | Run_view_command of
       { view : View_id.t
       ; command : string
@@ -101,6 +102,7 @@ type t =
 
 let scale t ~count =
   match t with
+  | Shift cells -> Some (Shift (cells * count))
   | Adjust_width cells -> Some (Adjust_width (cells * count))
   | Adjust_split points -> Some (Adjust_split (points * count))
   | Adjust_status_size cells -> Some (Adjust_status_size (cells * count))
@@ -125,7 +127,6 @@ let scale t ~count =
   | Force_close_tab
   | Recreate_missing_file
   | Toggle_centered
-  | Shift _
   | Toggle_absolute_numbers
   | Toggle_relative_numbers
   | Toggle_smear
@@ -139,6 +140,7 @@ let scale t ~count =
   | Place_view _
   | Focus_other_pane
   | Swap_split
+  | Close_split
   | Run_view_command _
   | Restart_source
   | Kill_source

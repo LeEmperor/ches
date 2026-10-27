@@ -32,6 +32,7 @@ end
 module Action = struct
   type t =
     | Move of Motion.t
+    | Move_count of int * Motion.t
     | Visual of Kind.t
     | Swap_ends
     | Yank
@@ -277,13 +278,10 @@ let tokens t =
   |> Array.of_list
 ;;
 
-let word t ~forward =
-  let tokens = tokens t in
+(* The index of the next (or previous) small-word start from token [i], or of the
+   text's last (or first) token when there is none. *)
+let word_step tokens i ~forward =
   let n = Array.length tokens in
-  let offset = function
-    | Glyph (o, _) | Empty o -> Some o
-    | Break -> None
-  in
   let blank i =
     match tokens.(i) with
     | Break | Glyph (_, `Blank) -> true
@@ -294,42 +292,58 @@ let word t ~forward =
     | Glyph (_, c) -> Some c
     | Empty _ | Break -> None
   in
-  let i =
-    Array.findi tokens ~f:(fun _ token -> [%equal: int option] (offset token) (Some t.cursor))
-    |> Option.value_map ~default:0 ~f:fst
+  let same_class j c =
+    [%equal: [ `Identifier | `Punctuation | `Blank ] option] (cls j) (Some c)
   in
-  let ends = if forward then n - 1 else 0 in
-  let at j = Option.value_exn (offset tokens.(j)) in
   if forward
   then (
     let j = ref (i + 1) in
     (match cls i with
      | Some c when not (blank i) ->
-       while !j < n && [%equal: [ `Identifier | `Punctuation | `Blank ] option] (cls !j) (Some c) do
+       while !j < n && same_class !j c do
          incr j
        done
      | Some _ | None -> ());
     while !j < n && blank !j do
       incr j
     done;
-    if !j < n then at !j else at ends)
+    if !j < n then !j else n - 1)
   else (
     let j = ref (i - 1) in
     while !j >= 0 && blank !j do
       decr j
     done;
     if !j < 0
-    then at ends
+    then 0
     else (
       match cls !j with
-      | None -> at !j
+      | None -> !j
       | Some c ->
-        while !j > 0
-              && [%equal: [ `Identifier | `Punctuation | `Blank ] option] (cls (!j - 1)) (Some c)
-        do
+        while !j > 0 && same_class (!j - 1) c do
           decr j
         done;
-        at !j))
+        !j))
+;;
+
+let word t ~forward ~count =
+  let tokens = tokens t in
+  let offset = function
+    | Glyph (o, _) | Empty o -> Some o
+    | Break -> None
+  in
+  let i =
+    Array.findi tokens ~f:(fun _ token -> [%equal: int option] (offset token) (Some t.cursor))
+    |> Option.value_map ~default:0 ~f:fst
+  in
+  (* Stops early once at an end, so a large count costs no more than the text. *)
+  let rec go i count =
+    if count = 0
+    then i
+    else (
+      let j = word_step tokens i ~forward in
+      if j = i then i else go j (count - 1))
+  in
+  Option.value_exn (offset tokens.(go i count))
 ;;
 
 (* {1 Selection} *)
@@ -402,7 +416,7 @@ let is_edit = function
   | _ -> false
 ;;
 
-let interpret t (keys : Key.t list) : Action.t Content_key.t =
+let interpret_once t (keys : Key.t list) : Action.t Content_key.t =
   let visual = Option.is_some t.visual in
   let is c = function
     | Key.Char u -> Uchar.is_char u && Char.equal (Uchar.to_char_exn u) c
@@ -433,6 +447,37 @@ let interpret t (keys : Key.t list) : Action.t Content_key.t =
          | Half_up -> Half_up
          | First -> First
          | Last -> Last))
+;;
+
+(* A count: [1]-[9], then any digits, at most [Command.max_count]. *)
+let count (keys : Key.t list) =
+  match keys with
+  | first :: _ when Option.exists (Key.digit first) ~f:(fun d -> d > 0) ->
+    let is_digit key = Option.is_some (Key.digit key) in
+    let digits, rest = List.split_while keys ~f:is_digit in
+    let count =
+      List.fold digits ~init:0 ~f:(fun n key ->
+        let digit = Option.value_exn (Key.digit key) in
+        Int.min Ches_core.Command.max_count ((n * 10) + digit))
+    in
+    Some count, rest
+  | _ -> None, keys
+;;
+
+let counts : Motion.t -> bool = function
+  | Left | Right | Down | Up | Word_forward | Word_backward | Half_down | Half_up | First
+  | Last -> true
+  | Line_start | First_nonblank | Line_end -> false
+;;
+
+let interpret t keys : Action.t Content_key.t =
+  match count keys with
+  | None, keys -> interpret_once t keys
+  | Some _, [] -> Prefix
+  | Some n, keys ->
+    Content_key.map (interpret_once t keys) ~f:(function
+      | Move motion when counts motion -> Action.Move_count (n, motion)
+      | action -> action)
 ;;
 
 let escape t = Option.map t.visual ~f:(fun _ -> Action.Exit_visual)
@@ -481,7 +526,10 @@ let item_commands =
 
 (* {1 Actions} *)
 
-let move t ~width ~rows:viewport (motion : Motion.t) =
+(* [motion], or with [count]: a relative motion [count] times, clamped at the text's
+   ends; [First] and [Last] to logical line [count]. *)
+let move ?count t ~width ~rows:viewport (motion : Motion.t) =
+  let n = Option.value count ~default:1 in
   let rows = layout t ~width in
   let line = line_of t t.cursor in
   let positions = Line.positions line in
@@ -495,8 +543,8 @@ let move t ~width ~rows:viewport (motion : Motion.t) =
   let horizontal cursor = { t with cursor; want = None } in
   let half = Int.max 1 (Int.max 1 viewport / 2) in
   match motion with
-  | Left -> horizontal positions.(Int.max 0 (index - 1))
-  | Right -> horizontal positions.(Int.min (Array.length positions - 1) (index + 1))
+  | Left -> horizontal positions.(Int.max 0 (index - n))
+  | Right -> horizontal positions.(Int.min (Array.length positions - 1) (index + n))
   | Line_start -> horizontal positions.(0)
   | Line_end -> horizontal (Array.last_exn positions)
   | First_nonblank ->
@@ -504,16 +552,19 @@ let move t ~width ~rows:viewport (motion : Motion.t) =
       (Array.find positions ~f:(fun p ->
          Option.exists (Line.glyph_at line p) ~f:(fun g -> not (Line.is_blank g)))
        |> Option.value ~default:(Array.last_exn positions))
-  | Word_forward -> horizontal (word t ~forward:true)
-  | Word_backward -> horizontal (word t ~forward:false)
-  | Down -> to_row (Int.min last_row (r + 1))
-  | Up -> to_row (Int.max 0 (r - 1))
+  | Word_forward -> horizontal (word t ~forward:true ~count:n)
+  | Word_backward -> horizontal (word t ~forward:false ~count:n)
+  | Down -> to_row (Int.min last_row (r + n))
+  | Up -> to_row (Int.max 0 (r - n))
   | Half_down | Half_up ->
-    let delta = if Motion.equal motion Half_down then half else -half in
+    let delta = if Motion.equal motion Half_down then n * half else -n * half in
     let maximum = Int.max 0 (Array.length rows - Int.max 1 viewport) in
     { (to_row (Int.clamp_exn (r + delta) ~min:0 ~max:last_row)) with
       top = Int.clamp_exn (t.top + delta) ~min:0 ~max:maximum
     }
+  | First | Last when Option.is_some count ->
+    let line = t.lines.(Int.clamp_exn (n - 1) ~min:0 ~max:(last_line t)) in
+    { t with cursor = (Line.positions line).(0); want = None }
   | First -> { t with cursor = position_in t rows.(0) 0; want = None }
   | Last -> { t with cursor = position_in t rows.(last_row) 0; want = None }
 ;;
@@ -523,6 +574,7 @@ let perform t ~width ~rows action =
   let t, effect =
     match (action : Action.t) with
     | Move motion -> move t ~width ~rows motion, None
+    | Move_count (count, motion) -> move t ~count ~width ~rows motion, None
     | Visual kind ->
       ( (match t.visual with
          | Some (current, _) when Kind.equal current kind -> { t with visual = None }

@@ -112,7 +112,17 @@ let default =
   (* The registered views these defaults bind; the screen installs them by these ids. *)
   let problems = View_id.of_string "problems"
   and history = View_id.of_string "history"
-  and demo_report = View_id.of_string "demo-report" in
+  and demo_report = View_id.of_string "demo-report"
+  and vcs = View_id.of_string "vcs" in
+  (* The VCS workspace. [Focus_view] opens the hidden view as a tab (it opens in
+     [Tab]), activates it where it is, or toggles focus with the editor, so [g g] and
+     [g f] are one command. [g c] / [g a] stay free for the commit flow. *)
+  let git c (command : View_command.t) =
+    [ leader; Key.char 'g'; Key.char c ], Target.View command
+  in
+  let place_vcs c (placement : View_command.Placement.t) =
+    git c (Place_view { view = Some vcs; placement })
+  in
   create
     [ move [ 'h' ] Left
     ; move [ 'j' ] Down
@@ -232,9 +242,15 @@ let default =
     ; place 'h' Hidden
     ; split 'f' Focus_other_pane
     ; split 'x' Swap_split
+    ; split 'c' Close_split
     ; split '-' (Adjust_split (-10))
     ; split '+' (Adjust_split 10)
     ; split '=' (Adjust_split 10)
+    ; git 'g' (Focus_view vcs)
+    ; git 'f' (Focus_view vcs)
+    ; place_vcs 't' Tab
+    ; place_vcs 's' Split
+    ; place_vcs 'h' Hidden
     ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
     ; [ leader; Key.char 'f'; Key.char 'l' ], View Open_line_picker
     ; [ leader; Key.char 'f'; Key.char 'f' ], View Open_file_picker

@@ -193,7 +193,7 @@ let%expect_test "file and view tabs cycle and close together; file tabs are unch
       [%expect
         {|
         a.txt [b.txt*] c.txt
-        Hidden; focused document; count 0; (none); notice (none)
+        Hidden; focused document; count 0; Counter closed; notice Counter closed
         document 0,0 80x16
         |}];
       let t = run t " bc" in
@@ -225,6 +225,107 @@ let%expect_test "file and view tabs cycle and close together; file tabs are unch
         │                                                 │ │  4: c.txt                │|
         |}];
       ignore (Ui_state.quit_session t ~width ~height ~force:true : _ * _))
+;;
+
+let%expect_test "[Space b c] and [Space b C] on a view tab say the view closed" =
+  (* Typed in the focused view tab: its footer goes with it, so the feedback line
+     says it, as [Space s h] would. *)
+  let t = run (create ()) " vT bc" in
+  show t;
+  tabs t;
+  let t = run t " vT bC" in
+  show t;
+  tabs t;
+  [%expect
+    {|
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    [a]
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    [a]
+    |}];
+  (* Reached by cycling from the file tab. *)
+  let t = run t " vT vx" in
+  tabs t;
+  let t = run t " bn" in
+  tabs t;
+  let t = run t " bc" in
+  show t;
+  let t = run t " vT vx bn bC" in
+  show t;
+  [%expect
+    {|
+    [a] Counter
+    a [Counter]
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}];
+  (* From help over the view tab, which closes with it, taking its footer. *)
+  let t = run t " vT?" in
+  print_endline (focused t);
+  let t = run t " bc" in
+  show t;
+  [%expect
+    {|
+    help
+    Hidden; focused document; count 0; Counter closed; notice (none)
+    document 0,0 80x16
+    |}]
+;;
+
+let%expect_test "the palette closes a view tab with a notice; file tabs keep theirs" =
+  let t = run (create ()) " vT ccclose file tab<CR>" in
+  show t;
+  tabs t;
+  let t = run t " vT ccclose file tab discarding<CR>" in
+  show t;
+  tabs t;
+  [%expect
+    {|
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    [a]
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    [a]
+    |}];
+  (* A file tab's close reports through the session alone: a capture notice left
+     over from moving the counter is not posted in its place. *)
+  let t = run (create ()) " vBiX<Esc>" in
+  let t = run t " bc" in
+  printf "%s; notice %s\n" (String.prefix (message t) 15)
+    (Option.value (Ui_state.capture_notice t) ~default:"(none)");
+  let t = run t " ccclose file tab<CR>" in
+  printf "%s; notice %s\n" (String.prefix (message t) 15)
+    (Option.value (Ui_state.capture_notice t) ~default:"(none)");
+  [%expect
+    {|
+    Unsaved buffer:; notice Counter in bottom band
+    Unsaved buffer:; notice (none)
+    |}]
+;;
+
+let%expect_test "[Space b c] from a split view closes the view tab beside it" =
+  (* The split view keeps focus and its footer, which shows the notice; the feedback
+     line is left alone, as for any placement typed in a view that keeps focus. *)
+  let t = run (create ()) " vT vm vM ss" in
+  show t;
+  tabs t;
+  let t = run t " bc" in
+  show t;
+  tabs t;
+  [%expect
+    {|
+    Tab; focused history; count 0; Counter in tab strip; notice History in split
+    document 0,0 40x16; (Minor history) 41,0 39x16
+    a [Counter]
+    Hidden; focused history; count 0; Counter in tab strip; notice Counter closed
+    document 0,0 40x16; (Minor history) 41,0 39x16
+    [a]
+    |}]
 ;;
 
 let%expect_test "the major split: focus, resize, swap, move between placements" =
@@ -307,7 +408,7 @@ let%expect_test "the major split: focus, resize, swap, move between placements" 
     {|
     Band; focused counter; count 1; Counter focused; notice Counter in bottom band
     document 0,0 80x11; (Minor counter) 0,11 80x5
-    Hidden; focused document; count 1; Counter focused; notice Counter closed
+    Hidden; focused document; count 1; Counter closed; notice Counter closed
     document 0,0 80x16
     No view focused; focus a view to move it
     |}];
@@ -436,4 +537,237 @@ let%expect_test "the split coexists with the side directory, which keeps its sha
         document 33,0 39x16; (Minor directory) 0,0 32x16
         |}];
       ignore (Ui_state.quit_session t ~width ~height ~force:true : _ * _))
+;;
+
+let%expect_test "[Space s c] closes the split view from either pane" =
+  (* From the editor pane: the active file keeps focus and takes the full area. *)
+  let t = run (create ~path:"/a" ()) " vS<Tab>" in
+  show t;
+  let t = run t " sc" in
+  show t;
+  [%expect
+    {|
+    Split; focused document; count 0; Counter in split; notice (none)
+    document 0,0 40x16; (Minor counter) 41,0 39x16
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}];
+  (* From the focused split view: focus returns to the active tab. *)
+  let t = run t " vS" in
+  print_endline (focused t);
+  let t = run t " sc" in
+  show t;
+  [%expect
+    {|
+    counter
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}];
+  (* With the view on the left, after a swap; the side is kept for the next split. *)
+  let t = run t " vS sx" in
+  show t;
+  let t = run t " sc" in
+  show t;
+  let t = run t " vS" in
+  show t;
+  [%expect
+    {|
+    Split; focused counter; count 0; Counter in split; notice (none)
+    document 40,0 40x16; (Minor counter) 0,0 39x16
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    Split; focused counter; count 0; Counter in split; notice Counter in split
+    document 40,0 40x16; (Minor counter) 0,0 39x16
+    |}];
+  (* With no split view, it says so and nothing changes: here the view is in the
+     band, focused. *)
+  let t = run t " sb" in
+  show t;
+  let t = run t " sc" in
+  show t;
+  let t = run t "<Tab> sc" in
+  show t;
+  [%expect
+    {|
+    Band; focused counter; count 0; Counter in split; notice Counter in bottom band
+    document 0,0 80x11; (Minor counter) 0,11 80x5
+    Band; focused counter; count 0; Counter in split; notice No split view
+    document 0,0 80x11; (Minor counter) 0,11 80x5
+    Band; focused document; count 0; No split view; notice No split view
+    document 0,0 80x11; (Minor counter) 0,11 80x5
+    |}]
+;;
+
+let%expect_test "[Space s c] beside a view tab returns to that tab" =
+  (* The counter in a tab, history in the split, focused. *)
+  let t = run (create ()) " vT vm vM ss" in
+  show t;
+  tabs t;
+  let t = run t " sc" in
+  show t;
+  tabs t;
+  print_s [%sexp (View_registry.placement (Ui_state.views t) (View_id.of_string "history")
+                  : View_registry.Placement.t option)];
+  [%expect
+    {|
+    Tab; focused history; count 0; Counter in tab strip; notice History in split
+    document 0,0 40x16; (Minor history) 41,0 39x16
+    a [Counter]
+    Tab; focused counter; count 0; History closed; notice History closed
+    document 0,0 80x16
+    a [Counter]
+    (Hidden)
+    |}]
+;;
+
+let%expect_test "[Space s c] closes a split that zen or a narrow terminal hides" =
+  let t = run (create ()) " vS<Tab> vz" in
+  show t;
+  let t = run t " sc" in
+  show t;
+  let t = run t " vz" in
+  show t;
+  [%expect
+    {|
+    Split; focused document; count 0; Zen (status hidden); notice (none)
+    document 0,0 80x16
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    Hidden; focused document; count 0; Workspace restored; notice Counter closed
+    document 0,0 80x16
+    |}];
+  let t = run (create ()) " vS" in
+  let t = resize t ~width:40 in
+  let t = run ~width:40 t " sc" in
+  show ~width:40 t;
+  (* Nothing comes back on a wider terminal. *)
+  let t = resize t ~width:80 in
+  show t;
+  [%expect
+    {|
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 40x16
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}]
+;;
+
+let%expect_test "[Space s c] takes no count; the palette closes the split from either pane" =
+  let t = run (create ~path:"/a" ()) " vS<Tab>" in
+  let t = run t "3 sc" in
+  show t;
+  [%expect
+    {|
+    Split; focused document; count 0; Space s c does not take a count; notice (none)
+    document 0,0 40x16; (Minor counter) 41,0 39x16
+    |}];
+  (* From the palette over the editor pane. *)
+  let t = run t " ccclose split<CR>" in
+  show t;
+  [%expect
+    {|
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}];
+  (* From the palette over the focused split view. *)
+  let t = run t " vS" in
+  print_endline (focused t);
+  let t = run t " ccclose split<CR>" in
+  show t;
+  [%expect
+    {|
+    counter
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}];
+  (* With no split view. *)
+  let t = run t " ccclose split<CR>" in
+  show t;
+  [%expect
+    {|
+    Hidden; focused document; count 0; No split view; notice No split view
+    document 0,0 80x16
+    |}]
+;;
+
+let%expect_test "a placement typed inside the view it moves: the notice stays visible" =
+  (* Kept where the view keeps focus: its footer shows the notice, and the feedback
+     line is left alone (0A policy), here still saying the band view was focused. *)
+  let t = run (create ()) " vB vx" in
+  show t;
+  let t = run t " st" in
+  show t;
+  let t = run t " ss" in
+  show t;
+  let t = run t " sb" in
+  show t;
+  let t = run t " sx" in
+  show t;
+  [%expect
+    {|
+    Band; focused counter; count 0; Counter focused; notice (none)
+    document 0,0 80x11; (Minor counter) 0,11 80x5
+    Tab; focused counter; count 0; Counter focused; notice Counter in tab strip
+    document 0,0 80x16
+    Split; focused counter; count 0; Counter focused; notice Counter in split
+    document 0,0 40x16; (Minor counter) 41,0 39x16
+    Band; focused counter; count 0; Counter focused; notice Counter in bottom band
+    document 0,0 80x11; (Minor counter) 0,11 80x5
+    Band; focused counter; count 0; Counter focused; notice (none)
+    document 0,0 80x11; (Minor counter) 0,11 80x5
+    |}];
+  (* Closed: no footer of the view is left, so the feedback line says it. *)
+  let t = run t " sh" in
+  show t;
+  let t = run t " vS sc" in
+  show t;
+  [%expect
+    {|
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}];
+  (* Moved where it cannot be shown, so focus left it: a split too narrow, and the
+     band in zen. *)
+  let t = run ~width:40 t " vB vx ss" in
+  show ~width:40 t;
+  let t = run t " vT vz sb" in
+  show t;
+  [%expect
+    {|
+    Split; focused document; count 0; Counter split hidden: needs 41 columns; notice (none)
+    document 0,0 40x16
+    Band; focused document; count 0; Counter band requested (compact/zen); notice (none)
+    document 0,0 80x16
+    |}]
+;;
+
+let%expect_test "placement from help over the split view, and from the palette over a view" =
+  (* Help closes with the view it describes, taking its footer: the feedback line has
+     the notice. *)
+  let t = run (create ()) " vS?" in
+  show t;
+  let t = run t " sc" in
+  show t;
+  [%expect
+    {|
+    Split; focused help; count 0; Counter in split; notice (none)
+    document 0,0 40x16; (Minor counter) 41,0 39x16
+    Hidden; focused document; count 0; Counter closed; notice (none)
+    document 0,0 80x16
+    |}];
+  (* The palette already reports placements in the feedback line, as from the editor
+     pane. *)
+  let t = run t " vB vx ccto tab<CR>" in
+  show t;
+  let t = run t " ccclose focused view<CR>" in
+  show t;
+  [%expect
+    {|
+    Tab; focused counter; count 0; Counter in tab strip; notice Counter in tab strip
+    document 0,0 80x16
+    Hidden; focused document; count 0; Counter closed; notice Counter closed
+    document 0,0 80x16
+    |}]
 ;;

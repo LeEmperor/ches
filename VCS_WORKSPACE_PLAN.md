@@ -1,12 +1,15 @@
 # VCS Workspace: a lazygit/Magit hybrid inside Ches
 
-Status: re-scoped on 2026-10-14 after a feature brainstorm. Phase 0A (view registry
-and view-local commands) is implemented and headlessly checked, uncommitted, with
-human terminal acceptance pending; see its handoff below. Phase 0B (view tabs and
-the major split) is implemented and headlessly checked, uncommitted, with human
-terminal acceptance pending. Phase 0C (confirmation and prompt floats) is likewise
-implemented and headlessly checked, uncommitted, acceptance pending. Later phases
-not started.
+Status: re-scoped on 2026-10-14 after a feature brainstorm. Phases 0A, 0B and 0C
+are implemented and committed (237e9dd). Owner terminal acceptance (2026-10-25): the
+`?` help float, view tabs (`Space s t`) and the split (`Space s s`) confirmed; the
+palette's local-command ordering not separately confirmed; 0C's floats have no real
+requester until phase 3. Follow-ups after acceptance (2026-10-25..27): counts repeat
+the resize and shift steps, `Space s c` closes the split from either pane, and
+placement/close notices typed inside a view reach the status line. Phase 1 (VCS
+core, git parsing, async runner) and phase 2 (the read-only VCS view, Space g)
+complete and uncommitted (2026-10-27), owner terminal acceptance of phase 2 pending.
+Phases 3-6 not started.
 
 ## Goal
 
@@ -136,23 +139,37 @@ vertically instead of side by side; below a minimum, only the focused part shows
 
 ## Architectural boundaries
 
-### Existing seams (recheck against the current checkout)
+### Existing seams (rechecked 2026-10-27, after phases 0A-0C)
 
-- `tile/` (`ches_tile`): host focus/capture/routing, `Spec` (including
-  `accepts_tab`), `Navigation` (lists), `Text_view` (read-only cursor, Visual,
-  yank). Never depends on `ches_error`/`ches_app`.
-- `screen/ui_state.ml` (~1900 lines): wires each minor tile by name; owns the single
-  transient float slot (palette, pickers); `Floating` gives centered geometry.
-- `screen/workspace.ml`: allocation of one document pane, status, and minor views.
+- `tile/` (`ches_tile`, depends on `ches_core`/`ches_input` only): host
+  focus/capture/routing, `Spec` (including `accepts_tab`), `Navigation` (lists and
+  `Selection`), `Text_view` (read-only cursor, Visual, yank), `Local_command`
+  (view-local commands); `View_id` re-exports `ches_input`'s.
+- `screen/view_registry.ml`: installed views as adapters (`Adapter.t`), placements
+  `Hidden | Band | Tab | Split`, local commands, `Ask` questions (confirm/prompt).
+  `screen/ui_state.ml` (~2500 lines) no longer wires minor tiles by name: generic
+  paths go through the registry (problems, history and the report keep typed
+  wrapper accessors). It owns the single float slot (palette, pickers, help,
+  confirm, prompt); `Floating` gives centered geometry.
+- `screen/workspace.ml`: allocation of the document pane, side directory, status,
+  band views and the major split (`Major_split`). `screen/tab_strip.ml` interleaves
+  view tabs with the session's file tabs.
 - `app/session.ml`: buffers, the file-tab list (file buffers only), and the
-  directory presentation (`Major | Side`).
+  directory presentation (`Major | Side`), unchanged by 0B.
 - `input/view_command.mli`, `input/bindings.ml`, `palette/`: commands, bindings,
-  palette catalog; per-consumer commands such as `Focus_problems`.
-- `file_picker/{discovery,host}` and `source/`: precedents for Async work outside
-  the transition path, delivered as `Ui_state.Input` events and rejected when
-  stale. `ches_app`, `ches_screen`, `ches_core`, `ches_input`, `ches_tile` stay
-  free of Async.
-- `docs/backlog/major_minor_tiles.md`: the registry gap phase 0A closes.
+  palette catalog. Views are named by `View_id` (`Toggle_view`, `Focus_view`,
+  `Place_view`, `Run_view_command`); `Focus_problems` and the like are gone.
+- Async precedents outside the transition path: `file_picker/{discovery,host}`,
+  `content_picker/{provider,host}`, `source/`. Results enter as `Ui_state.Input`
+  events (`File_picker_update`/`File_picker_work`, `Content_picker_snapshot`,
+  `Source`) and are rejected when stale (run/request identity; `Source_event.Owned`
+  generations). The frontend wiring is in `ui/editor_view.ml` (`ches_ui`), not
+  `bin/` (which only builds the source and calls `Editor_view.run`). `ches_source`
+  is the closest precedent for a long-lived runner: its event type lives in pure
+  `ches_error`, requests leave `Ui_state` as data (`take_source_requests`), and
+  `Editor_view` pumps `Source.next_batch` into `Ui_state.Input.Source`. `ches_app`,
+  `ches_screen`, `ches_core`, `ches_input`, `ches_tile` stay free of Async.
+- `docs/backlog/major_minor_tiles.md`: records what 0A-0C finished.
 
 ### Target libraries
 
@@ -205,8 +222,9 @@ dirty warns that the unsaved text is not staged.
 
 ## Phased implementation
 
-Phases run strictly sequentially, one agent at a time. Each lands in a usable, tested
-state and appends a handoff below.
+Phases run strictly sequentially. Within a phase, work may be split across up to
+three agents (see the protocol). Each phase lands in a usable, tested state and
+appends a handoff below.
 
 ### Phase 0A: View registry and view-local commands
 
@@ -328,13 +346,20 @@ state and appends a handoff below.
 
 ## Agent execution and handoff protocol
 
-Assign one phase per agent; phases run strictly sequentially. Start by reading this
-plan, all earlier handoffs, and the current interfaces. Earlier phases may have
-changed the architecture described here.
+Phases run strictly sequentially. An orchestrating session splits each phase across
+at most three implementation agents, with disjoint files and contracts fixed before
+any parallel work starts; it reviews, runs the full suite, and writes the handoff.
+Every agent starts by reading this plan, all earlier handoffs, and the current
+interfaces. Earlier phases may have changed the architecture described here.
 
-- **Load limit:** every dune invocation uses `-j 5` (`dune build -j 5`,
-  `dune runtest -j 5`, `dune exec -j 5 ...`). Never run two dune processes at once,
-  in the background, or in watch mode. The host is unstable under heavy load.
+- **Load limit (2026-10-25):** the total dune job budget is 10. Every dune
+  invocation passes `-j 10` and goes through one shared lock, so at most one runs
+  at a time: `flock /tmp/claude-1000/ches-dune.lock dune build -j 10`, likewise
+  `dune runtest -j 10`. (Dune itself aborts a second instance in the same tree with
+  "Another Dune instance is currently running".) Agents working in parallel build
+  only their own directories (e.g. `dune build -j 10 @vcs/git/runtest`) until
+  the final full run. Never background or watch mode. The host is unstable under
+  heavy load.
 - **No attributable git actions in this repository:** no `git add`, `commit`,
   `push`, `stash`, `checkout`, `reset`, `restore`, branch or config changes, and no
   Co-Authored-By lines anywhere. Read-only git (`status`, `diff`, `log`, `show`) is
@@ -344,12 +369,14 @@ changed the architecture described here.
   (`Ches Test <ches-test@example.invalid>`); "remotes" are local bare repositories.
   Never run feature mutations against the Ches repository itself, and never contact
   a real network remote.
-- No subagents. Do not run the interactive TUI. Drive behavior headlessly through
-  `Ui_state`, as existing tests do.
+- Implementation agents do not spawn further agents. Do not run the interactive
+  TUI. Drive behavior headlessly through `Ui_state`, as existing tests do.
 - Keep the library boundaries above. Match the surrounding code style and `.mli`
   documentation density.
-- Record the baseline (`dune build -j 5`, `dune runtest -j 5`) before changing code
-  so pre-existing failures are not attributed to the phase.
+- Record the baseline (`dune build -j 10`, `dune runtest -j 10`, through the lock)
+  before changing code so pre-existing failures are not attributed to the phase.
+  Known flake: `content_picker/host/test/test_runtime.ml` (empty pid file read
+  mid-write); rerun that directory once before treating it as a failure.
 - Do not claim a phase complete if a required behavior is stubbed or a check could
   not run. Human terminal acceptance is separate and stays pending.
 
@@ -376,6 +403,271 @@ Next-phase integration notes:
 - A VCS summary in the status tile.
 - Mercurial backend (no index: Monky-style in-memory staging or `commit -i`), jj.
 - Filesystem watching and automatic refresh on external changes.
+
+## Phase 1 contracts (stage 1, 2026-10-27)
+
+Stage 1 fixed the contracts so that agent G (`ches_vcs_git`) and agent H
+(`ches_vcs_host`) can work in parallel. `ches_vcs` and the fixture are implemented
+and tested; the git and host `.mli` files are the contracts, with compiling stubs
+(`failwith "TODO phase 1: agent G"` / `"... agent H"`; grep `TODO phase 1`).
+
+```text
+vcs/              ches_vcs           pure, core only            stage 1, done
+  exec            Kind (Read < Mutate < Network), Stdin (Null | Data), Stream,
+                  Spec {prog; args; cwd; env; kind; stdin; timeout; stdout_limit;
+                  stderr_limit; stream}, Status, Result {status; stdout(+truncated);
+                  stderr(+truncated); timed_out; cancelled; elapsed}
+  job             Id {generation; sequence}, File_read, Step (Run spec | Read_file),
+                  Step.Outcome (Ran | Read | Skipped), Step_report, t {id; lane;
+                  steps}, Report {id; lane; kind; steps; cancelled}, never_started
+  event           Started | Output {line; transient} | Finished of Job.Report.t
+  stamps          consumer-side ids and staleness (generation + latest per lane)
+  panel           Panel/Section/Item, Position (Header | Item {section; key}),
+                  Cursor {selected; folded}: rows, reconcile (the selection rule),
+                  select, toggle_fold
+  popup           Switch {key; flag; description; group}, Action {key; description;
+                  run : enabled:string list -> 'a}, State, press/escape/help
+  diff            Diff.t {preamble; files; cut}, File (paths, change, modes, raw
+                  header, hunks, binary/submodule/combined, truncated), Hunk, Line,
+                  Limits; mode_only / rename_only / line_actions
+  backend         Detection, Refresh, Summary, Plan + Plan.Decision
+                  (Run | Confirm | Refused), module type S
+vcs/test/         ches_vcs_test                                 stage 1, done
+vcs/fixture/      ches_vcs_fixture   test-only: Fixture_repo   stage 1, done
+vcs/fixture/test/ ches_vcs_fixture_test                         stage 1, done
+vcs/git/          ches_vcs_git       pure: Cli, Repository, Status, Branch_list,
+                  Log, In_progress, Diff_output, Backend (: Ches_vcs.Backend.S)   G
+vcs/git/test/     ches_vcs_git_test                                               G
+vcs/host/         ches_vcs_host      Async: Runner, Auth                          H
+vcs/host/test/    ches_vcs_host_test                                              H
+```
+
+Backend signature (`Ches_vcs.Backend.S`): `detect ~cwd` / `detected` (repository
+detection), `refresh repo r` -> steps, `snapshot repo r reports` -> `Snapshot.t
+Or_error.t`, `summary`, `panels`, `diff_target snapshot panel position`, `diff` ->
+steps, `parse_diff`, `plan repo snapshot action` -> `Plan.Decision.t`. Parse
+functions get the `Job.Report.steps` of a job built from exactly the steps returned,
+in order.
+
+Ownership. G: `vcs/git/*.ml` and everything under `vcs/git/test/`. H:
+`vcs/host/*.ml` and everything under `vcs/host/test/`. Each may add private modules
+(new `.ml`/`.mli`) in its own directory and libraries to its own `dune` files
+within the boundaries (`ches_vcs_git`: no Async, no Unix; `ches_vcs_host`: no
+`ches_screen`/`ches_ui`). Frozen for both: `vcs/*.ml(i)`, `vcs/test/`,
+`vcs/fixture/`, and the `.mli` files of `vcs/git/` and `vcs/host/`; a needed
+contract change goes to the orchestrator and into the handoff. Neither library
+depends on the other: H's tests build specs by hand (or via the fixture), never via
+`Ches_vcs_git`, whose stubs fail until G lands. Helpers either agent wants beyond
+`Fixture_repo` live in its own test directory.
+
+Frontend wiring decision: phase 1 adds no `Ui_state.Input` case and no `ches_ui`
+wiring; phase 2 does both when the view exists. Following `ches_source`, the seam is
+already in the types: `Ches_vcs.Event.t` and `Ches_vcs.Job.t` are pure, so phase 2
+adds `Ui_state.Input.Vcs of Ches_vcs.Event.t` and a `take_vcs_jobs` (requests leave
+the transition as data), and `Editor_view` submits jobs to one `Runner.t`, pumps
+`Runner.next_batch` into inputs, and calls `Runner.stop` on exit. The view keeps a
+`Stamps.t` and drops reports it does not accept. A stub input now would have no
+producer or consumer to test.
+
+Deviations from the target libraries and git CLI rules, with reasons:
+- The command-spec module is `Ches_vcs.Exec`, not `Command`: `open! Core` shadows
+  any library-local `Command` with `Core.Command`.
+- Detection runs `rev-parse --show-toplevel --absolute-git-dir` (not `--git-dir`,
+  which is relative to the cwd) so the git directory can be read directly.
+- Jobs may contain `Read_file` steps beside commands: merge/rebase/am/cherry-pick/
+  revert/bisect state is detected from the git directory's state files (as git and
+  Magit do) without a process per file.
+- Stdin is `Null` or `Data` (for phase 3's `git apply --cached`): a pipe, never the
+  terminal, which is what the "stdin from /dev/null" rule protects.
+- Reads also get `LC_ALL=C` (parsed fields such as `%(upstream:track)` are
+  translated in other locales); mutations and network commands keep the user's
+  locale (hooks run under them).
+- `GIT_TERMINAL_PROMPT=0` is forced for every child, not only network ones. The
+  `GIT_SSH_COMMAND` batch-mode default is git-specific yet lives in
+  `Ches_vcs_host.Auth`, which learns `core.sshCommand` by running
+  `git config --get core.sshCommand` before each network step.
+- Reads may run concurrently with each other and with the running mutation (git
+  reads take no optional locks; a refresh always follows the mutation, and stale
+  reads are dropped), so a long push never freezes the view. Mutations and network
+  jobs share one FIFO queue.
+- Default timeouts: reads 30 s, mutations and network 10 min. Children run in their
+  own process group; termination is SIGTERM to the group, then SIGKILL after a grace
+  (2 s), so git can remove `index.lock`.
+- Git's `action` type is empty in phase 1; constructors arrive with phases 3-6.
+  Popups are not yet in `Backend.S`; phase 5 adds them (the model is
+  `Ches_vcs.Popup`).
+- A test-only library, `ches_vcs_fixture`, holds the isolated fixture repositories
+  and a synchronous step runner, so G can test specs against real git without H.
+
+Notes for G and H beyond the `.mli` files:
+- git on this host is 2.43.0. Expect tests should not print absolute temp paths
+  (replace `t.dir`), and fixture commit hashes are reproducible (fixed dates).
+- G: `Fixture_repo.run_steps` executes a backend's steps synchronously; that is the
+  intended way to test `Backend` end to end. The unborn-branch log failure
+  (exit 128) is normal; `git diff --no-index` exits 1 on differences.
+- H: create runners with `~inherited:(Fixture_repo.environment t)`, which already
+  drops every inherited `GIT_*` variable (so `GIT_SSH_COMMAND` is unset). Network
+  tests push/fetch to `t.remote` (a path); never to a URL. For timeout, streaming and
+  termination tests, small helper programs in `vcs/host/test/` are fine (as
+  `fake_rg` is elsewhere); keep tests within the job budget and short.
+
+## Phase 2 contracts (stage 1, 2026-10-27)
+
+Stage 1 cleaned up phase 1's contract gaps, built and tested the generic seam for a
+registered view to run background jobs, and fixed the contracts so that agent V (the
+VCS view, `screen/`) and agent W (wiring: runner, install, bindings, palette, docs,
+end-to-end test) can work in parallel. Stubs fail with `"TODO phase 2: agent V"` /
+`"... agent W"` (grep `TODO phase 2`); no test runs them.
+
+Phase 1 cleanup (done, tested):
+- `vcs/diff.mli`: combined lines have no `old_line`; their `new_line` counts the result
+  from the hunk's `new_start`; `Limits.file_bytes` counts line texts only;
+  `Change.Unmerged` documented (conflict combined diff or `* Unmerged path` line).
+- `vcs/git/diff_output.mli`: the `* Unmerged path X` file and the combined change-type
+  rule. `vcs/host/runner.mli`: a Network step's `Started` follows the
+  `core.sshCommand` probe (none if cancelled during it).
+- `Diff.File.line_actions` is false for `Unmerged` (vcs/test/test_diff.ml; the
+  conflict expectations in vcs/git/test now say `no-line-actions`).
+- Git `diff_target` is `None` for an Untracked key ending in `/` (nested repository,
+  untracked directory); test "an untracked nested repository ..." in
+  vcs/git/test/test_backend.ml.
+
+The seam (implemented in `screen/view_registry.ml(i)`, `screen/ui_state.ml(i)`; test
+`screen/test/test_view_jobs.ml` with two test-only "worker" views):
+- `View_registry.Outcome.t` gains `jobs : Ches_vcs.Job.t list` and
+  `open_file : Location.t option` (`{ path; line : int option }`); `Outcome.create`
+  takes `?jobs ?open_file`.
+- `View_registry.Signal.t = Shown | Saved of string list | Job of Ches_vcs.Event.t`;
+  `Adapter.t` gains `signal : 'state -> Signal.t -> 'action option` (the view turns
+  a signal into one of its own actions, performed like a key's) and
+  `text_area : 'state -> rows -> width -> Geometry.Rect.t option` (where open text
+  sits inside the content, so the terminal cursor lands on the diff panel's text).
+  Existing adapters return `None` for both.
+- `Entry.install ?opens_in` (default `Band`): where `Focus_view`/`Toggle_view` show a
+  hidden view. The VCS view opens in `Tab`, so `Space g g` needs no new command.
+- `Ui_state.Input.Vcs of Ches_vcs.Event.t`; `Ui_state.take_vcs_jobs`. Ownership:
+  Ui_state maps each job id in flight to the view whose outcome carried it (until
+  its `Finished`) and routes events there; staleness is the view's own (`Stamps`).
+  A job whose id is already in flight (any view) is not submitted: its submitter is
+  signalled `Finished (Job.never_started job)` at once, so one runner serves every
+  view. Consecutive `Vcs` inputs are one step (one synchronization), like `Source`.
+- Signals: `Shown` after the input that moved a view out of `Hidden` (or the first
+  input for a view installed placed), not for moves between placements; `Saved`
+  after an input that saved files (absolute session paths, all of that input's
+  saves in one signal, every installed view); `Job` per event. Saves are peeked
+  (`Session.saved`, new), so `take_source_requests` is unchanged.
+- A signalled action never moves focus or disturbs the focused view: controller and
+  jobs apply; a `` `Post `` notice goes to feedback only; `` `Show ``, effect,
+  return and open_file are ignored; a question opens only while the asking view is
+  focused, else it is withdrawn. A key's (or palette/answer's) outcome applies in
+  the order controller, effect, notice, return, open_file, jobs, ask.
+- `open_file` (handled generically in Ui_state, so W does not touch it): like a
+  picker, `Session.open_or_activate ~must_exist:true`, the file tab replaces an
+  active view tab, focus returns to the editor area (the other pane beside a split
+  view), cursor at the line's first column, clamped to the file; failure is the
+  view's footer notice.
+- `Style.Diff_added | Diff_removed | Diff_hunk | Diff_meta` with theme colors
+  (Insert accent, Error, Special on Surface; meta bold).
+- `screen/test/vcs_driver.ml`: runs `take_vcs_jobs` synchronously in a
+  `Fixture_repo` (`run_steps`) and feeds `Started`/`Finished` back as `Input.Vcs`;
+  `settle` repeats until no view submits. `screen/test/dune` now has `ches_vcs`,
+  `ches_vcs_git`, `ches_vcs_fixture`.
+
+Dependencies: `ches_screen` now depends on `ches_vcs` and `ches_vcs_git` (both core
+only: no Async, no Unix), and stays free of Async; `ches_vcs_host` remains reachable
+only from `ches_ui` (`ui/dune` now lists `ches_vcs`, `ches_vcs_host`). No cycle: the
+vcs libraries depend on nothing in the UI.
+
+`screen/vcs_view.mli` (V's contract): id `vcs`; spec read-only text, role Major,
+`accepts_tab`; title "VCS" (static tab label and notices; the frame title is
+"VCS: <root basename> (<branch>)" / "(detached at <rev>)" / "VCS: not a repository");
+`create ~cwd`, `entry ?placement ~cwd ()` (hidden, `opens_in:Tab`); state queries
+(`repository`, `snapshot`, `panels`, `loading`, `refresh_error`, `focus`,
+`list_focus`, `cursor`, `diff`, `text_view`, `log_visible`, `log`, `stamps`); lanes
+`detect`/`refresh`/`diff`; refresh on Shown (new generation, re-detect), `g r`, and
+`Saved` under the root (or cwd); keys and local-command names; `Layout.compute`
+(log: bottom `max 4 (rows/3)` rows when `rows >= 12`; side by side from 80 content
+columns, lists `clamp (width*2/5) 30..60` + 1 separator; else stacked from 16 rows,
+lists the top half + 1 separator; else only the focused part); `e`/Enter in the diff
+returns `open_file` with the line rule in the `.mli`.
+
+`ui/vcs_host.mli` (W's new contract): `create ?config ?inherited ()`, `submit`,
+`next_inputs` (a batch as `Input.Vcs`), `busy`, `stop`, `shutdown ?cap` (default 3 s;
+`` `Finished | `Timed_out ``).
+
+Ownership.
+- V: `screen/vcs_view.ml` (the `.mli` is frozen); new private modules
+  `screen/vcs_*.ml(i)` (other than `vcs_view.mli`); new tests
+  `screen/test/test_vcs_view*.ml`. V's tests install the view through
+  `Ui_state.create ~views:[Vcs_view.entry ~cwd ()]` with their own bindings (as
+  `test_view_registry.ml` does), never W's `Space g` defaults, and run git through
+  `Vcs_driver` + `Fixture_repo`.
+- W: `ui/vcs_host.ml` (`.mli` frozen); `ui/editor_view.ml` and `ui/editor_view.mli`
+  (`app ?vcs:Vcs_host.t`, `run ?vcs`: when given, the default initial UI installs
+  `Vcs_view.entry ~cwd:starting_directory ()`, else `View_registry.Entry.unavailable
+  Vcs_view.id ~title:"VCS" ~notice:"VCS unavailable in this session"`; after each
+  transition `take_vcs_jobs` -> `Vcs_host.submit`; a pump loop like the source's
+  injecting `next_inputs`; `stop` on Exit and on deactivate; `run` awaits `shutdown`
+  after the terminal closes); `bin/ches.ml` (create the host, pass `~vcs`);
+  `input/bindings.ml`: `Space g g` and `Space g f` -> `Focus_view vcs`, `Space g t`/
+  `g s`/`g h` -> `Place_view { view = Some vcs; placement = Tab | Split | Hidden }`
+  (`vcs = View_id.of_string "vcs"`); `palette/catalog.ml`: `vcs.open` "VCS: open or
+  focus" (Focus_view), `vcs.to-tab`, `vcs.to-split`, `vcs.close` (Place_view); the
+  expectation updates those cause (`palette/test/*`, `screen/test/test_palette_tile.ml`,
+  `test/test_keymap.ml`, `ui/test/*` if any); new Async tests of `Vcs_host` in a new
+  `ui/vcs_test/` library (fixture repositories, real runner); the end-to-end test
+  `screen/test/test_vcs_workspace.ml` (default bindings, `Space g g/t/s/h/f`, the real
+  view, `Vcs_driver`, a save refreshing, `e` opening a file from a tab and from the
+  split), written last because it needs V's view; README.md,
+  docs/editor_reference.md, docs/backlog/major_minor_tiles.md. No new
+  `View_command`.
+- Frozen for both (changes go to the orchestrator): `screen/view_registry.ml(i)`,
+  `screen/ui_state.ml(i)`, `screen/style.ml(i)`, `ui/theme.ml`,
+  `screen/vcs_view.mli`, `ui/vcs_host.mli`, `screen/test/{helpers,vcs_driver,
+  test_view_jobs}.ml`, `screen/dune`, `screen/test/dune`, `ui/dune`, `app/`, `vcs/`.
+- Both edit inside `ches_screen`/`ches_screen_test`, which W's builds also compile:
+  leave no non-compiling file between dune runs; if a build fails in the other
+  agent's files, wait and rerun instead of editing them. V builds
+  `@screen/runtest`; W builds `@ui/runtest @palette/runtest @input/runtest
+  @test/runtest` and its new directories, and `@screen/runtest` only for its own files.
+
+Decisions and deviations from the plan, with reasons:
+- Ui_state work listed for W (refresh after save, opening a file at a line) is in the
+  stage 1 seam instead: both are generic (signals, `open_file`), so `ui_state.ml`
+  stays frozen and W's files stay disjoint from V's. W verifies them end to end.
+- No new `View_command`: `opens_in:Tab` makes `Focus_view vcs` "open as a tab or
+  focus it where it is". `Space g f` is the same command as `Space g g` rather than
+  `Focus_other_pane` when split: `Focus_view` already toggles focus between a split
+  view and the editor (and between a focused view tab and the file tab), with no
+  conditional binding.
+- `q` leaves through `Outcome.return` (the host's return stays in an active view tab
+  under the 0B policy, so it would do nothing there); Escape keeps the host's return
+  from a list panel. `accepts_tab`, so Tab is the view's own list/diff switch.
+- The view is written against `Ches_vcs.Backend.S` where it can, but over the git
+  backend concretely: item display needs git's types (`Backend.S.Item.t` is
+  abstract). A second backend would add a display function to `Backend.S` or make
+  the view a functor.
+- `Adapter.text_area` is new: 0A placed the cursor as if open text filled the whole
+  content, which a diff panel beside lists does not.
+- Signal outcomes may not steal focus or touch the focused view's footer (which
+  would cancel a typed prefix); background state is drawn in the view's body.
+- Command log: detection and refresh commands and failed diffs, not every
+  successful diff read (one per selection move would bury the rest).
+- Known gaps: directory-buffer applies are not `Saved` (Session records only file
+  saves; `g r` refreshes); saved paths are compared without resolving symlinks; a
+  job id collision between views is answered as never started (no view does that
+  today: there is one VCS view).
+
+Notes for V and W beyond the `.mli` files:
+- `Stamps.issue` starts at sequence 1 (`g0.1`); ids never repeat within a view.
+- A view's `fit` must not change its `text_view` text (Ui_state would post "Details
+  updated" and cancel a prefix): change the diff text only in `perform`.
+- Fixture paths are under `/tmp`: replace `Fixture_repo.t.dir` in expect output.
+  Promote only named files (`dune promote <file>`), never a bare `dune promote`.
+- W: `Bonsai.Apply_action_context.schedule_event` for submissions, as for source
+  requests; inject each `next_inputs` batch as one list; never call it again before
+  the previous is determined; `stop` on Exit (the `was_running` branch) as for the
+  source; the pump must not keep exit waiting.
 
 ## Implementation handoffs
 
@@ -576,6 +868,8 @@ Policy decisions settled:
     survives Hidden like the band views'.
   - Workspace commands typed inside a captured view still post no layout feedback
     (0A policy); the placement notice is shown in the view's footer instead.
+    Corrected 2026-10-27: a placement that closes the view or takes focus from it
+    (also typed in help or a question over it) posts its notice to the feedback line.
   - Side directory + split: the side directory keeps its width; the split gives way
     first. When the split view hides on resize, focus returns to the editor area's
     input owner (the side directory if it had input).
@@ -713,3 +1007,200 @@ Next-phase integration notes:
   - Async results that need a question (e.g. after a fetch) must arrive through an
     adapter action so the outcome can carry it; there is no other way to ask.
 ```
+
+```text
+Phase / date / status:
+  1, 2026-10-27, complete (headless checks only; nothing user-visible until phase 2).
+  Uncommitted, layered on 237e9dd plus the post-acceptance UI follow-ups. Run as three
+  agents: stage 1 fixed the contracts ("Phase 1 contracts" above), then G (vcs/git)
+  and H (vcs/host) in parallel, serialized on the dune lock.
+
+Implemented behavior:
+  - ches_vcs (pure): Exec spec/result, Job (Run | Read_file steps, lanes), Event,
+    Stamps, Panel (stable selection identity and the removed-item rule), Popup,
+    Diff, Backend.S. As specified in the contracts section.
+  - ches_vcs_git: Cli (read/mutate/network spec builders per the git CLI rules),
+    Repository (rev-parse detection: Found | Not_a_repository | No_work_tree |
+    Failed), Status (porcelain v2 -z --branch, incl. every unmerged XY, renames and
+    copies, submodules, untracked/ignored, cut output), Branch_list (for-each-ref,
+    In_sync | Ahead_behind | Gone), Log (bounded, cut-safe), In_progress (merge,
+    rebase merge/apply, am, cherry-pick, revert, bisect from state files),
+    Diff_output (diff / --cached / show / --no-index into Ches_vcs.Diff, incl.
+    combined conflict diffs, C-quoted names, CRLF, bounded per file with omitted
+    counts, cut output), Backend (Backend.S; degraded snapshots carry one-line
+    problems instead of failing), Step_failure (one-line failure text).
+  - ches_vcs_host: Runner (Async; reads run concurrently under a small semaphore,
+    Mutate/Network jobs one at a time FIFO stopping at the first failed step; lanes
+    supersede; cancel, timeout and stop terminate the child's process group with
+    SIGTERM then SIGKILL after 2 s; stdout head / stderr tail limits; streamed lines
+    with \r progress as transient; Not_started instead of exceptions; batches via
+    next_batch), Auth (GIT_TERMINAL_PROMPT=0 for every child; for Network,
+    GIT_SSH_COMMAND="ssh -o BatchMode=yes" unless the user set GIT_SSH_COMMAND,
+    GIT_SSH or core.sshCommand, probed per network step).
+  - ches_vcs_fixture (test-only): isolated temp repositories and a local bare remote,
+    deterministic hashes, run_steps for synchronous end-to-end tests.
+
+Changed modules and new public contracts:
+  - New: vcs/, vcs/git/, vcs/host/, vcs/fixture/ (libraries ches_vcs, ches_vcs_git,
+    ches_vcs_host, ches_vcs_fixture) and their tests. No existing file changed except
+    this plan. No Ui_state/bin wiring (decision recorded in the contracts section).
+  - Orchestrator edit after H: Auth.environment also respects GIT_SSH (git's
+    precedence is GIT_SSH_COMMAND > core.sshCommand > GIT_SSH), with a test.
+  - Capture (vcs/host) and Step_failure (vcs/git) are public only because the frozen
+    dune files have no private_modules; treat them as internal.
+
+Policy decisions settled:
+  - Reads may run beside the single mutation queue; Read jobs run every step even
+    after a failure, mutations stop at the first failure (rest Skipped).
+  - The runner never drops results: staleness is the consumer's job (Stamps),
+    including the never_started report for a reused id.
+  - "* Unmerged path X" lines (diff during a conflict; every conflict under --cached)
+    parse as their own Unmerged file with no hunks. Combined files are Unmerged when
+    the index line's result side is all zeros, else Modified/Added/Deleted (a merge
+    commit's show).
+  - Diff.Limits.file_bytes counts line text bytes only; combined lines have
+    old_line = None.
+
+Checks run and results:
+  - Baseline before stage 1: dune build -j 10 / dune runtest -j 10 -> exit 0.
+  - G and H each ran their own targets, then one full build/runtest -> exit 0; H ran
+    vcs/host tests twice in a row -> exit 0 both times.
+  - Orchestrator final (2026-10-27): dune build -j 10 -> 0; dune runtest -j 10 -> 0;
+    git diff --check clean; no trailing whitespace in vcs/; no TODO stubs left; no
+    stray processes or /tmp/ches-vcs* directories. 88 new expect tests.
+  - git 2.43.0. Ches repository untouched by git mutations (HEAD 237e9dd).
+
+Known gaps or blockers:
+  - Contract docs to fold in (phase 2 stage 1): the Unmerged-path and combined
+    change-type rules in diff_output.mli; combined line numbering and file_bytes in
+    diff.mli; Started following the core.sshCommand probe in runner.mli.
+  - Untracked/Ignored keys may be directories ending in "/" (nested repository,
+    ignored directory); diff_target returns a target whose diff then fails. Proposed:
+    diff_target returns None for such paths. Diff.File.line_actions should also be
+    false for Unmerged files (harmless today: they have no hunks).
+  - Streamed Output events are not capped by stdout_limit (a chatty streaming
+    mutation emits every line). Revisit in phase 6 if it matters.
+  - _build/.promotion-staging holds stale promotions from several directories; never
+    run a bare `dune promote` without checking what it would apply.
+
+Next-phase integration notes:
+  - Wiring (from H): one Runner.t in ui/editor_view.ml; Ui_state hands out jobs via
+    take_vcs_jobs; pump Runner.next_batch like Source.next_batch, as one transition
+    per batch of Ui_state.Input.Vcs events, never calling next_batch again before
+    the previous one is determined; Runner.stop on exit, then await
+    Runner.finished with a cap (up to the 2 s grace plus reaping) so git can drop
+    index.lock; the pump loop must not hold exit open (next_batch never resolves
+    after stop).
+  - GIT_OPTIONAL_LOCKS=0 and LC_ALL=C come from Cli.read specs; the runner adds only
+    the auth environment. Output lines are raw bytes: sanitize before rendering.
+    Log lines: Started's spec to_string_hum and Exec.Result.status_hum.
+  - Snapshot (from G): problems are one line each (command log material). During a
+    rebase, summary.branch = None and operations say "Rebasing main onto ...". Gone
+    upstreams have gone = true, ahead/behind 0. Item keys: file paths (may contain
+    control bytes: escape for display), short branch names, full commit hashes.
+  - Diff rendering: Unmerged files and rename-only files are header-only; combined
+    files have two-character prefixes; mode-only/binary/submodule are flagged
+    (line_actions); File.truncated draws the placeholder; Diff.t.cut means the
+    command output itself was cut; show's preamble is the commit header, the message
+    indented 4 spaces, and a blank line.
+```
+
+```text
+Phase / date / status:
+  2, 2026-10-27, complete (headless checks only; owner terminal acceptance pending).
+  Uncommitted, layered on phase 1. Run as three agents: stage 1 (contracts, the
+  generic job seam, phase 1 cleanups; see "Phase 2 contracts"), then V (the view)
+  and W (wiring) in parallel on the dune lock. V and W were interrupted by an API
+  session limit at 06:22 UTC and resumed from their saved state after the reset.
+
+Implemented behavior:
+  - Generic seam (stage 1): Outcome.jobs / Outcome.open_file; adapter signal field
+    (Shown | Saved paths | Job event); Entry.install ?opens_in; text_area for the
+    terminal cursor; Ui_state.Input.Vcs, take_vcs_jobs, job ownership by in-flight
+    id; open_file handled like a picker (other pane when split); Session.saved.
+  - VCS view (V, screen/vcs_view.ml, screen/vcs_diff_text.ml): head summary, Files
+    (Conflicted/Untracked/Unstaged/Staged, foldable), Branches, Commits, the diff
+    following the selection (styled; header-only for binary/submodule/mode-only/
+    rename-only and "* Unmerged path"; combined conflict hunks shown; truncation and
+    cut notes), the command log (@), loading/error/not-a-repository/no-work-tree
+    states, wide/stacked/single layouts, the read-only keys (1 2 3 0 Tab j k gg G
+    Ctrl-d Ctrl-u Enter g r @ y q, Text_view keys in the diff), e/Enter opening the
+    file at a line, ? help and palette-first local commands, stable selection.
+  - Wiring (W, ui/vcs_host.ml, ui/editor_view.ml, bin/ches.ml): one runner per real
+    session; jobs submitted after each transition; next_batch pumped as one batch
+    per transition; stop on exit and at_shutdown, then shutdown awaits finished with
+    a 3 s cap; the view installed hidden, opening as a tab (or the unavailable entry
+    "VCS unavailable in this session" without a host).
+  - Keys: Space g g / Space g f = Focus_view vcs; Space g t/s/h = Place_view
+    (Tab/Split/Hidden). Space g c / Space g a stay unbound (phase 5). Palette:
+    vcs.open, vcs.to-tab, vcs.to-split, vcs.close.
+
+Changed modules and new public contracts:
+  - New: screen/vcs_view.ml(i), screen/vcs_diff_text.ml(i), ui/vcs_host.ml(i),
+    ui/vcs_test/, screen/test/{vcs_driver,test_view_jobs,test_vcs_view,
+    test_vcs_workspace}.ml. Changed: view_registry, ui_state, session (saved),
+    style/theme (Diff_* styles), the existing views (two default adapter fields),
+    bindings, catalog, editor_view, bin/ches.ml, dune files, vcs/ cleanups, README,
+    docs/editor_reference.md (new "VCS view" section), major_minor_tiles backlog.
+  - Orchestrator edit: vcs_view.mli documents V's two deviations (below).
+
+Policy decisions settled:
+  - Unmerged files show their combined hunks (conflict markers, openable at the
+    result line) when git gives them; only "* Unmerged path" files are header-only.
+    (Deviation from the stage 1 .mli, accepted: headers alone hide the conflict.)
+  - Frame title "VCS: no work tree" for a bare repository or .git.
+  - e/Enter line rule: + and context -> new_line; - -> the next line in the hunk with
+    a new_line, else max 1 new_start; hunk header -> new_start; file headers ->
+    line 1; a deleted file -> notice "<path> was deleted: nothing to open". A commit's
+    diff opens the work-tree file at the commit's line numbers.
+  - q leaves via Outcome.return; Tab is the view's list/diff switch; Escape in a list
+    is the host's return. Signalled outcomes never move focus.
+  - The command log keeps detection/refresh commands, failed diffs and snapshot
+    problems (capped at 200, newest first), not every successful diff read.
+  - The view is written over the git backend (Backend.S.Item.t is abstract); a second
+    backend adds a display function to Backend.S or makes the view a functor.
+
+Checks run and results:
+  - Stage 1 baseline and final: full build/runtest -> 0.
+  - V: 21 expect tests; W: 5 Async host tests (ui/vcs_test) and the end-to-end
+    workspace test, plus keymap/palette updates.
+  - Orchestrator final (2026-10-27): dune build -j 10 -> 0; dune runtest -j 10 -> 0;
+    git diff --check clean; no TODO stubs; no stray git processes or
+    /tmp/ches-vcs* dirs; HEAD 237e9dd, nothing committed.
+
+Known gaps or blockers:
+  - No owner terminal acceptance yet (see W's checklist in the session report:
+    open/split/focus/close, save refresh, e from tab and split, outside a repo,
+    quitting mid-refresh, no ssh/credential prompts).
+  - Saving a directory buffer sends no Saved signal; g r refreshes. Saved paths are
+    compared to the repository root without resolving symlinks.
+  - Cosmetic: unfocused panel title rows draw on the Backdrop background
+    (Style.Title/Hint); a content-level panel-title style may look better.
+  - The tab label is the static "VCS" (no branch); the frame title carries it.
+  - W once copied a staged promotion by hand after a concurrent dune run cleared the
+    promotion list; the file's expectations were reviewed and pass.
+
+Next-phase integration notes (phase 3):
+  - Actions: Backend.S.plan -> Run | Confirm | Refused; git's action type is still
+    empty. Mutations go through Outcome.jobs as Mutate jobs (the runner serializes
+    them); refresh after each via the view's own stamps.
+  - Discard confirmations: return Ask.Confirm from perform (0C); the dirty-buffer
+    refusal needs the session's dirty buffers inside the repository, which the view
+    does not see today: add it to the signal/seam rather than per-name wiring.
+  - Open-buffer reconciliation after working-tree changes is new seam work (reload
+    clean buffers, mark deleted ones missing).
+  - Hunk staging: Diff_text lines already carry kind and open targets; add the hunk
+    identity for s/u/x at the cursor. Line staging (phase 4) needs Visual ranges
+    mapped back to Diff lines.
+```
+
+### Post-phase-2 tweaks (owner feedback, uncommitted)
+
+- Counts in every read-only Text_view (`Action.Move_count`): `N` before
+  `h l j k w b Ctrl-d Ctrl-u` repeats, `N G` / `N gg` go to line N. Inside the VCS
+  diff, digits are counts, so `1 2 3` switch panels only from a list (Tab/Esc back
+  first); the phase 2 key list above predates this.
+- VCS padding: one blank column each side of the diff (pane >= 10 columns;
+  `diff_text_rect` feeds `diff_area` and `text_area`), and blank rows after the head
+  summary, between panels, and at the bottom of the lists column (dropped when the
+  column is too short to keep three panels).

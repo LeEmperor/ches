@@ -1,0 +1,10 @@
+; ches_vcs_git is the git backend of ches_vcs: pure parsers of git's porcelain output,
+; the git CLI rules every command follows, and git actions as command plans. No
+; Async, no Unix, no process: specs go out and reports come back through ches_vcs
+; types. Implemented by phase 1 agent G against the .mli contracts.
+
+(library
+ (name ches_vcs_git)
+ (libraries ches_vcs core)
+ (preprocess
+  (pps ppx_jane)))

@@ -52,6 +52,12 @@ module Input : sig
        (** One bounded ranking turn, rejected if its run/root no longer matches. *)
     | Line_picker_work of int (** Bounded turn, rejected after close/reopen. *)
     | Content_picker_snapshot of (Ches_content_picker.Model.snapshot [@sexp.opaque])
+    | Vcs of Ches_vcs.Event.t
+    (** A runner's event for a job a registered view submitted ({!take_vcs_jobs}):
+        delivered to that view as {!View_registry.Signal.t.Job}, focused or not, and
+        dropped when no view owns the job (unknown, or after its [Finished]).
+        Consecutive [Vcs] inputs are one step ({!apply_all}). Never reaches the
+        editor. *)
   [@@deriving sexp_of]
 end
 
@@ -81,7 +87,9 @@ val create
            ids must be new; their commands are {!View_command.t.Toggle_view},
            {!View_command.t.Focus_view}, {!View_command.t.Place_view} and
            {!View_command.t.Run_view_command}. An entry installed [Tab] is a tab
-           (inactive until activated); one installed [Split] is the split view. *)
+           (inactive until activated); one installed [Split] is the split view.
+           Focusing or toggling a hidden view shows it where it [opens_in]
+           ({!View_registry.Entry.install}). *)
   -> Ches_app.Controller.t
   -> t
 
@@ -309,6 +317,23 @@ val take_clipboard : t -> t * string option
     [source_attached]. The synchronous side never waits for the source. *)
 val take_source_requests : t -> t * Ches_error.Source_request.t list
 
+(** The jobs registered views submitted ({!View_registry.Outcome.t.jobs}) since the
+    last take, in submission order, for the frontend's runner. Take after installing
+    the returned UI state, like {!take_source_requests}; the runner's events come back
+    as {!Input.t.Vcs}. Each id is unique among the jobs in flight: a view that reuses
+    one in flight is answered with its never-started report instead.
+
+    {2 Signals}
+
+    Besides keys, a registered view hears {!View_registry.Signal.t}s, which its
+    adapter may turn into actions: [Shown] after the input that gave it a placement
+    (from [Hidden], or the first input for a view installed placed); [Saved] after an
+    input that saved files, with their paths (every view, placed or hidden; saves
+    made by {!save_all} or {!quit_session} count at the next input); and [Job] for
+    its jobs' events. A signalled action never moves focus; see
+    {!View_registry.Signal} for how its outcome applies. *)
+val take_vcs_jobs : t -> t * Ches_vcs.Job.t list
+
 (** Whether an input has returned [Exit]. From then on, {!apply} ignores its input and
     returns [Exit] again, so keys that arrive before the frontend has shut down (say,
     [Space w] typed right after [Space Q]) never run. *)
@@ -360,7 +385,8 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     A registered view has one placement ({!View_registry.Placement.t}): hidden, the
     bottom band, a tab, or the split. [Place_view] moves it ([Space s t/s/b/h] move
     the focused view to a tab, the split, the band, or close it); [Toggle_view]
-    shows a hidden view in the band and closes it from any placement.
+    shows a hidden view where it opens (the band unless installed otherwise, see
+    {!View_registry.Entry.install}) and closes it from any placement.
 
     A view tab is added after the active entry and activated. While active it fills
     the editor area below the strip and is the editor area's input owner: returning
@@ -375,12 +401,17 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
 
     The split view shares the editor area beside the active tab (file or view),
     side by side, separated by a gap: [Space s f] focuses the other pane, [Space s x]
-    swaps sides, [Space s +]/[Space s -] change its share by 10% (20%..80%). Placing
+    swaps sides, [Space s +]/[Space s -] change its share by 10% (20%..80%), and
+    [Space s c] closes it from either pane, even while it is not shown. Placing
     a view there closes the previous split view and focuses the new one. It is not
     allocated in zen, or when the editor area (after a side directory and status)
     cannot keep {!Workspace.min_document_width} beside {!Workspace.min_split_width};
     it then stays in the split placement, a resize saying when it is hidden and
     restored.
+
+    A view's outcome may open a file ({!View_registry.Outcome.t.open_file}): as a
+    picker would, the file tab replaces an active view tab and focus returns to the
+    editor area, which beside a split view is the other pane.
 
     {2 View-local commands and help}
 
@@ -463,7 +494,7 @@ val max_offset : int
 
 (** [apply] for each input in order, stopping at [Exit]. Consecutive [Source] inputs
     (a frontend's batch of source events) are applied as one step that synchronizes the
-     views once, with the same result. [after_step] installs frontend-owned picker
+     views once, with the same result; so are consecutive [Vcs] inputs. [after_step] installs frontend-owned picker
      activation before the next input, so batched query keys retain their owner. *)
 val apply_all
    :  ?after_step:(t -> t)

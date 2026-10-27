@@ -35,6 +35,7 @@ module Input = struct
     | Content_picker_accept of (View_id.t Ches_content_picker.Model.intent [@sexp.opaque])
     | Line_picker_work of int
     | Content_picker_snapshot of (Ches_content_picker.Model.snapshot [@sexp.opaque])
+    | Vcs of Ches_vcs.Event.t
   [@@deriving sexp_of]
 end
 
@@ -92,6 +93,15 @@ type t =
   ; sent_revisions : (int * int) Buffer_id.Map.t
   ; source_commands : Ches_error.Source_request.t list
   (** Restart/kill requests not yet taken, newest first. *)
+  ; jobs : Ches_vcs.Job.t list (** Submitted by views, not yet taken; newest first. *)
+  ; job_owners : View_id.t Ches_vcs.Job.Id.Map.t
+  (** The view that submitted each job in flight (taken or not), until its
+      [Finished] event. *)
+  ; shown : View_id.t list
+  (** Placed views already signalled [Shown]; a view leaves it when hidden. *)
+  ; saves_signalled : int
+  (** How many of the session's untaken saves ({!Session.saved}) views were
+      signalled; reset when {!take_source_requests} takes them. *)
   }
 
 let document_id = View_id.of_string "document"
@@ -195,6 +205,10 @@ let create
   ; source_attached
   ; sent_revisions = Buffer_id.Map.empty
   ; source_commands = []
+  ; jobs = []
+  ; job_owners = Ches_vcs.Job.Id.Map.empty
+  ; shown = []
+  ; saves_signalled = 0
   }
 ;;
 
@@ -276,6 +290,7 @@ let line_picker t = t.line_picker
 let line_picker_generation t = t.line_generation
 
 let take_file_requests t = { t with file_requests = [] }, List.rev t.file_requests
+let take_vcs_jobs t = { t with jobs = [] }, List.rev t.jobs
 ;;
 let scroll t = t.scroll
 
@@ -333,7 +348,7 @@ let take_source_requests t =
     let session, _ = Session.take_closed session in
     let session, _ = Session.take_source_changes session in
     let controller = Option.value (Session.active_controller session) ~default:t.controller in
-    { t with session; controller; source_commands = [] }, [])
+    { t with session; controller; source_commands = []; saves_signalled = 0 }, [])
   else (
     let session, saved = Session.take_saved (session t) in
     let session, closed = Session.take_closed session in
@@ -357,7 +372,7 @@ let take_source_requests t =
     let saves = List.map saved ~f:(fun { Controller.Saved.path; revision } -> Ches_error.Source_request.Document_saved { resource = path; revision }) in
     let closes = List.map closed ~f:(fun resource -> Ches_error.Source_request.Document_closed { resource }) in
     let controller = Option.value (Session.active_controller session) ~default:t.controller in
-    ( { t with session; controller; sent_revisions; source_commands = [] }
+    ( { t with session; controller; sent_revisions; source_commands = []; saves_signalled = 0 }
     , closes @ document @ saves @ List.rev t.source_commands ))
 ;;
 
@@ -654,9 +669,18 @@ let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option 
   then Option.map t.prompt ~f:(Prompt_tile.cursor ~width:content.width)
   else
     Option.map (text_view t id) ~f:(fun view ->
-      let view = Ches_tile.Text_view.fit view ~width:content.width ~rows:content.height in
-      let row, column = Ches_tile.Text_view.cursor_cell view ~width:content.width in
-      { Ches_tile.Cursor.row = row - Ches_tile.Text_view.top view; column; shape = Block })
+      (* The view's own text area within its content, else all of it. *)
+      let area =
+        Option.value
+          (View_registry.text_area t.views id ~rows:content.height ~width:content.width)
+          ~default:{ Geometry.Rect.x = 0; y = 0; width = content.width; height = content.height }
+      in
+      let view = Ches_tile.Text_view.fit view ~width:area.width ~rows:area.height in
+      let row, column = Ches_tile.Text_view.cursor_cell view ~width:area.width in
+      { Ches_tile.Cursor.row = area.y + row - Ches_tile.Text_view.top view
+      ; column = area.x + column
+      ; shape = Block
+      })
 ;;
 
 let supporting_cursor ?floating t ~width ~height =
@@ -1114,6 +1138,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Focus_other_pane
   | Swap_split
   | Adjust_split _
+  | Close_split
   | Run_view_command _
   | Restart_source
   | Kill_source
@@ -1145,9 +1170,9 @@ let view_unavailable t id =
     ~default:(sprintf "View %s unavailable" (View_id.to_string id))
 ;;
 
-(* Feedback for [view], just applied: the requested value, then the effective one on this
-   screen when it differs. *)
-let view_feedback t ~width ~height (view : View_command.t) : string option =
+(* Feedback for [view], just applied to [before]: the requested value, then the effective
+   one on this screen when it differs. *)
+let view_feedback t ~before ~width ~height (view : View_command.t) : string option =
   let geometry = geometry t ~width ~height in
   let with_fit requested effective ~to_string =
     if requested = effective
@@ -1165,7 +1190,7 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
   | Focus_view _ | Focus_other_pane ->
     let focused = Host.spec t.host (focused_view t ~width ~height) in
     Some (Option.value (Host.notice t.host) ~default:(focused.title ^ " focused"))
-  | Place_view _ -> Host.notice t.host
+  | Place_view _ | Close_split -> Host.notice t.host
   | Swap_split | Adjust_split _ ->
     let split = t.split in
     let side =
@@ -1205,7 +1230,11 @@ let view_feedback t ~width ~height (view : View_command.t) : string option =
     Some (if t.source_attached then "Diagnostic source restart requested" else no_source)
   | Kill_source ->
     Some (if t.source_attached then "Diagnostic source kill requested" else no_source)
-  | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Close_tab | Force_close_tab | Recreate_missing_file -> None
+  | Close_tab | Force_close_tab ->
+    (* Closing a view tab closes the view, with its notice; a file tab's close reports
+       through the session. *)
+    if Option.is_some (active_tab_view before) then Host.notice t.host else None
+  | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Recreate_missing_file -> None
      | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> Host.notice t.host
   | Toggle_problems_filter ->
     Some (if problems_current_document t then "Problems: current document" else "Problems: workspace")
@@ -1367,11 +1396,93 @@ let open_ask t ~width ~height ~source (question : View_registry.Ask.Question.t) 
         })
 ;;
 
+(* Open a view's [location] as a picker opens a file: the file tab replaces a view
+   tab, focus returns to the editor area (the other pane beside a split view), and the
+   cursor goes to the line, clamped to the file. A failure is the view's notice. *)
+let open_location t ~width ~height ~source ({ path; line } : View_registry.Location.t) =
+  match Session.open_or_activate ~must_exist:true (session t) path with
+  | Error error ->
+    pane_notice t ~source
+      (Ches_file_picker.Model.Candidate.display_text
+         (sprintf "%s: %s" (Host.spec t.host source).title (Error.to_string_hum error)))
+  | Ok (session, _) ->
+    let session =
+      match line, Session.active_controller session with
+      | Some line, Some controller ->
+        let lines = Text_buffer.line_count (Editor.text (Controller.editor controller)) in
+        (match
+           Controller.jump controller ~line:(Int.clamp_exn line ~min:1 ~max:(Int.max 1 lines))
+             ~column:1
+         with
+         | Ok controller -> Session.replace_active session controller
+         | Error _ -> session)
+      | Some _, None | None, _ -> session
+    in
+    adopt_session_state (return_to_document (file_tab t)) session ~width ~height
+;;
+
+(* A signalled action's outcome ([View_registry.Signal]): applied without moving focus
+   or touching the focused view's capture state. A [`Post] notice goes to feedback
+   only; [`Show], the effect, [return] and [open_file] are ignored; a question opens
+   only over the focused view that asked, and is withdrawn otherwise. Jobs whose id is
+   in flight are answered at once with their never-started report. Returns whether
+   any signal was acted on. *)
+let rec apply_signal_outcome t ~width ~height ~source
+          ({ View_registry.Outcome.controller; notice; jobs; ask; effect = _; return = _
+           ; open_file = _ } : _ View_registry.Outcome.t)
+  =
+  let t = { t with controller } in
+  let t =
+    match notice with
+    | Some (`Post text) ->
+      { t with
+        controller =
+          Controller.update_feedback t.controller
+            (Notify
+               { source = View_id.to_string source
+               ; scope = path t
+               ; severity = Info
+               ; text
+               ; history = false
+               })
+      }
+    | Some (`Show _) | None -> t
+  in
+  let t = submit_jobs t ~width ~height ~source jobs in
+  match ask with
+  | None -> t
+  | Some question when View_id.equal (focused_view t ~width ~height) source ->
+    open_ask t ~width ~height ~source question
+  | Some _ -> { t with views = View_registry.withdraw t.views source }
+
+and submit_jobs t ~width ~height ~source jobs =
+  List.fold jobs ~init:t ~f:(fun t (job : Ches_vcs.Job.t) ->
+    if Map.mem t.job_owners job.id
+    then
+      signal_view t ~width ~height source
+        (View_registry.Signal.Job (Finished (Ches_vcs.Job.never_started job)))
+    else
+      { t with
+        jobs = job :: t.jobs
+      ; job_owners = Map.set t.job_owners ~key:job.id ~data:source
+      })
+
+(* Tell view [id] a signal; its action is performed in its own viewport. *)
+and signal_view t ~width ~height id (signal : View_registry.Signal.t) =
+  match
+    View_registry.signal t.views id signal ~controller:t.controller
+      ~rows:(minor_rows t ~width ~height id) ~width:(minor_width t ~width ~height id)
+  with
+  | views, None -> { t with views }
+  | views, Some outcome ->
+    apply_signal_outcome { t with views } ~width ~height ~source:id outcome
+;;
+
 (* What an adapter's action asks for, in order: the controller, a text effect, a
    notice, then returning to the document, showing its file tab over a view tab, then
-   its question. *)
+   opening a file, then its jobs, then its question. *)
 let apply_outcome t ~width ~height ~source
-      { View_registry.Outcome.controller; effect; notice; return; ask }
+      { View_registry.Outcome.controller; effect; notice; return; open_file; jobs; ask }
   =
   let t = text_effect { t with controller } ~source effect in
   let t =
@@ -1381,7 +1492,77 @@ let apply_outcome t ~width ~height ~source
     | Some (`Show text) -> { t with host = Host.with_notice t.host text }
   in
   let t = if return then return_to_document (file_tab t) else t in
+  let t = Option.value_map open_file ~default:t ~f:(open_location t ~width ~height ~source) in
+  let t = submit_jobs t ~width ~height ~source jobs in
   Option.value_map ask ~default:t ~f:(open_ask t ~width ~height ~source)
+;;
+
+(* A runner's event for a job in flight goes to the view that submitted it; [Finished]
+   ends the job's ownership first, so the view may reuse nothing but can submit
+   anew. Events of unknown jobs are dropped. *)
+let receive_job t ~width ~height (event : Ches_vcs.Event.t) =
+  let id = Ches_vcs.Event.job event in
+  match Map.find t.job_owners id with
+  | None -> t
+  | Some owner ->
+    let t =
+      match event with
+      | Finished _ -> { t with job_owners = Map.remove t.job_owners id }
+      | Started _ | Output _ -> t
+    in
+    signal_view t ~width ~height owner (View_registry.Signal.Job event)
+;;
+
+(* A batch of runner events, then one synchronization. *)
+let receive_jobs t ~width ~height events =
+  synchronize
+    (List.fold events ~init:t ~f:(fun t event -> receive_job t ~width ~height event))
+    ~width ~height
+;;
+
+(* After an input: [Shown] to views placed since they were last signalled, then one
+   [Saved] with the files the input saved, to every installed view; then one
+   synchronization if any view was told something. The active controller's save, if
+   any, is moved into the session first (as [take_source_requests] does), so repeated
+   saves of one buffer each count. *)
+let signal_views t ~width ~height =
+  let placed =
+    List.filter_map (View_registry.placements t.views) ~f:(fun (id, placement) ->
+      Option.some_if (not (View_registry.Placement.equal placement Hidden)) id)
+  in
+  let newly_shown =
+    List.filter placed ~f:(fun id -> not (List.mem t.shown id ~equal:View_id.equal))
+  in
+  let t = { t with shown = placed } in
+  let t =
+    match Controller.take_saved t.controller with
+    | _, None -> t
+    | _, Some _ ->
+      let session = session t in
+      { t with
+        session
+      ; controller = Option.value (Session.active_controller session) ~default:t.controller
+      }
+  in
+  let saved = Session.saved t.session in
+  let fresh = List.drop saved t.saves_signalled in
+  let t = { t with saves_signalled = List.length saved } in
+  let signals =
+    List.map newly_shown ~f:(fun id -> id, View_registry.Signal.Shown)
+    @
+    match fresh with
+    | [] -> []
+    | fresh ->
+      let paths = List.map fresh ~f:(fun (saved : Controller.Saved.t) -> saved.path) in
+      List.map (View_registry.ids t.views) ~f:(fun id -> id, View_registry.Signal.Saved paths)
+  in
+  if List.is_empty signals
+  then t
+  else
+    synchronize
+      (List.fold signals ~init:t ~f:(fun t (id, signal) ->
+         signal_view t ~width ~height id signal))
+      ~width ~height
 ;;
 
 (* Close the question float, refocus the view that asked (or return to the document
@@ -1652,6 +1833,25 @@ let place_view t ~width ~height id (placement : View_registry.Placement.t) =
     notice (title ^ where) t
 ;;
 
+(* Show hidden view [id] where it opens ([View_registry.opens_in]): in the band, as a
+   tab added after the active entry and activated, or in the split (closing the view
+   there). *)
+let show_hidden t id =
+  match View_registry.opens_in t.views id with
+  | Band -> { t with views = View_registry.set_placement t.views id Band }
+  | Split -> { t with views = View_registry.set_placement t.views id Split; rows = None }
+  | Tab ->
+    let after = active_tab t in
+    let views = View_registry.set_placement t.views id Tab in
+    let tabs =
+      Tab_strip.add t.tabs
+        ~files:(List.map (Session.buffers t.session) ~f:fst)
+        ~views:(View_registry.tabs views) id ~after
+    in
+    { t with views; tabs; rows = None }
+  | Hidden -> t
+;;
+
 (* The view a placement command names: [None] is the focused registered view. *)
 let place_named t ~width ~height view placement =
   let focused = focused_view t ~width ~height in
@@ -1674,6 +1874,14 @@ let focus_other_pane t ~width ~height =
       let t = leave t current in
       { t with host = Host.focus t.host id; controller = Controller.cancel_pending t.controller })
   | Some _ | None -> { t with host = Host.with_notice t.host "No split view shown" }
+;;
+
+(* Close the split view from either pane, shown or not (zen, too narrow): the
+   placement is what closes, as [Place_view] to [Hidden] would close it. *)
+let close_split t ~width ~height =
+  match View_registry.split t.views with
+  | Some id -> place_view t ~width ~height id Hidden
+  | None -> { t with host = Host.with_notice t.host "No split view" }
 ;;
 
 let apply_view_command t ~width ~height (view : View_command.t) =
@@ -1703,8 +1911,9 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Next_tab -> switch_tab t ~width ~height ~direction:1
   | Previous_tab -> switch_tab t ~width ~height ~direction:(-1)
   | Close_tab | Force_close_tab ->
+    (* An active view tab closes as [Place_view] to [Hidden] would, with its notice. *)
     (match active_tab_view t, Session.active_id (session t) with
-     | Some id, _ -> close_view t ~width ~height id
+     | Some id, _ -> place_view t ~width ~height id Hidden
      | None, None -> t
      | None, Some id -> fst (close_buffer_state t ~width ~height id ~force:(View_command.equal view Force_close_tab)))
   | Open_palette -> open_palette t ~width ~height
@@ -1726,19 +1935,19 @@ let apply_view_command t ~width ~height (view : View_command.t) =
           { t with tabs = Tab_strip.activate t.tabs (Some id); rows = None })
       | Some (Hidden | Band | Split) | None ->
         toggle_focus t ~width ~height id ~show:(fun t ->
-          if view_visible t id then t
-          else { t with views = View_registry.set_placement t.views id Band }))
+          if view_visible t id then t else show_hidden t id))
   | Toggle_view id ->
     if not (View_registry.installed t.views id)
     then t
     else if view_visible t id
     then close_view t ~width ~height id
-    else { t with views = View_registry.set_placement t.views id Band }
+    else show_hidden t id
   | Place_view { view; placement } -> place_named t ~width ~height view placement
   | Focus_other_pane -> focus_other_pane t ~width ~height
   | Swap_split -> { t with split = Workspace.Major_split.swap t.split; rows = None }
   | Adjust_split points ->
     { t with split = Workspace.Major_split.adjust t.split points; rows = None }
+  | Close_split -> close_split t ~width ~height
   | Run_view_command { view; command } -> run_view_command t ~width ~height view command
   | Restart_source when t.source_attached ->
     { t with source_commands = Restart :: t.source_commands }
@@ -1825,16 +2034,17 @@ let split_notice t ~before ~width ~height =
    order, then at most one notification. A keymap notice, which only a keyed step has,
    wins over layout feedback for the last view command. *)
 let finish_step t ~width ~height ~controller ~views ~keymap_notice =
-  let t =
-    List.fold views ~init:{ t with controller } ~f:(fun t view ->
-      apply_view_command t ~width ~height view)
+  let t = { t with controller } in
+  let before, t =
+    List.fold views ~init:(t, t) ~f:(fun (_, t) view ->
+      t, apply_view_command t ~width ~height view)
   in
   let notification =
     match keymap_notice, List.last views with
     | Some text, _ -> Some (Ches_error.Error.Severity.Warning, "keymap", text, true)
     | None, Some view ->
       (* Layout feedback is transient chatter; history keeps keymap notices only. *)
-      Option.map (view_feedback t ~width ~height view) ~f:(fun text ->
+      Option.map (view_feedback t ~before ~width ~height view) ~f:(fun text ->
         Ches_error.Error.Severity.Info, "workspace", text, false)
     | None, None -> None
   in
@@ -1872,6 +2082,35 @@ let open_help t ~width ~height origin =
   else { t with help = Some help; host = Host.focus t.host Help_tile.id }
 ;;
 
+(* Workspace commands typed in a captured view, or in help or a question over one,
+   post no layout feedback: a placement notice shows in the footer of [footer], that
+   view or float. When a placement command or a view tab's close closed that view
+   (or the float's view), or moved it where it cannot keep focus, that footer is gone
+   and the notice would be lost, so it goes to the feedback line as it would from the
+   editor pane. *)
+let placement_notice_from_view t ~width ~height ~footer (view : View_command.t) =
+  let footer_kept =
+    let origin =
+      if View_id.equal footer Help_tile.id
+      then Option.map t.help ~f:Help_tile.origin
+      else if View_id.equal footer Confirm_tile.id || View_id.equal footer Prompt_tile.id
+      then ask_origin t
+      else Some footer
+    in
+    View_id.equal (focused_view t ~width ~height) footer
+    && Option.exists origin ~f:(available t ~width ~height)
+  in
+  match view, Host.notice t.host with
+  | (Place_view _ | Close_split | Close_tab | Force_close_tab), Some text when not footer_kept ->
+    { t with
+      controller =
+        Controller.update_feedback
+          t.controller
+          (Notify { source = "workspace"; scope = None; severity = Info; text; history = false })
+    }
+  | _ -> t
+;;
+
 (* A key typed into captured view [id]: the host decides, then the view's adapter
    performs its own actions. This is the only place adapters meet the host. *)
 let feed_capture t ~width ~height id key =
@@ -1889,7 +2128,13 @@ let feed_capture t ~width ~height id key =
      | Handled -> t
      | Return -> return_to_document t
      | Notice text -> pane_notice t ~source:id text
-     | Workspace view -> apply_view_command t ~width ~height view
+     | Workspace view ->
+       placement_notice_from_view
+         (apply_view_command t ~width ~height view)
+         ~width
+         ~height
+         ~footer:id
+         view
      | Help -> open_help t ~width ~height id
      | Performed outcome -> apply_outcome t ~width ~height ~source:id outcome)
 ;;
@@ -2076,7 +2321,13 @@ let route t ~width ~height key =
       | Content (Scroll motion), Some help ->
         { t with help = Some (Help_tile.scroll help ~rows:(minor_rows t ~width ~height id) motion) }
       | Notice text, _ -> { t with host = Host.with_notice t.host text }
-      | Workspace view, _ -> apply_view_command t ~width ~height view
+      | Workspace view, _ ->
+        placement_notice_from_view
+          (apply_view_command t ~width ~height view)
+          ~width
+          ~height
+          ~footer:id
+          view
       | Handled, _ | Content _, None -> t
     in
     t, Controller.Status.Running
@@ -2097,7 +2348,13 @@ let route t ~width ~height key =
         | Content Yes -> answer_ask t ~width ~height Yes
         | Return | Content No -> answer_ask t ~width ~height No
         | Notice text -> { t with host = Host.with_notice t.host text }
-        | Workspace view -> apply_view_command t ~width ~height view
+        | Workspace view ->
+          placement_notice_from_view
+            (apply_view_command t ~width ~height view)
+            ~width
+            ~height
+            ~footer:id
+            view
         | Handled -> t)
       else (
         let host, decision =
@@ -2116,7 +2373,13 @@ let route t ~width ~height key =
         | Content (Edit event), Some prompt ->
           { t with prompt = Some (Prompt_tile.update prompt event) }
         | Notice text, _ -> { t with host = Host.with_notice t.host text }
-        | Workspace view, _ -> apply_view_command t ~width ~height view
+        | Workspace view, _ ->
+          placement_notice_from_view
+            (apply_view_command t ~width ~height view)
+            ~width
+            ~height
+            ~footer:id
+            view
         | Handled, _ | Content _, None -> t)
     in
     t, Controller.Status.Running
@@ -2217,7 +2480,17 @@ let release_held t ~width ~height =
 ;;
 
 let rec apply t ~width ~height (input : Input.t) =
-  if t.exited then t, Controller.Status.Exit else apply_running t ~width ~height input
+  if t.exited
+  then t, Controller.Status.Exit
+  else (
+    match apply_running t ~width ~height input, input with
+    | (t, Controller.Status.Exit), _ -> t, Controller.Status.Exit
+    | ( (t, Running)
+      , ( Animation_tick _ | Line_picker_work _ | File_picker_work _ | File_preview _
+        | File_picker_snapshot _ | File_picker_update _ | Content_picker_snapshot _ ) ) ->
+      (* Bounded background turns neither save nor place views. *)
+      t, Running
+    | (t, Running), _ -> signal_views t ~width ~height, Running)
 
 and apply_running t ~width ~height (input : Input.t) =
   match input with
@@ -2317,6 +2590,7 @@ and apply_regular t ~width ~height (input : Input.t) =
   match input with
   | Resize -> t, Running
   | Source event -> receive_all t ~width ~height [ event ], Running
+  | Vcs event -> receive_jobs t ~width ~height [ event ], Running
      | File_preview _ | File_picker_snapshot _ | File_picker_update _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
   | Animation_tick now ->
     let dt =
@@ -2351,7 +2625,7 @@ and apply_regular t ~width ~height (input : Input.t) =
         | Key key when not (has_document t) ->
           feed t ~width ~height (Key key)
         | Key key -> route ~width ~height t key
-       | Animation_tick _ | Resize | Source _ | File_preview _ | File_picker_snapshot _ | File_picker_update _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
+       | Animation_tick _ | Resize | Source _ | Vcs _ | File_preview _ | File_picker_snapshot _ | File_picker_update _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
     in
     let t = release_held t ~width ~height in
     let t = refit t ~width ~height in
@@ -2380,12 +2654,13 @@ and apply_regular t ~width ~height (input : Input.t) =
 ;;
 
 (* Consecutive [Source] inputs, as a frontend delivers a batch of source events, are
-   one step: the same result as applying them one by one, with one synchronization. *)
+   one step: the same result as applying them one by one, with one synchronization.
+   Consecutive [Vcs] inputs (a runner's batch) likewise. *)
 let apply_all ?(after_step = Fn.id) t ~width ~height inputs =
   let steps =
     List.group inputs ~break:(fun (a : Input.t) (b : Input.t) ->
       match a, b with
-      | Source _, Source _ -> false
+      | Source _, Source _ | Vcs _, Vcs _ -> false
       | _ -> true)
   in
   List.fold_until
@@ -2404,6 +2679,15 @@ let apply_all ?(after_step = Fn.id) t ~width ~height inputs =
               (List.filter_map step ~f:(function
                  | Input.Source event -> Some event
                  | _ -> None))
+          , Controller.Status.Running )
+        | Vcs _ :: _ when t.exited -> t, Controller.Status.Exit
+        | Vcs _ :: _ ->
+          let t = refit t ~width ~height in
+          ( receive_jobs t ~width ~height
+              (List.filter_map step ~f:(function
+                 | Input.Vcs event -> Some event
+                 | _ -> None))
+            |> signal_views ~width ~height
           , Controller.Status.Running )
         | [ input ] -> apply t ~width ~height input
         | _ -> assert false

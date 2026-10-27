@@ -77,7 +77,8 @@ let default =
   let numbers = [ "gutter"; "numbering"; "line numbers" ] in
   let problems = View_id.of_string "problems"
   and history = View_id.of_string "history"
-  and demo_report = View_id.of_string "demo-report" in
+  and demo_report = View_id.of_string "demo-report"
+  and vcs = View_id.of_string "vcs" in
   create
      [ editor ~id:"file.save" ~title:"Save buffer" ~keywords:[ "write"; "w"; "file"; "directory"; "apply"; "permanent delete" ] Save
     ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab
@@ -248,6 +249,11 @@ let default =
         ~keywords:[ "pane"; "ratio"; "size"; "narrower" ]
         (Adjust_split (-10))
     ; view
+        ~id:"split.close"
+        ~title:"Close split view"
+        ~keywords:[ "pane"; "hide"; "unsplit" ]
+        Close_split
+    ; view
         ~id:"problems.toggle"
         ~title:"Toggle problems tile"
         ~keywords:[ "errors"; "diagnostics"; "warnings" ]
@@ -287,6 +293,26 @@ let default =
         ~title:"Focus demo report"
         ~keywords:[ "demo" ]
         (Focus_view demo_report)
+    ; view
+        ~id:"vcs.open"
+        ~title:"VCS: open or focus"
+        ~keywords:[ "git"; "status"; "diff"; "magit"; "lazygit" ]
+        (Focus_view vcs)
+    ; view
+        ~id:"vcs.to-tab"
+        ~title:"VCS: move to a tab"
+        ~keywords:[ "git"; "placement"; "tab strip" ]
+        (Place_view { view = Some vcs; placement = Tab })
+    ; view
+        ~id:"vcs.to-split"
+        ~title:"VCS: move to the split"
+        ~keywords:[ "git"; "placement"; "pane"; "side by side" ]
+        (Place_view { view = Some vcs; placement = Split })
+    ; view
+        ~id:"vcs.close"
+        ~title:"VCS: close"
+        ~keywords:[ "git"; "hide" ]
+        (Place_view { view = Some vcs; placement = Hidden })
     ; view
         ~id:"source.restart"
         ~title:"Restart diagnostic source"

@@ -101,6 +101,7 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     split.swap                     Swap split sides
     split.grow-view                Grow split view by 10%
     split.shrink-view              Shrink split view by 10%
+    split.close                    Close split view
     problems.toggle                Toggle problems tile
     problems.focus                 Focus problems
     problems.toggle-filter         Toggle problems filter (workspace / current document)
@@ -109,6 +110,10 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     history.focus                  Focus notification history
     report.toggle                  Toggle demo report
     report.focus                   Focus demo report
+    vcs.open                       VCS: open or focus
+    vcs.to-tab                     VCS: move to a tab
+    vcs.to-split                   VCS: move to the split
+    vcs.close                      VCS: close
     source.restart                 Restart diagnostic source
     document.lines                 Search current document lines
     project.contents               Search project contents

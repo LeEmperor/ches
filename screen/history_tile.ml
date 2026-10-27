@@ -293,6 +293,8 @@ let adapter : (t, action) View_registry.Adapter.t =
               (Ches_app.Controller.update_feedback controller Clear_history) )
         else tile, View_registry.Outcome.create ?effect controller)
   ; commands
+  ; signal = (fun _ _ -> None)
+  ; text_area = (fun _ ~rows:_ ~width:_ -> None)
   ; render =
       (fun t controller ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
         render ~hotkey_hints ~focused ?notice ?pending t (history controller) ~width ~rows)
