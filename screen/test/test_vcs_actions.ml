@@ -72,6 +72,13 @@ let action_name : B.action -> string = function
   | Unstage_all -> "Unstage_all"
   | Finish_commit _ -> "Finish_commit"
   | Extend _ -> "Extend"
+  | Fetch -> "Fetch"
+  | Pull _ -> "Pull"
+  | Push _ -> "Push"
+  | Checkout name -> "Checkout " ^ name
+  | Checkout_previous -> "Checkout_previous"
+  | Create_branch name -> "Create_branch " ^ name
+  | Abort _ -> "Abort"
 ;;
 
 (* Whole hunks as [git apply] takes them, for plain names (the fake's own [Patch]). *)
@@ -228,7 +235,7 @@ let fake ?(override = fun (_ : B.action) -> None) env : Vcs_view.planner =
              plan ~rewrites_worktree:true ("Discard " ^ of_lines file hunks)
                (apply_hunks [ "--reverse" ] file (List.map hunks ~f:fst))
          }
-     | Stage _ | Unstage _ | Discard _ | Finish_commit _ | Extend _ ->
+     | Stage _ | Unstage _ | Discard _ | Finish_commit _ | Extend _ | Fetch | Pull _ | Push _ | Checkout _ | Checkout_previous | Create_branch _ | Abort _ ->
        Refused "fake: not planned; nothing ran")
 ;;
 
@@ -652,7 +659,7 @@ let%expect_test "busy until the refresh after a mutation is applied; failures ar
                  }
              })
       | Unstage _ -> Some (Refused "a.txt is not staged; nothing ran")
-      | Stage_all | Unstage_all | Finish_commit _ | Extend _ -> None
+      | Stage_all | Unstage_all | Finish_commit _ | Extend _ | Fetch | Pull _ | Push _ | Checkout _ | Checkout_previous | Create_branch _ | Abort _ -> None
     in
     let t = run env (run env (create ~override env) " vx") "jjj" in
     let t = run env t "s" in

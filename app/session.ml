@@ -32,6 +32,7 @@ type t =
   ; register : Register.t option
   ; clipboard : string option
   ; saved : Controller.Saved.t list
+  ; directory_changes : string list
   ; closed : string list
   ; exited : bool
   ; empty_keymap : Keymap.t
@@ -128,7 +129,7 @@ let create ?(cwd = Core_unix.getcwd ()) ?keymap_config ?(directory_config = Dire
   ; resources = (if directory_start then String.Map.empty else Option.value_map path ~default:String.Map.empty ~f:(fun p -> String.Map.singleton (Resource.normalize ~cwd p) (Buffer_id.of_int 1)))
    ; active = (if directory_start then None else Some (Buffer_id.of_int 1)); next_id = 2; next_generation = 2; feedback = Controller.feedback controller
   ; register = Editor.unnamed_register (Controller.editor controller); clipboard = None
-  ; saved = []; closed = []; exited = false; empty_keymap = Keymap.create keymap_config
+  ; saved = []; directory_changes = []; closed = []; exited = false; empty_keymap = Keymap.create keymap_config
    ; directories; directory = (if directory_start then Some (Buffer_id.of_int 1) else None)
    ; directory_index = ref None
    ; remembered = (if directory_start then Some (Buffer_id.of_int 1) else None); return_file = None
@@ -244,6 +245,27 @@ let reconcile_paths t moves =
     ; next_generation = !next; startup_directory = relocate moves t.startup_directory }
 ;;
 
+(* Absolute paths an apply changed, in syscall order; a staging name renamed on again
+   within the same apply is internal and dropped, one left behind by a failure is not. *)
+let changed_paths (d : Directory_buffer.t) applied =
+  let path name = Resource.normalize ~cwd:d.path name in
+  let renamed_from = function Directory_plan.Rename r -> Some (path r.source) | _ -> None in
+  let renamed_to = function Directory_plan.Rename r -> Some (path r.destination) | _ -> None in
+  let rec go earlier = function
+    | [] -> []
+    | operation :: later ->
+      let paths = match operation with
+        | Directory_plan.Create_file name | Create_directory name -> [ path name ]
+        | Delete r -> [ path r.source ]
+        | Copy r -> [ path r.destination ]
+        | Rename r ->
+          (if List.exists earlier ~f:(fun o -> Option.equal String.equal (renamed_to o) (Some (path r.source))) then [] else [ path r.source ])
+          @ (if List.exists later ~f:(fun o -> Option.equal String.equal (renamed_from o) (Some (path r.destination))) then [] else [ path r.destination ]) in
+      paths @ go (operation :: earlier) later in
+  List.fold (go [] applied) ~init:(String.Set.empty, []) ~f:(fun (seen, paths) path ->
+    if Set.mem seen path then seen, paths else Set.add seen path, path :: paths) |> snd |> List.rev
+;;
+
 let directory_save ?before_mutation t d =
   match Directory_buffer.plan d with
   | Error error -> notify t ("Invalid directory plan: " ^ Error.to_string_hum error)
@@ -275,6 +297,7 @@ let directory_save ?before_mutation t d =
       let reserved_paths = List.filter_map (ordered_buffers t) ~f:(fun b -> Editor.path (Controller.editor b.controller))
         @ List.map t.directories ~f:(fun d -> d.path) in
       let result = Directory_apply.apply ~reserved_paths ?before_mutation d in
+      let t = { t with directory_changes = t.directory_changes @ changed_paths d result.applied } in
       let t = reconcile_paths t result.moves in
       let t = reindex t (List.map (ordered_buffers t) ~f:(fun b ->
         if Option.exists (Editor.path (Controller.editor b.controller)) ~f:(fun path ->
@@ -769,6 +792,8 @@ let feedback t = t.feedback
 let take_clipboard t = { t with clipboard = None }, t.clipboard
 let take_saved t = { t with saved = [] }, t.saved
 let saved t = t.saved
+let take_directory_changes t = { t with directory_changes = [] }, t.directory_changes
+let directory_changes t = t.directory_changes
 let take_closed t = { t with closed = [] }, t.closed
 
 module For_testing = struct

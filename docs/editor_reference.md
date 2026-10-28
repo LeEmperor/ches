@@ -436,8 +436,9 @@ behave as in problems.
 
 `Space g g` opens a git view of the repository around the startup file (or the
 directory opened), in the spirit of lazygit and Magit. It stages, unstages and
-discards files, hunks and selected lines, and commits, amends and extends HEAD;
-branches and remotes are planned. The view is a tab the first time (labelled `VCS:
+discards files, hunks and selected lines, commits, amends and extends HEAD,
+fetches, pulls and pushes, and checks out and creates branches. The view is a tab the
+first time (labelled `VCS:
 <branch>`, or `VCS: <revision>` on a detached HEAD); `Space g s` moves it into the
 split beside the editor, `Space g t` back into the tab strip, and `Space g h`
 closes it (its state is simply re-read when it opens again). It occupies one place at a time. `Space g g` and `Space g f` are the
@@ -453,14 +454,15 @@ Untracked, Unstaged and Staged sections), **Branches** and **Commits** (the late
 diff, a section's combined diff, or a commit's `git show`. In a narrow placement,
 such as the split, the lists stack above the diff; when even that does not fit,
 only the focused part shows. `@` shows the command log at the bottom: each git
-command with its exit status and, on failure, its output.
+command with its exit status and, on failure, its output (a fetch, pull or push also
+keeps its last lines of output, and shows its progress while it runs).
 
 | VCS keys | Action |
 | --- | --- |
 | `1` / `2` / `3` (list) | Focus the Files / Branches / Commits panel |
 | `0` (list), `Tab` | Focus the diff; `Tab` again returns to the list it follows |
 | `j` `k`, `gg` `G`, `Ctrl-d` `Ctrl-u` | Move in a list (headers included); the diff follows |
-| `Enter` (list) | Fold or unfold a section header; on a file or commit, focus the diff |
+| `Enter` (list) | Fold or unfold a section header; on a file or commit, focus the diff; on a branch, check it out |
 | `y` (list) | Copy the selected path, branch name or abbreviated commit hash |
 | `s` / `u` / `x` (Files) | Stage / unstage / discard the selected file, or every file of the selected section |
 | `s` / `u` / `x` (diff) | Stage / unstage / discard the hunk at the cursor; on a file's header lines, the whole file |
@@ -470,6 +472,11 @@ command with its exit status and, on failure, its output.
 | Read-only text keys (diff) | Move, select and copy, as in [Read-only text](#read-only-text-in-supporting-views), with counts: `10j`, `5k`, `12G` |
 | `e`, `Enter` (diff) | Open the file at the cursor's line |
 | `c` | Commit popup: commit, amend or extend HEAD, with switches |
+| `f` | Fetch from the default remote (`git fetch --prune`) |
+| `p` / `P` | Pull popup / push popup |
+| `r` / `m` | While a rebase / merge is in progress: its popup, whose `a` aborts it |
+| `n` (Branches) | New branch at HEAD, checked out: prompts for the name |
+| `-` (Branches) | Check out the previous branch (`git switch -`) |
 | `g r` | Refresh (or look for a repository again) |
 | `@` | Show or hide the command log |
 | `?` | List the keys that work where the cursor is (also in the palette, first) |
@@ -591,6 +598,58 @@ Refusals and failures:
 Commits never rewrite the work tree themselves, so unsaved buffers do not block
 them, but hooks may: after every commit, amend or extend, open buffers inside the
 repository are compared with disk as after a discard.
+
+**Remotes and branches.** `f`, `p`, `P`, `r` and `m` work in any panel and in the
+diff outside a selection; `Enter`, `n` and `-` in Branches. Every one goes through
+the same steps as staging: refusals say why and run nothing, one command runs in the
+background and is logged, and the view refreshes after it.
+
+- `f` fetches at once: `git fetch --prune` from the default remote, so an upstream
+  deleted on the remote shows as gone.
+- `p` opens the pull popup: `p` pulls from the branch's upstream, fast-forward only
+  (`git pull --ff-only --no-rebase`, whatever `pull.rebase` says); with `-r` it
+  rebases the local commits onto the upstream (`git pull --rebase`). A pull is
+  refused on a detached HEAD, without an upstream ("push it with P u first"), with a
+  gone upstream, with conflicted files, and while another operation is in progress.
+- `P` opens the push popup, titled with the branch: `p` pushes to its upstream
+  (named exactly, e.g. `Push to origin/main`, so `push.default` never matters), `u`
+  pushes to `origin/<branch>` and makes that its upstream. `-n` skips the pre-push
+  hook; `-f` force-pushes with lease and always asks first ("Force-push main to
+  origin/main? Commits on origin/main that main does not contain are lost. git
+  refuses if origin/main moved since the last fetch."). Without an upstream, `p` says
+  to use `P u`.
+- `Enter` on a branch checks it out (`git switch`); on the current branch it says
+  "Already on <branch>; nothing ran". `-` checks out the previous branch. If
+  uncommitted changes would be overwritten, git refuses and nothing changes.
+- `n` asks for a new branch's name in a prompt that checks it as you type, with
+  `git check-ref-format --branch`'s rules ("Not a valid branch name: it contains
+  '..'", "A branch named main already exists"); `Enter` creates the branch at HEAD
+  and checks it out, keeping uncommitted changes. Escape cancels. On a branch with no
+  commits it is refused.
+- Checkout, the previous branch, pull and abort rewrite the work tree, so like a
+  discard they are refused while a file in the repository has unsaved changes, and
+  open buffers are compared with disk afterwards.
+
+A fetch, pull or push may take a while; the view stays usable meanwhile (moving,
+diffs, `g r`, the log), other actions say "Busy: <title>; nothing ran", and the head
+summary shows `Fetch...` (or the pull's or push's title) with git's latest progress
+line. When it ends, the result is reported even if you have moved on: "Fetch: done",
+"Push main to origin/main: done", or "<title> failed: <reason>", where the reason
+explains common failures: no key loaded in ssh-agent, an unknown host key,
+credentials Ches cannot ask for, an unresolvable host, a diverged branch for a
+fast-forward-only pull ("pull with rebase (p -r p)"), a rejected push ("pull first
+(p p)"), a stale lease, a missing remote. git's own output is in the command log.
+Git and ssh never prompt: Ches cannot ask for a passphrase or accept a host key, so
+use ssh-agent or a credential helper, and connect once with ssh in a terminal to
+accept a new host.
+
+If a pull with `-r` stops on a conflict (or a merge was started outside Ches), the
+head summary shows the operation with how to leave it: "Rebasing main onto 1a2b3c4
+(r a aborts)", "Merging 1a2b3c4 (m a aborts)". `r` and `m` open the rebase and merge
+popups, whose only action, `a`, asks before running `git rebase --abort` or `git
+merge --abort`; the branch returns to where it was. Resolving and continuing are not
+supported yet. Without an operation in progress they say "No rebase in progress;
+nothing ran" ("No merge ...").
 
 `e` in the diff opens the work-tree file at the line the cursor is on (for a removed
 line, the next line that survives; for a hunk header, its first line). From a tab, the

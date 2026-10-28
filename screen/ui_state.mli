@@ -331,7 +331,8 @@ val take_clipboard : t -> t * string option
     applied, in order: actual closes, lifetime-tagged opens and changed text for every
     buffer whose revision changed since the last take, all successful saves, then
     [Space v R]/[Space v K] requests in the order given. Empty unless
-    [source_attached]. The synchronous side never waits for the source. *)
+    [source_attached]. Paths changed by directory saves are dropped, never sent. The
+    synchronous side never waits for the source. *)
 val take_source_requests : t -> t * Ches_error.Source_request.t list
 
 (** The jobs registered views submitted ({!View_registry.Outcome.t.jobs}) since the
@@ -345,10 +346,11 @@ val take_source_requests : t -> t * Ches_error.Source_request.t list
     Besides keys, a registered view hears {!View_registry.Signal.t}s, which its
     adapter may turn into actions: [Shown] after the input that gave it a placement
     (from [Hidden], or the first input for a view installed placed); [Saved] after an
-    input that saved files, with their paths (every view, placed or hidden; saves
-    made by {!save_all} or {!quit_session} count at the next input); and [Job] for
-    its jobs' events. A signalled action never moves focus; see
-    {!View_registry.Signal} for how its outcome applies. *)
+    input that saved files or directory edits, with the saved files' paths, then the
+    paths the directory saves changed ({!Ches_app.Session.directory_changes}) (every
+    view, placed or hidden; saves made by {!save_all} or {!quit_session} count at the
+    next input); and [Job] for its jobs' events. A signalled action never moves
+    focus; see {!View_registry.Signal} for how its outcome applies. *)
 val take_vcs_jobs : t -> t * Ches_vcs.Job.t list
 
 (** Whether an input has returned [Exit]. From then on, {!apply} ignores its input and

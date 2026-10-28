@@ -42,7 +42,13 @@ for general distribution.
   `c` commit, `a` amend, `e` extend HEAD): commit and amend open the message as a
   file tab, `Space g c` commits it and `Space g a` aborts, and on success the tab
   closes and you are back in the view; a rejecting hook or an empty message keeps it
-  open with git's reason. `e`
+  open with git's reason. `f` fetches, `p` pulls (fast-forward only, or `-r` rebase)
+  and `P` pushes (`p` to the upstream, `u` to `origin` setting it, `-f` force with
+  lease, confirmed), streaming git's progress into the summary and the log and
+  explaining common failures (no ssh key loaded, diverged branches); in Branches,
+  `Enter` checks out, `n` creates a branch (the name checked as you type) and `-`
+  returns to the previous one. A rebase or merge left in progress can be aborted
+  (`r a`, `m a`). `e`
   in the diff opens the file at that line. Git runs in the background, never
   prompting on the terminal; saving a file in the repository refreshes it.
 
@@ -226,8 +232,10 @@ acceptance remain separate and unperformed.
   coalesced and use incremental synchronization when supported. The synthetic
   checker retains per-file runtimes. No session persistence or multiple editor groups.
 - **Version control:** the VCS view stages, unstages and discards files, hunks and
-  the lines of a Visual selection, and commits, amends and extends HEAD (branches and
-  remotes are planned; no merge message pre-fill or switch memory); it
+  the lines of a Visual selection, commits, amends and extends HEAD, fetches, pulls
+  and pushes, and checks out and creates branches (a stopped rebase or merge can only
+  be aborted, not resolved and continued; no merge message pre-fill or switch
+  memory; authentication only through ssh-agent or a credential helper); it
   refreshes on open,
   `g r`, saves and its own commands, never by watching files.
 - **Editing and tooling:** literal search, an unnamed

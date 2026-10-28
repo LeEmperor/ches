@@ -359,21 +359,32 @@ let%expect_test "Branch_list.command" =
   [%expect
     {|
     (git --no-pager -c color.ui=false -c core.quotepath=false for-each-ref
-     "--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)%00"
+     "--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)%00%(upstream:remotename)%00%(upstream:remoteref)%00"
      refs/heads)
     |}]
 ;;
 
-let%expect_test "Branch_list: upstreams in sync, ahead, behind, both, gone, none" =
-  let line name head upstream track subject =
+let%expect_test "Branch_list: upstreams in sync, ahead, behind, both, gone, local, none" =
+  (* [upstream] is ["<remote>/<branch>"], or [""] for none; a local upstream (remote
+     ["."]) is given as [~local]. *)
+  let line ?local name head upstream track subject =
+    let refname, short, remote, merge =
+      match local, String.lsplit2 upstream ~on:'/' with
+      | Some branch, _ -> "refs/heads/" ^ branch, branch, ".", "refs/heads/" ^ branch
+      | None, None -> "", "", "", ""
+      | None, Some (remote, branch) ->
+        "refs/remotes/" ^ upstream, upstream, remote, "refs/heads/" ^ branch
+    in
     sprintf
-      "%s\000a757577ac7f79aa5fd48614f00553a6319b37a4a\000%s\000%s\000%s\000%s\0001767225600\000%s\000\n"
+      "%s\000a757577ac7f79aa5fd48614f00553a6319b37a4a\000%s\000%s\000%s\000%s\0001767225600\000%s\000%s\000%s\000\n"
       name
       head
-      (if String.is_empty upstream then "" else "refs/remotes/" ^ upstream)
-      upstream
+      refname
+      short
       track
       subject
+      remote
+      merge
   in
   branches
     (String.concat
@@ -381,7 +392,8 @@ let%expect_test "Branch_list: upstreams in sync, ahead, behind, both, gone, none
        ; line "in-sync" " " "origin/main" "" "First"
        ; line "main" "*" "origin/main" "ahead 1" "Second"
        ; line "old" " " "origin/main" "behind 12" "Old"
-       ; line "split" " " "origin/main" "ahead 3, behind 4" "Fix: a, b and c"
+       ; line "on-main" " " ~local:"main" "" "behind 1" "Old"
+       ; line "split" " " "fork/feature/x" "ahead 3, behind 4" "Fix: a, b and c"
        ; line "user/local" " " "" "" ""
        ]);
   [%expect
@@ -390,28 +402,38 @@ let%expect_test "Branch_list: upstreams in sync, ahead, behind, both, gone, none
       (current false)
       (upstream
        (((name origin/doomed) (refname refs/remotes/origin/doomed)
-         (tracking Gone))))
+         (tracking Gone) (remote origin) (merge refs/heads/doomed))))
       (subject Second) (committer_time 1767225600))
      ((name in-sync) (oid a757577ac7f79aa5fd48614f00553a6319b37a4a)
       (current false)
       (upstream
-       (((name origin/main) (refname refs/remotes/origin/main)
-         (tracking In_sync))))
+       (((name origin/main) (refname refs/remotes/origin/main) (tracking In_sync)
+         (remote origin) (merge refs/heads/main))))
       (subject First) (committer_time 1767225600))
      ((name main) (oid a757577ac7f79aa5fd48614f00553a6319b37a4a) (current true)
       (upstream
        (((name origin/main) (refname refs/remotes/origin/main)
-         (tracking (Ahead_behind (ahead 1) (behind 0))))))
+         (tracking (Ahead_behind (ahead 1) (behind 0))) (remote origin)
+         (merge refs/heads/main))))
       (subject Second) (committer_time 1767225600))
      ((name old) (oid a757577ac7f79aa5fd48614f00553a6319b37a4a) (current false)
       (upstream
        (((name origin/main) (refname refs/remotes/origin/main)
-         (tracking (Ahead_behind (ahead 0) (behind 12))))))
+         (tracking (Ahead_behind (ahead 0) (behind 12))) (remote origin)
+         (merge refs/heads/main))))
+      (subject Old) (committer_time 1767225600))
+     ((name on-main) (oid a757577ac7f79aa5fd48614f00553a6319b37a4a)
+      (current false)
+      (upstream
+       (((name main) (refname refs/heads/main)
+         (tracking (Ahead_behind (ahead 0) (behind 1))) (remote .)
+         (merge refs/heads/main))))
       (subject Old) (committer_time 1767225600))
      ((name split) (oid a757577ac7f79aa5fd48614f00553a6319b37a4a) (current false)
       (upstream
-       (((name origin/main) (refname refs/remotes/origin/main)
-         (tracking (Ahead_behind (ahead 3) (behind 4))))))
+       (((name fork/feature/x) (refname refs/remotes/fork/feature/x)
+         (tracking (Ahead_behind (ahead 3) (behind 4))) (remote fork)
+         (merge refs/heads/feature/x))))
       (subject "Fix: a, b and c") (committer_time 1767225600))
      ((name user/local) (oid a757577ac7f79aa5fd48614f00553a6319b37a4a)
       (current false) (upstream ()) (subject "") (committer_time 1767225600)))
@@ -420,13 +442,21 @@ let%expect_test "Branch_list: upstreams in sync, ahead, behind, both, gone, none
 
 let%expect_test "Branch_list: empty, cut, malformed" =
   branches "";
-  branches ~cut:true "main\000aaaa\000*\000\000\000\0001\000s\000\nnext\000bb";
-  branches "main\000aaaa\000*\000\000\000\0001\000s\000\nnext\000bb";
+  branches ~cut:true "main\000aaaa\000*\000\000\000\0001\000s\000\000\000\nnext\000bb";
+  branches "main\000aaaa\000*\000\000\000\0001\000s\000\000\000\nnext\000bb";
+  branches "main\000aaaa\000*\000\000\000\0001\000s\000\000\000\n";
+  branches "main\000aaaa\000*\000\000\000\000\000s\000\000\000\n";
+  branches "main\000aaaa\000?\000\000\000\0001\000s\000\000\000\n";
+  branches
+    "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000sideways 2\0001\000s\000o\000refs/heads/m\000\n";
+  branches
+    "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000ahead 0\0001\000s\000o\000refs/heads/m\000\n";
+  print_endline "-- an upstream without its remote name or remote ref";
+  branches
+    "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000\0001\000s\000\000refs/heads/m\000\n";
+  branches "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000\0001\000s\000o\000\000\n";
+  print_endline "-- the phase 5 format (two fields short)";
   branches "main\000aaaa\000*\000\000\000\0001\000s\000\n";
-  branches "main\000aaaa\000*\000\000\000\000\000s\000\n";
-  branches "main\000aaaa\000?\000\000\000\0001\000s\000\n";
-  branches "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000sideways 2\0001\000s\000\n";
-  branches "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000ahead 0\0001\000s\000\n";
   [%expect
     {|
     ()
@@ -437,18 +467,31 @@ let%expect_test "Branch_list: empty, cut, malformed" =
       (committer_time 1)))
     (Error
      ("malformed branch line"
-      (line "main\000aaaa\000*\000\000\000\000\000s\000")))
+      (line "main\000aaaa\000*\000\000\000\000\000s\000\000\000")))
     (Error
      ("malformed branch line"
-      (line "main\000aaaa\000?\000\000\000\0001\000s\000")))
-    (Error
-     ("malformed branch line"
-      (line
-       "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000sideways 2\0001\000s\000")))
+      (line "main\000aaaa\000?\000\000\000\0001\000s\000\000\000")))
     (Error
      ("malformed branch line"
       (line
-       "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000ahead 0\0001\000s\000")))
+       "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000sideways 2\0001\000s\000o\000refs/heads/m\000")))
+    (Error
+     ("malformed branch line"
+      (line
+       "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000ahead 0\0001\000s\000o\000refs/heads/m\000")))
+    -- an upstream without its remote name or remote ref
+    (Error
+     ("malformed branch line"
+      (line
+       "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000\0001\000s\000\000refs/heads/m\000")))
+    (Error
+     ("malformed branch line"
+      (line
+       "main\000aaaa\000*\000refs/remotes/o/m\000o/m\000\0001\000s\000o\000\000")))
+    -- the phase 5 format (two fields short)
+    (Error
+     ("malformed branch line"
+      (line "main\000aaaa\000*\000\000\000\0001\000s\000")))
     |}]
 ;;
 

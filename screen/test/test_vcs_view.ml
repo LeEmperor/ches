@@ -493,7 +493,8 @@ let%expect_test "panel and focus keys: 1 2 3 0 Tab Escape, moves, folds, Enter" 
     rows t;
     let t = step t "j" in
     let t = step t "<CR>" in
-    (* Enter on a branch does nothing; on a commit it focuses the diff. *)
+    (* Enter on a branch checks it out (here refused: it is the current one); on a
+       commit it focuses the diff. *)
     let t = step t "2j" in
     let t = run env t "<CR>" in
     notice t;
@@ -522,7 +523,7 @@ let%expect_test "panel and focus keys: 1 2 3 0 Tab Escape, moves, folds, Enter" 
     j      Files: header staged; diff (Staged()), 2 file(s)
     <CR>   Files: header staged; diff (Staged()), 2 file(s)
     2j     Branches: local "main"; diff no diff
-    notice: VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: Already on main; nothing ran
     3j<CR> Diff (follows Commits): recent "10cf1aeab695c84699dfd610ebd22b42a8e06666"; diff (Commit 10cf1aeab695c84699dfd610ebd22b42a8e06666), 3 file(s)
     |}]
 ;;
@@ -609,6 +610,9 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     S        stage-all       Stage all changes (not conflicts)
     U        unstage-all     Unstage all changes
     c        commit          Commit, amend or extend (the commit popup)
+    f        fetch           Fetch from the default remote, pruning gone branches
+    p        pull            Pull from the upstream (the pull popup)
+    P        push            Push the branch (the push popup)
     y        copy            Copy the file's path
     j        next            Select next item
     k        previous        Select previous item
@@ -629,6 +633,9 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     ]        next-hunk       Next hunk
     [        previous-hunk   Previous hunk
     c        commit          Commit, amend or extend (the commit popup)
+    f        fetch           Fetch from the default remote, pruning gone branches
+    p        pull            Pull from the upstream (the pull popup)
+    P        push            Push the branch (the push popup)
     j        cursor-down     Move down a row
     k        cursor-up       Move up a row
     w        word-forward    Move to the next word
@@ -1058,7 +1065,7 @@ let%expect_test "a conflict: the section, its combined diff, conflict markers, h
      1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 1d0798b                    │ 0 Diff: Conflicted: aa.txt, du.txt, ud.txt, uu.txt       │|
-    │ Merging 1cca8e7                       │ diff --cc aa.txt                                         │|
+    │ Merging 1cca8e7 (m a aborts)          │ diff --cc aa.txt                                         │|
     │                                       │ index b19a1e9,950b81b..0000000                           │|
     │ 1 Files (4)                           │ --- a/aa.txt                                             │|
     │ > - Conflicted (4)                    │ +++ b/aa.txt                                             │|
@@ -1132,7 +1139,7 @@ let%expect_test "a rebase in progress, then a detached HEAD" =
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: work (detached at 1cca8e7) ────────────────────────────────────────────────────────────────╮|
     │ Head: detached at 1cca8e7             │ 0 Diff: Conflicted: aa.txt, du.txt, ud.txt, uu.txt       │|
-    │ Rebasing main onto 1cca8e7            │ diff --cc aa.txt                                         │|
+    │ Rebasing main onto 1cca8e7 (r a abort>│ diff --cc aa.txt                                         │|
     │                                       │ index 950b81b,b19a1e9..0000000                           │|
     │ 1 Files (4)                           │ --- a/aa.txt                                             │|
      1:a.txt [2:VCS: 7b0842b]                                                                           |
@@ -1226,7 +1233,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      NORMAL  VCS VCS focused                                                                            |
     cursor: none
     (Not_a_repository(cwd $DIR/plain))
-    notice: VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: VCS: s/u/x stage/unstage/discard, c commit, f/p/P fetch/pull/push, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
     g r refresh
     @ toggle-log
     q leave
@@ -1242,7 +1249,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
     │                                                                                                  │|
     │                                                                                                  │|
     ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, @ lo> |
+     NORMAL  VCS VCS: s/u/x stage/unstage/discard, c commit, f/p/P fetch/pull/push, 1/2/3 panels, Tab > |
     cursor: none
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: no work tree ──────────────────────────────────────────────────────────────────────────────╮|

@@ -19,6 +19,13 @@ module Upstream : sig
     { name : string (** Short, e.g. ["origin/main"]. *)
     ; refname : string (** Full, e.g. ["refs/remotes/origin/main"]. *)
     ; tracking : Tracking.t
+    ; remote : string
+    (** The remote it is on ([branch.<name>.remote], e.g. ["origin"]; ["."] for a
+        local branch as upstream): what a push names (phase 6). *)
+    ; merge : string
+    (** Its ref on that remote ([branch.<name>.merge], e.g. ["refs/heads/main"]):
+        the push's destination. Both come from the configuration, so a [Gone]
+        upstream has them too. *)
     }
   [@@deriving sexp, equal]
 end
@@ -37,15 +44,18 @@ end
 
 (** [Cli.read ~cwd] of [for-each-ref --format=<f> refs/heads], where [<f>] is
     [%(refname:short)], [%(objectname)], [%(HEAD)], [%(upstream)],
-    [%(upstream:short)], [%(upstream:track,nobracket)], [%(committerdate:unix)] and
-    [%(contents:subject)], each followed by [%00], one branch per line. (for-each-ref
+    [%(upstream:short)], [%(upstream:track,nobracket)], [%(committerdate:unix)],
+    [%(contents:subject)], [%(upstream:remotename)] and [%(upstream:remoteref)]
+    (phase 6), each followed by [%00], one branch per line. (for-each-ref
     has no [-z]; ref names cannot contain NUL or newline, and the subject is one
     line.) Git's default order: by refname. With [LC_ALL=C] (see {!Cli.read_env}) the
     track field is [""], ["ahead N"], ["behind N"], ["ahead N, behind M"] or
     ["gone"]. *)
 val command : cwd:string -> Exec.Spec.t
 
-(** Parse stdout, in output order. An empty [%(upstream)] means no upstream. A
+(** Parse stdout, in output order. An empty [%(upstream)] means no upstream (then
+    the last two fields are empty too); an upstream with an empty remote name or
+    remote ref is an error. A
     malformed line or track field is an error. With [~cut:true], an incomplete final
     line is dropped. *)
 val parse : cut:bool -> string -> Branch.t list Or_error.t

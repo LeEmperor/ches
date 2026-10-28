@@ -12,8 +12,10 @@ complete; the owner accepted phase 2 (with the post-phase-2 tweaks) and committe
 phases 1-2 as fe0f087 (2026-10-27). Phase 3 (stage/unstage/discard) accepted and
 committed by the owner as d0cb736 (2026-10-27). Phase 4 (line staging from a
 Visual selection) complete and committed by the owner as 117f230 (2026-10-28).
-Phase 5 (popups and the commit flow) complete and uncommitted (2026-10-28), owner
-terminal acceptance pending. Phase 6 not started.
+Phase 5 (popups and the commit flow) complete and committed by the owner as
+a6d6c31 (2026-10-28). Phase 6 (remotes and branches) complete and uncommitted
+(2026-10-28), owner terminal acceptance pending. All six phases of this plan are
+implemented; the tier-2 choice (merge/conflict resolution or log/history) is open.
 
 ## Goal
 
@@ -347,6 +349,12 @@ appends a handoff below.
   deferred.
 - Fixture tests against a local bare remote: push, set-upstream, ff-only pull
   refusal on divergence, rebase pull, fetch prune, auth-failure handling (simulated).
+- Carried over from phase 5 (owner, 2026-10-28): a directory-buffer save that applied
+  changes refreshes the VCS view. `Session` keeps a separate list of the paths an
+  apply touched (created, deleted, copied, both sides of a rename), fed only into
+  the views' `Saved` signal, never into `Session.saved` (which reaches the
+  diagnostic source as `Document_saved`). Test: a headless directory save of a
+  tracked file's delete or rename refreshes the view's status.
 
 ## Agent execution and handoff protocol
 
@@ -1083,6 +1091,109 @@ Builds: A builds `@screen/runtest @palette/runtest @test/runtest` (app and input
 tests live in `test/`; `@ui/runtest` too if touched); G5 builds `@vcs/git/runtest
 @vcs/runtest`; all through the lock with `-j 10`; no file left non-compiling between
 runs (`ches_screen` compiles `ches_vcs_git`).
+
+## Phase 6 contracts (2026-10-28)
+
+Run as three agents: G6 (git plans, `vcs/git/`) and A6 (the directory-save signal,
+`app/` and `screen/ui_state.ml`) in parallel, then V6 (the view, docs, end-to-end
+tests) once G6 lands. Stubs fail with `"TODO phase 6: agent G6"` (grep `TODO phase 6`).
+
+Done by the orchestrator before the agents (compiling, no test reaches the stubs):
+- `vcs/git/remote.mli` (new): `Push` (`Target`: `Upstream | Set_upstream`;
+  `Choice { target; flags }`; `popup status`; `flags`), `Pull` (`Choice { flags }`;
+  `popup status`; `flags`), and `hint`, which explains a failed network step's
+  stderr (ssh key, host key, credentials, DNS, diverged, rejected, stale lease,
+  missing remote). Exact texts in the `.mli`.
+- `vcs/git/branch_name.mli` (new): `refusal ~existing name`, the rules of `git
+  check-ref-format --branch` as a pure check for the name prompt, then "already
+  exists".
+- `vcs/git/abort.mli` (new): `Operation` (`Rebase | Merge`), `popup` (one action, `a`
+  Abort), `in_progress`.
+- `vcs/git/branch_list.mli`: `Upstream.t` gains `remote` and `merge`, from two more
+  `for-each-ref` fields (`%(upstream:remotename)`, `%(upstream:remoteref)`, appended
+  after the subject), so a push names its destination exactly.
+- `vcs/git/backend.mli`: `action` gains `Fetch`, `Pull { flags }`, `Push { target;
+  flags }`, `Checkout name`, `Checkout_previous`, `Create_branch name`, `Abort
+  operation`; the plan contract "Remotes and branches (phase 6)": commands, titles,
+  refusals, the force-push and abort confirmations, `rewrites_worktree` (pull,
+  checkout, previous and abort: true).
+- `screen/vcs_view.mli`: section "Remotes and branches (phase 6)" (keys `f p P r m`
+  anywhere, Enter `n -` in Branches, the streamed log, the progress row, the
+  network notices, the abort marks); `Log_entry.t` gains `progress`, and `output`
+  keeps a streamed command's lines.
+- Compile fixes: record patterns in `vcs_view.ml` and `test_backend.ml`; `staged_keys`
+  and the log entries in `vcs_view.ml`; the fake planner in `test_vcs_actions.ml`.
+
+Correction to the phase 5 notes: the command log did not record `Output` events
+(`Vcs_view.event` dropped them); V6 adds that.
+
+Directory saves (A6; generic, no VCS knowledge):
+- `Session` records, beside `saved` and kept out of it, the absolute paths each
+  directory-buffer save changed on disk: created, deleted, copied to, and both
+  sides of a rename (a directory's own path for a directory operation), oldest
+  first, also for a partly failed apply (the operations that happened). A6 names
+  the accessor and documents it in `session.mli`.
+- `Ui_state.signal_views` adds those paths to the same `Saved` signal as file saves
+  (one signal per input, file saves first), counted like `saves_signalled`. They
+  never become `Document_saved` source requests.
+- Tests: a session-level test of the recorded paths (create, rename, delete, a
+  partial failure if the existing fault injection allows it), and a headless test
+  that a directory save deleting or renaming a tracked file refreshes the VCS view
+  (new `screen/test/test_directory_vcs_refresh.ml`, on the existing VCS driver;
+  read-only use of `Vcs_view`).
+
+Git (G6):
+- `remote.ml`, `branch_name.ml`, `abort.ml`, the `branch_list.ml` fields, and the
+  plan branches in `backend.ml`, per the `.mli` files.
+- Verify against git 2.43 in fixtures and record any deviation: `--end-of-options`
+  accepted by `push` and `switch`; `--set-upstream` with the explicit refspec sets
+  `branch.<b>.merge`; `--ff-only --no-rebase` with `pull.rebase=true` set does not
+  rebase; `--rebase` with `pull.ff=only` set rebases; `--progress` output arrives
+  on stderr.
+- Fixture tests against the local bare remote (`Fixture_repo ~remote:true`; second
+  clones as plain dirs where a test needs another pusher): push to upstream,
+  set-upstream, force-with-lease (accepted and stale), ff-only pull refused on
+  divergence (nothing changes), rebase pull, a rebase pull stopping on a conflict
+  (then `Abort Rebase` restores the branch), merge abort, fetch prune (an upstream
+  becomes `Gone`), checkout, previous branch, create branch, the refusals, and
+  `Branch_name.refusal` checked against `git check-ref-format --branch` on a table
+  of names. Authentication failure is simulated: a remote URL `ssh://git@example.invalid/x.git`
+  with `GIT_SSH_COMMAND` set (in the step's environment) to a test script that
+  prints `Permission denied (publickey).` to stderr and exits 255; `hint` on its
+  report. No test contacts a network.
+
+View (V6, after G6): per the `vcs_view.mli` section. Tests in a new
+`screen/test/test_vcs_remote.ml` (end to end with default bindings and the real
+planner over fixture repositories with a bare remote, as `test_vcs_commit.ml`
+does), plus expectation updates; README, docs/editor_reference.md ("Remotes and
+branches"), docs/backlog/major_minor_tiles.md.
+
+Decisions (orchestrator; Magit defaults where the plan left it open):
+- `f` fetches at once (`git fetch --prune`, the default remote); `p` and `P` are
+  popups; `r` and `m` are the rebase and merge popups, with only `a` (abort) for now.
+- Push names its destination explicitly (remote and merge ref from the branch's
+  configuration), so `push.default` never matters; `u` always means `origin`.
+- Pull, checkout and the previous branch are refused while an operation other than
+  bisect is in progress or a file is conflicted; no `--autostash`.
+- A new branch is checked with a pure copy of `check-ref-format --branch`'s rules in
+  the prompt (cross-checked against git in tests) rather than a git step: the
+  prompt's check is synchronous. Branching an unborn branch is refused.
+- Network success posts "<title>: done" (it may finish long after the user moved
+  on); local actions still post nothing.
+- Every git child gets `--progress` explicitly: without a terminal, git prints no
+  progress.
+
+Ownership:
+- G6: `vcs/git/*.ml` (not `.mli`), `vcs/git/test/` (new test files and expectation
+  updates). Builds `@vcs/git/runtest @vcs/runtest`.
+- A6: `app/session.ml(i)`, `screen/ui_state.ml(i)`, new tests under `test/` and
+  `screen/test/test_directory_vcs_refresh.ml`; expectation updates elsewhere only if
+  its change causes them. Builds `@test/runtest @screen/runtest`.
+- V6 (after G6): `screen/vcs_view.ml`, `screen/vcs_*.ml` other than `.mli` contracts,
+  `screen/test/test_vcs_*.ml`, README, docs.
+- Frozen for everyone: every `.mli` except A6's `session.mli`/`ui_state.mli`
+  additions; `vcs/` outside `vcs/git/`. A needed contract change goes to the
+  orchestrator.
 
 ## Implementation handoffs
 
@@ -1831,6 +1942,7 @@ Known gaps or blockers:
   - No owner terminal acceptance (checklist in the session report).
   - Directory-buffer saves still send no Saved signal (putting the directory in
     Session.saved would reach the diagnostic source as a document save); g r.
+    Folded into phase 6 (owner, 2026-10-28).
   - Amending drops HEAD message lines that start with '#' (comment char forced).
   - A prepare that finishes while the view is unfocused opens nothing (c again);
     a cancelled prepare says nothing.
@@ -1850,6 +1962,109 @@ Next-phase integration notes (phase 6):
   - Branch name prompt: Ask.Prompt with a cheap validate, the real check by git.
   - Request_view and Outcome.save/dispose are generic if a later flow (rebase todo
     buffer) needs a view-owned file buffer.
+  - Directory-buffer saves send Saved (owner folded the gap into phase 6): a
+    separate Session list of applied paths, signalled with file saves in
+    Ui_state.signal_views, kept out of the diagnostic Document_saved requests.
+```
+
+```text
+Phase / date / status:
+  6, 2026-10-28, complete (headless checks only; owner terminal acceptance pending).
+  Uncommitted, on a6d6c31. Run as the orchestrator's contracts, then G6 (git plans)
+  and A6 (directory-save signal) in parallel, then V6 (the view, docs); see
+  "Phase 6 contracts".
+
+Implemented behavior:
+  - f: git fetch --progress --prune, at once. p: pull popup (-r --rebase; p pulls
+    from the upstream, fast-forward only without -r: --ff-only --no-rebase).
+    P: push popup (-f --force-with-lease, confirmed; -n --no-verify; p pushes to the
+    configured upstream with an explicit remote and refspec, u pushes to
+    origin/<branch> with --set-upstream). In any panel and the diff outside Visual.
+  - Branches: Enter checks out (git switch), n prompts for a new branch (checked on
+    every edit with git's ref-name rules, then switch --create), - checks out the
+    previous branch. Checkout, previous and pull are refused with dirty buffers in
+    the repository (and reconcile open buffers afterwards), with an operation in
+    progress (bisect aside) or conflicted files.
+  - r / m: while a rebase / merge is in progress, a popup with a (abort), confirmed;
+    the head summary marks "(r a aborts)" / "(m a aborts)". Otherwise "No rebase in
+    progress; nothing ran".
+  - Network jobs stream into the command log (last 5 lines plus the latest
+    progress line) and a "<title>... <progress>" row in the head summary; the view
+    stays usable (other actions busy). Success: "<title>: done". Failure: "<title>
+    failed: <hint>" for ssh key, host key, credentials, DNS, diverged pull,
+    rejected or stale push, missing remote; else git's first fatal:/error: line.
+  - Directory-buffer saves (save, save all, quit, either placement) reach views in
+    the Saved signal, so the VCS view refreshes after a rename or delete; never a
+    diagnostic document save.
+
+Changed modules and new public contracts:
+  - Orchestrator: vcs/git/remote.mli, branch_name.mli, abort.mli (new);
+    branch_list.mli Upstream.remote / merge (%(upstream:remotename),
+    %(upstream:remoteref)); backend.mli phase 6 actions and "Remotes and branches
+    (phase 6)"; vcs_view.mli phase 6 section, Log_entry.progress; view_registry.mli
+    Signal.Saved wording; after G6, in-progress refusals before detached (pull,
+    push) and for create branch, '@' and '@{-N}' documented as stricter than git;
+    after V6, the failure line rule.
+  - G6: remote.ml, branch_name.ml, abort.ml, branch_list.ml, backend.ml plans;
+    vcs/git/test/plan_fixture.ml (helpers), test_remote.ml (11), test_branches.ml
+    (7, including a 41-name cross-check against git check-ref-format --branch);
+    test_parsers.ml / test_backend.ml updates.
+  - A6: Session.directory_changes / take_directory_changes (paths each directory
+    save changed: created, copied to, deleted, both sides of a rename; staging names
+    dropped unless left behind by a partial failure; refused plans record nothing);
+    Ui_state signal_views (one Saved per input, file saves first) and
+    take_source_requests (dropped there); test/test_directory_changes.ml (2),
+    screen/test/test_directory_vcs_refresh.ml (2).
+  - V6: screen/vcs_view.ml (keys, popups, prompt, streaming, progress row, network
+    notices, abort marks, commands, hints); screen/test/test_vcs_remote.ml (11, end
+    to end with a bare remote and a second clone); test_vcs_view.ml updates;
+    README, docs/editor_reference.md ("Remotes and branches."), backlog.
+
+Policy decisions settled (orchestrator unless noted; Magit defaults):
+  - f fetches at once; p/P popups; r/m popups with only abort; u means origin.
+  - Push names remote and refspec explicitly (push.default never matters).
+  - No --autostash; branching an unborn branch refused; every network command gets
+    --progress (git prints none without a terminal).
+  - Network success posts "<title>: done"; local actions post nothing.
+  - Branch names: a pure copy of check-ref-format --branch, stricter for "@" and
+    "@{-N}" (git 2.43 accepts "@").
+  - V6: failure notices quote git's first fatal:/error: line (a pull's stderr
+    starts with fetch chatter), last carriage-return segment only.
+
+Checks run and results:
+  - Baseline after the contract stubs, 2026-10-28: dune build -j 10 -> 0; dune
+    runtest -j 10 -> only test_parsers.ml (the stub's empty new fields), as expected.
+  - G6: @vcs/git/runtest @vcs/runtest -> 0 (also after the refusal-order follow-up).
+    git 2.43 verified: --end-of-options accepted by push and switch (switch reaches
+    a refs/heads/-x branch); --set-upstream with the explicit refspec sets
+    branch.<b>.remote/merge; --ff-only --no-rebase ignores pull.rebase=true;
+    --rebase overrides pull.ff=only; --progress goes to stderr, \r-separated.
+  - A6: @test/runtest @screen/runtest -> 0. V6: @screen/runtest, full build/runtest
+    -> 0.
+  - Orchestrator final (2026-10-28), through the lock: dune build -j 10 -> 0; dune
+    runtest -j 10 -> 0 (the runtime flake did not occur); git diff --check clean;
+    no TODO phase 6 stubs; no stray git processes or /tmp/ches-vcs* dirs; HEAD
+    a6d6c31, nothing committed.
+
+Known gaps or blockers:
+  - No owner terminal acceptance (checklist in the session report). Real ssh to
+    GitHub untested by design (simulated with a fake GIT_SSH_COMMAND).
+  - Streaming is tested with synthetic Output events: the test driver runs steps
+    synchronously and never streams.
+  - Hints match untranslated git/ssh messages; network commands keep the user's
+    locale, so another language falls back to git's line.
+  - u fails with git's error when there is no remote named origin (no remote list
+    is read). Popups describe the snapshot of the key press.
+  - progress stays the latest transient line until the step finishes, even after
+    later non-transient lines.
+  - Carried from phase 5: amend drops '#' lines; an unfocused prepare opens nothing;
+    gpg pinentry untested.
+
+Next-phase integration notes (tier 2):
+  - Merge/conflict resolution: Git.Abort's popups are the place for continue/skip;
+    In_progress and the (r a)/(m a) marks exist; Backend.S still has no popups (only
+    git has them).
+  - Log/history: the Commits panel and Commit diff target are the base.
 ```
 
 ### Post-phase-2 tweaks (owner feedback, committed in fe0f087)

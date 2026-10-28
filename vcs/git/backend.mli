@@ -12,7 +12,8 @@
 
     Actions arrive with the phases that need them: stage/unstage/discard in 3
     ({!action}), line staging in 4 ({!Target.t.Lines}), commit in 5 ({!Commit}),
-    push/pull/fetch/checkout in 6. *)
+    push/pull/fetch, branches and abort in 6 ({!Remote}, {!Branch_name},
+    {!Abort}). *)
 
 open! Core
 open Ches_vcs
@@ -111,7 +112,7 @@ module Target : sig
   [@@deriving sexp_of]
 end
 
-(** The phase 3 to 5 actions. Line staging (phase 4) is a {!Target.t.Lines}
+(** The phase 3 to 6 actions. Line staging (phase 4) is a {!Target.t.Lines}
     target, not a new action. *)
 type action =
   | Stage of Target.t (** [s] *)
@@ -125,6 +126,16 @@ type action =
       ; message_file : string (** Absolute: {!Commit.Prepared.t.message_file}. *)
       } (** [Space g c] in the message buffer (phase 5). *)
   | Extend of { flags : string list } (** [e] in the commit popup (phase 5). *)
+  | Fetch (** [f] (phase 6). *)
+  | Pull of { flags : string list } (** The pull popup's [p] ({!Remote.Pull}). *)
+  | Push of
+      { target : Remote.Push.Target.t
+      ; flags : string list (** {!Remote.Push.flags}. *)
+      } (** The push popup's [p] and [u]. *)
+  | Checkout of string (** Enter on a Branches item: the branch's name. *)
+  | Checkout_previous (** [-] in Branches: [git switch -]. *)
+  | Create_branch of string (** [n] in Branches: the prompt's name. *)
+  | Abort of Abort.Operation.t (** [r a], [m a]. *)
 [@@deriving sexp_of]
 
 (** Contract details beyond {!Ches_vcs.Backend.S}:
@@ -376,7 +387,79 @@ type action =
     [<flags>] in {!Commit.flags} order. [-c core.commentChar=#] makes
     [--cleanup=strip] remove the template's comments whatever the user's
     [core.commentChar]; [-F] and [--no-edit] never start an editor. An empty message
-    after stripping, or a rejecting hook, fails the step (git's stderr says why). *)
+    after stripping, or a rejecting hook, fails the step (git's stderr says why).
+
+    {3 Remotes and branches (phase 6)}
+
+    Network steps are [Run (Cli.network ~cwd:repo.root args)] (kind [Network],
+    streamed; the runner adds the authentication environment) and each passes
+    [--progress] (git prints progress only to a terminal otherwise). The others are
+    [Run (Cli.mutate ~cwd:repo.root args)]. One step per plan; no
+    [--literal-pathspecs] (no paths). Refusal texts used below:
+    - detached ([status.branch.head = None]): ["HEAD is detached: check out a branch
+      first; nothing ran"];
+    - unborn ([status.branch.oid = None]): ["There is no commit yet; nothing ran"];
+    - in progress: the first of [snapshot.operations] other than [Bisect]:
+      ["<In_progress.describe> in progress: finish or abort it first; nothing ran"];
+    - conflicted (any [Unmerged] entry): ["Resolve the conflicted files first (s
+      marks one resolved); nothing ran"];
+    - an unknown flag: ["Unknown push switch <flag>; nothing ran"] (["pull"]).
+    The current branch is [status.branch.head]; its upstream's name is
+    [status.branch.upstream]; its [Branch_list.Upstream.t] (remote, merge, tracking)
+    is that of the [snapshot.branches] entry with [current].
+
+    - [Fetch]: never refused. [fetch --progress --prune]. Run, title ["Fetch"],
+      [rewrites_worktree = false].
+    - [Pull { flags }]: refused, the first that applies: unknown flag; in progress
+      (before detached: a stopped rebase detaches HEAD); detached; no upstream:
+      ["<branch> has no upstream: push it with P u first; nothing ran"]; a [Gone]
+      upstream: ["The upstream <upstream> is gone; nothing ran"]; conflicted. Else Run, [rewrites_worktree = true]: without
+      [--rebase], [pull --progress --ff-only --no-rebase] (fast-forward only,
+      whatever [pull.rebase] says), title ["Pull from <upstream>"]; with it, [pull
+      --progress --rebase], title ["Pull from <upstream> (rebase)"]. A diverged
+      fast-forward-only pull fails and changes nothing ({!Remote.hint} explains).
+    - [Push { target; flags }]: refused, the first that applies: unknown flag; in
+      progress (as for pull); detached; unborn; [Upstream] with no upstream: ["<branch> has no upstream: P u
+      pushes it to origin/<branch> and sets it; nothing ran"]; [Upstream] whose
+      current branch has no [Branch_list] upstream (the branch list failed): ["The
+      branch list could not be read; refresh (g r); nothing ran"]. Else, with
+      [<flags>] in {!Remote.Push.flags} order:
+      - [Upstream]: [push --progress <flags> --end-of-options <remote>
+        refs/heads/<branch>:<merge>] (explicit, so [push.default] does not matter);
+        [<dest>] is [<upstream>].
+      - [Set_upstream]: [push --progress --set-upstream <flags> --end-of-options
+        origin refs/heads/<branch>:refs/heads/<branch>]; [<dest>] is
+        [origin/<branch>].
+      Plan title ["Push <branch> to <dest>"], [rewrites_worktree = false]. Without
+      [--force-with-lease], Run. With it, the title is ["Force-push <branch> to
+      <dest>"] and the decision a [Confirm]: title ["Force push"], message
+      ["Force-push <branch> to <dest>? Commits on <dest> that <branch> does not
+      contain are lost. git refuses if <dest> moved since the last fetch."].
+    - [Checkout name]: refused, the first that applies: [name] not among
+      [snapshot.branches]: ["<name> is no longer listed; refresh (g r); nothing
+      ran"]; it is the current branch: ["Already on <name>; nothing ran"]; in
+      progress; conflicted. Else Run [switch --end-of-options <name>], title ["Check
+      out <name>"], [rewrites_worktree = true]. Uncommitted changes git would
+      overwrite fail the step (git refuses; nothing changes).
+    - [Checkout_previous]: refused: in progress; conflicted. Else Run [switch -],
+      title ["Check out the previous branch"], [rewrites_worktree = true]. Without a
+      previous branch, git fails the step.
+    - [Create_branch name]: refused, the first that applies: unborn: ["There is no
+      commit yet: commit before branching; nothing ran"]; in progress (git refuses
+      to switch mid-merge); {!Branch_name.refusal}
+      [~existing] (the names of [snapshot.branches]) with ["; nothing ran"]
+      appended. Else Run [switch --create <name>] (the new branch at HEAD, checked
+      out, uncommitted changes kept), title ["Create branch <name>"],
+      [rewrites_worktree = false].
+    - [Abort operation]: refused unless {!Abort.in_progress}: ["No rebase in
+      progress; nothing ran"] (["No merge in progress; nothing ran"]). Else a
+      [Confirm], [rewrites_worktree = true]:
+      - [Rebase]: title ["Abort rebase"], message ["Abort the rebase? The branch
+        returns to where it was before the rebase; commits and conflict resolutions
+        made during it are lost."], plan [rebase --abort], title ["Abort rebase"].
+      - [Merge]: title ["Abort merge"], message ["Abort the merge? Its changes and
+        your conflict resolutions are lost; HEAD stays where it is."], plan [merge
+        --abort], title ["Abort merge"]. *)
 include
   Ches_vcs.Backend.S
   with type Repository.t = Repository.t

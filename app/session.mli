@@ -105,6 +105,16 @@ val take_saved : t -> t * Controller.Saved.t list
 (** What {!take_saved} would return now (oldest first), without taking it. Saves of
     the active controller count once it is passed to {!replace_active}. *)
 val saved : t -> Controller.Saved.t list
+val take_directory_changes : t -> t * string list
+
+(** What {!take_directory_changes} would return now: the absolute paths directory-buffer
+    saves (save, {!save_all}, quit, either placement) changed on disk, oldest first,
+    each once per save: created and copied-to paths, deleted paths, and both sides of
+    a rename (a directory operation names the directory, not its contents). A partly
+    failed apply lists only the operations that happened, a staging name it left
+    behind included. Kept out of {!saved} (no document was written) and never
+    relocated by later renames. *)
+val directory_changes : t -> string list
 val take_closed : t -> t * string list
 val exited : t -> bool
 val dispose : t -> unit

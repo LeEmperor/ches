@@ -16,6 +16,8 @@ module Upstream = struct
     { name : string
     ; refname : string
     ; tracking : Tracking.t
+    ; remote : string
+    ; merge : string
     }
   [@@deriving sexp, equal]
 end
@@ -41,6 +43,8 @@ let format =
   ; "%(upstream:track,nobracket)"
   ; "%(committerdate:unix)"
   ; "%(contents:subject)"
+  ; "%(upstream:remotename)"
+  ; "%(upstream:remoteref)"
   ]
   |> List.map ~f:(fun field -> field ^ "%00")
   |> String.concat
@@ -81,7 +85,7 @@ let tracking line track : Tracking.t Or_error.t =
 
 let parse_line line =
   match String.split line ~on:'\000' with
-  | [ name; oid; head; refname; short; track; time; subject; "" ] ->
+  | [ name; oid; head; refname; short; track; time; subject; remote; merge; "" ] ->
     let%bind.Or_error current =
       match head with
       | "*" -> Ok true
@@ -93,15 +97,20 @@ let parse_line line =
       | Some time -> Ok time
       | None -> malformed line
     in
+    (* Without an upstream git leaves every upstream field empty. *)
     let%bind.Or_error upstream =
       if String.is_empty refname
       then Ok None
+      else if String.is_empty remote || String.is_empty merge
+      then malformed line
       else (
         let%map.Or_error tracking = tracking line track in
         Some
           { Upstream.name = (if String.is_empty short then refname else short)
           ; refname
           ; tracking
+          ; remote
+          ; merge
           })
     in
     if String.is_empty name || String.is_empty oid

@@ -84,7 +84,7 @@ let describe_item : B.item -> string = function
       subject
       (match upstream with
        | None -> ""
-       | Some { name; tracking; refname = _ } ->
+       | Some { name; tracking; _ } ->
          sprintf
            " -> %s %s"
            name
@@ -883,7 +883,7 @@ let%expect_test "failed steps: status is fatal, the rest degrade the snapshot" =
     ok: 1 branches, 1 commits, 0 operations
     git --no-pager -c color.ui=false -c core.quotepath=false status --porcelain=v2 -z --branch --untracked-files=all --find-renames: exit 128: fatal: broken
     ok: 0 branches, 1 commits, 0 operations
-    problem: git --no-pager -c color.ui=false -c core.quotepath=false for-each-ref '--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)%00' refs/heads: exit 128: fatal: broken
+    problem: git --no-pager -c color.ui=false -c core.quotepath=false for-each-ref '--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)%00%(upstream:remotename)%00%(upstream:remoteref)%00' refs/heads: exit 128: fatal: broken
     ok: 1 branches, 0 commits, 0 operations
     problem: git --no-pager -c color.ui=false -c core.quotepath=false log -z --no-color --no-show-signature --max-count=200 --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s HEAD --: exit 128: fatal: broken
     ok: 1 branches, 1 commits, 0 operations
@@ -892,6 +892,6 @@ let%expect_test "failed steps: status is fatal, the rest degrade the snapshot" =
     ("git refresh: the report does not match the refresh's steps" (steps 11)
      (expected 12))
     ok: 0 branches, 1 commits, 0 operations
-    problem: git --no-pager -c color.ui=false -c core.quotepath=false for-each-ref '--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)%00' refs/heads: ("unterminated branch line"(tail garbage))
+    problem: git --no-pager -c color.ui=false -c core.quotepath=false for-each-ref '--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)%00%(upstream:remotename)%00%(upstream:remoteref)%00' refs/heads: ("unterminated branch line"(tail garbage))
     |}]
 ;;

@@ -109,6 +109,16 @@ type action =
       ; message_file : string
       }
   | Extend of { flags : string list }
+  | Fetch
+  | Pull of { flags : string list }
+  | Push of
+      { target : Remote.Push.Target.t
+      ; flags : string list
+      }
+  | Checkout of string
+  | Checkout_previous
+  | Create_branch of string
+  | Abort of Abort.Operation.t
 [@@deriving sexp_of]
 
 let name = "git"
@@ -512,8 +522,8 @@ let apply repository flags patch =
   ]
 ;;
 
-let run title steps : Decision.t =
-  Run { Ches_vcs.Backend.Plan.title; steps; rewrites_worktree = false }
+let run ?(rewrites_worktree = false) title steps : Decision.t =
+  Run { Ches_vcs.Backend.Plan.title; steps; rewrites_worktree }
 ;;
 
 let confirm ~title ~message plan_title steps : Decision.t =
@@ -933,6 +943,207 @@ let commit_flags given =
   List.filter Commit.flags ~f:(fun flag -> List.mem given flag ~equal:String.equal)
 ;;
 
+(* Phase 6: remotes and branches. One step per plan, no paths; the texts are in the
+   contract comment of backend.mli. *)
+let network_step (repository : Repository.t) args =
+  Job.Step.Run (Cli.network ~cwd:repository.root args)
+;;
+
+let unknown_flag ~verb ~known given =
+  List.find given ~f:(fun flag -> not (List.mem known flag ~equal:String.equal))
+  |> Option.map ~f:(fun flag -> sprintf "Unknown %s switch %s; nothing ran" verb flag)
+;;
+
+(* [known] restricted to the given switches: the popup's order whatever the caller's. *)
+let ordered ~known given =
+  List.filter known ~f:(fun flag -> List.mem given flag ~equal:String.equal)
+;;
+
+let detached_refusal = "HEAD is detached: check out a branch first; nothing ran"
+
+(* The first operation in progress, bisect aside. *)
+let in_progress_refusal (snapshot : snapshot) =
+  List.find snapshot.operations ~f:(function
+    | Bisect -> false
+    | _ -> true)
+  |> Option.map ~f:(fun operation ->
+    sprintf
+      "%s in progress: finish or abort it first; nothing ran"
+      (In_progress.describe operation))
+;;
+
+let conflicted_refusal (snapshot : snapshot) =
+  Option.some_if
+    (List.exists snapshot.status.entries ~f:(function
+      | Unmerged _ -> true
+      | _ -> false))
+    "Resolve the conflicted files first (s marks one resolved); nothing ran"
+;;
+
+(* An operation in progress, then conflicted files: what checkout and the previous branch
+   refuse. *)
+let local_refusal snapshot =
+  Option.first_some (in_progress_refusal snapshot) (conflicted_refusal snapshot)
+;;
+
+(* The current branch's upstream as the branch list has it (remote and merge ref). *)
+let current_upstream (snapshot : snapshot) =
+  List.find snapshot.branches ~f:(fun branch -> branch.current)
+  |> Option.bind ~f:(fun (branch : Branch_list.Branch.t) -> branch.upstream)
+;;
+
+let pull_plan repository (snapshot : snapshot) flags : Decision.t =
+  let { Status.Branch.head; upstream; _ } = snapshot.status.branch in
+  (* In progress before detached: a stopped rebase detaches HEAD. *)
+  let early =
+    Option.first_some
+      (unknown_flag ~verb:"pull" ~known:Remote.Pull.flags flags)
+      (in_progress_refusal snapshot)
+  in
+  match early, head, upstream with
+  | Some message, _, _ -> Refused message
+  | None, None, _ -> Refused detached_refusal
+  | None, Some branch, None ->
+    refused "%s has no upstream: push it with P u first; nothing ran" branch
+  | None, Some _, Some upstream ->
+    (match current_upstream snapshot, conflicted_refusal snapshot with
+     | Some { tracking = Gone; _ }, _ ->
+       refused "The upstream %s is gone; nothing ran" upstream
+     | _, Some message -> Refused message
+     | _, None ->
+       if List.mem flags "--rebase" ~equal:String.equal
+       then
+         run
+           ~rewrites_worktree:true
+           (sprintf "Pull from %s (rebase)" upstream)
+           [ network_step repository [ "pull"; "--progress"; "--rebase" ] ]
+       else
+         run
+           ~rewrites_worktree:true
+           ("Pull from " ^ upstream)
+           [ network_step repository [ "pull"; "--progress"; "--ff-only"; "--no-rebase" ]
+           ])
+;;
+
+let push_plan repository (snapshot : snapshot) (target : Remote.Push.Target.t) flags
+  : Decision.t
+  =
+  let { Status.Branch.head; upstream; _ } = snapshot.status.branch in
+  let known = Remote.Push.flags in
+  let early =
+    Option.first_some
+      (unknown_flag ~verb:"push" ~known flags)
+      (in_progress_refusal snapshot)
+  in
+  match early, head with
+  | Some message, _ -> Refused message
+  | None, None -> Refused detached_refusal
+  | None, Some _ when unborn snapshot -> Refused "There is no commit yet; nothing ran"
+  | None, Some branch ->
+    let flags = ordered ~known flags in
+    let source = "refs/heads/" ^ branch in
+    let destination =
+      match target, upstream, current_upstream snapshot with
+      | Upstream, None, _ ->
+        Error
+          (sprintf
+             "%s has no upstream: P u pushes it to origin/%s and sets it; nothing ran"
+             branch
+             branch)
+      | Upstream, Some _, None ->
+        Error "The branch list could not be read; refresh (g r); nothing ran"
+      | Upstream, Some upstream, Some { remote; merge; _ } ->
+        Ok
+          ( upstream
+          , ("push" :: "--progress" :: flags)
+            @ [ "--end-of-options"; remote; sprintf "%s:%s" source merge ] )
+      | Set_upstream, _, _ ->
+        Ok
+          ( "origin/" ^ branch
+          , ("push" :: "--progress" :: "--set-upstream" :: flags)
+            @ [ "--end-of-options"; "origin"; sprintf "%s:%s" source source ] )
+    in
+    (match destination with
+     | Error message -> Refused message
+     | Ok (dest, args) ->
+       let steps = [ network_step repository args ] in
+       if List.mem flags "--force-with-lease" ~equal:String.equal
+       then
+         Confirm
+           { title = "Force push"
+           ; message =
+               sprintf
+                 "Force-push %s to %s? Commits on %s that %s does not contain are lost. \
+                  git refuses if %s moved since the last fetch."
+                 branch
+                 dest
+                 dest
+                 branch
+                 dest
+           ; plan =
+               { title = sprintf "Force-push %s to %s" branch dest
+               ; steps
+               ; rewrites_worktree = false
+               }
+           }
+       else run (sprintf "Push %s to %s" branch dest) steps)
+;;
+
+let checkout_plan repository (snapshot : snapshot) name : Decision.t =
+  match
+    List.find snapshot.branches ~f:(fun (branch : Branch_list.Branch.t) ->
+      String.equal branch.name name)
+  with
+  | None -> refused "%s is no longer listed; refresh (g r); nothing ran" name
+  | Some { current = true; _ } -> refused "Already on %s; nothing ran" name
+  | Some _ ->
+    (match local_refusal snapshot with
+     | Some message -> Refused message
+     | None ->
+       run
+         ~rewrites_worktree:true
+         ("Check out " ^ name)
+         [ commit_step repository [ "switch"; "--end-of-options"; name ] ])
+;;
+
+let create_branch_plan repository (snapshot : snapshot) name : Decision.t =
+  if unborn snapshot
+  then Refused "There is no commit yet: commit before branching; nothing ran"
+  else (
+    let existing =
+      List.map snapshot.branches ~f:(fun (branch : Branch_list.Branch.t) -> branch.name)
+    in
+    match in_progress_refusal snapshot, Branch_name.refusal ~existing name with
+    | Some message, _ -> Refused message
+    | None, Some message -> Refused (message ^ "; nothing ran")
+    | None, None ->
+      run
+        ("Create branch " ^ name)
+        [ commit_step repository [ "switch"; "--create"; name ] ])
+;;
+
+let abort_plan repository (snapshot : snapshot) (operation : Abort.Operation.t)
+  : Decision.t
+  =
+  (* The subcommand is the noun: [rebase --abort], [merge --abort]. *)
+  let noun, message =
+    match operation with
+    | Rebase ->
+      ( "rebase"
+      , "Abort the rebase? The branch returns to where it was before the rebase; commits \
+         and conflict resolutions made during it are lost." )
+    | Merge ->
+      ( "merge"
+      , "Abort the merge? Its changes and your conflict resolutions are lost; HEAD stays \
+         where it is." )
+  in
+  if not (Abort.in_progress snapshot.operations operation)
+  then refused "No %s in progress; nothing ran" noun
+  else (
+    let title = "Abort " ^ noun in
+    confirm ~title ~message title [ commit_step repository [ noun; "--abort" ] ])
+;;
+
 let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : Decision.t =
   let target verb : Target.t -> Decision.t = function
     | File { section; path } -> file_plan repository snapshot verb section path
@@ -1004,4 +1215,18 @@ let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : D
              repository
              ([ "commit"; "--amend"; "--no-edit" ] @ commit_flags flags)
          ])
+  | Fetch -> run "Fetch" [ network_step repository [ "fetch"; "--progress"; "--prune" ] ]
+  | Pull { flags } -> pull_plan repository snapshot flags
+  | Push { target; flags } -> push_plan repository snapshot target flags
+  | Checkout name -> checkout_plan repository snapshot name
+  | Checkout_previous ->
+    (match local_refusal snapshot with
+     | Some message -> Refused message
+     | None ->
+       run
+         ~rewrites_worktree:true
+         "Check out the previous branch"
+         [ commit_step repository [ "switch"; "-" ] ])
+  | Create_branch name -> create_branch_plan repository snapshot name
+  | Abort operation -> abort_plan repository snapshot operation
 ;;

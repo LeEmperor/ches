@@ -104,6 +104,9 @@ type t =
   ; saves_signalled : int
   (** How many of the session's untaken saves ({!Session.saved}) views were
       signalled; reset when {!take_source_requests} takes them. *)
+  ; changes_signalled : int
+  (** Likewise for the paths directory saves changed ({!Session.directory_changes}),
+      which {!take_source_requests} drops: they are no source request. *)
   }
 
 let document_id = View_id.of_string "document"
@@ -213,6 +216,7 @@ let create
   ; job_owners = Ches_vcs.Job.Id.Map.empty
   ; shown = []
   ; saves_signalled = 0
+  ; changes_signalled = 0
   }
 ;;
 
@@ -363,12 +367,14 @@ let take_source_requests t =
   if not t.source_attached
   then (
     let session, _ = Session.take_saved (session t) in
+    let session, _ = Session.take_directory_changes session in
     let session, _ = Session.take_closed session in
     let session, _ = Session.take_source_changes session in
     let controller = Option.value (Session.active_controller session) ~default:t.controller in
-    { t with session; controller; source_commands = []; saves_signalled = 0 }, [])
+    { t with session; controller; source_commands = []; saves_signalled = 0; changes_signalled = 0 }, [])
   else (
     let session, saved = Session.take_saved (session t) in
+    let session, _ = Session.take_directory_changes session in
     let session, closed = Session.take_closed session in
     let session, changes = Session.take_source_changes session in
     let sent_revisions, document = List.fold changes ~init:(t.sent_revisions, []) ~f:(fun (sent, requests) (id, current) ->
@@ -390,7 +396,7 @@ let take_source_requests t =
     let saves = List.map saved ~f:(fun { Controller.Saved.path; revision } -> Ches_error.Source_request.Document_saved { resource = path; revision }) in
     let closes = List.map closed ~f:(fun resource -> Ches_error.Source_request.Document_closed { resource }) in
     let controller = Option.value (Session.active_controller session) ~default:t.controller in
-    ( { t with session; controller; sent_revisions; source_commands = []; saves_signalled = 0 }
+    ( { t with session; controller; sent_revisions; source_commands = []; saves_signalled = 0; changes_signalled = 0 }
     , closes @ document @ saves @ List.rev t.source_commands ))
 ;;
 
@@ -1800,10 +1806,10 @@ let receive_jobs t ~width ~height events =
 ;;
 
 (* After an input: [Shown] to views placed since they were last signalled, then one
-   [Saved] with the files the input saved, to every installed view; then one
-   synchronization if any view was told something. The active controller's save, if
-   any, is moved into the session first (as [take_source_requests] does), so repeated
-   saves of one buffer each count. *)
+   [Saved] with the files the input saved and then the paths its directory saves
+   changed, to every installed view; then one synchronization if any view was told
+   something. The active controller's save, if any, is moved into the session first
+   (as [take_source_requests] does), so repeated saves of one buffer each count. *)
 let signal_views t ~width ~height =
   let placed =
     List.filter_map (View_registry.placements t.views) ~f:(fun (id, placement) ->
@@ -1824,15 +1830,24 @@ let signal_views t ~width ~height =
       }
   in
   let saved = Session.saved t.session in
-  let fresh = List.drop saved t.saves_signalled in
-  let t = { t with saves_signalled = List.length saved } in
+  let changes = Session.directory_changes t.session in
+  let fresh =
+    List.map (List.drop saved t.saves_signalled) ~f:(fun (saved : Controller.Saved.t) ->
+      saved.path)
+    @ List.drop changes t.changes_signalled
+  in
+  let t =
+    { t with
+      saves_signalled = List.length saved
+    ; changes_signalled = List.length changes
+    }
+  in
   let signals =
     List.map newly_shown ~f:(fun id -> id, View_registry.Signal.Shown)
     @
     match fresh with
     | [] -> []
-    | fresh ->
-      let paths = List.map fresh ~f:(fun (saved : Controller.Saved.t) -> saved.path) in
+    | paths ->
       List.map (View_registry.ids t.views) ~f:(fun id -> id, View_registry.Signal.Saved paths)
   in
   if List.is_empty signals

@@ -1,7 +1,9 @@
 (* The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines;
-   phase 5: commit): see vcs_view.mli. The diff panel's text, its per-line open targets
-   and positions are [Vcs_diff_text]'s; the command plans are the backend's ([plan]);
-   the commit popup, message file and template are [Git.Commit]'s. *)
+   phase 5: commit; phase 6: remotes and branches): see vcs_view.mli. The diff panel's
+   text, its per-line open targets and positions are [Vcs_diff_text]'s; the command
+   plans are the backend's ([plan]); the commit popup, message file and template are
+   [Git.Commit]'s; the push, pull and abort popups and the network hints are
+   [Git.Remote]'s and [Git.Abort]'s. *)
 
 open! Core
 open Ches_vcs
@@ -79,6 +81,7 @@ module Log_entry = struct
     ; command : string
     ; status : string option
     ; output : string list
+    ; progress : string option
     ; stale : bool
     }
   [@@deriving sexp_of]
@@ -200,6 +203,9 @@ module Mutation = struct
     ; title : string
     ; root : string (** Reconciled after a work-tree rewrite. *)
     ; rewrites_worktree : bool
+    ; network : bool
+    (** A [Network] step (push, pull, fetch): streamed, with a progress row and a
+        notice at its end. *)
     ; anchor : Anchor.t option
     ; commit : Committing.t option
     ; settling : bool (** Finished: waiting for the refresh after it. *)
@@ -433,7 +439,7 @@ let item_text : B.item -> string = function
     let upstream =
       match upstream with
       | None -> ""
-      | Some { name; tracking; refname = _ } ->
+      | Some { name; tracking; _ } ->
         (match tracking with
          | In_sync -> sprintf " [%s]" name
          | Ahead_behind { ahead; behind } ->
@@ -490,9 +496,35 @@ let title t =
      | Some _ | None -> "VCS: " ^ name)
 ;;
 
+(* While a network mutation runs: ["<title>..."], then its latest progress line (the
+   newest of its log records that has one). *)
+let progress_row t =
+  match t.mutation with
+  | Some { network = true; settling = false; job; title; _ } ->
+    let progress =
+      List.find_map t.log ~f:(fun record ->
+        if Job.Id.equal record.entry.job job then record.entry.progress else None)
+    in
+    Some
+      ( Style.Status
+      , match progress with
+        | None -> title ^ "..."
+        | Some line -> sprintf "%s... %s" title line )
+  | Some _ | None -> None
+;;
+
+(* How to leave an operation in progress, after its summary row. *)
+let abort_mark (operation : Git.In_progress.t) =
+  match operation with
+  | Rebase _ -> " (r a aborts)"
+  | Merge _ -> " (m a aborts)"
+  | Apply_mailbox | Cherry_pick _ | Revert _ | Bisect -> ""
+;;
+
 (* The head summary rows above the panels. *)
 let summary_rows t : (Style.t * string) list =
   let loading = loading t in
+  let progress = Option.to_list (progress_row t) in
   let head =
     match t.snapshot with
     | None -> [ Style.Status, if loading then "Loading..." else "Nothing loaded yet" ]
@@ -523,10 +555,12 @@ let summary_rows t : (Style.t * string) list =
           ]
       in
       ((Style.Status, head ^ if loading then "  (refreshing)" else "") :: upstream)
-      @ List.map summary.operations ~f:(fun operation -> Style.Warning, operation)
+      @ progress
+      @ List.map snapshot.operations ~f:(fun operation ->
+        Style.Warning, Git.In_progress.describe operation ^ abort_mark operation)
       @ problems
   in
-  head
+  (if Option.is_none t.snapshot then head @ progress else head)
   @ Option.value_map t.refresh_error ~default:[] ~f:(fun error ->
     [ Style.Error, "Refresh failed: " ^ error ])
 ;;
@@ -671,16 +705,29 @@ let update_record t ~job ~step ~f =
   }
 ;;
 
+(* stderr's lines as a terminal leaves them: of a line that progress updates rewrote
+   (["Receiving objects: 45%\rReceiving objects: 100%, done."]), the last update. *)
+let stderr_lines (result : Exec.Result.t) =
+  String.split_lines result.stderr
+  |> List.map ~f:(fun line ->
+    String.split line ~on:'\r'
+    |> List.filter ~f:(Fn.non String.is_empty)
+    |> List.last
+    |> Option.value ~default:"")
+  |> List.filter ~f:(Fn.non String.is_empty)
+;;
+
 let stderr_tail (result : Exec.Result.t) =
   if Exec.Result.succeeded result
   then []
   else (
-    let lines = String.split_lines result.stderr |> List.filter ~f:(Fn.non String.is_empty) in
+    let lines = stderr_lines result in
     List.drop lines (List.length lines - 5))
 ;;
 
 (* Record each command step of a finished report: the status and a failed command's
-   stderr tail, on the entry its [Started] made (or a new one). *)
+   stderr tail, on the entry its [Started] made (or a new one). A streamed command
+   that succeeded keeps the lines it streamed; its progress line is gone. *)
 let log_report t (report : Job.Report.t) ~stale =
   List.foldi report.steps ~init:t ~f:(fun step t (step_report : Job.Step_report.t) ->
     match step_report.step, step_report.outcome with
@@ -691,7 +738,12 @@ let log_report t (report : Job.Report.t) ~stale =
       if has_record t ~job:report.id ~step
       then
         update_record t ~job:report.id ~step ~f:(fun entry ->
-          { entry with status; output; stale })
+          { entry with
+            status
+          ; output = (if Exec.Result.succeeded result then entry.output else output)
+          ; progress = None
+          ; stale
+          })
       else
         add_record
           t
@@ -701,13 +753,27 @@ let log_report t (report : Job.Report.t) ~stale =
               ; command = Exec.Spec.to_string_hum spec
               ; status
               ; output
+              ; progress = None
               ; stale
               }
           }
     | Run _, Skipped ->
       update_record t ~job:report.id ~step ~f:(fun entry ->
-        { entry with status = Some "skipped"; stale })
+        { entry with status = Some "skipped"; progress = None; stale })
   )
+;;
+
+(* A streamed line of a running command: a transient one is its progress, the others
+   its last [output_lines], stdout and stderr in arrival order. *)
+let output_lines = 5
+
+let log_output t ~job ~step (line : Event.Line.t) =
+  update_record t ~job ~step ~f:(fun entry ->
+    if line.transient
+    then { entry with progress = Some line.text }
+    else (
+      let output = entry.output @ [ line.text ] in
+      { entry with output = List.drop output (List.length output - output_lines) }))
 ;;
 
 (* A snapshot's problems, except those that only repeat a failed command already
@@ -732,6 +798,7 @@ let log_problems t (report : Job.Report.t) (snapshot : B.snapshot) =
             ; command = problem
             ; status = Some "problem"
             ; output = []
+            ; progress = None
             ; stale = false
             }
         })
@@ -981,7 +1048,10 @@ let finished t (report : Job.Report.t) =
 
 let event t (event : Event.t) =
   match event with
-  | Output _ -> t, []
+  | Output { job; step; stream = _; line } ->
+    (match Map.find t.in_flight job with
+     | Some Mutate -> log_output t ~job ~step line, []
+     | Some (Detect | Refresh _ | Diff _ | Prepare _) | None -> t, [])
   | Started { job; step; spec } ->
     (match Map.find t.in_flight job with
      | None | Some (Diff _) -> t, []
@@ -994,6 +1064,7 @@ let event t (event : Event.t) =
                ; command = Exec.Spec.to_string_hum spec
                ; status = None
                ; output = []
+               ; progress = None
                ; stale =
                    not (Stamps.is_current t.stamps ?lane:(Purpose.lane purpose) job)
                }
@@ -1004,14 +1075,23 @@ let event t (event : Event.t) =
 
 (* {2 Mutations} *)
 
-(* One line for a mutation's failed step: git's first stderr line and the status. *)
+(* One line for a mutation's failed step: git's first ["fatal:"] or ["error:"] line
+   (a pull's fetch chatter and git's ["hint:"] lines come first), else its first stderr
+   line, and the status. *)
 let failure_line (step_report : Job.Step_report.t) =
   match step_report.outcome with
   | Ran result ->
     let status = Exec.Result.status_hum result in
+    let lines =
+      List.map (stderr_lines result) ~f:String.strip
+      |> List.filter ~f:(Fn.non String.is_empty)
+    in
     (match
-       List.find_map (String.split_lines result.stderr) ~f:(fun line ->
-         Option.some_if (not (String.is_empty (String.strip line))) (String.strip line))
+       Option.first_some
+         (List.find lines ~f:(fun line ->
+            List.exists [ "fatal:"; "error:" ] ~f:(fun prefix ->
+              String.is_prefix line ~prefix)))
+         (List.hd lines)
      with
      | Some line -> sprintf "%s (%s)" line status
      | None -> status)
@@ -1067,9 +1147,17 @@ let mutation_finished t (report : Job.Report.t) =
     when Job.Id.equal job report.id && never_ran report ->
     { t with mutation = None }, Finished_mutation.nothing
   | Some mutation when Job.Id.equal mutation.job report.id ->
+    (* A network step's failure is explained by its hint when git's stderr has one. *)
     let failure =
       Option.map (Job.Report.first_failure report) ~f:(fun step_report ->
-        sprintf "%s failed: %s" mutation.title (failure_line step_report))
+        let reason =
+          match
+            if mutation.network then Git.Remote.hint step_report else None
+          with
+          | Some hint -> hint
+          | None -> failure_line step_report
+        in
+        sprintf "%s failed: %s" mutation.title reason)
     in
     let reconcile =
       if mutation.rewrites_worktree || Option.is_some mutation.commit
@@ -1087,6 +1175,7 @@ let mutation_finished t (report : Job.Report.t) =
         ( t
         , Some (Option.value (Git.Commit.summary report.steps) ~default:mutation.title)
         , [ pending.path ] )
+      | None, None when mutation.network -> t, Some (mutation.title ^ ": done"), []
       | (Some (Finish _ | Extend) | None), _ -> t, failure, []
     in
     let settling = Some { mutation with settling = true } in
@@ -1126,6 +1215,7 @@ let prepare_finished t (report : Job.Report.t) =
                 ; command = message
                 ; status = Some "problem"
                 ; output = []
+                ; progress = None
                 ; stale = false
                 }
             }
@@ -1226,12 +1316,35 @@ type action =
   | Commit_choice of Git.Commit.Choice.t (** The commit popup's answer. *)
   | Finish_commit (** The ["commit-finish"] request. *)
   | Abort_commit (** The ["commit-abort"] request. *)
+  | Fetch (** [f]. *)
+  | Pull_popup (** [p]. *)
+  | Pull_choice of Git.Remote.Pull.Choice.t (** The pull popup's answer. *)
+  | Push_popup (** [P]. *)
+  | Push_choice of Git.Remote.Push.Choice.t (** The push popup's answer. *)
+  | Abort_popup of Git.Abort.Operation.t (** [r], [m]. *)
+  | Abort_choice of Git.Abort.Operation.t (** The abort popup's [a]. *)
+  | Checkout (** Enter on a branch: the selected one. *)
+  | Checkout_previous (** [-] in Branches. *)
+  | New_branch (** [n] in Branches: the name prompt. *)
+  | Create_branch of string (** The name prompt's answer. *)
 [@@deriving sexp_of]
 
 (* The commit popup asked with [c]; its actions are the view's own. *)
 let commit_popup = Popup.map Git.Commit.popup ~f:(fun choice -> Commit_choice choice)
 
 let is c key = Key.equal key (Key.char c)
+
+(* [f p P r m]: anywhere a snapshot is loaded (the diff outside Visual), as [c]. *)
+let remote_key key =
+  List.find_map
+    [ 'f', Fetch
+    ; 'p', Pull_popup
+    ; 'P', Push_popup
+    ; 'r', Abort_popup Rebase
+    ; 'm', Abort_popup Merge
+    ]
+    ~f:(fun (c, action) -> Option.some_if (is c key) action)
+;;
 
 (* A count before a key, as {!Text_view} reads it: [1]-[9], then any digits. *)
 let split_count (keys : Key.t list) =
@@ -1269,6 +1382,8 @@ let interpret t (keys : Key.t list) : action Content_key.t =
      | _, (count, [ key ]) when (is ']' key || is '[' key) && not visual ->
        Action (Next_hunk { forward = is ']' key; count = Option.value count ~default:1 })
      | [ key ], _ when is 'c' key && not visual -> Action Commit_popup
+     | [ key ], _ when Option.is_some (remote_key key) && not visual ->
+       Action (Option.value_exn (remote_key key))
      | keys, _ -> Content_key.map (Text_view.interpret t.diff_view keys) ~f:(fun a -> Text a))
   | [ key ] when is '1' key -> Action (Focus_list Files)
   | [ key ] when is '2' key -> Action (Focus_list Branches)
@@ -1276,13 +1391,18 @@ let interpret t (keys : Key.t list) : action Content_key.t =
   | [ key ] when is '0' key -> Action Focus_diff
   | [ key ] when is 'y' key -> Action Copy
   | [ key ] when is 'c' key -> Action Commit_popup
+  | [ key ] when Option.is_some (remote_key key) ->
+    Action (Option.value_exn (remote_key key))
   | [ key ] when Focus.equal t.focus Files && Option.is_some (Verb.of_key key) ->
     Action (Act (Option.value_exn (Verb.of_key key)))
+  | [ key ] when Focus.equal t.focus Branches && is 'n' key -> Action New_branch
+  | [ key ] when Focus.equal t.focus Branches && is '-' key -> Action Checkout_previous
   | [ Enter ] ->
     (match selected t t.focus with
      | Some (Header section) -> Action (Toggle_fold section)
-     | Some (Item _) when not (Focus.equal t.focus Branches) -> Action Select
-     | Some (Item _) | None -> Unbound)
+     | Some (Item _) when Focus.equal t.focus Branches -> Action Checkout
+     | Some (Item _) -> Action Select
+     | None -> Unbound)
   | keys -> Content_key.map (Navigation.interpret keys) ~f:(fun m -> Move m)
 ;;
 
@@ -1313,7 +1433,11 @@ let signal t : View_registry.Signal.t -> action option = function
             && (under ~dir:root path || under ~dir:t.cwd path)))
          Refresh
      | Unknown | Detecting | Not_a_repository _ | No_work_tree _ | Failed _ -> None)
-  | Job (Output _) -> None
+  | Job (Output { job; _ } as event) ->
+    (* Streamed lines matter only to the log of a running mutation. *)
+    (match Map.find t.in_flight job with
+     | Some Mutate -> Some (Event event)
+     | Some (Detect | Refresh _ | Diff _ | Prepare _) | None -> None)
   | Job event -> Some (Event event)
   | Request "commit-finish" -> Some Finish_commit
   | Request "commit-abort" -> Some Abort_commit
@@ -1463,7 +1587,18 @@ let staged_keys t (action : B.action) =
   | Stage (Hunk { file; _ } | Lines { file; _ }) -> [ Diff.File.path file ]
   | Stage (Section section) -> keys [ section ]
   | Stage_all -> keys [ Unstaged; Untracked ]
-  | Unstage _ | Discard _ | Unstage_all | Finish_commit _ | Extend _ -> []
+  | Unstage _
+  | Discard _
+  | Unstage_all
+  | Finish_commit _
+  | Extend _
+  | Fetch
+  | Pull _
+  | Push _
+  | Checkout _
+  | Checkout_previous
+  | Create_branch _
+  | Abort _ -> []
 ;;
 
 (* The warning for staging paths whose buffers have unsaved text. *)
@@ -1515,6 +1650,11 @@ let submit ?commit t (submission : Submission.t) =
   let stamps, id = Stamps.issue t.stamps in
   match Job.create ~id submission.plan.steps with
   | Ok job ->
+    let network =
+      List.exists submission.plan.steps ~f:(function
+        | Run { kind = Network; _ } -> true
+        | Run { kind = Read | Mutate; _ } | Read_file _ -> false)
+    in
     Ok
       ( { t with
           stamps
@@ -1525,6 +1665,7 @@ let submit ?commit t (submission : Submission.t) =
               ; title = submission.plan.title
               ; root = submission.root
               ; rewrites_worktree = submission.plan.rewrites_worktree
+              ; network
               ; anchor = submission.anchor
               ; commit
               ; settling = false
@@ -1650,6 +1791,15 @@ let perform t controller ~context ~rows ~width action =
                    (View_registry.Ask.Confirm
                       { title; message; yes = Submit submission; no = None }))))
   in
+  (* A popup built for the loaded snapshot; its answer is one of the view's actions. *)
+  let ask_popup t popup_of =
+    match t.snapshot with
+    | None -> outcome t ~notice:(`Show "Nothing loaded yet")
+    | Some snapshot ->
+      outcome
+        t
+        ~ask:(View_registry.Ask.Popup { popup = popup_of snapshot; cancel = None })
+  in
   (* The pending commit while the user is in its message buffer, else the refusal. *)
   let in_message t =
     match t.pending, View_registry.Context.active context with
@@ -1748,6 +1898,64 @@ let perform t controller ~context ~rows ~width action =
     (match busy t with
      | Some busy -> outcome t ~notice:(`Show busy)
      | None -> run t submission)
+  | Fetch -> act t (fun _ -> Ok (B.Fetch, None))
+  | Pull_popup ->
+    ask_popup t (fun snapshot ->
+      Popup.map (Git.Remote.Pull.popup snapshot.status) ~f:(fun choice ->
+        Pull_choice choice))
+  | Push_popup ->
+    ask_popup t (fun snapshot ->
+      Popup.map (Git.Remote.Push.popup snapshot.status) ~f:(fun choice ->
+        Push_choice choice))
+  | Pull_choice { flags } -> act t (fun _ -> Ok (B.Pull { flags }, None))
+  | Push_choice { target; flags } -> act t (fun _ -> Ok (B.Push { target; flags }, None))
+  | Abort_popup operation ->
+    (match t.snapshot with
+     | None -> outcome t ~notice:(`Show "Nothing loaded yet")
+     | Some snapshot when Git.Abort.in_progress snapshot.operations operation ->
+       let popup =
+         Popup.map (Git.Abort.popup operation) ~f:(fun operation ->
+           Abort_choice operation)
+       in
+       outcome t ~ask:(View_registry.Ask.Popup { popup; cancel = None })
+     | Some _ ->
+       outcome
+         t
+         ~notice:
+           (`Show
+               (match operation with
+                | Rebase -> "No rebase in progress; nothing ran"
+                | Merge -> "No merge in progress; nothing ran")))
+  | Abort_choice operation -> act t (fun _ -> Ok (B.Abort operation, None))
+  | Checkout ->
+    act t (fun t ->
+      match selected_item t Branches with
+      | Some { value = Branch branch; _ } -> Ok (B.Checkout branch.name, None)
+      | Some { value = File _ | Commit _; _ } | None -> Error "No branch selected")
+  | Checkout_previous -> act t (fun _ -> Ok (B.Checkout_previous, None))
+  | New_branch ->
+    (match t.snapshot with
+     | None -> outcome t ~notice:(`Show "Nothing loaded yet")
+     | Some { status = { branch = { oid = None; _ }; _ }; _ } ->
+       outcome
+         t
+         ~notice:(`Show "There is no commit yet: commit before branching; nothing ran")
+     | Some snapshot ->
+       let existing =
+         List.map snapshot.branches ~f:(fun (branch : Git.Branch_list.Branch.t) ->
+           branch.name)
+       in
+       outcome
+         t
+         ~ask:
+           (View_registry.Ask.Prompt
+              { title = "New branch"
+              ; initial = ""
+              ; validate = Git.Branch_name.refusal ~existing
+              ; accept = (fun name -> Create_branch name)
+              ; cancel = None
+              }))
+  | Create_branch name -> act t (fun _ -> Ok (B.Create_branch name, None))
   | Next_hunk { forward; count } -> outcome (next_hunk t ~forward ~count)
   | Focus_list focus ->
     let t = end_visual t in
@@ -1824,6 +2032,24 @@ let commands t =
       ]
     in
     let commit = c "commit" [ k 'c' ] "Commit, amend or extend (the commit popup)" in
+    (* [f p P] always; [r] and [m] only while there is something for them to abort. *)
+    let in_progress operation =
+      Option.exists t.snapshot ~f:(fun (snapshot : B.snapshot) ->
+        Git.Abort.in_progress snapshot.operations operation)
+    in
+    let remote =
+      [ c "fetch" [ k 'f' ] "Fetch from the default remote, pruning gone branches"
+      ; c "pull" [ k 'p' ] "Pull from the upstream (the pull popup)"
+      ; c "push" [ k 'P' ] "Push the branch (the push popup)"
+      ]
+      @ (if in_progress Rebase
+         then [ c "rebase" [ k 'r' ] "Abort the rebase in progress (the rebase popup)" ]
+         else [])
+      @
+      if in_progress Merge
+      then [ c "merge" [ k 'm' ] "Abort the merge in progress (the merge popup)" ]
+      else []
+    in
     match t.focus with
     | Diff ->
       let visual = Option.is_some (Text_view.visual t.diff_view) in
@@ -1851,6 +2077,7 @@ let commands t =
           ; c "previous-hunk" [ k '[' ] "Previous hunk"
           ; commit
           ]
+          @ remote
       in
       always
       @ [ c "toggle-diff" [ Tab ] "Back to the list"
@@ -1864,9 +2091,10 @@ let commands t =
       let enter =
         match selected t t.focus with
         | Some (Header _) -> [ c "toggle-fold" [ Enter ] "Fold or unfold the section" ]
-        | Some (Item _) when not (Focus.equal t.focus Branches) ->
-          [ c "select" [ Enter ] "Focus the diff of the selection" ]
-        | Some (Item _) | None -> []
+        | Some (Item _) when Focus.equal t.focus Branches ->
+          [ c "checkout" [ Enter ] "Check out the branch" ]
+        | Some (Item _) -> [ c "select" [ Enter ] "Focus the diff of the selection" ]
+        | None -> []
       in
       let copy =
         match t.focus with
@@ -1882,7 +2110,11 @@ let commands t =
           ; c "discard" [ k 'x' ] "Discard the file's or section's changes; confirmed"
           ]
           @ all
-        | Branches | Commits | Diff -> []
+        | Branches ->
+          [ c "new-branch" [ k 'n' ] "Create a branch at HEAD and check it out"
+          ; c "previous-branch" [ k '-' ] "Check out the previous branch"
+          ]
+        | Commits | Diff -> []
       in
       always
       @ panels
@@ -1891,7 +2123,8 @@ let commands t =
         ]
       @ enter
       @ actions
-      @ [ commit; c "copy" [ k 'y' ] copy ]
+      @ (commit :: remote)
+      @ [ c "copy" [ k 'y' ] copy ]
       @ Navigation.commands)
 ;;
 
@@ -2082,7 +2315,9 @@ let log_part t (rect : Geometry.Rect.t) =
            (if entry.stale then ", stale" else "")
            (short_command entry.command))
         ~width
-      :: List.map entry.output ~f:(fun line -> Tile_text.row style ("    " ^ line) ~width))
+      :: List.map
+           (entry.output @ Option.to_list entry.progress)
+           ~f:(fun line -> Tile_text.row style ("    " ^ line) ~width))
   in
   let body = Int.max 0 (rect.height - 1) in
   Tile_text.row Title (sprintf "@ Command log (%d)" (List.length entries)) ~width
@@ -2196,7 +2431,9 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
         sprintf "Diff %d-%d/%d%s" (top + 1) (Int.min total (top + h)) total visual
         ^ hints
             (if String.is_empty visual
-             then "s u x hunk, ] [ hunks, c commit, e open, 10j, v V y, Tab/Esc list, g r, @, q"
+             then
+               "s u x hunk, ] [ hunks, c commit, f p P fetch/pull/push, e open, 10j, v V \
+                y, Tab/Esc list, g r, @, q"
              else "s u x lines, S U, y copy, Esc ends, g r, @, q")
       | (Files | Branches | Commits) as focus ->
         let count = List.length (rows_of t focus) in
@@ -2210,9 +2447,15 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
           count
         ^ hints
             (match focus with
-             | Files -> "s u x S U, c commit, 1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"
-             | Branches | Commits | Diff ->
-               "c commit, 1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"))
+             | Files ->
+               "s u x S U, c commit, f p P fetch/pull/push, 1 2 3 panels, Tab diff, \
+                Enter, y copy, g r, @, q"
+             | Branches ->
+               "Enter checkout, n new, - previous, c commit, f p P fetch/pull/push, 1 \
+                2 3 panels, Tab diff, y copy, g r, @, q"
+             | Commits | Diff ->
+               "c commit, f p P fetch/pull/push, 1 2 3 panels, Tab diff, Enter, y copy, \
+                g r, @, q"))
   in
   { title = title t
   ; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default)
@@ -2253,8 +2496,8 @@ let adapter : (t, action) View_registry.Adapter.t =
   ; interpret
   ; escape
   ; hint =
-      "VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, \
-       @ log, q leaves, ? help"
+      "VCS: s/u/x stage/unstage/discard, c commit, f/p/P fetch/pull/push, 1/2/3 panels, \
+       Tab diff, g r refresh, @ log, q leaves, ? help"
   ; perform
   ; commands
   ; signal

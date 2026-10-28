@@ -1,5 +1,5 @@
 (** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines;
-    phase 5: commit), a registered view ({!View_registry}) over the
+    phase 5: commit; phase 6: remotes and branches), a registered view ({!View_registry}) over the
     git backend ([Ches_vcs_git.Backend], a {!Ches_vcs.Backend.S}). Lazygit's layout
     and Magit's context keys: the Files, Branches and Commits list panels beside a diff
     panel that follows the selection, a head summary above the lists, and a
@@ -207,6 +207,54 @@
     ([Git.Repository.t.git_dir], where the message file lives) do not refresh; other
     saves under the root still do.
 
+    {2 Remotes and branches (phase 6)}
+
+    Every action below goes through the actions' machinery above (busy, refusals as
+    [`Show] notices, the dirty-buffer refusal and reconciliation for plans with
+    [rewrites_worktree], the confirmation, one job, logging, the failure notice,
+    refresh); the plans and texts are [Git.Backend]'s ("Remotes and branches").
+    Keys, while a snapshot is loaded, in any panel and in the diff outside Visual
+    (as [c]):
+    - [f]: [plan Fetch]. Local command [fetch].
+    - [p]: {!View_registry.Ask.t.Popup} [{ popup = Git.Remote.Pull.popup status;
+      cancel = None }]; its [Choice { flags }] -> [plan (Pull { flags })]. Local
+      command [pull].
+    - [P]: the same with [Git.Remote.Push.popup status]; [{ target; flags }] ->
+      [plan (Push { target; flags })] (a force push is confirmed). Local command
+      [push].
+    - [r]: while {!Git.Abort.in_progress} [Rebase], the popup [Git.Abort.popup
+      Rebase], whose [a] gives [plan (Abort Rebase)] (confirmed); otherwise [`Show]
+      ["No rebase in progress; nothing ran"]. [m]: the same for [Merge] (["No merge
+      in progress; nothing ran"]). Local commands [rebase] ([r]) and [merge] ([m]),
+      listed only while that operation is in progress.
+    In the Branches panel:
+    - Enter on a branch: [plan (Checkout name)] (Enter on the current branch is
+      refused by the plan: ["Already on <name>; nothing ran"]). Local command
+      [checkout].
+    - [n]: on an unborn branch, [`Show] ["There is no commit yet: commit before
+      branching; nothing ran"]; else {!View_registry.Ask.t.Prompt} [{ title = "New
+      branch"; initial = ""; validate = Git.Branch_name.refusal ~existing; accept =
+      fun name -> plan (Create_branch name); cancel = None }], [existing] the
+      snapshot's branch names. Local command [new-branch].
+    - [-]: [plan Checkout_previous]. Local command [previous-branch].
+    The hint mentions [Enter n -] in Branches.
+
+    A plan with a [Network] step streams: its {!Ches_vcs.Event.Output} lines go to
+    its log entry ({!Log_entry.t.output}, [progress]), and while it runs the head
+    summary shows one more row, ["<title>..."] followed by the latest progress line
+    when there is one (escaped, cut to the width). Success posts [`Post] ["<title>:
+    done"] (network plans only; others still post nothing). Failure posts ["<title>
+    failed: <reason>"], [<reason>] being {!Git.Remote.hint} of the failed step when
+    it has one, else the one-line failure as for any action; the stderr is in the
+    log either way. The one-line failure (every plan) quotes git's first [fatal:]
+    or [error:] stderr line, else its first non-blank one (a pull's stderr starts
+    with fetch chatter), with only the last carriage-return segment of a line (what
+    a terminal shows); the log's stderr tail keeps last segments too. While it runs the view stays usable (moving, diffs, [g r], the
+    log); other actions are refused as busy, as during any mutation.
+
+    The head summary marks how to leave an operation: a [Rebase] row ends with [" (r
+    a aborts)"], a [Merge] row with [" (m a aborts)"].
+
     {2 Layout}
 
     {!Layout.compute} divides the content viewport (the view's own rows and width
@@ -239,8 +287,8 @@
       headers and items; {!Ches_tile.Navigation.commands}); the diff follows.
     - Enter: on a section header, fold or unfold it
       ({!Ches_vcs.Panel.Cursor.toggle_fold}); on a Files or Commits item, focus the
-      diff ([select]). On a branch it is unbound (checkout arrives in phase 6), so
-      [select] is not listed there.
+      diff ([select]). On a branch it checks the branch out (phase 6, below:
+      [checkout]), so [select] is not listed there.
     - [y]: copy the selected item's name: a file's path, a branch name, a commit's
       abbreviated hash (7 characters) ([copy]); nothing on a header.
     Diff panel:
@@ -334,7 +382,13 @@ module Log_entry : sig
     ; status : string option
     (** {!Exec.Result.status_hum} once finished; [None] while running. *)
     ; output : string list
-    (** A failed command's stderr tail (else empty), at most 5 lines, raw. *)
+    (** A failed command's stderr tail, at most 5 lines, raw. A streamed command
+        (phase 6: push, pull, fetch) also keeps its last 5 non-transient output
+        lines, stdout and stderr in arrival order, while it runs and after it
+        succeeds; a failure replaces them with the stderr tail. Else empty. *)
+    ; progress : string option
+    (** A streamed command's latest transient line (git's ["Receiving objects:
+        45% (9/20)"]) while it runs; [None] once it has finished. Raw. *)
     ; stale : bool (** Its result was not used (superseded or a new generation). *)
     }
   [@@deriving sexp_of]

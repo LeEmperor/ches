@@ -242,10 +242,12 @@ module Signal : sig
         between [Band], [Tab] and [Split] is not signalled; closing and reopening
         is. *)
     | Saved of string list
-    (** The session wrote these files (absolute paths, oldest first; at least one)
-        during the last input: one signal for all of an input's saves (e.g. a save
-        all). Directory-buffer applies are not included. Every installed view gets
-        it, placed or hidden. *)
+    (** The session changed these paths on disk (absolute, at least one) during
+        the last input: one signal for all of an input's saves (e.g. a save all).
+        First the files it wrote (oldest first), then the paths directory-buffer
+        saves changed ({!Ches_app.Session.directory_changes}: created, deleted,
+        copied to, both sides of a rename; a path may be a directory or no longer
+        exist). Every installed view gets it, placed or hidden. *)
     | Job of Ches_vcs.Event.t
     (** An event of a job this view submitted ({!Outcome.t.jobs}), in the runner's
         order; nothing after its [Finished]. Delivered placed or hidden. Staleness

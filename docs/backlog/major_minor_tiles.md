@@ -94,6 +94,19 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   `View_command.Request_view`, `Adapter.label`, and a signalled `open_file` that
   applies only while the view is focused.
 
+**Done in VCS workspace phase 6 (2026-10-28):** remotes and branches.
+- `f p P r m` and Branches' `Enter n -` reuse the phase 5 seams: the pull, push and
+  abort popups (`Git.Remote`, `Git.Abort`) and the new-branch name (`Ask.Prompt`,
+  validated by `Git.Branch_name.refusal` on every edit) answer with the view's own
+  actions, planned through the same mutation machinery.
+- Network jobs stream: the view logs `Event.Output` lines of its own mutation jobs
+  (the log keeps the last five, plus the latest transient progress line) and draws a
+  progress row in its head summary. No new registry seam: `Signal.Job` already
+  carried `Output`.
+- Directory-buffer saves now reach views in `Signal.Saved` (`Session` keeps the
+  paths they changed apart from file saves, so they never become diagnostic
+  document saves).
+
 **What is not done:**
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.
