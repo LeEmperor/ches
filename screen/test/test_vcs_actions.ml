@@ -70,6 +70,8 @@ let action_name : B.action -> string = function
   | Discard target -> "Discard " ^ target_name target
   | Stage_all -> "Stage_all"
   | Unstage_all -> "Unstage_all"
+  | Finish_commit _ -> "Finish_commit"
+  | Extend _ -> "Extend"
 ;;
 
 (* Whole hunks as [git apply] takes them, for plain names (the fake's own [Patch]). *)
@@ -226,7 +228,8 @@ let fake ?(override = fun (_ : B.action) -> None) env : Vcs_view.planner =
              plan ~rewrites_worktree:true ("Discard " ^ of_lines file hunks)
                (apply_hunks [ "--reverse" ] file (List.map hunks ~f:fst))
          }
-     | Stage _ | Unstage _ | Discard _ -> Refused "fake: not planned; nothing ran")
+     | Stage _ | Unstage _ | Discard _ | Finish_commit _ | Extend _ ->
+       Refused "fake: not planned; nothing ran")
 ;;
 
 (* The editor on [file] as it is on disk, the VCS view (with the fake planner)
@@ -649,7 +652,7 @@ let%expect_test "busy until the refresh after a mutation is applied; failures ar
                  }
              })
       | Unstage _ -> Some (Refused "a.txt is not staged; nothing ran")
-      | Stage_all | Unstage_all -> None
+      | Stage_all | Unstage_all | Finish_commit _ | Extend _ -> None
     in
     let t = run env (run env (create ~override env) " vx") "jjj" in
     let t = run env t "s" in

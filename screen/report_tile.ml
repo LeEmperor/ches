@@ -208,6 +208,7 @@ let adapter : (t, action) View_registry.Adapter.t =
   ; commands
   ; signal = (fun _ _ -> None)
   ; text_area = (fun _ ~rows:_ ~width:_ -> None)
+  ; label = (fun _ -> None)
   ; render =
       (fun t _ ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
         render ~hotkey_hints ~focused ?notice ?pending t ~width ~rows)

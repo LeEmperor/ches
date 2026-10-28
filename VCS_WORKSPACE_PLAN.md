@@ -10,9 +10,10 @@ placement/close notices typed inside a view reach the status line. Phase 1 (VCS
 core, git parsing, async runner) and phase 2 (the read-only VCS view, Space g)
 complete; the owner accepted phase 2 (with the post-phase-2 tweaks) and committed
 phases 1-2 as fe0f087 (2026-10-27). Phase 3 (stage/unstage/discard) accepted and
-committed by the owner as d0cb736 (2026-10-27). Phase 4 (line staging from a Visual selection)
-complete and uncommitted (2026-10-27), owner terminal acceptance pending. Phases 5-6 not
-started.
+committed by the owner as d0cb736 (2026-10-27). Phase 4 (line staging from a
+Visual selection) complete and committed by the owner as 117f230 (2026-10-28).
+Phase 5 (popups and the commit flow) complete and uncommitted (2026-10-28), owner
+terminal acceptance pending. Phase 6 not started.
 
 ## Goal
 
@@ -954,6 +955,135 @@ the `Lines` targets it receives) until G4 reports, then end to end with the real
 planner (stage two of three added lines, a selection across two hunks, a spanning
 refusal, a discard with confirmation).
 
+## Phase 5 contracts (2026-10-28)
+
+Run as three agents: A (the generic seams, the popup float, bindings and palette;
+`screen/` outside the VCS view, `app/`, `input/`, `palette/`) and G5 (git commit plans,
+`vcs/git/`) in parallel, then V5 (the view's commit flow, docs, end-to-end tests) once
+A's seams land. Stubs fail with `"TODO phase 5: agent <name>"` (grep `TODO phase 5`).
+
+Done by the orchestrator before the agents (compiling, no test reaches the stubs):
+- `Ches_vcs.Popup.map` (vcs/popup.ml(i)): a popup whose actions build `f` of what they
+  built, so the application can hold a `unit Popup.t`.
+- `vcs/git/commit.mli` (new, G5's stubs): `Kind` (Commit | Amend), `Choice` (what the
+  popup returns: `Message { kind; flags }` | `Extend { flags }`), `popup`, `flags`,
+  `refusal`, `prepare`/`prepared` (the message file via `rev-parse --git-path
+  CHES_COMMIT_EDITMSG`; HEAD's message for amend), `template`, `summary`; exact texts
+  in the `.mli`.
+- `vcs/git/backend.mli`: `action` gains `Finish_commit { kind; flags; message_file }`
+  and `Extend { flags }`; the "Commits (phase 5)" plan contract (`git -c
+  core.commentChar=# commit --cleanup=strip [--amend] <flags> -F <file>`, `commit
+  --amend --no-edit <flags>`, titles "Commit", "Amend HEAD", "Extend HEAD"). The
+  action constructors are not named `Commit` because `item` and `diff_target` already
+  have one. Compile fixes only in `vcs_view.ml` (`staged_keys`) and
+  `test_vcs_actions.ml` (fake planner, `action_name`).
+
+Seams (A; generic, tested with test-only views like 0A-0C's; exact `.mli` wording is
+A's, recorded in the files):
+- Popup question. `View_registry.Ask.t` gains `Popup of { popup : 'action
+  Ches_vcs.Popup.t; cancel : 'action option }`; `Ask.Question.t` gains `Popup of unit
+  Ches_vcs.Popup.t` (via `Popup.map`); `Answer.t` gains `Choose of { key : char;
+  enabled : string list }`, which the registry turns into that action's `run
+  ~enabled`. A new float `screen/popup_tile.ml(i)` (id `popup`, read-only spec) on the
+  single float slot over the asking view, like the confirmation: a title row, the
+  switches (`-n  Disable hooks (--no-verify)`, the enabled ones marked visibly
+  without colour as well as styled), the actions (`c  Commit`), laid out in columns as
+  width allows, and a footer showing a pending `-`. Keys per `Popup.press`: `-` then a
+  switch key toggles; an action key answers `Choose` and closes; Escape clears a
+  pending dash, else declines (`cancel`); `q` and Ctrl-c decline; an unbound key
+  shows a hint in the footer. `?` opens the help float listing `Popup.help` over the
+  popup; closing help returns to the popup with its state. Leader workspace keys keep
+  working (as over the confirmation); paste is rejected. Fit refusal, withdrawal (no
+  room, view hidden/left, another float) and focus return as for 0C questions.
+  Switches are not remembered between openings (Magit's default).
+- Signalled `open_file` (rule change): applied when the view that asked is focused
+  (as `ask` already is), else ignored. Needed because the commit buffer opens after
+  an async read.
+- `Location.t` gains `contents : string option`: when given, the file is first written
+  with exactly that text (created or replaced), then opened as before. Refused with
+  the view's notice, nothing written, when the session has a retained buffer for the
+  path with unsaved changes; a retained clean buffer is reloaded from the new text.
+- `Outcome.save : string list`: retained file buffers (absolute paths) written now,
+  like `:w`, even when clean, after `reconcile` and before `jobs`. If a path has no
+  retained buffer or a write fails, the error goes to feedback and the outcome's jobs
+  are not submitted: each is answered with its `never_started` report.
+- `Outcome.dispose : string list`: files the view created for editing and is done
+  with. Their retained buffers are closed, unsaved changes discarded, and the files
+  deleted (missing is fine; a delete failure goes to feedback). When one of them had
+  the editor area's input (the user was in it), focus goes to the disposing view
+  where it is placed (its tab activated, or the split pane focused); hidden, the
+  editor shows the next tab as closing does. This is the one way a signalled outcome
+  may move focus (the user's buffer was taken away). Applied from key and signal
+  outcomes, after `jobs`.
+- `Context.active : t -> File.t option`: the file buffer that has the editor area's
+  input (the document focused, not a view tab, the directory or a view); `None`
+  otherwise.
+- `Signal.Request of string` and `View_command.Request_view of { view : View_id.t;
+  request : string }`: a named request delivered to an installed view, focused or
+  not, as a signal (its outcome is applied as a signalled one, plus `save` and
+  `dispose`; views answer requests with `` `Post `` notices because their footer may
+  be hidden). An unavailable view gives its notice; a view that ignores the request,
+  "<Title>: nothing to do for <request>".
+- Bindings: `Space g c` -> `Request_view { view = vcs; request = "commit-finish" }`,
+  `Space g a` -> `"commit-abort"`. Palette: `vcs.commit-finish` "VCS: finish commit",
+  `vcs.commit-abort` "VCS: abort commit". Expectation updates they cause.
+- Adapter tab label: `Adapter.t` gains `label : 'state -> string option` (the tab
+  strip's label for a view tab; `None` is `Spec.title`); existing adapters `None`.
+- Leftovers: `Place_view { view = None }` (Space s t/s/b/h) typed while help, a
+  question or a popup floats over a view acts on that view instead of "No view
+  focused"; a directory-buffer save that applied changes sends `Saved` with the
+  directory's path, if cheap (else recorded as a gap).
+
+View (V5; A writes the `vcs_view.mli` section "Commit (phase 5)" from this):
+- `c` (any panel, outside Visual, snapshot loaded) asks `Popup { popup =
+  Git.Commit.popup; cancel = None }`. `?` help and the palette list it (`commit`).
+- On `Message`: `Commit.refusal` -> `` `Show `` notice. A commit already pending (its
+  path in `Context.files`) -> `open_file` of it (no contents) and "A commit message is
+  already open: Space g c commits it, Space g a aborts". Busy -> the busy notice. Else
+  a read job (lane `commit`) of `Commit.prepare`; its `Finished` -> `prepared` (error:
+  `` `Post ``) -> `open_file { path; line = Some 1; contents = Some (template ...) }`,
+  remembering `{ path; kind; flags }` as pending.
+- On `Extend`: `refusal`, then `plan (Extend { flags })` through the Act machinery
+  (busy, logging, refresh).
+- `Request "commit-finish"`: refused (`` `Post ``) unless `Context.active`'s path is the
+  pending path: "No pending commit message here; nothing ran"; busy -> busy (as
+  `` `Post ``). Then `plan (Finish_commit ...)`: `Refused` -> `` `Post `` (buffer stays);
+  `Run` -> outcome `save = [path]` and the Mutate job. On `Finished`: success ->
+  `dispose = [path]`, pending cleared, `` `Post `` of `Commit.summary` (else the title),
+  refresh; failure -> the existing "<title> failed: <first line>" `` `Post ``, buffer
+  kept, stderr in the log. Reconcile `[root]` after any commit-like mutation (hooks
+  may rewrite files) without the dirty-buffer refusal. Never started (a failed save)
+  -> nothing ran, pending kept.
+- `Request "commit-abort"`: same refusal; else `dispose = [path]`, pending cleared,
+  "Commit aborted" ("Amend aborted").
+- Saved signals for paths inside the git directory do not refresh.
+- Tab label `VCS: <branch>` (`VCS: <7-char rev>` detached), else `VCS`.
+
+Decisions (orchestrator; Magit defaults where the plan left it open): no switch memory;
+after commit or abort the user lands back in the VCS view where it is placed (Magit
+returns to the status buffer); amend with nothing staged is allowed (reword), commit
+and extend need staged changes or `--allow-empty`; conflicted files refuse every
+commit; the merge message (`MERGE_MSG`) is not pre-filled (tier 2); a pending message
+whose buffer the user closed by hand is forgotten (the next `c` starts afresh).
+
+Ownership:
+- A: `vcs/popup.ml(i)` only if a fix is needed, `screen/` except `vcs_view.ml`,
+  `vcs_diff_text.ml` and `screen/test/test_vcs_*.ml`; `app/`, `input/`, `palette/`,
+  `test/`, `ui/` if a type change needs it; `screen/vcs_view.mli` (the new section;
+  plus `label`/`~context:_` compile fixes in `vcs_view.ml`, nothing else there);
+  README/docs only for the generic float and the new keys' table rows.
+- G5: `vcs/git/commit.ml`, `vcs/git/backend.ml` (the two plan branches), new
+  `vcs/git/test/test_commit.ml` (and existing git tests if needed).
+- V5 (after A): `screen/vcs_view.ml`, `screen/vcs_*.ml(i)` other than `.mli`
+  contracts, `screen/test/test_vcs_*.ml`, README, docs/editor_reference.md,
+  docs/backlog/major_minor_tiles.md.
+- Frozen for everyone once A reports: every `.mli`; `vcs/` other than G5's files.
+
+Builds: A builds `@screen/runtest @palette/runtest @test/runtest` (app and input
+tests live in `test/`; `@ui/runtest` too if touched); G5 builds `@vcs/git/runtest
+@vcs/runtest`; all through the lock with `-j 10`; no file left non-compiling between
+runs (`ches_screen` compiles `ches_vcs_git`).
+
 ## Implementation handoffs
 
 ```text
@@ -1615,6 +1745,113 @@ Next-phase integration notes (phase 5):
   - The Busy/mutation and dirty-buffer machinery in vcs_view.ml is shared by Act
     and Act_on_lines; commit and amend should reuse it.
 ```
+
+```text
+Phase / date / status:
+  5, 2026-10-28, complete (headless checks only; owner terminal acceptance pending).
+  Uncommitted, on 117f230. Run as the orchestrator's git contracts, then A (generic
+  seams, popup float, bindings) and G5 (git commit plans) in parallel, then V5 (the
+  view's commit flow, docs); see "Phase 5 contracts".
+
+Implemented behavior:
+  - Popup float (screen/popup_tile.ml, any view via Ask.Popup): title, "Switches"
+    and "Actions" in columns, enabled switches marked "* " and styled; - then a key
+    toggles (groups exclusive), an action key runs it; Escape clears a pending dash,
+    then closes; q, Tab, Ctrl-c close; ? lists the keys in help and returns to the
+    popup; leader keys work; paste refused; fit refusal and withdrawal as for 0C.
+  - Commit popup on c (any panel; the diff outside Visual): c commit, a amend, e
+    extend; -n --no-verify, -s --signoff, -e --allow-empty; not remembered.
+  - c/a: refusals first (conflicted files, amend/extend without a commit, nothing
+    staged without --allow-empty), then rev-parse --git-path CHES_COMMIT_EDITMSG
+    (+ HEAD's message for amend) as a read job, then the file is written with the
+    #-commented template and opened as a file tab (the other pane beside a split);
+    the switches stay with the pending commit. c again while pending reopens it.
+  - Space g c in that buffer: saves it (even when clean), git -c
+    core.commentChar=# commit --cleanup=strip [--amend] <flags> -F <file>. Success:
+    the buffer closes, the file is deleted, the user lands back in the VCS view
+    (tab activated or split focused), the notice is git's "[main 1a2b3c4] subject",
+    refresh. Failure (hook, empty message, refused plan): buffer kept, "<title>
+    failed: <first line>", stderr in the command log. Space g a: buffer closed,
+    file deleted, "Commit aborted"/"Amend aborted"; refused (Busy) while the commit
+    runs. Both refused outside the pending buffer ("No pending commit message here;
+    nothing ran"). Open buffers are reconciled after every commit-like mutation
+    (hooks may rewrite files).
+  - e: commit --amend --no-edit <flags> at once, through the stage/discard
+    machinery (busy, log, refresh).
+  - Leftovers: Space s t/s/b/h typed in help, a question or the popup act on the
+    view underneath; the VCS tab label is "VCS: <branch>" ("VCS: <rev>" detached).
+
+Changed modules and new public contracts:
+  - Orchestrator: Ches_vcs.Popup.map; vcs/git/commit.mli (new); backend.mli
+    Finish_commit/Extend and the "Commits (phase 5)" plan contract; vcs_view.mli
+    clarifications from V5 (abort busy, Confirm, no snapshot, prepare errors).
+  - A: View_registry Ask.Popup / Question.Popup / Answer.Choose, Location.contents,
+    Outcome.save and dispose (key and signal outcomes; order controller, reconcile,
+    effect, notice, return, open_file, save, jobs, dispose, ask), Context.active,
+    Signal.Request, Adapter.label (+ View_registry.label); signalled open_file
+    applies only while the view is focused; screen/popup_tile.ml(i) (new);
+    Help_tile.of_entries; Ui_state popup, popup_layout, tab_label;
+    Session.save_buffer; File_io.remove; View_command.Request_view; bindings
+    Space g c / g a; palette vcs.commit-finish / vcs.commit-abort; vcs_view.mli
+    "Commit (phase 5)". Tests: screen/test/test_view_popup.ml (9),
+    test_view_requests.ml (5); catalog/palette/keymap expectation updates.
+  - G5: vcs/git/commit.ml, backend.ml plan branches; vcs/git/test/test_commit.ml
+    (11 expect tests, pure and real git: hooks, --no-verify, signoff, allow-empty,
+    commentChar=';', empty message, amend, extend, linked worktree, conflicts).
+  - V5: screen/vcs_view.ml (commit flow on the shared Mutation machinery, which now
+    carries an optional commit purpose); screen/test/test_vcs_commit.ml (17, end to
+    end with default bindings and the real planner, one with a fake planner);
+    label/hint/help expectation updates; README, docs/editor_reference.md
+    ("Committing."), backlog.
+
+Policy decisions settled (orchestrator unless noted; Magit defaults):
+  - No switch memory between popup openings; back in the VCS view after commit or
+    abort; amend with nothing staged allowed (reword); every commit refused with
+    conflicted files; MERGE_MSG not pre-filled (tier 2); a message buffer closed by
+    hand is forgotten (the next c starts afresh).
+  - Popup in Git.Commit, not Backend.S (deviation): the popup's result is a request
+    that needs a message first, not a planned action. A second backend adds popups
+    to Backend.S then.
+  - A: Choose's flags sanitized by the popup's own rules; contents must be document
+    text; Tab declines the popup as it declines a confirmation.
+  - V5: abort refused while its commit runs (deleting -F's file would race git);
+    extend's success posts nothing, as other actions.
+
+Checks run and results:
+  - Baseline after the contract stubs (no behavior change), 2026-10-28: dune build
+    -j 10 -> 0; dune runtest -j 10 -> 0.
+  - A and V5 each: their targets, then full build/runtest -> 0. G5: @vcs/git/runtest,
+    @vcs/runtest -> 0.
+  - Orchestrator final (2026-10-28), through the lock: dune build -j 10 -> 0; dune
+    runtest -j 10 -> 0 (the runtime flake did not occur); git diff --check clean;
+    no trailing whitespace in new files; no TODO phase 5 stubs; no stray git
+    processes or /tmp/ches-vcs* dirs; HEAD 117f230, nothing committed.
+
+Known gaps or blockers:
+  - No owner terminal acceptance (checklist in the session report).
+  - Directory-buffer saves still send no Saved signal (putting the directory in
+    Session.saved would reach the diagnostic source as a document save); g r.
+  - Amending drops HEAD message lines that start with '#' (comment char forced).
+  - A prepare that finishes while the view is unfocused opens nothing (c again);
+    a cancelled prepare says nothing.
+  - commit.gpgSign with a terminal pinentry is untested (it would need the TTY).
+  - A retained message buffer in Insert/Visual is not reloaded when its file is
+    rewritten (reconcile's busy rule); the popup's 20x4 minimum may cut entries
+    (? lists all); help over the popup hides it (single float slot).
+
+Next-phase integration notes (phase 6):
+  - Push and pull popups: Popup.t values in ches_vcs_git like Git.Commit.popup,
+    asked with Ask.Popup; their choices go straight to plan (as Extend does).
+    Force-with-lease: Plan.Decision.Confirm. Phase 6 may move popups into
+    Backend.S if a shared shape emerges.
+  - Network jobs stream Output events: the command log already logs them; the
+    Mutation machinery (busy, refresh, reconcile [root] for rewrites_worktree,
+    which checkout and pull set) carries over.
+  - Branch name prompt: Ask.Prompt with a cheap validate, the real check by git.
+  - Request_view and Outcome.save/dispose are generic if a later flow (rebase todo
+    buffer) needs a view-owned file buffer.
+```
+
 ### Post-phase-2 tweaks (owner feedback, committed in fe0f087)
 
 - Counts in every read-only Text_view (`Action.Move_count`): `N` before

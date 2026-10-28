@@ -59,6 +59,11 @@ module State : sig
   [@@deriving sexp, equal]
 end
 
+(** The same popup whose actions build [f] of what they built before: how an
+    application holds a popup whose action type it does not know (the popup float
+    renders [unit t]). *)
+val map : 'a t -> f:('a -> 'b) -> 'b t
+
 (** No dash pending, and [enabled] (default none) restricted to the popup's flags;
     within a group only the first given flag stays enabled. For popups that remember
     their switches between openings. *)

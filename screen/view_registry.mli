@@ -30,9 +30,11 @@ end
 (** A question a view asks the user on a float over itself, and the view's own action
     that each answer performs. A confirmation's default answer is No: only [y]
     performs [yes]. A prompt's [accept] runs only on text that [validate] passes
-    ([None]; [Some error] is shown inline). [no] and [cancel] are performed when the
-    user declines; a question withdrawn without an answer (its float cannot fit, the
-    view is left or hidden) performs nothing. *)
+    ([None]; [Some error] is shown inline). A popup ({!Ches_vcs.Popup}: switches
+    toggled with [-] and a key, actions run with one key) performs the chosen
+    action's [run ~enabled]; its switches start disabled at every opening. [no] and
+    [cancel] are performed when the user declines; a question withdrawn without an
+    answer (its float cannot fit, the view is left or hidden) performs nothing. *)
 module Ask : sig
   type 'action t =
     | Confirm of
@@ -48,6 +50,10 @@ module Ask : sig
         ; accept : string -> 'action
         ; cancel : 'action option
         }
+    | Popup of
+        { popup : 'action Ches_vcs.Popup.t
+        ; cancel : 'action option
+        }
 
   (** The question alone, as the application shows it. *)
   module Question : sig
@@ -61,18 +67,29 @@ module Ask : sig
           ; initial : string
           ; validate : string -> string option
           }
+    | Popup of unit Ches_vcs.Popup.t
+    (** The view's popup with its actions' results dropped ({!Ches_vcs.Popup.map}):
+        what the popup float renders and presses keys on. *)
   end
 
   val question : _ t -> Question.t
 end
 
 (** The user's answer to a view's pending question ({!answer}). [Yes] answers only a
-    confirmation and [Text] only a prompt; any other answer declines. *)
+    confirmation, [Text] only a prompt and [Choose] only a popup; any other answer
+    declines. *)
 module Answer : sig
   type t =
     | Yes
     | No
     | Text of string
+    | Choose of
+        { key : char (** The action's key. *)
+        ; enabled : string list
+        (** The enabled switches' flags, kept to the popup's own and its group rule
+            ({!Ches_vcs.Popup.initial}) before the action's [run] sees them. *)
+        }
+    (** A key the popup has no action for declines. *)
   [@@deriving sexp_of, equal]
 end
 
@@ -82,6 +99,13 @@ module Location : sig
     { path : string (** Absolute. *)
     ; line : int option
     (** 1-based, at the line's first column; past the end means the last line. *)
+    ; contents : string option
+    (** Write the file first with exactly this text (created or replaced), then open
+        it: how a view hands the user a file to edit (a commit message). Refused
+        with the view's notice, nothing written, while the session has a buffer for
+        [path] with unsaved changes; a retained clean buffer is reloaded from the
+        new text. The text must be document text (UTF-8, no CR), or nothing is
+        written and the view gets the reason. *)
     }
   [@@deriving sexp_of, equal]
 end
@@ -108,14 +132,20 @@ module Context : sig
 
   type t
 
-  (** [files] runs at most once, when first asked. *)
-  val create : (unit -> File.t list) -> t
+  (** [files] and [active] (default: none) each run at most once, when first asked. *)
+  val create : ?active:(unit -> File.t option) -> (unit -> File.t list) -> t
 
   (** No files. *)
   val empty : t
 
   (** In tab order, the active buffer's latest state included. *)
   val files : t -> File.t list
+
+  (** The file buffer that has the editor area's input: the document is focused (not
+      a view tab, the directory, a view or a float) and shows it. [None] otherwise.
+      A view acting on "the buffer the user is in" (finishing a commit message from
+      a leader key typed there) checks it. *)
+  val active : t -> File.t option
 
   (** The dirty files within [root] ({!Ches_core.Resource.within}), in tab order. *)
   val dirty_within : t -> root:string -> File.t list
@@ -151,13 +181,33 @@ module Outcome : sig
         have rewritten files (a VCS discard: the repository root, once the job has
         finished). Applied right after [controller], from key and signal outcomes
         alike; its feedback goes to the feedback line. *)
+    ; save : string list
+    (** Absolute paths of retained file buffers to write now, as [:w] does, even when
+        clean (the file a job is about to read must hold the buffer's text). Applied
+        after [reconcile], [notice] and [open_file], right before [jobs], from key and
+        signal outcomes. If a path has
+        no retained file buffer or its write fails, the error goes to the feedback
+        line (["<Title>: <reason>; nothing ran"]), later paths are not written, and
+        none of the outcome's [jobs] is submitted: each is answered at once with its
+        {!Ches_vcs.Job.never_started} report. *)
+    ; dispose : string list
+    (** Absolute paths of files the view created for editing and is done with (a
+        commit message once committed or aborted): their retained buffers are
+        closed with unsaved changes discarded, and the files deleted (already gone is
+        fine; a failed delete goes to the feedback line). When one of them had the
+        editor area's input ({!Context.active}: the user was in it), focus goes to
+        the disposing view where it is placed (its tab activated, the split or band
+        pane focused); a hidden view leaves the editor showing the next tab, as
+        closing does. Otherwise focus and the active tab stay. The one way a
+        signalled outcome may move focus (the user's buffer was taken away).
+        Applied after [jobs], from key and signal outcomes. *)
     ; ask : 'ask option
     (** A question to ask on a float over the view, applied last; it replaces any
         question still pending. *)
     }
 
-  (** No effect, notice, return, file, jobs, reconciliation or question; [controller]
-      unchanged. *)
+  (** No effect, notice, return, file, jobs, reconciliation, saves, disposals or
+      question; [controller] unchanged. *)
   val create
     :  ?effect:Ches_tile.Text_view.Effect.t
     -> ?notice:[ `Post of string | `Show of string ]
@@ -165,6 +215,8 @@ module Outcome : sig
     -> ?open_file:Location.t
     -> ?jobs:Ches_vcs.Job.t list
     -> ?reconcile:string list
+    -> ?save:string list
+    -> ?dispose:string list
     -> ?ask:'ask
     -> Ches_app.Controller.t
     -> 'ask t
@@ -174,11 +226,14 @@ end
     turns each into one of its own actions (or ignores it), which is performed like a
     key's action, focused or not. The outcome of a signalled action is applied
     without moving focus or disturbing the focused view (its prefix and footer
-    notice): its [controller], [reconcile] and [jobs] apply; a [`Post] notice goes to
-    the feedback line only; [`Show] notices, [effect], [return] and [open_file] are ignored; [ask]
-    opens only while the asking view itself is focused, and is otherwise withdrawn
-    (nothing runs). A pending question survives a signalled action that asks
-    nothing. The view's [fit] follows once per input or batch. *)
+    notice): its [controller], [reconcile], [save], [jobs] and [dispose] apply (only
+    [dispose] may move focus, see {!Outcome.t.dispose}); a [`Post] notice goes to
+    the feedback line only; [`Show] notices, [effect] and [return] are ignored;
+    [open_file] and [ask] apply only while the view itself is focused (so a file
+    read in the background opens only if the user is still there), and are
+    otherwise ignored and withdrawn (nothing runs). A pending question survives a
+    signalled action that asks nothing. The view's [fit] follows once per input or
+    batch. *)
 module Signal : sig
   type t =
     | Shown
@@ -195,6 +250,13 @@ module Signal : sig
     (** An event of a job this view submitted ({!Outcome.t.jobs}), in the runner's
         order; nothing after its [Finished]. Delivered placed or hidden. Staleness
         is the view's to decide ({!Ches_vcs.Stamps}). *)
+    | Request of string
+    (** A named request from a workspace command
+        ({!View_command.t.Request_view}, e.g. [Space g c]'s ["commit-finish"]),
+        delivered placed or hidden, focused or not, so it can be typed from the
+        buffer the view handed out. A view that ignores it ([None]) gets the notice
+        ["<Title>: nothing to do for <request>"]. Answer with [`Post] notices: the
+        view's footer may not be shown. *)
   [@@deriving sexp_of]
 end
 
@@ -234,6 +296,9 @@ module Adapter : sig
         viewport, relative to its top-left corner; [None] is the whole viewport. The
         terminal cursor is the text cursor fitted to this area, so a view that draws
         its text in a part of its content (a diff panel beside lists) says which. *)
+    ; label : 'state -> string option
+    (** The tab strip's (and status's) label for the view's tab in this state, e.g.
+        ["VCS: main"]; [None] is [spec.title]. Notices keep using the title. *)
     ; render
       :  'state
       -> Ches_app.Controller.t
@@ -319,6 +384,9 @@ val text_view : t -> View_id.t -> Ches_tile.Text_view.t option
 val text_area : t -> View_id.t -> rows:int -> width:int -> Geometry.Rect.t option
 
 val commands : t -> View_id.t -> Ches_tile.Local_command.t list
+
+(** The adapter's {!Adapter.t.label}; [None] also when not installed. *)
+val label : t -> View_id.t -> string option
 
 val render
   :  t

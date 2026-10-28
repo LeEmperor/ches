@@ -117,6 +117,15 @@ type t =
       }
   (** Run one of a focused view's local commands, as its keys would. Refused, with a
       notice, unless [view] is focused and currently declares [command]. *)
+  | Request_view of
+      { view : View_id.t
+      ; request : string (** A name the view understands, e.g. ["commit-finish"]. *)
+      }
+  (** Deliver a named request to a registered view, focused or not, placed or
+      hidden: from anywhere, e.g. from a buffer the view handed out ([Space g c]
+      finishes the VCS view's commit message). The view decides what it means; one
+      that is not installed gives its notice, one that ignores it says ["<Title>:
+      nothing to do for <request>"]. *)
   | Restart_source (** Restart the diagnostic source ([--synthetic-checker]). *)
   | Kill_source (** Crash the synthetic diagnostic source, to test the stopped state. *)
   | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)

@@ -638,6 +638,24 @@ let save_all t =
   { t with active = original; directory; directory_focused; feedback }, results
 ;;
 
+let save_buffer t id =
+  if t.exited then t, Or_error.error_string "Session has exited" else
+  match Map.find t.buffer_index id with
+  | None -> t, Or_error.error_string "Not an open file buffer"
+  | Some b ->
+    let c, _, _ = Controller.dispatch (install t b.controller) [ Editor Save ] in
+    let _, saved = Controller.take_saved c in
+    let result = match saved, Editor.message (Controller.editor c) with
+      | Some _, _ -> Ok ()
+      | None, _ when Controller.is_missing c -> Or_error.error_string
+          "Missing backing file: text retained; recreate it or save as"
+      | None, Some (Editor.Message.Error text) -> Or_error.error_string text
+      | None, (Some (Info _) | None) -> Or_error.error_string "Not written" in
+    let active = t.active and directory_focused = t.directory_focused in
+    let t = replace_active { t with active = Some id; directory_focused = false } c in
+    { t with active; directory_focused }, result
+;;
+
 let close_buffer t id ~force =
   if t.exited then t, false else
   match find t id with

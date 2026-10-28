@@ -111,7 +111,7 @@ let%expect_test "Space g g opens a tab with the repository; s, f and h move, foc
     [%expect {|
       jobs: detect g1.1, refresh g1.2, diff g1.3
       focused vcs; vcs (Tab); active tab vcs; file a.txt line 1
-       1:a.txt [2:VCS]                                                                                    |
+       1:a.txt [2:VCS: main]                                                                              |
       ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
       │ Head: main 07a4bd0                    │ 0 Diff: Unstaged changes                                 │|
       │                                       │ diff --git a/a.txt b/a.txt                               │|
@@ -134,7 +134,7 @@ let%expect_test "Space g g opens a tab with the repository; s, f and h move, foc
       │   07a4bd0 first                       │                                                          │|
       │                                       │                                                          │|
       ╰─ Files 1/2 ──────────────────────────────────────────────────────────────────────────────────────╯|
-       NORMAL  VCS VCS focused                                                                            |
+       NORMAL  VCS: main VCS focused                                                                      |
       cursor: none
       |}];
     (* Moving it runs nothing: it was already shown. *)

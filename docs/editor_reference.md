@@ -36,6 +36,7 @@ checks for [Ches](../README.md).
 | Normal | `Space v m` / `Space v M` | Show/hide, or show/focus, the notification history |
 | Normal | `Space g g` / `Space g f` | Open the VCS view as a tab, or focus it where it is; from the focused view, back to the editor (see [VCS view](#vcs-view)) |
 | Normal | `Space g t` / `Space g s` / `Space g h` | Move the VCS view to a tab / the split, or close it |
+| Normal | `Space g c` / `Space g a` | In a commit message opened from the VCS view (`c`): commit it / abort it |
 | Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp, slang-server, or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
@@ -435,11 +436,11 @@ behave as in problems.
 
 `Space g g` opens a git view of the repository around the startup file (or the
 directory opened), in the spirit of lazygit and Magit. It stages, unstages and
-discards files, hunks and selected lines; commits, branches and remotes are
-planned. The view is a tab the first
-time; `Space g s` moves it into the split beside the editor, `Space g t` back
-into the tab strip, and `Space g h` closes it (its state is simply re-read when it
-opens again). It occupies one place at a time. `Space g g` and `Space g f` are the
+discards files, hunks and selected lines, and commits, amends and extends HEAD;
+branches and remotes are planned. The view is a tab the first time (labelled `VCS:
+<branch>`, or `VCS: <revision>` on a detached HEAD); `Space g s` moves it into the
+split beside the editor, `Space g t` back into the tab strip, and `Space g h`
+closes it (its state is simply re-read when it opens again). It occupies one place at a time. `Space g g` and `Space g f` are the
 same command: they open the view, activate its tab, or move focus between it and
 the editor. The palette lists them as `VCS: open or focus` (`vcs.open`),
 `VCS: move to a tab`, `VCS: move to the split` and `VCS: close` (`vcs.to-tab`,
@@ -468,6 +469,7 @@ command with its exit status and, on failure, its output.
 | `]` / `[` (diff) | Next / previous hunk; with a count, `3]` moves three, stopping at the last |
 | Read-only text keys (diff) | Move, select and copy, as in [Read-only text](#read-only-text-in-supporting-views), with counts: `10j`, `5k`, `12G` |
 | `e`, `Enter` (diff) | Open the file at the cursor's line |
+| `c` | Commit popup: commit, amend or extend HEAD, with switches |
 | `g r` | Refresh (or look for a repository again) |
 | `@` | Show or hide the command log |
 | `?` | List the keys that work where the cursor is (also in the palette, first) |
@@ -477,6 +479,17 @@ command with its exit status and, on failure, its output.
 In the diff, digits belong to the text: `10j` scrolls ten rows and `0` is the line
 start, so `1`/`2`/`3` do not switch panels there. `Tab` or `Escape` returns to the
 lists, where they do.
+
+A popup (such as `c`'s) floats over the view, listing its switches and actions:
+
+| Popup keys | Action |
+| --- | --- |
+| `-` then a switch's key | Toggle the switch (`* ` marks an enabled one; one per group) |
+| An action's key | Run it with the enabled switches; the popup closes |
+| `Escape` | Clear a pending `-`; otherwise close, running nothing |
+| `q`, `Tab`, `Ctrl-c` | Close, running nothing |
+| `?` | List the popup's keys; closing the list returns to the popup |
+| `Space` ... | Workspace keys still work; switches start off at every opening |
 
 **Staging and discarding.** Each action runs as one git command (two for a hunk:
 `git apply --check`, then the apply, with the patch on stdin), shown in the command
@@ -534,13 +547,59 @@ touched one. Refusals leave the selection in place so it can be adjusted:
 
 Running an action, or asking about it, ends the selection whatever the answer.
 
+**Committing.** `c` (in any panel, and in the diff outside a selection) opens the
+commit popup. Its switches are `-n` (`--no-verify`: skip the pre-commit and
+commit-msg hooks), `-s` (`--signoff`: add a `Signed-off-by` line) and `-e`
+(`--allow-empty`); they start off at every opening. Its actions:
+
+- `c` commits the staged changes and `a` amends HEAD with them (HEAD's message
+  pre-filled; with nothing staged, `a` just rewords HEAD). Both open the message
+  file, `.git/CHES_COMMIT_EDITMSG`, as an ordinary file tab with the cursor on the
+  first line, below which a `#` comment block names the branch, the switches and the
+  staged files (from the split, it opens in the editor pane). Write the message with
+  the usual editing keys, then `Space g c` (palette `VCS: finish commit`) saves the
+  buffer and runs `git commit --cleanup=strip -F` on it (with `--amend` for an
+  amend, and the switches chosen in the popup): comment lines and surrounding blank
+  lines are removed. On success the message tab closes (unsaved edits and all), the
+  file is deleted, you are back in the VCS view where it is placed (if it was closed
+  meanwhile, the editor shows the next tab), the view refreshes and git's summary line (`[main 1a2b3c4] Subject`) is reported. `Space g
+  a` (`VCS: abort commit`) closes the message and deletes the file without
+  committing ("Commit aborted", "Amend aborted"). A message tab closed by hand is
+  simply forgotten; the next `c c` writes a fresh one.
+- `e` extends HEAD at once: `git commit --amend --no-edit` adds the staged changes
+  and keeps HEAD's message.
+
+Refusals and failures:
+
+- Nothing staged: "Nothing staged; stage changes first (s), or allow an empty commit
+  (-e); nothing ran" for `c` and `e` (checked again on `Space g c`). Conflicted
+  files refuse every commit ("Resolve the conflicted files first ..."), and on a
+  branch with no commits there is nothing to amend or extend.
+- `Space g c` and `Space g a` work only in the pending message's buffer; elsewhere
+  they say "No pending commit message here; nothing ran". `c c` or `c a` while a
+  message is pending shows that buffer again: "A commit message is already open:
+  Space g c commits it, Space g a aborts".
+- If git refuses (a pre-commit or commit-msg hook rejects the commit, or the message
+  is empty once comments are stripped), the message stays open and pending with the
+  failure reported ("Commit failed: <git's first line> (exit 1)"); the full output
+  is in the command log (`@`). Fix the message and press `Space g c` again, or abort
+  and reopen with `-n` to bypass the hooks.
+- If the buffer cannot be saved, nothing runs and the message stays pending.
+- While an action or a commit runs, commit keys say "Busy: <action>; nothing ran"
+  (also `Space g a` while its commit runs).
+
+Commits never rewrite the work tree themselves, so unsaved buffers do not block
+them, but hooks may: after every commit, amend or extend, open buffers inside the
+repository are compared with disk as after a discard.
+
 `e` in the diff opens the work-tree file at the line the cursor is on (for a removed
 line, the next line that survives; for a hunk header, its first line). From a tab, the
 file's tab replaces the view's; beside the split, the file shows in the editor pane,
 which gets focus. A commit's diff opens today's file at the commit's line numbers.
 
 The view refreshes when it opens, on `g r`, and after a save of a file inside the
-repository (at most once per save); it never polls or watches files. Its git
+repository (at most once per save; saves inside `.git`, such as the commit
+message, do not count); it never polls or watches files. Its git
 commands run in the background, so the editor never waits for them; while one runs,
 the last state stays drawn. Git never prompts on the terminal
 (`GIT_TERMINAL_PROMPT=0`), and git's lock files are released on quit: Ches waits up

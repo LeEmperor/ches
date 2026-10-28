@@ -1,6 +1,7 @@
-(* The VCS view (phase 2: read-only; phase 3: stage, unstage, discard): see
-   vcs_view.mli. The diff panel's text, its per-line open targets and positions are
-   [Vcs_diff_text]'s; the command plans are the backend's ([plan]). *)
+(* The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines;
+   phase 5: commit): see vcs_view.mli. The diff panel's text, its per-line open targets
+   and positions are [Vcs_diff_text]'s; the command plans are the backend's ([plan]);
+   the commit popup, message file and template are [Git.Commit]'s. *)
 
 open! Core
 open Ches_vcs
@@ -144,6 +145,12 @@ module Purpose = struct
     | Refresh of Git.Repository.t
     | Diff of B.diff_target
     | Mutate (** A plan's steps; see [Mutation]. *)
+    | Prepare of
+        { repository : Git.Repository.t
+        ; kind : Git.Commit.Kind.t
+        ; flags : string list
+        ; status : Git.Status.t (** For the template, if no snapshot is left. *)
+        } (** The commit message file ([Git.Commit.prepare]). *)
   [@@deriving sexp_of]
 
   let lane = function
@@ -151,7 +158,28 @@ module Purpose = struct
     | Refresh _ -> Some "refresh"
     | Diff _ -> Some "diff"
     | Mutate -> None
+    | Prepare _ -> Some "commit"
   ;;
+end
+
+(* The commit whose message buffer the view handed out: valid while its path is among
+   the session's files. *)
+module Pending = struct
+  type t =
+    { path : string (** Absolute, normalized. *)
+    ; kind : Git.Commit.Kind.t
+    ; flags : string list
+    }
+  [@@deriving sexp_of]
+end
+
+(* What a commit-like mutation is: finishing a pending message, or extending HEAD.
+   Either way open buffers are reconciled afterwards (hooks may rewrite files). *)
+module Committing = struct
+  type t =
+    | Finish of Pending.t
+    | Extend
+  [@@deriving sexp_of]
 end
 
 (* Where the diff cursor goes after a hunk action: hunk [hunk] of the file [path] in
@@ -173,6 +201,7 @@ module Mutation = struct
     ; root : string (** Reconciled after a work-tree rewrite. *)
     ; rewrites_worktree : bool
     ; anchor : Anchor.t option
+    ; commit : Committing.t option
     ; settling : bool (** Finished: waiting for the refresh after it. *)
     }
   [@@deriving sexp_of]
@@ -229,6 +258,7 @@ type t =
   ; plan : (planner[@sexp.opaque])
   ; mutation : Mutation.t option
   ; anchor : Anchor.t option (** Applied to the next [Loaded] diff of its target. *)
+  ; pending : Pending.t option (** See [live_pending]. *)
   }
 [@@deriving sexp_of]
 
@@ -258,6 +288,7 @@ let create ?(plan = B.plan) ~cwd () =
   ; plan
   ; mutation = None
   ; anchor = None
+  ; pending = None
   }
 ;;
 
@@ -278,7 +309,7 @@ let loading t =
   Map.existsi t.in_flight ~f:(fun ~key ~data ->
     match (data : Purpose.t) with
     | Detect | Refresh _ -> Stamps.is_current t.stamps ?lane:(Purpose.lane data) key
-    | Diff _ | Mutate -> false)
+    | Diff _ | Mutate | Prepare _ -> false)
 ;;
 
 (* Whether the panels are drawn (and their keys work): a repository was found, or is
@@ -737,7 +768,7 @@ let issue t (purpose : Purpose.t) steps =
            ~shown:(Some target)
            (Vcs_diff_text.of_message ("Diff failed: " ^ message))
        , [] )
-     | Mutate -> t, [])
+     | Mutate | Prepare _ -> t, [])
 ;;
 
 (* The diff for the followed list's selection: fetched when its target changes, or
@@ -891,7 +922,7 @@ let finished t (report : Job.Report.t) =
            (match purpose with
             | Detect ->
               { t with repository = Failed "repository detection was cancelled" }, []
-            | Refresh _ | Diff _ | Mutate ->
+            | Refresh _ | Diff _ | Mutate | Prepare _ ->
               { t with refresh_error = Some "refresh cancelled" }, [])
          | _, false -> t, []
          | Detect, true -> detected t report
@@ -901,10 +932,10 @@ let finished t (report : Job.Report.t) =
               apply_snapshot { (log_problems t report snapshot) with anchor } snapshot
             | Error error ->
               { t with refresh_error = Some (one_line (Error.to_string_hum error)) }, [])
-         | (Diff _ | Mutate), true -> t, []
+         | (Diff _ | Mutate | Prepare _), true -> t, []
        in
        end_settled_mutation t ~purpose ~current, jobs
-     | Mutate -> t, []
+     | Mutate | Prepare _ -> t, []
      | Diff target ->
        let parsed =
          if report.cancelled
@@ -991,23 +1022,73 @@ let failure_line (step_report : Job.Step_report.t) =
 let is_mutation t id =
   match Map.find t.in_flight id with
   | Some Mutate -> true
-  | Some (Detect | Refresh _ | Diff _) | None -> false
+  | Some (Detect | Refresh _ | Diff _ | Prepare _) | None -> false
+;;
+
+let is_prepare t id =
+  match Map.find t.in_flight id with
+  | Some (Prepare _) -> true
+  | Some (Detect | Refresh _ | Diff _ | Mutate) | None -> false
+;;
+
+(* What a mutation's report asks of the application besides the view's state. *)
+module Finished_mutation = struct
+  type t =
+    { jobs : Job.t list
+    ; notice : string option (** Posted. *)
+    ; reconcile : string list
+    ; dispose : string list
+    }
+
+  let nothing = { jobs = []; notice = None; reconcile = []; dispose = [] }
+end
+
+(* Every step [Skipped] in a cancelled report: the job never ran (a failed save
+   answered it at once). *)
+let never_ran (report : Job.Report.t) =
+  report.cancelled
+  && List.for_all report.steps ~f:(fun (step_report : Job.Step_report.t) ->
+    match step_report.outcome with
+    | Skipped -> true
+    | Ran _ | Read _ -> false)
 ;;
 
 (* The mutation's report: logged; a failure noticed; open buffers reconciled after a
-   work-tree rewrite, whatever the outcome; then a refresh, which ends the mutation
-   (a stale report's repository is refreshed too, or its new detection's refresh
-   ends it). Returns the jobs, the failure and the roots to reconcile. *)
+   work-tree rewrite or a commit-like mutation, whatever the outcome; then a refresh,
+   which ends the mutation (a stale report's repository is refreshed too, or its new
+   detection's refresh ends it). A finished commit message that succeeded is
+   disposed of, with git's summary line; one that never ran (its save failed) ends
+   the mutation quietly and stays pending. *)
 let mutation_finished t (report : Job.Report.t) =
   let t = { t with in_flight = Map.remove t.in_flight report.id } in
   let t = log_report t report ~stale:(not (Stamps.accepts t.stamps report)) in
   match t.mutation with
+  | Some { commit = Some (Finish _); job; _ }
+    when Job.Id.equal job report.id && never_ran report ->
+    { t with mutation = None }, Finished_mutation.nothing
   | Some mutation when Job.Id.equal mutation.job report.id ->
     let failure =
       Option.map (Job.Report.first_failure report) ~f:(fun step_report ->
         sprintf "%s failed: %s" mutation.title (failure_line step_report))
     in
-    let reconcile = if mutation.rewrites_worktree then [ mutation.root ] else [] in
+    let reconcile =
+      if mutation.rewrites_worktree || Option.is_some mutation.commit
+      then [ mutation.root ]
+      else []
+    in
+    let t, notice, dispose =
+      match mutation.commit, failure with
+      | Some (Finish pending), None ->
+        let t =
+          match t.pending with
+          | Some { path; _ } when String.equal path pending.path -> { t with pending = None }
+          | Some _ | None -> t
+        in
+        ( t
+        , Some (Option.value (Git.Commit.summary report.steps) ~default:mutation.title)
+        , [ pending.path ] )
+      | (Some (Finish _ | Extend) | None), _ -> t, failure, []
+    in
     let settling = Some { mutation with settling = true } in
     let t, jobs =
       match t.repository with
@@ -1019,8 +1100,53 @@ let mutation_finished t (report : Job.Report.t) =
       | Unknown | Not_a_repository _ | No_work_tree _ | Failed _ ->
         { t with mutation = None }, []
     in
-    t, jobs, failure, reconcile
-  | Some _ | None -> t, [], None, []
+    t, { Finished_mutation.jobs; notice; reconcile; dispose }
+  | Some _ | None -> t, Finished_mutation.nothing
+;;
+
+(* The message file's report: logged; when current, the file and the template to open
+   it with (the pending commit remembered), or the error. *)
+let prepare_finished t (report : Job.Report.t) =
+  match Map.find t.in_flight report.id with
+  | Some (Prepare { repository; kind; flags; status }) ->
+    let t = { t with in_flight = Map.remove t.in_flight report.id } in
+    let used = Stamps.accepts t.stamps report && not report.cancelled in
+    let t = log_report t report ~stale:(not used) in
+    if not used
+    then t, `Nothing
+    else (
+      match Git.Commit.prepared repository kind report.steps with
+      | Error error ->
+        let message = one_line (Error.to_string_hum error) in
+        ( add_record
+            t
+            { step = -1
+            ; entry =
+                { job = report.id
+                ; command = message
+                ; status = Some "problem"
+                ; output = []
+                ; stale = false
+                }
+            }
+        , `Error message )
+      | Ok { message_file; head_message } ->
+        let path =
+          Ches_core.Resource.normalize ~cwd:(Git.Repository.root repository) message_file
+        in
+        let status =
+          match t.snapshot with
+          | Some snapshot when Git.Repository.equal snapshot.repository repository ->
+            snapshot.status
+          | Some _ | None -> status
+        in
+        ( { t with pending = Some { path; kind; flags } }
+        , `Open
+            { View_registry.Location.path
+            ; line = Some 1
+            ; contents = Some (Git.Commit.template status kind ~flags ~head_message)
+            } ))
+  | Some (Detect | Refresh _ | Diff _ | Mutate) | None -> t, `Nothing
 ;;
 
 (* {2 Actions} *)
@@ -1096,7 +1222,14 @@ type action =
       { forward : bool
       ; count : int
       }
+  | Commit_popup (** [c]. *)
+  | Commit_choice of Git.Commit.Choice.t (** The commit popup's answer. *)
+  | Finish_commit (** The ["commit-finish"] request. *)
+  | Abort_commit (** The ["commit-abort"] request. *)
 [@@deriving sexp_of]
+
+(* The commit popup asked with [c]; its actions are the view's own. *)
+let commit_popup = Popup.map Git.Commit.popup ~f:(fun choice -> Commit_choice choice)
 
 let is c key = Key.equal key (Key.char c)
 
@@ -1135,12 +1268,14 @@ let interpret t (keys : Key.t list) : action Content_key.t =
        else Action (Act verb)
      | _, (count, [ key ]) when (is ']' key || is '[' key) && not visual ->
        Action (Next_hunk { forward = is ']' key; count = Option.value count ~default:1 })
+     | [ key ], _ when is 'c' key && not visual -> Action Commit_popup
      | keys, _ -> Content_key.map (Text_view.interpret t.diff_view keys) ~f:(fun a -> Text a))
   | [ key ] when is '1' key -> Action (Focus_list Files)
   | [ key ] when is '2' key -> Action (Focus_list Branches)
   | [ key ] when is '3' key -> Action (Focus_list Commits)
   | [ key ] when is '0' key -> Action Focus_diff
   | [ key ] when is 'y' key -> Action Copy
+  | [ key ] when is 'c' key -> Action Commit_popup
   | [ key ] when Focus.equal t.focus Files && Option.is_some (Verb.of_key key) ->
     Action (Act (Option.value_exn (Verb.of_key key)))
   | [ Enter ] ->
@@ -1165,6 +1300,7 @@ let under ~dir path =
   || String.is_prefix path ~prefix:(if String.is_suffix dir ~suffix:"/" then dir else dir ^ "/")
 ;;
 
+(* Saves inside the git directory (the commit message file) do not refresh. *)
 let signal t : View_registry.Signal.t -> action option = function
   | Shown -> Some Shown
   | Saved paths ->
@@ -1172,11 +1308,16 @@ let signal t : View_registry.Signal.t -> action option = function
      | Found repository ->
        let root = Git.Repository.root repository in
        Option.some_if
-         (List.exists paths ~f:(fun path -> under ~dir:root path || under ~dir:t.cwd path))
+         (List.exists paths ~f:(fun path ->
+            (not (Ches_core.Resource.within ~root:repository.git_dir path))
+            && (under ~dir:root path || under ~dir:t.cwd path)))
          Refresh
      | Unknown | Detecting | Not_a_repository _ | No_work_tree _ | Failed _ -> None)
   | Job (Output _) -> None
   | Job event -> Some (Event event)
+  | Request "commit-finish" -> Some Finish_commit
+  | Request "commit-abort" -> Some Abort_commit
+  | Request _ -> None
 ;;
 
 let move t motion ~rows ~width =
@@ -1220,7 +1361,7 @@ let open_target t =
   match Vcs_diff_text.line_at t.diff_text (Text_view.cursor t.diff_view), root t with
   | Some { target = Some { path = Some path; line; display = _ }; _ }, Some root ->
     let path = if String.is_suffix root ~suffix:"/" then root ^ path else root ^ "/" ^ path in
-    `Open { View_registry.Location.path; line }
+    `Open { View_registry.Location.path; line; contents = None }
   | Some { target = Some { path = None; display; _ }; _ }, _ ->
     `Notice (sprintf "%s was deleted: nothing to open" display)
   | _ -> `Notice "No file at the cursor"
@@ -1322,7 +1463,7 @@ let staged_keys t (action : B.action) =
   | Stage (Hunk { file; _ } | Lines { file; _ }) -> [ Diff.File.path file ]
   | Stage (Section section) -> keys [ section ]
   | Stage_all -> keys [ Unstaged; Untracked ]
-  | Unstage _ | Discard _ | Unstage_all -> []
+  | Unstage _ | Discard _ | Unstage_all | Finish_commit _ | Extend _ -> []
 ;;
 
 (* The warning for staging paths whose buffers have unsaved text. *)
@@ -1370,7 +1511,7 @@ let busy t =
 ;;
 
 (* The plan's steps as one mutation job. [Error] is the failure notice. *)
-let submit t (submission : Submission.t) =
+let submit ?commit t (submission : Submission.t) =
   let stamps, id = Stamps.issue t.stamps in
   match Job.create ~id submission.plan.steps with
   | Ok job ->
@@ -1385,6 +1526,7 @@ let submit t (submission : Submission.t) =
               ; root = submission.root
               ; rewrites_worktree = submission.plan.rewrites_worktree
               ; anchor = submission.anchor
+              ; commit
               ; settling = false
               }
         }
@@ -1392,6 +1534,19 @@ let submit t (submission : Submission.t) =
   | Error error ->
     Error
       (sprintf "%s failed: %s" submission.plan.title (one_line (Error.to_string_hum error)))
+;;
+
+(* The pending commit, forgotten once its message buffer is no longer among the
+   session's files (the user closed it by hand). *)
+let live_pending t context =
+  match t.pending with
+  | Some pending
+    when not
+           (List.exists
+              (View_registry.Context.files context)
+              ~f:(fun (file : View_registry.Context.File.t) ->
+                String.equal file.path pending.path)) -> { t with pending = None }
+  | Some _ | None -> t
 ;;
 
 (* The next or previous [@@] line, [count] times, stopping at the last or first. *)
@@ -1426,7 +1581,18 @@ let next_hunk t ~forward ~count =
 
 let perform t controller ~context ~rows ~width action =
   let t = fit t ~rows ~width in
-  let outcome ?effect ?notice ?(return = false) ?open_file ?(jobs = []) ?reconcile ?ask t =
+  let outcome
+    ?effect
+    ?notice
+    ?(return = false)
+    ?open_file
+    ?(jobs = [])
+    ?reconcile
+    ?save
+    ?dispose
+    ?ask
+    t
+    =
     ( fit t ~rows ~width
     , View_registry.Outcome.create
         ?effect
@@ -1435,15 +1601,18 @@ let perform t controller ~context ~rows ~width action =
         ?open_file
         ~jobs
         ?reconcile
+        ?save
+        ?dispose
         ?ask
         controller )
   in
   let with_jobs (t, jobs) = outcome t ~jobs in
-  let run ?warning t submission =
-    match dirty_refusal context submission with
+  (* A commit-like plan rewrites nothing itself: no dirty-buffer refusal. *)
+  let run ?warning ?commit t submission =
+    match if Option.is_some commit then None else dirty_refusal context submission with
     | Some refusal -> outcome t ~notice:(`Post refusal)
     | None ->
-      (match submit t submission with
+      (match submit ?commit t submission with
        | Error failure -> outcome t ~notice:(`Post failure)
        | Ok (t, job) ->
          outcome
@@ -1453,7 +1622,7 @@ let perform t controller ~context ~rows ~width action =
   in
   (* Plans the chosen action and runs it or asks; a refusal keeps a Visual selection
      so it can be adjusted, running or asking ends it. *)
-  let act t chosen =
+  let act ?commit t chosen =
     match busy t, t.snapshot with
     | Some busy, _ -> outcome t ~notice:(`Show busy)
     | None, None -> outcome t ~notice:(`Show "Nothing loaded yet")
@@ -1465,7 +1634,11 @@ let perform t controller ~context ~rows ~width action =
          (match t.plan snapshot.repository snapshot action with
           | Refused message -> outcome t ~notice:(`Show message)
           | Run plan ->
-            run t { plan; root; anchor } ?warning:(staging_warning t context ~root action)
+            run
+              t
+              { plan; root; anchor }
+              ?commit
+              ?warning:(staging_warning t context ~root action)
           | Confirm { title; message; plan } ->
             let submission = { Submission.plan; root; anchor } in
             (match dirty_refusal context submission with
@@ -1477,15 +1650,100 @@ let perform t controller ~context ~rows ~width action =
                    (View_registry.Ask.Confirm
                       { title; message; yes = Submit submission; no = None }))))
   in
+  (* The pending commit while the user is in its message buffer, else the refusal. *)
+  let in_message t =
+    match t.pending, View_registry.Context.active context with
+    | Some pending, Some file when String.equal file.path pending.path -> Ok pending
+    | _ -> Error "No pending commit message here; nothing ran"
+  in
   match action with
   | Shown -> with_jobs (detect t)
   | Refresh -> with_jobs (refresh t)
   | Event (Finished report) when is_mutation t report.id ->
-    let t, jobs, failure, reconcile = mutation_finished t report in
-    outcome t ~jobs ~reconcile ?notice:(Option.map failure ~f:(fun f -> `Post f))
+    let t, { Finished_mutation.jobs; notice; reconcile; dispose } =
+      mutation_finished t report
+    in
+    outcome t ~jobs ~reconcile ~dispose ?notice:(Option.map notice ~f:(fun n -> `Post n))
+  | Event (Finished report) when is_prepare t report.id ->
+    (match prepare_finished t report with
+     | t, `Nothing -> outcome t
+     | t, `Error message -> outcome t ~notice:(`Post message)
+     | t, `Open location -> outcome t ~open_file:location)
   | Event e -> with_jobs (event t e)
   | Act verb -> act t (fun t -> action_of t verb)
   | Act_on_lines verb -> act t (fun t -> lines_action_of t verb)
+  | Commit_popup ->
+    (match t.snapshot with
+     | None -> outcome t ~notice:(`Show "Nothing loaded yet")
+     | Some _ ->
+       outcome t ~ask:(View_registry.Ask.Popup { popup = commit_popup; cancel = None }))
+  | Commit_choice choice ->
+    let t = live_pending t context in
+    (match t.snapshot with
+     | None -> outcome t ~notice:(`Show "Nothing loaded yet")
+     | Some snapshot ->
+       (match Git.Commit.refusal snapshot.status choice, choice with
+        | Some refusal, _ -> outcome t ~notice:(`Show refusal)
+        | None, Extend { flags } ->
+          act t ~commit:Extend (fun _ -> Ok (B.Extend { flags }, None))
+        | None, Message { kind; flags } ->
+          (match t.pending, busy t with
+           | Some pending, _ ->
+             outcome
+               t
+               ~open_file:{ path = pending.path; line = None; contents = None }
+               ~notice:
+                 (`Post
+                     "A commit message is already open: Space g c commits it, Space g a \
+                      aborts")
+           | None, Some busy -> outcome t ~notice:(`Show busy)
+           | None, None ->
+             let repository = snapshot.repository in
+             with_jobs
+               (issue
+                  t
+                  (Prepare { repository; kind; flags; status = snapshot.status })
+                  (Git.Commit.prepare repository kind)))))
+  | Finish_commit ->
+    let t = live_pending t context in
+    (match in_message t, busy t, t.snapshot with
+     | Error refusal, _, _ -> outcome t ~notice:(`Post refusal)
+     | Ok _, Some busy, _ -> outcome t ~notice:(`Post busy)
+     | Ok _, None, None -> outcome t ~notice:(`Post "Nothing loaded yet; nothing ran")
+     | Ok pending, None, Some snapshot ->
+       let root = Git.Repository.root snapshot.repository in
+       (match
+          t.plan
+            snapshot.repository
+            snapshot
+            (Finish_commit
+               { kind = pending.kind; flags = pending.flags; message_file = pending.path })
+        with
+        | Refused message -> outcome t ~notice:(`Post message)
+        | Confirm { title; _ } ->
+          (* The message buffer cannot show a question; git's plans never ask. *)
+          outcome t ~notice:(`Post (sprintf "%s needs a confirmation; nothing ran" title))
+        | Run plan ->
+          (match submit ~commit:(Finish pending) t { plan; root; anchor = None } with
+           | Error failure -> outcome t ~notice:(`Post failure)
+           | Ok (t, job) -> outcome (end_visual t) ~save:[ pending.path ] ~jobs:[ job ])))
+  | Abort_commit ->
+    let t = live_pending t context in
+    (match in_message t, t.mutation with
+     | Error refusal, _ -> outcome t ~notice:(`Post refusal)
+     | Ok pending, Some { commit = Some (Finish running); settling = false; title; _ }
+       when String.equal running.path pending.path ->
+       (* Its commit is running: deleting the file under git would race it. *)
+       outcome t ~notice:(`Post (sprintf "Busy: %s; nothing ran" title))
+     | Ok pending, _ ->
+       outcome
+         { t with pending = None }
+         ~dispose:[ pending.path ]
+         ~notice:
+           (`Post
+               (match pending.kind with
+                | Commit -> "Commit aborted"
+                | Amend -> "Amend aborted")))
   | Submit submission ->
     (match busy t with
      | Some busy -> outcome t ~notice:(`Show busy)
@@ -1565,6 +1823,7 @@ let commands t =
       ; c "unstage-all" [ k 'U' ] "Unstage all changes"
       ]
     in
+    let commit = c "commit" [ k 'c' ] "Commit, amend or extend (the commit popup)" in
     match t.focus with
     | Diff ->
       let visual = Option.is_some (Text_view.visual t.diff_view) in
@@ -1590,6 +1849,7 @@ let commands t =
         else
           [ c "next-hunk" [ k ']' ] "Next hunk"
           ; c "previous-hunk" [ k '[' ] "Previous hunk"
+          ; commit
           ]
       in
       always
@@ -1631,7 +1891,7 @@ let commands t =
         ]
       @ enter
       @ actions
-      @ [ c "copy" [ k 'y' ] copy ]
+      @ [ commit; c "copy" [ k 'y' ] copy ]
       @ Navigation.commands)
 ;;
 
@@ -1936,7 +2196,7 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
         sprintf "Diff %d-%d/%d%s" (top + 1) (Int.min total (top + h)) total visual
         ^ hints
             (if String.is_empty visual
-             then "s u x hunk, ] [ hunks, e open, 10j, v V y, Tab/Esc list, g r, @, q"
+             then "s u x hunk, ] [ hunks, c commit, e open, 10j, v V y, Tab/Esc list, g r, @, q"
              else "s u x lines, S U, y copy, Esc ends, g r, @, q")
       | (Files | Branches | Commits) as focus ->
         let count = List.length (rows_of t focus) in
@@ -1950,8 +2210,9 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
           count
         ^ hints
             (match focus with
-             | Files -> "s u x S U, 1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"
-             | Branches | Commits | Diff -> "1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"))
+             | Files -> "s u x S U, c commit, 1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"
+             | Branches | Commits | Diff ->
+               "c commit, 1 2 3 panels, Tab diff, Enter, y copy, g r, @, q"))
   in
   { title = title t
   ; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default)
@@ -1965,6 +2226,22 @@ let text_area t ~rows ~width =
   else None
 ;;
 
+(* The tab label: the branch, or the abbreviated revision when detached (not while a
+   rebase or [git am] runs, when the branch is unknown). *)
+let label t =
+  Option.bind t.snapshot ~f:(fun snapshot ->
+    let rebasing =
+      List.exists snapshot.operations ~f:(function
+        | Rebase _ | Apply_mailbox -> true
+        | Merge _ | Cherry_pick _ | Revert _ | Bisect -> false)
+    in
+    match B.summary snapshot with
+    | { branch = Some branch; _ } -> Some ("VCS: " ^ branch)
+    | { branch = None; revision = Some revision; _ } when not rebasing ->
+      Some ("VCS: " ^ String.prefix revision 7)
+    | { branch = None; _ } -> None)
+;;
+
 let key = Type_equal.Id.create ~name:"vcs" sexp_of_t
 
 let adapter : (t, action) View_registry.Adapter.t =
@@ -1976,12 +2253,13 @@ let adapter : (t, action) View_registry.Adapter.t =
   ; interpret
   ; escape
   ; hint =
-      "VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q \
-       leaves, ? help"
+      "VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, \
+       @ log, q leaves, ? help"
   ; perform
   ; commands
   ; signal
   ; text_area
+  ; label
   ; render =
       (fun t _ ~hotkey_hints ~focused ~notice ~pending ~width ~rows ->
         render t ~hotkey_hints ~focused ~notice ~pending ~width ~rows)

@@ -116,7 +116,8 @@ let default =
   and vcs = View_id.of_string "vcs" in
   (* The VCS workspace. [Focus_view] opens the hidden view as a tab (it opens in
      [Tab]), activates it where it is, or toggles focus with the editor, so [g g] and
-     [g f] are one command. [g c] / [g a] stay free for the commit flow. *)
+     [g f] are one command. [g c] / [g a] finish and abort a commit message: requests
+     the view answers from wherever they are typed (usually the message buffer). *)
   let git c (command : View_command.t) =
     [ leader; Key.char 'g'; Key.char c ], Target.View command
   in
@@ -251,6 +252,8 @@ let default =
     ; place_vcs 't' Tab
     ; place_vcs 's' Split
     ; place_vcs 'h' Hidden
+    ; git 'c' (Request_view { view = vcs; request = "commit-finish" })
+    ; git 'a' (Request_view { view = vcs; request = "commit-abort" })
     ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
     ; [ leader; Key.char 'f'; Key.char 'l' ], View Open_line_picker
     ; [ leader; Key.char 'f'; Key.char 'f' ], View Open_file_picker

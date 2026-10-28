@@ -96,6 +96,7 @@ module Shelf = struct
         (fun _ -> [ Ches_tile.Local_command.create "delete" ~keys:[ Key.char 'd' ] "Delete the last" ])
     ; signal = (fun _ _ -> None)
     ; text_area = (fun _ ~rows:_ ~width:_ -> None)
+    ; label = (fun _ -> None)
     ; render =
         (fun t _ ~hotkey_hints:_ ~focused:_ ~notice ~pending ~width ~rows:_ ->
           { title = "Shelf"

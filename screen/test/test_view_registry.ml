@@ -55,6 +55,7 @@ module Counter = struct
     ; commands
     ; signal = (fun _ _ -> None)
     ; text_area = (fun _ ~rows:_ ~width:_ -> None)
+    ; label = (fun _ -> None)
     ; render =
         (fun t _ ~hotkey_hints:_ ~focused:_ ~notice ~pending ~width ~rows:_ ->
           { title = sprintf "Counter: %d" t.count

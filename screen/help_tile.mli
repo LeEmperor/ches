@@ -1,8 +1,9 @@
 (** The [?] help float: a read-only list of the local commands that a registered
-    view ({!View_registry}) declares in its current state, with their keys. It runs
-    nothing. It opens on the single float slot over the view it describes, which is
+    view ({!View_registry}) declares in its current state, with their keys, or of
+    the keys of the popup float ({!Popup_tile}) it opens over. It runs nothing. It
+    opens on the single float slot over the view (or popup) it describes, which is
     neither left nor changed meanwhile; closing it ([q], [?], Escape, or Tab) returns
-    focus to that view. *)
+    focus there. *)
 
 open! Core
 
@@ -14,9 +15,14 @@ type t [@@deriving sexp_of]
 (** Help for [origin], whose title is [title]. *)
 val create : origin:Ches_tile.View_id.t -> title:string -> Ches_tile.Local_command.t list -> t
 
-(** The view that focus returns to. *)
+(** Help listing [(keys, description)] rows as given, e.g. a popup's
+    ({!Ches_vcs.Popup.help}: [("-n", "Disable hooks (--no-verify)")]). *)
+val of_entries : origin:Ches_tile.View_id.t -> title:string -> (string * string) list -> t
+
+(** The view (or popup float) that focus returns to. *)
 val origin : t -> Ches_tile.View_id.t
 
+(** The commands given to {!create}; empty for {!of_entries}. *)
 val commands : t -> Ches_tile.Local_command.t list
 
 (** The first visible command. *)

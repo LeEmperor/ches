@@ -65,6 +65,8 @@ type t =
   ; help : Help_tile.t option (** The [?] float, over its origin view. *)
   ; confirm : Confirm_tile.t option (** A view's pending confirmation, over it. *)
   ; prompt : Prompt_tile.t option (** A view's pending prompt, over it. *)
+  ; popup : Popup_tile.t option
+  (** A view's pending popup, over it; the help float may cover it ([?]). *)
   ; file_picker : View_id.t File_picker_tile.t option
   ; file_picker_release : unit -> unit
   ; file_picker_return : View_id.t
@@ -172,6 +174,7 @@ let create
            ; Help_tile.spec
            ; Confirm_tile.spec
            ; Prompt_tile.spec
+           ; Popup_tile.spec
            ; Ches_tile.Spec.read_only_text directory_id ~title:"Directory"
            ])
   ; views
@@ -182,6 +185,7 @@ let create
   ; help = None
   ; confirm = None
   ; prompt = None
+  ; popup = None
   ; file_picker = None
   ; file_picker_activation = false
   ; content_picker_activation = false
@@ -222,17 +226,15 @@ let buffer_presentation t = t.buffer_presentation
 let zen t = t.zen
 let views t = t.views
 
-(* What a view may know when it performs an action ([View_registry.Context]): the
-   session's file buffers, the active one's latest state included, computed only if
-   the view asks. *)
-let view_context t =
-  View_registry.Context.create (fun () ->
-    let session = session t in
-    List.filter_map (Open_buffers.of_session session)
-      ~f:(fun ({ id; label; modified; missing; active = _ } : Open_buffers.t) ->
-        Option.bind (Session.find session id) ~f:(fun controller ->
-          Option.map (Editor.path (Controller.editor controller)) ~f:(fun path ->
-            { View_registry.Context.File.path; label; dirty = modified; missing }))))
+(* The session's file buffers for a view's context ([View_registry.Context]), by id,
+   the active one's latest state included. *)
+let context_files t =
+  let session = session t in
+  List.filter_map (Open_buffers.of_session session)
+    ~f:(fun ({ id; label; modified; missing; active = _ } : Open_buffers.t) ->
+      Option.bind (Session.find session id) ~f:(fun controller ->
+        Option.map (Editor.path (Controller.editor controller)) ~f:(fun path ->
+          id, { View_registry.Context.File.path; label; dirty = modified; missing })))
 ;;
 
 let view_visible t id =
@@ -265,6 +267,8 @@ let active_tab t : Tab_strip.Entry.t option =
 (* Show the session's active file tab (or directory) instead of a view tab. *)
 let file_tab t = { t with tabs = Tab_strip.activate t.tabs None }
 
+let tab_label t id = Option.value (View_registry.label t.views id) ~default:(view_title t id)
+
 let tab_items t =
   let files = Open_buffers.of_session (session t) in
   let active_view = active_tab_view t in
@@ -276,7 +280,7 @@ let tab_items t =
         { item with active = item.active && Option.is_none active_view })
     | View id ->
       Some
-        { Tab_strip.Item.label = view_title t id
+        { Tab_strip.Item.label = tab_label t id
         ; active = Option.exists active_view ~f:(View_id.equal id)
         ; modified = false
         ; missing = false
@@ -295,6 +299,7 @@ let palette t = t.palette
 let help t = t.help
 let confirm t = t.confirm
 let prompt t = t.prompt
+let popup t = t.popup
 let file_picker t = t.file_picker
 let file_picker_visible_stamp t = Option.map t.file_picker ~f:File_picker_tile.visible_stamp
 let content_picker t = t.content_picker
@@ -535,6 +540,16 @@ let prompt_placement ~width ~height =
   ask_placement ~preferred:Prompt_tile.preferred_size ~minimum:Prompt_tile.minimum ~width ~height
 ;;
 
+let popup_placement popup ~width ~height =
+  ask_placement ~preferred:(Popup_tile.preferred_size popup ~screen:width)
+    ~minimum:Popup_tile.minimum
+    ~width ~height
+;;
+
+let popup_layout t ~width ~height =
+  Option.bind t.popup ~f:(fun popup -> popup_placement popup ~width ~height)
+;;
+
 let confirm_layout t ~width ~height =
   Option.bind t.confirm ~f:(fun confirm -> confirm_placement confirm ~width ~height)
 ;;
@@ -556,11 +571,13 @@ let effective_floating floating t ~width ~height =
         (match t.palette with
          | Some _ -> Some (Palette_tile.id, palette_layout t ~width ~height)
          | None ->
-           (match t.help, t.confirm, t.prompt with
-            | Some _, _, _ -> Some (Help_tile.id, help_layout t ~width ~height)
-            | None, Some _, _ -> Some (Confirm_tile.id, confirm_layout t ~width ~height)
-            | None, None, Some _ -> Some (Prompt_tile.id, prompt_layout t ~width ~height)
-            | None, None, None -> None)))
+           (* Help may cover the popup it describes. *)
+           (match t.help, t.confirm, t.prompt, t.popup with
+            | Some _, _, _, _ -> Some (Help_tile.id, help_layout t ~width ~height)
+            | None, Some _, _, _ -> Some (Confirm_tile.id, confirm_layout t ~width ~height)
+            | None, None, Some _, _ -> Some (Prompt_tile.id, prompt_layout t ~width ~height)
+            | None, None, None, Some _ -> Some (Popup_tile.id, popup_layout t ~width ~height)
+            | None, None, None, None -> None)))
 ;;
 
 (* A supplied floating identity overrides its tiled placement, including when
@@ -611,6 +628,28 @@ let focused_view ?floating t ~width ~height =
 let cursor_owner ?floating t ~width ~height =
   Option.filter (Host.cursor_owner t.host ~available:(view_available ?floating t ~width ~height))
     ~f:(fun id -> not (View_id.equal id document_id) || has_document t)
+;;
+
+(* The active file buffer while it has the editor area's input: the document is
+   focused and shows it (no view tab, no input directory, no float or view). *)
+let input_buffer t ~width ~height =
+  if View_id.equal (focused_view t ~width ~height) document_id
+     && Option.is_none (active_tab_view t)
+     && Option.is_none (Session.input_directory t.session)
+  then Session.active_id t.session
+  else None
+;;
+
+(* What a view may know when it performs an action ([View_registry.Context]): the
+   session's file buffers, the active one's latest state included, and the one the
+   user is in, computed only if the view asks. *)
+let view_context t ~width ~height =
+  let files = lazy (context_files t) in
+  View_registry.Context.create
+    ~active:(fun () ->
+      Option.bind (input_buffer t ~width ~height) ~f:(fun id ->
+        List.Assoc.find (Lazy.force files) id ~equal:Buffer_id.equal))
+    (fun () -> List.map (Lazy.force files) ~f:snd)
 ;;
 
 let surface t ~directory =
@@ -720,15 +759,36 @@ let capture_pending t =
 ;;
 
 let ask_origin t =
-  Option.first_some
-    (Option.map t.confirm ~f:Confirm_tile.origin)
-    (Option.map t.prompt ~f:Prompt_tile.origin)
+  List.find_map ~f:Fn.id
+    [ Option.map t.confirm ~f:Confirm_tile.origin
+    ; Option.map t.prompt ~f:Prompt_tile.origin
+    ; Option.map t.popup ~f:Popup_tile.origin
+    ]
+;;
+
+let is_ask id =
+  View_id.equal id Confirm_tile.id
+  || View_id.equal id Prompt_tile.id
+  || View_id.equal id Popup_tile.id
+;;
+
+(* The registered view a float [id] floats over: help's view (through the popup it
+   may cover), or a question's. *)
+let float_origin t id =
+  if View_id.equal id Help_tile.id
+  then
+    Option.bind t.help ~f:(fun help ->
+      let origin = Help_tile.origin help in
+      if View_id.equal origin Popup_tile.id then ask_origin t else Some origin)
+  else if is_ask id
+  then ask_origin t
+  else None
 ;;
 
 (* Close the question float, leaving its view's question pending. *)
 let close_ask t =
   let host = Host.invalidate_paste t.host Prompt_tile.id in
-  { t with confirm = None; prompt = None; host }
+  { t with confirm = None; prompt = None; popup = None; host }
 ;;
 
 (* Close a view's capture-local state (details) when it stops being focused. *)
@@ -741,7 +801,7 @@ let leave t id =
     { t with palette = None; palette_origin = None }
   else if View_id.equal id Help_tile.id
   then { t with help = None }
-  else if View_id.equal id Confirm_tile.id || View_id.equal id Prompt_tile.id
+  else if is_ask id
   then (* Leaving a question unanswered withdraws it: nothing runs. *)
     { (close_ask t) with
       views =
@@ -768,7 +828,7 @@ let leave t id =
 let leave_ids t =
   View_registry.ids t.views
   @ [ Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
-    ; Confirm_tile.id; Prompt_tile.id ]
+    ; Confirm_tile.id; Prompt_tile.id; Popup_tile.id ]
 ;;
 
 let close_content_picker t ~width ~height =
@@ -822,21 +882,40 @@ let close_help t ~width ~height =
   | Some _ | None -> return_to_document t
 ;;
 
+(* Whether what help describes is still there: its view, or the popup it covers (a
+   popup that lost its room or its view is withdrawn with its help, and says so). *)
+let help_origin_shown t ~width ~height help =
+  let origin = Help_tile.origin help in
+  if View_id.equal origin Popup_tile.id
+  then Option.is_some t.popup
+  else available t ~width ~height origin
+;;
+
 (* A question float that lost its room or its view closes unanswered: the view's
    question is withdrawn, and focus returns to the view or the document. *)
 let withdraw_ask t ~width ~height =
   let lost =
-    match t.confirm, t.prompt with
-    | Some confirm, _ ->
-      Some (Confirm_tile.title confirm, Option.is_none (confirm_layout t ~width ~height))
-    | None, Some prompt ->
-      Some (Prompt_tile.title prompt, Option.is_none (prompt_layout t ~width ~height))
-    | None, None -> None
+    match t.confirm, t.prompt, t.popup with
+    | Some confirm, _, _ ->
+      Some
+        (Confirm_tile.id, Confirm_tile.title confirm, Option.is_none (confirm_layout t ~width ~height))
+    | None, Some prompt, _ ->
+      Some (Prompt_tile.id, Prompt_tile.title prompt, Option.is_none (prompt_layout t ~width ~height))
+    | None, None, Some popup ->
+      Some
+        (Popup_tile.id, Popup_tile.title popup, Option.is_none (popup_placement popup ~width ~height))
+    | None, None, None -> None
   in
   match lost, ask_origin t with
-  | Some (title, no_room), Some origin
+  | Some (id, title, no_room), Some origin
     when no_room || not (available t ~width ~height origin) ->
-    let t = leave t (if Option.is_some t.confirm then Confirm_tile.id else Prompt_tile.id) in
+    (* Help over the popup goes with it. *)
+    let t =
+      if Option.exists t.help ~f:(fun help -> View_id.equal (Help_tile.origin help) id)
+      then leave t Help_tile.id
+      else t
+    in
+    let t = leave t id in
     let t =
       if available t ~width ~height origin
       then { t with host = Host.focus t.host origin }
@@ -873,7 +952,7 @@ let synchronize t ~width ~height =
     match t.help with
     | Some help
       when Option.is_none (help_layout t ~width ~height)
-           || not (available t ~width ~height (Help_tile.origin help)) ->
+           || not (help_origin_shown t ~width ~height help) ->
       close_help t ~width ~height
     | Some _ | None -> t
   in
@@ -946,18 +1025,21 @@ let geometry t ~width ~height =
    diagnostics are released by the input assembly or the public lifecycle facade. *)
 (* A session change that shows a file or a major directory also shows it instead of
    the active view tab: another active file, a newly presented major directory, or
-   (unless [keep_view_tab], for focus moves) a directory giving up input. *)
-let adopt_session_state ?(keep_view_tab = false) t session ~width ~height =
+   (unless [keep_view_tab], for focus moves) a directory giving up input. With
+   [keep_focus] (a buffer closed under a view the user is in), neither the active tab
+   nor focus moves. *)
+let adopt_session_state ?(keep_view_tab = false) ?(keep_focus = false) t session ~width ~height =
   let major_directory s =
     Option.is_some (Session.input_directory s)
     && Option.exists (Session.directory_presentation s) ~f:(fun p -> Poly.equal p.placement Major)
   in
   let t =
-    if (not (Option.equal Buffer_id.equal (Session.active_id t.session) (Session.active_id session)))
-       || (major_directory session && not (major_directory t.session))
-       || ((not keep_view_tab)
-           && Option.is_some (Session.input_directory t.session)
-           && Option.is_none (Session.input_directory session))
+    if (not keep_focus)
+       && ((not (Option.equal Buffer_id.equal (Session.active_id t.session) (Session.active_id session)))
+           || (major_directory session && not (major_directory t.session))
+           || ((not keep_view_tab)
+               && Option.is_some (Session.input_directory t.session)
+               && Option.is_none (Session.input_directory session)))
     then file_tab t
     else t
   in
@@ -993,19 +1075,20 @@ let adopt_session_state ?(keep_view_tab = false) t session ~width ~height =
        { t with rows = None; animation = Animation.create ~enabled:(Animation.enabled t.animation) }))
     else
     let scroll = Option.value (Option.bind (Session.context_id session) ~f:(Map.find scrolls)) ~default:Scroll.zero in
-    { (return_to_document t) with scroll; rows = None; paste_buffer = None
+    { (if keep_focus then t else return_to_document t) with scroll; rows = None; paste_buffer = None
       ; animation = Animation.create ~enabled:(Animation.enabled t.animation) } in
   let t = synchronize t ~width ~height in
-  if Option.is_some (Session.input_directory t.session) && Option.is_some (side_layout t ~width ~height)
+  if (not keep_focus)
+      && Option.is_some (Session.input_directory t.session) && Option.is_some (side_layout t ~width ~height)
       && Option.is_none t.palette
       && Option.is_none t.file_picker && Option.is_none t.line_picker
       && Option.is_none t.content_picker && Option.is_none t.help
-      && Option.is_none t.confirm && Option.is_none t.prompt
+      && Option.is_none t.confirm && Option.is_none t.prompt && Option.is_none t.popup
   then { t with host = Host.focus t.host directory_id }
   else t
 ;;
 
-let close_buffer_state t ~width ~height id ~force =
+let close_buffer_state ?keep_focus t ~width ~height id ~force =
   let session = session t in
   let resource = Option.bind (Session.find session id) ~f:(fun c -> Editor.path (Controller.editor c)) in
   let session, closed = Session.close_buffer session id ~force in
@@ -1013,7 +1096,7 @@ let close_buffer_state t ~width ~height id ~force =
   let t = if not closed then t else Option.value_map resource ~default:t ~f:(fun resource ->
     { t with views = View_registry.map t.views Problems_tile.key ~f:(fun problems ->
         Problems_tile.forget_resource problems resource) }) in
-  adopt_session_state t session ~width ~height, closed
+  adopt_session_state ?keep_focus t session ~width ~height, closed
 ;;
 
 (* Leave an active view tab for the active file tab, returning focus there. *)
@@ -1153,6 +1236,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Adjust_split _
   | Close_split
   | Run_view_command _
+  | Request_view _
   | Restart_source
   | Kill_source
   | Scroll _
@@ -1230,6 +1314,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
          then title ^ " requested (compact/zen)"
          else title ^ " shown"))
   | Run_view_command _ -> Host.notice t.host
+  | Request_view _ -> None (* [request_view] posts its own refusals. *)
   | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files
   | Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory -> None
   | Directory_major -> Option.map (Session.directory_presentation t.session) ~f:(fun _ -> "Directory in major tile")
@@ -1406,18 +1491,87 @@ let open_ask t ~width ~height ~source (question : View_registry.Ask.Question.t) 
         { t with
           prompt = Some (Prompt_tile.create ~origin:source ~title ~initial ~validate)
         ; host = Host.focus t.host Prompt_tile.id
-        })
+        }
+    | Popup popup ->
+      let popup = Popup_tile.create ~origin:source popup in
+      if Option.is_none (popup_placement popup ~width ~height)
+      then refuse (Popup_tile.title popup) Popup_tile.minimum
+      else { t with popup = Some popup; host = Host.focus t.host Popup_tile.id })
+;;
+
+(* A view's error on the feedback line (kept in history), and in its footer when
+   [footer] (a key's outcome; a signalled one leaves the focused view's footer
+   alone). *)
+let view_error t ~source ~footer text =
+  let text = Ches_file_picker.Model.Candidate.display_text text in
+  { t with
+    host = (if footer then Host.with_notice t.host text else t.host)
+  ; controller =
+      Controller.update_feedback t.controller
+        (Notify
+           { source = View_id.to_string source
+           ; scope = path t
+           ; severity = Error
+           ; text
+           ; history = true
+           })
+  }
+;;
+
+let buffer_label session id =
+  Option.value (List.Assoc.find (Session.buffer_labels session) id ~equal:Buffer_id.equal)
+    ~default:"[unnamed]"
+;;
+
+(* [Location.contents]: write the file with exactly that text, unless the session
+   holds unsaved changes for it, then reload a retained clean buffer from it. The
+   session to open the file in, or why nothing was written. *)
+let write_contents t ~path text =
+  let session = session t in
+  let retained = Session.find_resource session path in
+  match retained with
+  | Some (id, controller) when Editor.is_dirty (Controller.editor controller) ->
+    Error
+      (sprintf "%s has unsaved changes; save or undo them first; nothing written"
+         (buffer_label session id))
+  | Some _ | None ->
+    (match Text_buffer.of_string text with
+     | Error invalid ->
+       Error
+         (sprintf "cannot write %s: %s" path (Text_buffer.Invalid_text.to_string_hum invalid))
+     | Ok text ->
+       (match File_io.write path text with
+        | Error error -> Error (sprintf "Failed to write %s: %s" path (Error.to_string_hum error))
+        | Ok () ->
+          Ok
+            (match retained with
+             | None -> session
+             | Some _ -> fst (Session.reconcile session ~under:[ path ]))))
 ;;
 
 (* Open a view's [location] as a picker opens a file: the file tab replaces a view
    tab, focus returns to the editor area (the other pane beside a split view), and the
-   cursor goes to the line, clamped to the file. A failure is the view's notice. *)
-let open_location t ~width ~height ~source ({ path; line } : View_registry.Location.t) =
-  match Session.open_or_activate ~must_exist:true (session t) path with
-  | Error error ->
+   cursor goes to the line, clamped to the file. With [contents], the file is written
+   first ([write_contents]). A failure is the view's notice. *)
+let open_location t ~width ~height ~source
+      ({ path; line; contents } : View_registry.Location.t)
+  =
+  let failed text =
     pane_notice t ~source
       (Ches_file_picker.Model.Candidate.display_text
-         (sprintf "%s: %s" (Host.spec t.host source).title (Error.to_string_hum error)))
+         (sprintf "%s: %s" (Host.spec t.host source).title text))
+  in
+  let session =
+    match contents with
+    | None -> Ok (session t)
+    | Some text -> write_contents t ~path text
+  in
+  match
+    Result.bind session ~f:(fun session ->
+      Session.open_or_activate ~must_exist:true session path
+      |> Result.map_error ~f:Error.to_string_hum)
+  with
+  | Error text -> failed text
   | Ok (session, _) ->
     let session =
       match line, Session.active_controller session with
@@ -1452,15 +1606,85 @@ let reconcile_buffers t ~width ~height roots =
     else adopt_session_state ~keep_view_tab:true t session ~width ~height)
 ;;
 
+(* A view's [Outcome.save]: write each path's retained file buffer now, in order, as
+   [:w] does. The first failure stops there, with the view's error; [false] then
+   (the outcome's jobs must not run). Focus and the active tab stay. *)
+let save_buffers t ~width ~height ~source ~footer paths =
+  List.fold_until paths ~init:t ~finish:(fun t -> t, true) ~f:(fun t path ->
+    let fail t text =
+      Continue_or_stop.Stop
+        ( view_error t ~source ~footer
+            (sprintf "%s: %s; nothing ran" (view_title t source) text)
+        , false )
+    in
+    let session = session t in
+    match Session.find_resource session path with
+    | None -> fail t (sprintf "%s is not open in a buffer" path)
+    | Some (id, _) ->
+      let session, result = Session.save_buffer session id in
+      let t = adopt_session_state ~keep_view_tab:true ~keep_focus:true t session ~width ~height in
+      (match result with
+       | Ok () -> Continue_or_stop.Continue t
+       | Error error -> fail t (Error.to_string_hum error)))
+;;
+
+(* After [dispose] closed the buffer the user was in: the disposing view, where it is
+   placed, takes focus (its tab activated, its split or band pane focused). *)
+let focus_disposing t ~width ~height id =
+  match View_registry.placement t.views id with
+  | Some Tab -> show_view_tab t ~width ~height id
+  | Some (Split | Band) when available t ~width ~height id ->
+    let current = focused_view t ~width ~height in
+    let t = if View_id.equal current id then t else leave t current in
+    { t with host = Host.focus t.host id; controller = Controller.cancel_pending t.controller }
+  | Some (Hidden | Split | Band) | None -> t
+;;
+
+(* A view's [Outcome.dispose]: close each path's retained buffer, discarding unsaved
+   changes, and delete the file. Closing the buffer the user is in moves focus to the
+   view ([focus_disposing]); otherwise neither focus nor the active tab moves. *)
+let dispose_files t ~width ~height ~source ~footer paths =
+  if List.is_empty paths
+  then t
+  else (
+    let normalize = Session.normalize t.session in
+    let disposed = List.map paths ~f:normalize in
+    let user_in =
+      Option.exists (input_buffer t ~width ~height) ~f:(fun id ->
+        Option.exists (Session.find (session t) id) ~f:(fun controller ->
+          Option.exists (Editor.path (Controller.editor controller)) ~f:(fun path ->
+            List.mem disposed (normalize path) ~equal:String.equal)))
+    in
+    let t =
+      List.fold disposed ~init:t ~f:(fun t path ->
+        let t =
+          match Session.find_resource (session t) path with
+          | None -> t
+          | Some (id, _) ->
+            fst
+              (close_buffer_state ~keep_focus:(not user_in) t ~width ~height id ~force:true)
+        in
+        match File_io.remove path with
+        | Ok () -> t
+        | Error error ->
+          view_error t ~source ~footer
+            (sprintf "%s: could not delete %s: %s" (view_title t source) path
+               (Error.to_string_hum error)))
+    in
+    if user_in then focus_disposing t ~width ~height source else t)
+;;
+
 (* A signalled action's outcome ([View_registry.Signal]): applied without moving focus
-   or touching the focused view's capture state. A [`Post] notice goes to feedback
-   only; [`Show], the effect, [return] and [open_file] are ignored; buffers are
-   reconciled right after the controller; a question opens only over the focused view
-   that asked, and is withdrawn otherwise. Jobs whose id is in flight are answered at
-   once with their never-started report. *)
+   or touching the focused view's capture state, in the order controller, reconcile,
+   notice, open_file, save, jobs, dispose, ask (a failed save's error is the last
+   word). A [`Post] notice goes to feedback
+   only; [`Show], the effect and [return] are ignored; [open_file] and a question
+   apply only while the view is focused (a question is withdrawn otherwise). Jobs
+   whose id is in flight, or all of them after a failed save, are answered at once
+   with their never-started report. Only [dispose] may move focus. *)
 let rec apply_signal_outcome t ~width ~height ~source
-          ({ View_registry.Outcome.controller; notice; jobs; reconcile; ask; effect = _
-           ; return = _; open_file = _ } : _ View_registry.Outcome.t)
+          ({ View_registry.Outcome.controller; notice; jobs; reconcile; save; dispose; ask
+           ; open_file; effect = _; return = _ } : _ View_registry.Outcome.t)
   =
   let t = reconcile_buffers { t with controller } ~width ~height reconcile in
   let t =
@@ -1479,16 +1703,25 @@ let rec apply_signal_outcome t ~width ~height ~source
       }
     | Some (`Show _) | None -> t
   in
-  let t = submit_jobs t ~width ~height ~source jobs in
+  let focused t = View_id.equal (focused_view t ~width ~height) source in
+  let t =
+    match open_file with
+    | Some location when focused t -> open_location t ~width ~height ~source location
+    | Some _ | None -> t
+  in
+  let t, saved = save_buffers t ~width ~height ~source ~footer:false save in
+  let t = submit_jobs t ~width ~height ~source ~saved jobs in
+  let t = dispose_files t ~width ~height ~source ~footer:false dispose in
   match ask with
   | None -> t
-  | Some question when View_id.equal (focused_view t ~width ~height) source ->
-    open_ask t ~width ~height ~source question
+  | Some question when focused t -> open_ask t ~width ~height ~source question
   | Some _ -> { t with views = View_registry.withdraw t.views source }
 
-and submit_jobs t ~width ~height ~source jobs =
+(* Jobs go out unless their id is in flight, or [saved] is false (the outcome's save
+   failed): those are answered with their never-started report instead. *)
+and submit_jobs t ~width ~height ~source ~saved jobs =
   List.fold jobs ~init:t ~f:(fun t (job : Ches_vcs.Job.t) ->
-    if Map.mem t.job_owners job.id
+    if (not saved) || Map.mem t.job_owners job.id
     then
       signal_view t ~width ~height source
         (View_registry.Signal.Job (Finished (Ches_vcs.Job.never_started job)))
@@ -1501,7 +1734,7 @@ and submit_jobs t ~width ~height ~source jobs =
 (* Tell view [id] a signal; its action is performed in its own viewport. *)
 and signal_view t ~width ~height id (signal : View_registry.Signal.t) =
   match
-    View_registry.signal t.views id signal ~controller:t.controller ~context:(view_context t)
+    View_registry.signal t.views id signal ~controller:t.controller ~context:(view_context t ~width ~height)
       ~rows:(minor_rows t ~width ~height id) ~width:(minor_width t ~width ~height id)
   with
   | views, None -> { t with views }
@@ -1509,9 +1742,11 @@ and signal_view t ~width ~height id (signal : View_registry.Signal.t) =
     apply_signal_outcome { t with views } ~width ~height ~source:id outcome
 ;;
 
-(* What an adapter's action asks for, in order: the controller, reconciling buffers, a
-   text effect, a notice, then returning to the document, showing its file tab over a
-   view tab, then opening a file, then its jobs, then its question. *)
+(* What an adapter's action asks for, in order: the controller, reconciling buffers,
+   a text effect, a notice, then returning to the document, showing its file tab
+   over a view tab, then opening a file, then saving buffers, then its jobs (none
+   after a failed save, whose error is then the last word), then disposing of files,
+   then its question. *)
 let apply_outcome t ~width ~height ~source
       { View_registry.Outcome.controller
       ; effect
@@ -1520,6 +1755,8 @@ let apply_outcome t ~width ~height ~source
       ; open_file
       ; jobs
       ; reconcile
+      ; save
+      ; dispose
       ; ask
       }
   =
@@ -1533,7 +1770,9 @@ let apply_outcome t ~width ~height ~source
   in
   let t = if return then return_to_document (file_tab t) else t in
   let t = Option.value_map open_file ~default:t ~f:(open_location t ~width ~height ~source) in
-  let t = submit_jobs t ~width ~height ~source jobs in
+  let t, saved = save_buffers t ~width ~height ~source ~footer:true save in
+  let t = submit_jobs t ~width ~height ~source ~saved jobs in
+  let t = dispose_files t ~width ~height ~source ~footer:true dispose in
   Option.value_map ask ~default:t ~f:(open_ask t ~width ~height ~source)
 ;;
 
@@ -1618,7 +1857,7 @@ let answer_ask t ~width ~height answer =
       else return_to_document t
     in
     (match
-       View_registry.answer t.views origin answer ~controller:t.controller ~context:(view_context t)
+       View_registry.answer t.views origin answer ~controller:t.controller ~context:(view_context t ~width ~height)
          ~rows:(minor_rows t ~width ~height origin) ~width:(minor_width t ~width ~height origin)
      with
      | views, None -> { t with views }
@@ -1635,7 +1874,7 @@ let run_view_command t ~width ~height id command =
   then { t with host = Host.with_notice t.host (sprintf "%s is not focused; nothing ran" title) }
   else (
     match
-      View_registry.run t.views id command ~controller:t.controller ~context:(view_context t)
+      View_registry.run t.views id command ~controller:t.controller ~context:(view_context t ~width ~height)
         ~rows:(minor_rows t ~width ~height id) ~width:(minor_width t ~width ~height id)
     with
     | Error error -> pane_notice t ~source:id (Error.to_string_hum error)
@@ -1706,10 +1945,12 @@ let open_palette t ~width ~height =
   then notice "Command palette cannot fit; needs at least 14 columns and 4 rows"
   else (
     let current = focused_view t ~width ~height in
+    (* Help over a popup describes no view's commands; the popup is withdrawn. *)
     let origin =
       if View_registry.installed t.views current
       then Some current
-      else Option.map t.help ~f:Help_tile.origin
+      else
+        Option.filter (Option.map t.help ~f:Help_tile.origin) ~f:(View_registry.installed t.views)
     in
     let local = local_entries t origin in
     let catalog =
@@ -1733,7 +1974,9 @@ let open_palette t ~width ~height =
           (List.map local ~f:(fun (entry, keys) -> Ches_palette.Catalog.Entry.id entry, keys))
     in
     let t =
-      { (if View_registry.installed t.views current then t else leave t current) with
+      { (if View_registry.installed t.views current
+         then t
+         else leave (leave t current) Popup_tile.id) with
         controller = Controller.cancel_pending t.controller
       ; palette = Some palette
       ; palette_origin = origin
@@ -1892,15 +2135,51 @@ let show_hidden t id =
   | Hidden -> t
 ;;
 
-(* The view a placement command names: [None] is the focused registered view. *)
+(* The view a placement command names: [None] is the focused registered view, or the
+   one that help, a question or a popup floats over. *)
 let place_named t ~width ~height view placement =
   let focused = focused_view t ~width ~height in
-  match view with
-  | None when View_registry.installed t.views focused ->
-    place_view t ~width ~height focused placement
-  | None -> { t with host = Host.with_notice t.host "No view focused; focus a view to move it" }
-  | Some id when View_registry.installed t.views id -> place_view t ~width ~height id placement
-  | Some id -> { t with host = Host.with_notice t.host (view_unavailable t id) }
+  let focused =
+    if View_registry.installed t.views focused
+    then Some focused
+    else Option.filter (float_origin t focused) ~f:(View_registry.installed t.views)
+  in
+  match view, focused with
+  | None, Some focused -> place_view t ~width ~height focused placement
+  | None, None -> { t with host = Host.with_notice t.host "No view focused; focus a view to move it" }
+  | Some id, _ when View_registry.installed t.views id -> place_view t ~width ~height id placement
+  | Some id, _ -> { t with host = Host.with_notice t.host (view_unavailable t id) }
+;;
+
+(* A refused workspace request: on the feedback line, and in the footer of a focused
+   view or float (whose footer would otherwise keep an older notice). *)
+let workspace_notice t ~width ~height text =
+  let t =
+    { t with
+      controller =
+        Controller.update_feedback t.controller
+          (Notify { source = "workspace"; scope = None; severity = Info; text; history = false })
+    }
+  in
+  if View_id.equal (focused_view t ~width ~height) document_id
+  then t
+  else { t with host = Host.with_notice t.host text }
+;;
+
+(* [Request_view]: a named request to view [id], focused or not, as a signal. *)
+let request_view t ~width ~height id request =
+  if not (View_registry.installed t.views id)
+  then workspace_notice t ~width ~height (view_unavailable t id)
+  else (
+    match
+      View_registry.signal t.views id (Request request) ~controller:t.controller
+        ~context:(view_context t ~width ~height) ~rows:(minor_rows t ~width ~height id)
+        ~width:(minor_width t ~width ~height id)
+    with
+    | views, None ->
+      workspace_notice { t with views } ~width ~height
+        (sprintf "%s: nothing to do for %s" (view_title t id) request)
+    | views, Some outcome -> apply_signal_outcome { t with views } ~width ~height ~source:id outcome)
 ;;
 
 (* In the major split, focus the split view or return to the active tab. *)
@@ -1989,6 +2268,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     { t with split = Workspace.Major_split.adjust t.split points; rows = None }
   | Close_split -> close_split t ~width ~height
   | Run_view_command { view; command } -> run_view_command t ~width ~height view command
+  | Request_view { view; request } -> request_view t ~width ~height view request
   | Restart_source when t.source_attached ->
     { t with source_commands = Restart :: t.source_commands }
   | Kill_source when t.source_attached ->
@@ -2113,13 +2393,25 @@ let feed t ~width ~height (input : Keymap.Input.t) =
   , status )
 ;;
 
-(* Open help for registered view [origin], over it: the view is not left. *)
-let open_help t ~width ~height origin =
-  let title = (Host.spec t.host origin).title in
-  let help = Help_tile.create ~origin ~title (View_registry.commands t.views origin) in
+(* Open [help] over what it describes, which is not left. *)
+let open_help_float t ~width ~height help =
   if Option.is_none (help_placement help ~width ~height)
   then { t with host = Host.with_notice t.host "Help cannot fit; needs at least 14 columns and 3 rows" }
   else { t with help = Some help; host = Host.focus t.host Help_tile.id }
+;;
+
+(* Open help for registered view [origin], over it: the view is not left. *)
+let open_help t ~width ~height origin =
+  let title = (Host.spec t.host origin).title in
+  open_help_float t ~width ~height
+    (Help_tile.create ~origin ~title (View_registry.commands t.views origin))
+;;
+
+(* [?] in the popup: its keys, in help over it; closing help returns to it. *)
+let open_popup_help t ~width ~height popup =
+  open_help_float t ~width ~height
+    (Help_tile.of_entries ~origin:Popup_tile.id ~title:(Popup_tile.title popup)
+       (Popup_tile.help popup))
 ;;
 
 (* Workspace commands typed in a captured view, or in help or a question over one,
@@ -2131,10 +2423,8 @@ let open_help t ~width ~height origin =
 let placement_notice_from_view t ~width ~height ~footer (view : View_command.t) =
   let footer_kept =
     let origin =
-      if View_id.equal footer Help_tile.id
-      then Option.map t.help ~f:Help_tile.origin
-      else if View_id.equal footer Confirm_tile.id || View_id.equal footer Prompt_tile.id
-      then ask_origin t
+      if View_id.equal footer Help_tile.id || is_ask footer
+      then float_origin t footer
       else Some footer
     in
     View_id.equal (focused_view t ~width ~height) footer
@@ -2158,7 +2448,7 @@ let feed_capture t ~width ~height id key =
     View_registry.key t.views id t.host key
       ~lookup:(Keymap.lookup (Controller.keymap t.controller))
       ~controller:t.controller
-      ~context:(view_context t)
+      ~context:(view_context t ~width ~height)
       ~rows:(minor_rows t ~width ~height id)
       ~width:(minor_width t ~width ~height id)
   with
@@ -2422,6 +2712,43 @@ let route t ~width ~height key =
             ~footer:id
             view
         | Handled, _ | Content _, None -> t)
+    in
+    t, Controller.Status.Running
+  | Some id when View_id.equal id Popup_tile.id ->
+    (* Escape is the popup's own (it clears a pending dash first); Tab, which
+       returns, and Ctrl-c decline, as do q and Escape without a dash. *)
+    let host, decision =
+      if Key.equal key (Ctrl 'c')
+      then t.host, Host.Decision.Return
+      else
+        Host.key t.host key
+          ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+          ~content:Popup_tile.interpret ~escape:(Some Popup_tile.Escape) ~hint:Popup_tile.hint
+    in
+    let t = { t with host } in
+    let t =
+      match decision, t.popup with
+      | (Return | Content Close), _ -> answer_ask t ~width ~height No
+      | Content Escape, Some popup ->
+        (match Popup_tile.escape popup with
+         | `Close -> answer_ask t ~width ~height No
+         | `Updated popup -> { t with popup = Some popup })
+      | Content (Press key), Some popup ->
+        (match Popup_tile.press popup key with
+         | `Updated popup -> { t with popup = Some popup }
+         | `Choose (key, enabled) -> answer_ask t ~width ~height (Choose { key; enabled })
+         | `Unbound (popup, hint) ->
+           { t with popup = Some popup; host = Host.with_notice t.host hint })
+      | Content Help, Some popup -> open_popup_help t ~width ~height popup
+      | Notice text, _ -> { t with host = Host.with_notice t.host text }
+      | Workspace view, _ ->
+        placement_notice_from_view
+          (apply_view_command t ~width ~height view)
+          ~width
+          ~height
+          ~footer:id
+          view
+      | Handled, _ | Content _, None -> t
     in
     t, Controller.Status.Running
   | Some id when View_id.equal id Palette_tile.id ->

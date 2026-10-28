@@ -74,3 +74,10 @@ let write path text =
         | exception Core_unix.Unix_error (error, _, _) -> unix_error error
         | () -> Ok ()))
 ;;
+
+let remove path =
+  match Core_unix.unlink path with
+  | exception Core_unix.Unix_error (ENOENT, _, _) -> Ok ()
+  | exception Core_unix.Unix_error (error, _, _) -> unix_error error
+  | () -> Ok ()
+;;

@@ -81,6 +81,19 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   the backend applies one patch (`Patch.hunks`) for all of them. No new seams:
   refusals keep the view's Visual selection, running or asking ends it.
 
+**Done in VCS workspace phase 5 (2026-10-28):** popups and the commit flow.
+- `c` asks `Ask.Popup` (`Git.Commit.popup`, drawn by `screen/popup_tile.ml`); its
+  answer is the view's own action. Commit and amend read the message file as a
+  `commit`-lane job, then hand it to the user as a file tab (`Location.contents`);
+  `Space g c` / `Space g a` reach the view as `Signal.Request` from that buffer
+  (`Context.active`), finishing with `Outcome.save` before the commit job and
+  `Outcome.dispose` after it. The view's tab label (`Adapter.label`) names the
+  branch.
+- Generic seams it introduced (phase 5 agent A): popup questions, `Location.contents`,
+  `Outcome.save` / `Outcome.dispose`, `Context.active`, `Signal.Request` with
+  `View_command.Request_view`, `Adapter.label`, and a signalled `open_file` that
+  applies only while the view is focused.
+
 **What is not done:**
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.

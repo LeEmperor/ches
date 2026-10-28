@@ -1786,8 +1786,8 @@ let%expect_test "% is a motion that rejects a count, even a huge one" =
     |}]
 ;;
 
-let%expect_test "Space g places and focuses the VCS view; g c and g a stay unbound" =
-  (* Every default binding under Space g: the five workspace keys, nothing else. *)
+let%expect_test "Space g places and focuses the VCS view; g c and g a are its commit requests" =
+  (* Every default binding under Space g: the five workspace keys and the two requests. *)
   List.iter (Bindings.to_list Bindings.default) ~f:(fun (sequence, target) ->
     if List.is_prefix sequence ~prefix:[ Key.char ' '; Key.char 'g' ] ~equal:Key.equal
     then
@@ -1801,6 +1801,8 @@ let%expect_test "Space g places and focuses the VCS view; g c and g a stay unbou
     Space g t  (View(Place_view(view(vcs))(placement Tab)))
     Space g s  (View(Place_view(view(vcs))(placement Split)))
     Space g h  (View(Place_view(view(vcs))(placement Hidden)))
+    Space g c  (View(Request_view(view vcs)(request commit-finish)))
+    Space g a  (View(Request_view(view vcs)(request commit-abort)))
     |}];
   let t = run (create "abc") (keys " g") in
   show_position t;
@@ -1815,13 +1817,19 @@ let%expect_test "Space g places and focuses the VCS view; g c and g a stay unbou
     (View(Place_view(view(vcs))(placement Hidden)))
     NORMAL 0:0
     |}];
-  (* The commit flow's keys arrive in phase 5. *)
+  (* The commit flow's keys are requests to the VCS view. *)
   let t = run t (keys " gc") in
   show_position t;
-  [%expect {| NORMAL 0:0 notice="Space g c is not bound" |}];
+  [%expect {|
+    (View(Request_view(view vcs)(request commit-finish)))
+    NORMAL 0:0
+    |}];
   let t = run t (keys " ga") in
   show_position t;
-  [%expect {| NORMAL 0:0 notice="Space g a is not bound" |}];
+  [%expect {|
+    (View(Request_view(view vcs)(request commit-abort)))
+    NORMAL 0:0
+    |}];
   (* Placement commands take no count. *)
   let t = run t (keys "2 gg") in
   show_position t;

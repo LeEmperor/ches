@@ -1,4 +1,5 @@
-(** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines), a registered view ({!View_registry}) over the
+(** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines;
+    phase 5: commit), a registered view ({!View_registry}) over the
     git backend ([Ches_vcs_git.Backend], a {!Ches_vcs.Backend.S}). Lazygit's layout
     and Magit's context keys: the Files, Branches and Commits list panels beside a diff
     panel that follows the selection, a head summary above the lists, and a
@@ -13,8 +14,10 @@
     it with [View_id.of_string "vcs"]). Spec: {!Ches_tile.Spec.read_only_text} with
     role [Major] and [accepts_tab = true] (Tab is the view's list/diff switch, so it
     does not return; [q] and Escape leave). Title ["VCS"]: notices ("VCS in tab
-    strip", "VCS closed") and the tab label, which is static. The frame title is the
-    state's (see {!render}). {!entry} installs it hidden, opening in a tab: focusing a
+    strip", "VCS closed"). The tab label ({!View_registry.Adapter.t.label}) is
+    ["VCS: <branch>"] while a snapshot is loaded on a branch, ["VCS: <7-char rev>"]
+    detached, else ["VCS"] (also while the branch is unknown, e.g. during a rebase).
+    The frame title is the state's (see {!render}). {!entry} installs it hidden, opening in a tab: focusing a
     hidden VCS view ([Space g g]) adds and activates a tab.
 
     {2 Lifecycle and work}
@@ -137,6 +140,72 @@
     of the selected lines ([S U] keep working in Visual, on everything);
     [next-hunk] ([\]]) and [previous-hunk] ([\[]) in the diff outside Visual.
     The hint mentions [s u x].
+
+    {2 Commit (phase 5)}
+
+    [c] (any panel, outside Visual, while a snapshot is loaded) asks
+    {!View_registry.Ask.t.Popup} [{ popup = Git.Commit.popup; cancel = None }]: the
+    popup float shows its switches ([-n] [-s] [-e]) and actions ([c] commit, [a]
+    amend, [e] extend); declining runs nothing. Local command [commit] ([c]) in help
+    and the palette, in the states where [c] works. The popup's answer
+    ({!Git.Commit.Choice.t}) is one of the view's actions:
+    - [Message { kind; flags }] ([c], [a]): {!Git.Commit.refusal} of the snapshot's
+      status gives its text as a [`Show] notice; nothing runs. A commit already
+      pending (below) whose path is among {!View_registry.Context.files} reopens it
+      instead: [open_file { path; line = None; contents = None }] and [`Post] ["A
+      commit message is already open: Space g c commits it, Space g a aborts"]. While
+      a mutation is in flight ({!mutation}), the busy notice ([`Show] ["Busy:
+      <title>; nothing ran"]). Otherwise a [Read] job on lane ["commit"] of
+      {!Git.Commit.prepare} [repo kind]; its [Finished] report (current only) goes to
+      {!Git.Commit.prepared}: an error is [`Post] and logged as a problem entry; [Ok { message_file;
+      head_message }] gives [open_file { path = message_file; line = Some 1; contents
+      = Some (Git.Commit.template status kind ~flags ~head_message) }] (applied only
+      while the view is still focused, {!View_registry.Signal}) and remembers
+      [{ path = message_file; kind; flags }] as the pending commit. Pending counts
+      only while its path is among the context's files: a message buffer the user
+      closed by hand is forgotten, and the next [c] starts afresh.
+    - [Extend { flags }] ([e]): {!Git.Commit.refusal} as a [`Show] notice, else
+      [plan (Extend { flags })] through the actions' machinery above (busy, the Mutate
+      job, logging, the failure notice, refresh); title ["Extend HEAD"].
+
+    Finishing and aborting are requests ({!View_registry.Signal.t.Request}), typed
+    from the message buffer: [Space g c] is ["commit-finish"], [Space g a]
+    ["commit-abort"] ({!View_command.t.Request_view}; palette [vcs.commit-finish]
+    "VCS: finish commit", [vcs.commit-abort] "VCS: abort commit"). They answer with
+    [`Post] notices only (the view's footer may not be shown):
+    - Both are refused unless {!View_registry.Context.active} is the pending path
+      (the user is in the message buffer): [`Post] ["No pending commit message here;
+      nothing ran"].
+    - ["commit-finish"]: with no snapshot, [`Post] ["Nothing loaded yet; nothing
+      ran"]; while busy, [`Post] ["Busy: <title>; nothing ran"]. Else
+      [plan (Finish_commit { kind; flags; message_file = path })]: [Refused message]
+      is [`Post message] (the buffer stays); [Confirm _] (git's plans never ask) is
+      [`Post] ["<confirm title> needs a confirmation; nothing ran"]; [Run plan] gives the outcome [save =
+      [path]] (the buffer is written first, even when clean) and the plan's one
+      [Mutate] job (busy until the refresh after it, as any action). If the save
+      fails, the application posts why and answers the job as never started
+      ({!Ches_vcs.Job.never_started}): nothing ran, the pending commit is kept, and
+      the view posts nothing more. On the job's [Finished]:
+      every step is logged; success gives [dispose = [path]] (the buffer closed, the
+      file deleted, the user back in the view where it is placed), clears the pending
+      commit, posts [`Post] of {!Git.Commit.summary} (else the plan's title), and
+      refreshes; failure posts the usual ["<title> failed: <one-line failure>"],
+      keeps the buffer and the pending commit (stderr in the log). Either way
+      [reconcile = [root]] follows a commit-like mutation (hooks may rewrite files),
+      without the dirty-buffer refusal (the plans do not rewrite the work tree
+      themselves). The same reconciliation follows [Extend]'s report, whose success
+      posts nothing (as other actions).
+    - ["commit-abort"]: while that message's commit is running (submitted, not yet
+      finished), [`Post] ["Busy: <title>; nothing ran"] (deleting the [-F] file
+      would race git and its hooks). Else [dispose = [path]], the pending commit
+      cleared, [`Post] ["Commit aborted"] (["Amend aborted"] for an amend); nothing
+      runs.
+    Other requests are ignored (the application says "VCS: nothing to do for
+    <request>").
+
+    [Saved] signals for paths inside the repository's git directory
+    ([Git.Repository.t.git_dir], where the message file lives) do not refresh; other
+    saves under the root still do.
 
     {2 Layout}
 

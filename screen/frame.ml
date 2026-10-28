@@ -101,6 +101,18 @@ let floating_layer ?allocation ?floating ui ~width ~height =
                prompt ~width:content.width ~rows:content.height
            ; cursor = Some (Prompt_tile.cursor prompt ~width:content.width)
            }))
+     | None when Option.is_some (Ui_state.popup ui) ->
+       Option.bind (Ui_state.popup_layout ui ~width ~height) ~f:(fun layout ->
+         Option.map (Ui_state.popup ui) ~f:(fun popup ->
+           let content = layout.content in
+           { Floating_layer.id = Popup_tile.id
+           ; layout
+           ; content =
+               Popup_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+                 ?pending:(Ui_state.capture_pending ui) popup ~width:content.width
+                 ~rows:content.height
+           ; cursor = None
+           }))
      | None ->
       Option.bind (Ui_state.palette_layout ui ~width ~height) ~f:(fun layout ->
         Option.map (Ui_state.palette ui) ~f:(fun palette ->
@@ -135,7 +147,8 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
           else if Option.is_some (Ui_state.file_picker ui) then File_picker_tile.id
           else if Option.is_some (Ui_state.help ui) then Help_tile.id
           else if Option.is_some (Ui_state.confirm ui) then Confirm_tile.id
-          else if Option.is_some (Ui_state.prompt ui) then Prompt_tile.id else Palette_tile.id), None)
+          else if Option.is_some (Ui_state.prompt ui) then Prompt_tile.id
+          else if Option.is_some (Ui_state.popup ui) then Popup_tile.id else Palette_tile.id), None)
     | None -> None
   in
   let explicit_allocation = Option.is_some allocation in

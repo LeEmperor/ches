@@ -86,7 +86,7 @@ module Worker = struct
                  { title = "Again"; message = "Run again?"; yes = Submit "again"; no = None })
             () )
       else t, outcome ~notice:(`Post (t.name ^ " work done")) ()
-    | Open (path, line) -> t, outcome ~open_file:{ path; line } ()
+    | Open (path, line) -> t, outcome ~open_file:{ path; line; contents = None } ()
     | Show_text ->
       ( { t with
           text = Some (Ches_tile.Text_view.create ~cell_width:Cell_map.width "abc\ndef")
@@ -114,6 +114,7 @@ module Worker = struct
     | Saved paths ->
       Some (Submit ("saved " ^ String.concat ~sep:"," (List.map paths ~f:Filename.basename)))
     | Job event -> Some (Event event)
+    | Request _ -> None
   ;;
 
   (* One adapter (and typed key) per installed worker. *)
@@ -134,6 +135,7 @@ module Worker = struct
       ; text_area =
           (fun t ~rows:_ ~width:_ ->
             Option.map t.text ~f:(fun _ -> { Geometry.Rect.x = 2; y = 1; width = 10; height = 3 }))
+      ; label = (fun _ -> None)
       ; render =
           (fun t _ ~hotkey_hints:_ ~focused:_ ~notice ~pending ~width ~rows:_ ->
             { title = t.name

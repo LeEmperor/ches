@@ -103,6 +103,12 @@ type action =
   | Discard of Target.t
   | Stage_all
   | Unstage_all
+  | Finish_commit of
+      { kind : Commit.Kind.t
+      ; flags : string list
+      ; message_file : string
+      }
+  | Extend of { flags : string list }
 [@@deriving sexp_of]
 
 let name = "git"
@@ -917,6 +923,16 @@ let lines_plan
                   (apply repository [ "--index"; "--reverse" ] patch)))))
 ;;
 
+(* Commit steps name no paths, so no [--literal-pathspecs]. *)
+let commit_step (repository : Repository.t) args =
+  Job.Step.Run (Cli.mutate ~cwd:repository.root args)
+;;
+
+(* The given switches in {!Commit.flags} order (the refusal rejected unknown ones). *)
+let commit_flags given =
+  List.filter Commit.flags ~f:(fun flag -> List.mem given flag ~equal:String.equal)
+;;
+
 let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : Decision.t =
   let target verb : Target.t -> Decision.t = function
     | File { section; path } -> file_plan repository snapshot verb section path
@@ -960,4 +976,32 @@ let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : D
         run
           (sprintf "Unstage all changes (%s)%s" (count n) title_suffix)
           (restore_staged repository snapshot paths))
+  | Finish_commit { kind; flags; message_file } ->
+    (match Commit.refusal snapshot.status (Commit.Choice.Message { kind; flags }) with
+     | Some message -> Refused message
+     | None ->
+       let amend, title =
+         match kind with
+         | Commit.Kind.Commit -> [], "Commit"
+         | Amend -> [ "--amend" ], "Amend HEAD"
+       in
+       run
+         title
+         [ commit_step
+             repository
+             ([ "-c"; "core.commentChar=#"; "commit"; "--cleanup=strip" ]
+              @ amend
+              @ commit_flags flags
+              @ [ "-F"; message_file ])
+         ])
+  | Extend { flags } ->
+    (match Commit.refusal snapshot.status (Commit.Choice.Extend { flags }) with
+     | Some message -> Refused message
+     | None ->
+       run
+         "Extend HEAD"
+         [ commit_step
+             repository
+             ([ "commit"; "--amend"; "--no-edit" ] @ commit_flags flags)
+         ])
 ;;

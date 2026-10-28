@@ -79,6 +79,17 @@ let create ~title ~switches ~actions =
   { title; switches; actions }
 ;;
 
+let map t ~f =
+  { t with
+    actions =
+      List.map t.actions ~f:(fun (action : _ Action.t) ->
+        { Action.key = action.key
+        ; description = action.description
+        ; run = (fun ~enabled -> f (action.run ~enabled))
+        })
+  }
+;;
+
 module State = struct
   type t =
     { enabled : string list

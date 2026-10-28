@@ -63,6 +63,13 @@ val recreate_current : t -> t
 val save_as : t -> Buffer_id.t -> string -> t Or_error.t
 (** Dirty file and retained directory buffers in ID order; continue on error. *)
 val save_all : t -> t * (Buffer_id.t * bool) list
+(** Write retained file buffer [id] now, as [:w] would with it active, even when it
+    is clean; the active buffer is unchanged. A success is recorded like any save
+    ({!saved}). An error says why nothing was written: not an open file buffer (a
+    directory buffer, an unknown id), a buffer marked missing, or the write's own
+    failure (["Failed to write <path>: <reason>"], also kept as the buffer's save
+    problem, as [:w] keeps it). *)
+val save_buffer : t -> Buffer_id.t -> t * unit Or_error.t
 val quit : t -> force:bool -> t * Controller.Status.t
 (** What {!reconcile} did, per retained file buffer (tab order); unchanged buffers
     are not listed. *)

@@ -22,7 +22,7 @@ let fields ui : Status_field.t list =
     match view_tab with
     | Some id ->
       field Filename ~priority:5 ~fit:Cut_left
-        (Span.of_text (Ui_state.view_title ui id) ~style:Status ~special:Status_special)
+        (Span.of_text (Ui_state.tab_label ui id) ~style:Status ~special:Status_special)
     | None ->
      Option.bind (Controller.display_path (Ui_state.controller ui)) ~f:(fun path ->
       let path = if Option.is_some (Session.input_directory (Ui_state.session ui))

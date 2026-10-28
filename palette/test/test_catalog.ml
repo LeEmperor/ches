@@ -114,6 +114,8 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     vcs.to-tab                     VCS: move to a tab
     vcs.to-split                   VCS: move to the split
     vcs.close                      VCS: close
+    vcs.commit-finish              VCS: finish commit
+    vcs.commit-abort               VCS: abort commit
     source.restart                 Restart diagnostic source
     document.lines                 Search current document lines
     project.contents               Search project contents

@@ -130,14 +130,18 @@ val views : t -> View_registry.t
     leaves it without an allocation, or it is an inactive tab. *)
 val view_visible : t -> Ches_tile.View_id.t -> bool
 
-(** A view's title (its spec's), which also labels its tab. *)
+(** A view's title (its spec's), for notices. *)
 val view_title : t -> Ches_tile.View_id.t -> string
+
+(** A view tab's label in the strip and status: its adapter's
+    {!View_registry.Adapter.t.label} in its current state, else its title. *)
+val tab_label : t -> Ches_tile.View_id.t -> string
 
 (** The tab strip: the session's file tabs and the views placed [Tab], in order. *)
 val tab_entries : t -> Tab_strip.Entry.t list
 
 (** {!tab_entries} as drawn, in the top strip or the status rows: a file's label and
-    flags, or a view's title. Exactly one is active when any is: the active view
+    flags, or a view's {!tab_label}. Exactly one is active when any is: the active view
     tab, else the session's active file. *)
 val tab_items : t -> Tab_strip.Item.t list
 
@@ -166,18 +170,31 @@ val help : t -> Help_tile.t option
 val help_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 
 (** A registered view's question ({!View_registry.Ask}), asked on the single float
-    slot over the view that asked when its outcome carries one: a confirmation or a
-    prompt, while open (it is then focused). The view is not left meanwhile. An
-    answer closes the float, refocuses the view (or returns to the document when it
-    is gone) and performs the action the view named for it. A question that cannot
-    fit is refused with a notice; one whose float loses its room or its view, or is
-    left another way (another float, a return to the document), is withdrawn with
-    nothing run. *)
+    slot over the view that asked when its outcome carries one: a confirmation, a
+    prompt or a popup, while open (it is then focused). The view is not left
+    meanwhile. An answer closes the float, refocuses the view (or returns to the
+    document when it is gone) and performs the action the view named for it. A
+    question that cannot fit is refused with a notice ("<Title> cannot fit; needs at
+    least 20 columns and 4 rows; nothing ran"); one whose float loses its room or its
+    view, or is left another way (another float, a return to the document), is
+    withdrawn with nothing run ("<Title> closed; nothing ran" where it closed
+    itself). Leader workspace keys work in all three; paste is rejected except in
+    the prompt. *)
 val confirm : t -> Confirm_tile.t option
 
 val confirm_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 val prompt : t -> Prompt_tile.t option
 val prompt_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+
+(** The popup float ({!Popup_tile}), while open. It is focused, except while [?]
+    help covers it ({!help}, whose origin is then {!Popup_tile.id}); closing help
+    refocuses the popup with its switches as they were. Help goes with a withdrawn
+    popup. *)
+val popup : t -> Popup_tile.t option
+
+(** The open popup's centered floating shell; [None] when closed or unfit. Help over
+    the popup has its own ({!help_layout}). *)
+val popup_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 
 (** Provider assembly boundary (also used by the production frontend).
     Only one transient float exists. Refusal calls [release]; all closing paths
@@ -411,7 +428,17 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
 
     A view's outcome may open a file ({!View_registry.Outcome.t.open_file}): as a
     picker would, the file tab replaces an active view tab and focus returns to the
-    editor area, which beside a split view is the other pane.
+    editor area, which beside a split view is the other pane. With
+    [Location.contents] the file is written first (refused while its buffer is
+    dirty; a retained clean buffer is reloaded). It may save retained buffers before
+    its jobs run ({!View_registry.Outcome.t.save}) and dispose of files it handed out
+    ({!View_registry.Outcome.t.dispose}): their buffers closed, the files deleted,
+    and, when the user was in one, focus given to the view where it is placed.
+
+    [Request_view] ([Space g c], [Space g a]) signals a named request to a view,
+    focused or not ({!View_registry.Signal.t.Request}); a view that is not installed
+    gives its notice, one that ignores the request says ["<Title>: nothing to do for
+    <request>"], on the feedback line (and in the focused view's or float's footer).
 
     It may ask for open-buffer reconciliation ({!View_registry.Outcome.t.reconcile}),
     from a key or a signal: the session rereads the retained file buffers within
@@ -419,6 +446,9 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     moving focus or leaving a view tab (buffer ids, hence scrolls, are unchanged).
     Every action the view performs gets a {!View_registry.Context.t} built from the
     session with the active buffer's latest state.
+
+    [Place_view] without a view ([Space s t/s/b/h]) typed in help, a question or a
+    popup over a view moves that view.
 
     {2 View-local commands and help}
 

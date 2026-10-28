@@ -314,6 +314,16 @@ let default =
         ~keywords:[ "git"; "hide" ]
         (Place_view { view = Some vcs; placement = Hidden })
     ; view
+        ~id:"vcs.commit-finish"
+        ~title:"VCS: finish commit"
+        ~keywords:[ "git"; "commit"; "message"; "amend" ]
+        (Request_view { view = vcs; request = "commit-finish" })
+    ; view
+        ~id:"vcs.commit-abort"
+        ~title:"VCS: abort commit"
+        ~keywords:[ "git"; "commit"; "message"; "cancel" ]
+        (Request_view { view = vcs; request = "commit-abort" })
+    ; view
         ~id:"source.restart"
         ~title:"Restart diagnostic source"
         ~keywords:[ "checker"; "lsp"; "diagnostics" ]

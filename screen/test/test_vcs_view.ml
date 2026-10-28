@@ -83,7 +83,7 @@ let%expect_test "wide: lists beside the diff, which follows the selection" =
     let t = run env (create env) " vx" in
     screen env t);
   [%expect {|
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 10cf1ae                    │ 0 Diff: none                                             │|
     │                                       │ No diff for this row                                     │|
@@ -106,7 +106,7 @@ let%expect_test "wide: lists beside the diff, which follows the selection" =
     │   10cf1ae First                       │                                                          │|
     │                                       │                                                          │|
     ╰─ Files 1/7 ──────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
     |}]
 ;;
@@ -248,7 +248,7 @@ let%expect_test "hidden, the view runs nothing; shown, it detects, refreshes and
     Files: header untracked; diff no diff
     ran: [diff g1.3]
     Files: untracked "new.txt"; diff (Untracked new.txt), 1 file(s)
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 10cf1ae                    │ 0 Diff: Untracked: new.txt                               │|
     │                                       │ diff --git a/new.txt b/new.txt                           │|
@@ -271,7 +271,7 @@ let%expect_test "hidden, the view runs nothing; shown, it detects, refreshes and
     │   10cf1ae First                       │                                                          │|
     │                                       │                                                          │|
     ╰─ Files 2/7 ──────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
     |}]
 ;;
@@ -332,7 +332,7 @@ let%expect_test "stacked and single frames, in both focuses" =
     let t = run env t "<Tab>" in
     screen env t);
   [%expect {|
-     1:a.txt [2:VCS]                                            |
+     1:a.txt [2:VCS: main]                                      |
     ╭─ VCS: work (main) ───────────────────────────────────────╮|
     │ Head: main 10cf1ae                                       │|
     │                                                          │|
@@ -371,12 +371,12 @@ let%expect_test "stacked and single frames, in both focuses" =
     │                                                          │|
     │                                                          │|
     ╰─ Files 4/7 ──────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                    |
+     NORMAL  VCS: main VCS focused                              |
     cursor: none
-     1:a.txt [2:VCS]                                            |
+     1:a.txt [2:VCS: main]                                      |
     ╭─ VCS: work (main) ───────────────────────────────────────╮|
     │ Head: main 10cf1ae                                       │|
-     1:a.txt [2:VCS]                                            |
+     1:a.txt [2:VCS: main]                                      |
     ╭─ VCS: work (main) ───────────────────────────────────────╮|
     │  0 Diff: Unstaged: a.txt                                 │|
     │  diff --git a/a.txt b/a.txt                              │|
@@ -389,9 +389,9 @@ let%expect_test "stacked and single frames, in both focuses" =
     │  +TWO                                                    │|
     │   three                                                  │|
     ╰─ Diff 1-9/10 ────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                    |
+     NORMAL  VCS: main VCS focused                              |
     cursor: 3,3 Block
-     1:a.txt [2:VCS]                                            |
+     1:a.txt [2:VCS: main]                                      |
     ╭─ VCS: work (main) ───────────────────────────────────────╮|
     │ Head: main 10cf1ae                                       │|
     │ 1 Files (4)                                              │|
@@ -404,7 +404,7 @@ let%expect_test "stacked and single frames, in both focuses" =
     │ 3 Commits (1)                                            │|
     │ > - Recent commits (1)                                   │|
     ╰─ Files 4/7 ──────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                    |
+     NORMAL  VCS: main VCS focused                              |
     cursor: none
     |}]
 ;;
@@ -419,7 +419,7 @@ let%expect_test "the command log, on and off" =
     let t = run env t "@" in
     printf "log visible: %b\n" (Vcs_view.log_visible (state t)));
   [%expect {|
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 10cf1ae                    │ 0 Diff: Unstaged: a.txt                                  │|
     │                                       │ diff --git a/a.txt b/a.txt                               │|
@@ -442,7 +442,7 @@ let%expect_test "the command log, on and off" =
     │ [exit 0] git log -z --no-color --no-show-signature --max-count=200 --format=%H%x00%P%x00%an%x00> │|
     │                                                                                                  │|
     ╰─ Files 4/7 ──────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
     g1.1 rev-parse: exit 0
     g1.2 status: exit 0
@@ -522,7 +522,7 @@ let%expect_test "panel and focus keys: 1 2 3 0 Tab Escape, moves, folds, Enter" 
     j      Files: header staged; diff (Staged()), 2 file(s)
     <CR>   Files: header staged; diff (Staged()), 2 file(s)
     2j     Branches: local "main"; diff no diff
-    notice: VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
     3j<CR> Diff (follows Commits): recent "10cf1aeab695c84699dfd610ebd22b42a8e06666"; diff (Commit 10cf1aeab695c84699dfd610ebd22b42a8e06666), 3 file(s)
     |}]
 ;;
@@ -608,6 +608,7 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     x        discard         Discard the file's or section's changes; confirmed
     S        stage-all       Stage all changes (not conflicts)
     U        unstage-all     Unstage all changes
+    c        commit          Commit, amend or extend (the commit popup)
     y        copy            Copy the file's path
     j        next            Select next item
     k        previous        Select previous item
@@ -627,6 +628,7 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     U        unstage-all     Unstage all changes
     ]        next-hunk       Next hunk
     [        previous-hunk   Previous hunk
+    c        commit          Commit, amend or extend (the commit popup)
     j        cursor-down     Move down a row
     k        cursor-up       Move up a row
     w        word-forward    Move to the next word
@@ -709,7 +711,7 @@ let%expect_test "the diff follows the selection across files, headers and commit
      7|+TWO
      8| three
      9|+four
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 10cf1ae                    │ 0 Diff: Commit 10cf1ae                                   │|
     │                                       │ commit 10cf1aeab695c84699dfd610ebd22b42a8e06666          │|
@@ -732,7 +734,7 @@ let%expect_test "the diff follows the selection across files, headers and commit
     │                                       │ diff --git a/b.txt b/b.txt                               │|
     │                                       │ new file mode 100644                                     │|
     ╰─ Commits 2/2 ────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
     |}]
 ;;
@@ -804,7 +806,7 @@ let%expect_test "padding: a blank column each side of the diff, blank rows betwe
     printf "%s\n" (diff_cursor t);
     screen env t);
   [%expect {|
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 0e161fa                    │ 0 Diff: Untracked: wide.txt                              │|
     │                                       │ diff --git a/wide.txt b/wide.txt                         │|
@@ -827,10 +829,10 @@ let%expect_test "padding: a blank column each side of the diff, blank rows betwe
     │   0e161fa First                       │                                                          │|
     │                                       │                                                          │|
     ╰─ Files 2/2 ──────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
     line 6 col 70
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 0e161fa                    │ 0 Diff: Untracked: wide.txt                              │|
     │                                       │ diff --git a/wide.txt b/wide.txt                         │|
@@ -853,7 +855,7 @@ let%expect_test "padding: a blank column each side of the diff, blank rows betwe
     │   0e161fa First                       │                                                          │|
     │                                       │                                                          │|
     ╰─ Diff 1-8/8 ─────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: 57,10 Block
     |}]
 ;;
@@ -1053,7 +1055,7 @@ let%expect_test "a conflict: the section, its combined diff, conflict markers, h
     print_diff t);
   [%expect {|
     git merge -q other: exit 1
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 1d0798b                    │ 0 Diff: Conflicted: aa.txt, du.txt, ud.txt, uu.txt       │|
     │ Merging 1cca8e7                       │ diff --cc aa.txt                                         │|
@@ -1076,7 +1078,7 @@ let%expect_test "a conflict: the section, its combined diff, conflict markers, h
     │   1d0798b main                        │ ++=======                                                │|
     │                                       │ + theirs                                                 │|
     ╰─ Files 1/5 ──────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
      0|diff --cc aa.txt
      1|index b19a1e9,950b81b..0000000
@@ -1133,7 +1135,7 @@ let%expect_test "a rebase in progress, then a detached HEAD" =
     │ Rebasing main onto 1cca8e7            │ diff --cc aa.txt                                         │|
     │                                       │ index 950b81b,b19a1e9..0000000                           │|
     │ 1 Files (4)                           │ --- a/aa.txt                                             │|
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: 7b0842b]                                                                           |
     ╭─ VCS: work (detached at 7b0842b) ────────────────────────────────────────────────────────────────╮|
     │ Head: detached at 7b0842b             │ 0 Diff                                                   │|
     │                                       │                                                          │|
@@ -1163,7 +1165,7 @@ let%expect_test "upstreams: ahead and behind, in sync, gone" =
     let t = run env t "gr" in
     top env t 4);
   [%expect {|
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 5cd767d                    │ 0 Diff: none                                             │|
     │ Upstream: origin/main, ahead 1, behin>│ No diff for this row                                     │|
@@ -1182,9 +1184,9 @@ let%expect_test "upstreams: ahead and behind, in sync, gone" =
     │ > - Recent commits (2)                │                                                          │|
     │                                       │                                                          │|
     ╰─ Branches 1/4 ───────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: doomed]                                                                            |
     ╭─ VCS: work (doomed) ─────────────────────────────────────────────────────────────────────────────╮|
     │ Head: doomed 5cd767d                  │ 0 Diff: none                                             │|
     │ Upstream: origin/doomed (gone)        │ No diff for this row                                     │|
@@ -1224,7 +1226,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      NORMAL  VCS VCS focused                                                                            |
     cursor: none
     (Not_a_repository(cwd $DIR/plain))
-    notice: VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
     g r refresh
     @ toggle-log
     q leave
@@ -1240,7 +1242,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
     │                                                                                                  │|
     │                                                                                                  │|
     ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS: s/u/x stage/unstage/discard, 1/2/3 panels, Tab diff, g r refresh, @ log, q leave> |
+     NORMAL  VCS VCS: s/u/x stage/unstage/discard, c commit, 1/2/3 panels, Tab diff, g r refresh, @ lo> |
     cursor: none
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: no work tree ──────────────────────────────────────────────────────────────────────────────╮|
@@ -1419,7 +1421,7 @@ let%expect_test "a truncated file, and a diff cut at its output limit" =
     print_diff t);
   [%expect {|
     2255 lines
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main c06e27f                    │ 0 Diff: Unstaged: huge.txt                               │|
     │ 1 Files (1)                           │  line 2492                                               │|
@@ -1432,7 +1434,7 @@ let%expect_test "a truncated file, and a diff cut at its output limit" =
     │ 3 Commits (1)                         │  line 2498                                               │|
     │ > - Recent commits (1)                │ ... 50 more hunks (400 lines) not shown                  │|
     ╰─ Diff 2247-2255/2255 ────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: 42,11 Block
     refresh g1.5
     Files: unstaged "huge.txt"; diff (Unstaged(huge.txt)), 1 file(s)
@@ -1486,7 +1488,7 @@ let%expect_test "paths with spaces, unicode and control bytes are escaped for di
     let t = run env t "<Tab>Gy" in
     ignore (clipboard t : Ui_state.t));
   [%expect {|
-     1:a.txt [2:VCS]                                                                                    |
+     1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main c17d7cb                    │ 0 Diff: Untracked: ctl^A^[.txt                           │|
     │ 1 Files (4)                           │ diff --git "a/ctl\001\033.txt" "b/ctl\001\033.txt"       │|
@@ -1501,7 +1503,7 @@ let%expect_test "paths with spaces, unicode and control bytes are escaped for di
     │ > - Recent commits (1)                │                                                          │|
     │   c17d7cb One                         │                                                          │|
     ╰─ Files 2/5 ──────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS focused                                                                            |
+     NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
      0|diff --git "a/ctl\001\033.txt" "b/ctl\001\033.txt"
      1|new file mode 100644

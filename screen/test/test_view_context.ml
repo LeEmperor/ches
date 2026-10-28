@@ -95,8 +95,9 @@ module Keeper = struct
     ; signal =
         (fun _ -> function
           | Job event -> Some (Event event)
-          | Shown | Saved _ -> None)
+          | Shown | Saved _ | Request _ -> None)
     ; text_area = (fun _ ~rows:_ ~width:_ -> None)
+    ; label = (fun _ -> None)
     ; render =
         (fun t _ ~hotkey_hints:_ ~focused:_ ~notice ~pending ~width ~rows:_ ->
           { title = "Keeper"

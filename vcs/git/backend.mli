@@ -11,7 +11,7 @@
     - Commits (["commits"]): one section ["recent"], keyed by full hash.
 
     Actions arrive with the phases that need them: stage/unstage/discard in 3
-    ({!action}), line staging in 4 ({!Target.t.Lines}), commit in 5,
+    ({!action}), line staging in 4 ({!Target.t.Lines}), commit in 5 ({!Commit}),
     push/pull/fetch/checkout in 6. *)
 
 open! Core
@@ -111,7 +111,7 @@ module Target : sig
   [@@deriving sexp_of]
 end
 
-(** The phase 3 and 4 actions. Line staging (phase 4) is a {!Target.t.Lines}
+(** The phase 3 to 5 actions. Line staging (phase 4) is a {!Target.t.Lines}
     target, not a new action. *)
 type action =
   | Stage of Target.t (** [s] *)
@@ -119,6 +119,12 @@ type action =
   | Discard of Target.t (** [x] *)
   | Stage_all (** [S]: every Unstaged and Untracked item (not Conflicted). *)
   | Unstage_all (** [U]: every Staged item. *)
+  | Finish_commit of
+      { kind : Commit.Kind.t
+      ; flags : string list (** The popup's enabled switches ({!Commit.flags}). *)
+      ; message_file : string (** Absolute: {!Commit.Prepared.t.message_file}. *)
+      } (** [Space g c] in the message buffer (phase 5). *)
+  | Extend of { flags : string list } (** [e] in the commit popup (phase 5). *)
 [@@deriving sexp_of]
 
 (** Contract details beyond {!Ches_vcs.Backend.S}:
@@ -351,7 +357,26 @@ type action =
       - [Stage] in Staged: ["<path> is already staged; nothing ran"]; [Unstage] in
         Unstaged: ["<path> is not staged; nothing ran"].
     A selection that no longer matches the index or work tree (the diff is stale)
-    fails at the [--check] step and changes nothing. *)
+    fails at the [--check] step and changes nothing.
+
+    {3 Commits (phase 5)}
+
+    [Finish_commit { kind; flags; message_file }] and [Extend { flags }] are refused
+    with {!Commit.refusal} of [snapshot.status] and [Choice.Message { kind; flags }]
+    / [Choice.Extend { flags }] (an unknown flag, conflicted files, amending an
+    unborn branch, nothing staged without [--allow-empty]). Otherwise [Run], one step
+    [Run (Cli.mutate ~cwd:repo.root args)], [rewrites_worktree = false] (the view
+    still reconciles open buffers afterwards: hooks may rewrite files), no
+    [--literal-pathspecs] (no paths):
+    - [Commit]: [-c core.commentChar=# commit --cleanup=strip <flags> -F
+      <message_file>]. Title ["Commit"].
+    - [Amend]: [-c core.commentChar=# commit --cleanup=strip --amend <flags> -F
+      <message_file>]. Title ["Amend HEAD"].
+    - [Extend]: [commit --amend --no-edit <flags>]. Title ["Extend HEAD"].
+    [<flags>] in {!Commit.flags} order. [-c core.commentChar=#] makes
+    [--cleanup=strip] remove the template's comments whatever the user's
+    [core.commentChar]; [-F] and [--no-edit] never start an editor. An empty message
+    after stripping, or a rejecting hook, fails the step (git's stderr says why). *)
 include
   Ches_vcs.Backend.S
   with type Repository.t = Repository.t

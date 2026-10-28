@@ -32,3 +32,7 @@ val read : string -> Loaded.t Or_error.t
 (** Replaces the contents of [path] with exactly the bytes of the text, creating the
     file if needed. Fails if the parent directory does not exist. *)
 val write : string -> Text_buffer.t -> unit Or_error.t
+
+(** Deletes the file at [path] (a symlink itself, not its target). Nothing there is
+    [Ok ()]; a directory, or any other failure, is an error. *)
+val remove : string -> unit Or_error.t

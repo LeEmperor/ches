@@ -37,7 +37,12 @@ for general distribution.
   selection, and a command log. `s` `u` `x` stage, unstage and discard the selected
   file or section, the hunk at the diff's cursor, or the lines of a Visual selection
   in the diff (`S` `U`: everything; `]` `[` move between hunks). Discards ask first (only `y` confirms) and are refused while
-  a file in the repository has unsaved changes; open buffers reload afterwards. `e`
+  a file in the repository has unsaved changes; open buffers reload afterwards. `c`
+  opens a Magit-style commit popup (`-n` no hooks, `-s` signoff, `-e` allow empty;
+  `c` commit, `a` amend, `e` extend HEAD): commit and amend open the message as a
+  file tab, `Space g c` commits it and `Space g a` aborts, and on success the tab
+  closes and you are back in the view; a rejecting hook or an empty message keeps it
+  open with git's reason. `e`
   in the diff opens the file at that line. Git runs in the background, never
   prompting on the terminal; saving a file in the repository refreshes it.
 
@@ -95,6 +100,7 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space s f/x/c/+/-` | Split: focus the other pane / swap sides / close the split view / grow / shrink the view's share (a count repeats `+`/`-`) |
 | `Space g g` / `Space g f` | Open the VCS view as a tab, or focus it where it is / toggle focus with the editor |
 | `Space g t/s/h` | Move the VCS view to a tab / the split, or close it |
+| `Space g c` / `Space g a` | In a commit message opened from the VCS view (`c`): commit / abort |
 
 See the [editor reference](docs/editor_reference.md) for the complete keybindings,
 editing semantics, workspace controls, and diagnostic-source behavior.
@@ -220,7 +226,8 @@ acceptance remain separate and unperformed.
   coalesced and use incremental synchronization when supported. The synthetic
   checker retains per-file runtimes. No session persistence or multiple editor groups.
 - **Version control:** the VCS view stages, unstages and discards files, hunks and
-  the lines of a Visual selection (commits, branches and remotes are planned); it
+  the lines of a Visual selection, and commits, amends and extends HEAD (branches and
+  remotes are planned; no merge message pre-fill or switch memory); it
   refreshes on open,
   `g r`, saves and its own commands, never by watching files.
 - **Editing and tooling:** literal search, an unnamed

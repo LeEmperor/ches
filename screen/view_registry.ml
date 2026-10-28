@@ -27,6 +27,10 @@ module Ask = struct
         ; accept : string -> 'action
         ; cancel : 'action option
         }
+    | Popup of
+        { popup : 'action Ches_vcs.Popup.t
+        ; cancel : 'action option
+        }
 
   module Question = struct
     type t =
@@ -39,11 +43,13 @@ module Ask = struct
           ; initial : string
           ; validate : string -> string option
           }
+      | Popup of unit Ches_vcs.Popup.t
   end
 
   let question : _ t -> Question.t = function
     | Confirm { title; message; _ } -> Confirm { title; message }
     | Prompt { title; initial; validate; _ } -> Prompt { title; initial; validate }
+    | Popup { popup; _ } -> Popup (Ches_vcs.Popup.map popup ~f:(fun _ -> ()))
   ;;
 end
 
@@ -52,6 +58,10 @@ module Answer = struct
     | Yes
     | No
     | Text of string
+    | Choose of
+        { key : char
+        ; enabled : string list
+        }
   [@@deriving sexp_of, equal]
 end
 
@@ -59,6 +69,7 @@ module Location = struct
   type t =
     { path : string
     ; line : int option
+    ; contents : string option
     }
   [@@deriving sexp_of, equal]
 end
@@ -74,11 +85,18 @@ module Context = struct
     [@@deriving sexp_of, equal]
   end
 
-  type t = File.t list Lazy.t
+  type t =
+    { files : File.t list Lazy.t
+    ; active : File.t option Lazy.t
+    }
 
-  let create files = Lazy.from_fun files
-  let empty = lazy []
-  let files = Lazy.force
+  let create ?(active = fun () -> None) files =
+    { files = Lazy.from_fun files; active = Lazy.from_fun active }
+  ;;
+
+  let empty = { files = lazy []; active = lazy None }
+  let files t = Lazy.force t.files
+  let active t = Lazy.force t.active
 
   let dirty_within t ~root =
     List.filter (files t) ~f:(fun (file : File.t) ->
@@ -95,6 +113,8 @@ module Outcome = struct
     ; open_file : Location.t option
     ; jobs : Ches_vcs.Job.t list
     ; reconcile : string list
+    ; save : string list
+    ; dispose : string list
     ; ask : 'ask option
     }
 
@@ -105,10 +125,12 @@ module Outcome = struct
         ?open_file
         ?(jobs = [])
         ?(reconcile = [])
+        ?(save = [])
+        ?(dispose = [])
         ?ask
         controller
     =
-    { controller; effect; notice; return; open_file; jobs; reconcile; ask }
+    { controller; effect; notice; return; open_file; jobs; reconcile; save; dispose; ask }
   ;;
 end
 
@@ -117,6 +139,7 @@ module Signal = struct
     | Shown
     | Saved of string list
     | Job of Ches_vcs.Event.t
+    | Request of string
   [@@deriving sexp_of]
 end
 
@@ -141,6 +164,7 @@ module Adapter = struct
     ; commands : 'state -> Ches_tile.Local_command.t list
     ; signal : 'state -> Signal.t -> 'action option
     ; text_area : 'state -> rows:int -> width:int -> Geometry.Rect.t option
+    ; label : 'state -> string option
     ; render
       :  'state
       -> Ches_app.Controller.t
@@ -314,6 +338,12 @@ let text_area t id ~rows ~width =
     | Unavailable _ -> None)
 ;;
 
+let label t id =
+  Option.bind (find_installed t id) ~f:(function
+    | Installed { adapter; state; _ } -> adapter.label state
+    | Unavailable _ -> None)
+;;
+
 let commands t id =
   Option.value_map (find_installed t id) ~default:[] ~f:(function
     | Installed { adapter; state; _ } -> adapter.commands state
@@ -416,10 +446,20 @@ let answer t id (answer : Answer.t) ~controller ~context ~rows ~width =
       match pending, answer with
       | None, _ -> `Keep
       | Some (Confirm { yes; _ }), Yes -> `Perform (Some yes)
-      | Some (Confirm { no; _ }), (No | Text _) -> `Perform no
+      | Some (Confirm { no; _ }), (No | Text _ | Choose _) -> `Perform no
       | Some (Prompt { validate; accept; _ }), Text text ->
         if Option.is_some (validate text) then `Keep else `Perform (Some (accept text))
-      | Some (Prompt { cancel; _ }), (Yes | No) -> `Perform cancel
+      | Some (Prompt { cancel; _ }), (Yes | No | Choose _) -> `Perform cancel
+      | Some (Popup { popup; cancel }), Choose { key; enabled } ->
+        (match
+           List.find popup.actions ~f:(fun (action : _ Ches_vcs.Popup.Action.t) ->
+             Char.equal action.key key)
+         with
+         | Some action ->
+           `Perform
+             (Some (action.run ~enabled:(Ches_vcs.Popup.initial popup ~enabled).enabled))
+         | None -> `Perform cancel)
+      | Some (Popup { cancel; _ }), (Yes | No | Text _) -> `Perform cancel
     in
     (match action with
      | `Keep -> t, None

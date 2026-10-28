@@ -86,6 +86,10 @@ type t =
       { view : View_id.t
       ; command : string
       }
+  | Request_view of
+      { view : View_id.t
+      ; request : string
+      }
   | Restart_source
   | Kill_source
   | Toggle_zen
@@ -142,6 +146,7 @@ let scale t ~count =
   | Swap_split
   | Close_split
   | Run_view_command _
+  | Request_view _
   | Restart_source
   | Kill_source
   | Toggle_zen
