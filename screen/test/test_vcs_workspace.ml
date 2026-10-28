@@ -534,3 +534,158 @@ let%expect_test "s on a conflicted file marks it resolved; u and x are refused" 
       log: [exit 0] git --literal-pathspecs add --all -- a.txt
       |}])
 ;;
+
+(* {2 Phase 4: Visual s u x on selected lines, with git's own plans} *)
+
+(* The diff panel's text, numbered, and the line the cursor is on. *)
+let diff_text t =
+  let view = Option.value_exn (Vcs_view.text_view (vcs t)) in
+  let text = Ches_tile.Text_view.text view in
+  let cursor =
+    String.count (String.prefix text (Ches_tile.Text_view.cursor view)) ~f:(Char.equal '\n')
+  in
+  List.iteri (String.split_lines text) ~f:(fun i line ->
+    printf "%s%2d|%s\n" (if i = cursor then "> " else "  ") i line)
+;;
+
+let%expect_test "V over two of three added lines, then s stages exactly those; u \
+                 unstages a line of the staged diff"
+  =
+  Fixture.with_repo (fun repo ->
+    Fixture.write repo "a.txt" "one\ntwo\n";
+    ignore (Fixture.commit_all repo "first" : string);
+    Fixture.write repo "a.txt" "one\nA\nB\nC\ntwo\n";
+    let t = act repo (create ~cwd:repo.work (Fixture.path repo "a.txt")) " gg" in
+    let t = act repo (act repo t "j") "<Tab>6jVj" in
+    let t = act repo t "s" in
+    outcome repo t;
+    print_string (Fixture.git repo [ "diff"; "--cached" ]);
+    (* What is left unstaged; the cursor is on its hunk. *)
+    diff_text t;
+    [%expect {|
+      Diff at ((Item(section unstaged)(key a.txt)))
+      status: MM a.txt
+      diff --git a/a.txt b/a.txt
+      index 814f4a4..c4ac876 100644
+      --- a/a.txt
+      +++ b/a.txt
+      @@ -1,2 +1,4 @@
+       one
+      +A
+      +B
+       two
+         0|diff --git a/a.txt b/a.txt
+         1|index c4ac876..ad24016 100644
+         2|--- a/a.txt
+         3|+++ b/a.txt
+      >  4|@@ -1,4 +1,5 @@
+         5| one
+         6| A
+         7| B
+         8|+C
+         9| two
+      |}];
+    (* The staged diff: unstage B. *)
+    let t = act repo t "<Tab>G<Tab>" in
+    diff_text t;
+    let t = act repo t "7jVu" in
+    outcome repo t;
+    print_string (Fixture.git repo [ "diff"; "--cached" ]);
+    mutations t;
+    [%expect {|
+      >  0|diff --git a/a.txt b/a.txt
+         1|index 814f4a4..c4ac876 100644
+         2|--- a/a.txt
+         3|+++ b/a.txt
+         4|@@ -1,2 +1,4 @@
+         5| one
+         6|+A
+         7|+B
+         8| two
+      Diff at ((Item(section staged)(key a.txt)))
+      status: MM a.txt
+      diff --git a/a.txt b/a.txt
+      index 814f4a4..d0ef1c7 100644
+      --- a/a.txt
+      +++ b/a.txt
+      @@ -1,2 +1,3 @@
+       one
+      +A
+       two
+      log: [exit 0] git --literal-pathspecs apply --cached --whitespace=nowarn --check
+      log: [exit 0] git --literal-pathspecs apply --cached --whitespace=nowarn
+      log: [exit 0] git --literal-pathspecs apply --cached --reverse --whitespace=nowarn --check
+      log: [exit 0] git --literal-pathspecs apply --cached --reverse --whitespace=nowarn
+      |}])
+;;
+
+let%expect_test "x on lines across two hunks asks, and y discards them with one patch" =
+  Fixture.with_repo (fun repo ->
+    let lines = List.init 12 ~f:(fun i -> sprintf "line %d\n" (i + 1)) in
+    Fixture.write repo "a.txt" (String.concat lines);
+    ignore (Fixture.commit_all repo "first" : string);
+    Fixture.write repo "a.txt"
+      (String.concat
+         (List.mapi lines ~f:(fun i line ->
+            if i = 0 || i = 11 then String.uppercase line else line)));
+    let t = act repo (create ~cwd:repo.work (Fixture.path repo "a.txt")) " gg" in
+    (* From "-line 1" to "-line 12": three changes, not "+LINE 12". *)
+    let t = act repo (act repo t "j") "<Tab>5jV9j" in
+    let t = act repo t "x" in
+    outcome repo t;
+    let t = act repo t "y" in
+    outcome repo t;
+    print_string (Fixture.git repo [ "diff" ]);
+    mutations t;
+    [%expect {|
+      confirm: Discard lines: Discard 3 lines of a.txt? Their unstaged changes are lost.
+      Diff at ((Item(section unstaged)(key a.txt)))
+      status:  M a.txt
+      message: Reloaded from disk: a.txt
+      Diff at ((Item(section unstaged)(key a.txt)))
+      status:  M a.txt
+      diff --git a/a.txt b/a.txt
+      index 624b469..2072f2b 100644
+      --- a/a.txt
+      +++ b/a.txt
+      @@ -10,3 +10,4 @@ line 9
+       line 10
+       line 11
+       line 12
+      +LINE 12
+      log: [exit 0] git --literal-pathspecs apply --reverse --whitespace=nowarn --check
+      log: [exit 0] git --literal-pathspecs apply --reverse --whitespace=nowarn
+      |}])
+;;
+
+let%expect_test "lines of two files, and an untracked file's lines, are refused" =
+  with_repo (fun repo ->
+    Fixture.write repo "b.txt" "BEE\n";
+    Fixture.write repo "new.txt" "new\n";
+    let t = act repo (create ~cwd:repo.work (Fixture.path repo "a.txt")) " gg" in
+    (* Rows: untracked header, new.txt, unstaged header (both files' diff). *)
+    let t = act repo (act repo t "jj") "<Tab>VG" in
+    let t = act repo t "s" in
+    outcome repo t;
+    let t = act repo (act repo t "<Tab>k") "<Tab>GV" in
+    let t = act repo t "s" in
+    outcome repo t;
+    let t = act repo t "u" in
+    outcome repo t;
+    let t = act repo t "x" in
+    outcome repo t;
+    [%expect {|
+      notice: Select lines within one file; nothing ran
+      Diff at ((Header unstaged))
+      status:  M a.txt,  M b.txt, ?? new.txt
+      notice: Stage the whole untracked file first (s on its row); nothing ran
+      Diff at ((Item(section untracked)(key new.txt)))
+      status:  M a.txt,  M b.txt, ?? new.txt
+      notice: new.txt is not staged; nothing ran
+      Diff at ((Item(section untracked)(key new.txt)))
+      status:  M a.txt,  M b.txt, ?? new.txt
+      notice: Stage the whole untracked file first (s on its row); nothing ran
+      Diff at ((Item(section untracked)(key new.txt)))
+      status:  M a.txt,  M b.txt, ?? new.txt
+      |}])
+;;

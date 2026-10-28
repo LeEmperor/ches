@@ -93,6 +93,32 @@ val position_at : t -> int -> Position.t option
     [None] when it is not laid out (out of range, or a header-only file's hunks). *)
 val start_of : t -> file:int -> hunk:int option -> int option
 
+(** The diff lines a Visual selection touches (phase 4): one file and, per hunk,
+    its lines. *)
+module Span : sig
+  type t =
+    { file : int (** Index into [Diff.t.files]. *)
+    ; hunks : (int * int list) list
+    (** Hunk indices into that file's [hunks], ascending, each with the ascending
+        indices into its [lines] of every touched hunk line ([Added], [Removed],
+        [Context] and [No_newline] alike; {!Ches_vcs_git.Patch} ignores what is not a
+        change). A hunk whose only touched line is its [@@] line is not listed.
+        Empty when only the file's header lines, its [@@] lines, a submodule's note
+        or a truncation placeholder are touched. *)
+    }
+  [@@deriving sexp_of, equal]
+end
+
+(** The lines touched by the byte range [\[start, stop)] of {!text} (Text_view's
+    {!Ches_tile.Text_view.selection}): every line holding at least one byte of it,
+    its line feed counting as its own (an empty range touches the line holding
+    [start]). Lines outside any file (a commit's preamble, the cut note, an
+    {!of_message} text) are ignored. [Ok None] when no touched line belongs to a
+    file; [Ok (Some span)] when they all belong to one ([span.file], header lines
+    included); [Error `Several_files] when they belong to more than one, header
+    lines of a second file included. *)
+val span : t -> start:int -> stop:int -> (Span.t option, [ `Several_files ]) Result.t
+
 (** The byte offsets of every [@@] line, in order ([\]] and [\[] in the view). *)
 val hunk_starts : t -> int list
 

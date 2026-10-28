@@ -89,6 +89,11 @@ module Target = struct
         ; hunk : int
         ; selection : Patch.Selection.t
         }
+    | Lines of
+        { section : Section.t
+        ; file : Diff.File.t
+        ; hunks : (int * Patch.Selection.t) list
+        }
   [@@deriving sexp_of]
 end
 
@@ -827,12 +832,101 @@ let hunk_plan
                   (apply repository [ "--index"; "--reverse" ] patch)))))
 ;;
 
+let lines_plan
+  repository
+  snapshot
+  verb
+  (section : Section.t)
+  (file : Diff.File.t)
+  selections
+  : Decision.t
+  =
+  let path = Diff.File.path file in
+  let reverse =
+    match verb with
+    | Stage_verb -> false
+    | Unstage_verb | Discard_verb -> true
+  in
+  match section with
+  | Conflicted -> Refused (conflicted path)
+  | Untracked ->
+    (match verb with
+     | Unstage_verb -> refused "%s is not staged; nothing ran" path
+     | Stage_verb | Discard_verb ->
+       Refused "Stage the whole untracked file first (s on its row); nothing ran")
+  | Ignored -> file_plan repository snapshot verb section path
+  | Unstaged | Staged ->
+    (match Patch.changes file selections with
+     | Error error -> Refused (Error.to_string_hum error)
+     | Ok 0 -> Refused "No changes selected; nothing ran"
+     | Ok n ->
+       (match find_entry snapshot section path, Patch.hunks file selections ~reverse with
+        | None, _ -> refused "%s is no longer listed; refresh (g r); nothing ran" path
+        | Some _, Error error -> Refused (Error.to_string_hum error)
+        | Some entry, Ok patch ->
+          let lines = count ~noun:"line" n in
+          (match verb, section with
+           | Stage_verb, Unstaged ->
+             run
+               (sprintf "Stage %s of %s" lines path)
+               (apply repository [ "--cached" ] patch)
+           | Stage_verb, _ -> refused "%s is already staged; nothing ran" path
+           | Unstage_verb, Staged ->
+             run
+               (sprintf "Unstage %s of %s" lines path)
+               (apply repository [ "--cached"; "--reverse" ] patch)
+           | Unstage_verb, _ -> refused "%s is not staged; nothing ran" path
+           | Discard_verb, Unstaged ->
+             (match discard_unstaged entry with
+              | Either.Second left -> Refused left.refusal
+              | First _ ->
+                confirm
+                  ~title:"Discard lines"
+                  ~message:
+                    (if n = 1
+                     then
+                       sprintf "Discard 1 line of %s? Its unstaged change is lost." path
+                     else
+                       sprintf
+                         "Discard %s of %s? Their unstaged changes are lost."
+                         lines
+                         path)
+                  (sprintf "Discard %s of %s" lines path)
+                  (apply repository [ "--reverse" ] patch))
+           | Discard_verb, _ ->
+             (match discard_staged entry with
+              | Either.Second left -> Refused left.refusal
+              | First _ ->
+                let lines = count ~noun:"staged line" n in
+                confirm
+                  ~title:"Discard lines"
+                  ~message:
+                    (if n = 1
+                     then
+                       sprintf
+                         "Discard 1 staged line of %s? Its change is removed from the \
+                          index and the work tree and lost."
+                         path
+                     else
+                       sprintf
+                         "Discard %s of %s? Their changes are removed from the index and \
+                          the work tree and lost."
+                         lines
+                         path)
+                  (sprintf "Discard %s of %s" lines path)
+                  (apply repository [ "--index"; "--reverse" ] patch)))))
+;;
+
 let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : Decision.t =
   let target verb : Target.t -> Decision.t = function
     | File { section; path } -> file_plan repository snapshot verb section path
     | Section section -> section_plan repository snapshot verb section
-    | Hunk { section; file; hunk; selection } ->
-      hunk_plan repository snapshot verb section file ~hunk selection
+    | Hunk { section; file; hunk; selection = Whole } ->
+      hunk_plan repository snapshot verb section file ~hunk Whole
+    | Hunk { section; file; hunk; selection = Lines _ as selection } ->
+      lines_plan repository snapshot verb section file [ hunk, selection ]
+    | Lines { section; file; hunks } ->
+      lines_plan repository snapshot verb section file hunks
   in
   match action with
   | Stage t -> target Stage_verb t

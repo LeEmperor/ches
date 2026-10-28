@@ -75,6 +75,12 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   dirty or missing, in every `perform`) and `Outcome.reconcile` (reload clean
   buffers under a root from disk, mark deleted ones missing).
 
+**Done in VCS workspace phase 4 (2026-10-27):** line staging from a Visual selection.
+- Visual `s u x` in the diff build `Backend.Target.Lines` from
+  `Vcs_diff_text.span` of `Text_view.selection` (one file, every touched hunk line);
+  the backend applies one patch (`Patch.hunks`) for all of them. No new seams:
+  refusals keep the view's Visual selection, running or asking ends it.
+
 **What is not done:**
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.

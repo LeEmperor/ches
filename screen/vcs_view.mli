@@ -1,4 +1,4 @@
-(** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard), a registered view ({!View_registry}) over the
+(** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines), a registered view ({!View_registry}) over the
     git backend ([Ches_vcs_git.Backend], a {!Ches_vcs.Backend.S}). Lazygit's layout
     and Magit's context keys: the Files, Branches and Commits list panels beside a diff
     panel that follows the selection, a head summary above the lists, and a
@@ -40,7 +40,7 @@
     refresh is shown in the view (the last snapshot kept), a failed diff in the diff
     panel, each with its one-line message, and logged.
 
-    {2 Actions (phase 3)}
+    {2 Actions (phases 3 and 4)}
 
     [s] [u] [x] stage, unstage and discard; [S] [U] stage all and unstage all. In the
     Files panel they act on the selected row: an item is
@@ -53,9 +53,29 @@
     file ({!Ches_vcs.Diff.File.path}) in that section. A commit's diff, the preamble,
     notes outside any file, a loading or failed diff, give a [`Show] notice ("Nothing
     to stage here: a commit's diff", "No change at the cursor", "The diff is still
-    loading") and run nothing; in Visual, ["Staging selected lines is not supported
-    yet; nothing ran"] (phase 4 replaces it). [S] and [U] work from the Files panel
-    and the diff. The Branches and Commits panels leave all five unbound.
+    loading") and run nothing. [S] and [U] work from the Files panel and the diff.
+    The Branches and Commits panels leave all five unbound.
+
+    In Visual in the diff (characterwise or linewise; phase 4), [s] [u] [x] act on
+    the lines the selection touches ({!Vcs_diff_text.span} of
+    {!Ches_tile.Text_view.selection}: a line counts when any of its bytes is
+    selected): [Target.Lines { section; file; hunks }] with [hunks] the span's, each
+    hunk's indices as [Patch.Selection.Lines] (a hunk the selection covers may be
+    sent as [Whole]), so lines across several hunks of one file are one patch,
+    applied atomically. Header lines of that same file are ignored. Before
+    planning, with the same notices as above for a loading, failed or commit
+    diff: [Error `Several_files] gives [`Show] ["Select lines within one file;
+    nothing ran"], and [Ok None] (nothing of a file touched) ["No changes selected;
+    nothing ran"]; an empty [hunks] goes to the planner, which refuses it with the
+    same text (or the file's own refusal, e.g. a binary file). Everything after
+    planning is as for any action: refusals, the dirty-buffer refusal for discards,
+    the confirmation, the staging warning (the file's path), busy, logging and
+    reconciliation. Visual ends when the plan runs or its confirmation is asked
+    (whatever the answer); a refusal (a notice, before or from the planner, or the
+    dirty-buffer refusal) keeps the selection so it can be adjusted. After a line
+    action the diff cursor is anchored like a hunk action's, on the hunk with the
+    first touched hunk's index ([fst] of the first of [hunks]) in the refreshed
+    diff.
 
     The action goes to the backend's [plan] (the [?plan] given to {!create}, by
     default [Git.Backend.plan]) with the current repository and snapshot:
@@ -99,7 +119,7 @@
     section, else the previous, else the section's header, else the nearest
     section's header. Focus stays where it was.
 
-    The diff cursor after a hunk action: the view remembers the target, the file's
+    The diff cursor after a hunk (or line) action: the view remembers the target, the file's
     path and the hunk's index. When the next [Loaded] diff for the same target
     arrives, the cursor goes to the [@@] line of the hunk with that index in that
     file (the next hunk now that the acted one left), else the file's last hunk, else
@@ -112,8 +132,11 @@
 
     Local commands (help and palette) in the states where they work: [stage] ([s]),
     [unstage] ([u]), [discard] ([x]), [stage-all] ([S]), [unstage-all] ([U]) in the
-    Files panel and the diff while a snapshot is loaded; [next-hunk] ([\]]) and
-    [previous-hunk] ([\[]) in the diff. The hint mentions [s u x].
+    Files panel and the diff while a snapshot is loaded; in Visual in a diff of the
+    work tree or index, [stage] [unstage] [discard] are listed with descriptions
+    of the selected lines ([S U] keep working in Visual, on everything);
+    [next-hunk] ([\]]) and [previous-hunk] ([\[]) in the diff outside Visual.
+    The hint mentions [s u x].
 
     {2 Layout}
 

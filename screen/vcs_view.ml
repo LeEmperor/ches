@@ -1090,7 +1090,7 @@ type action =
   | Toggle_log
   | Leave
   | Act of Verb.t
-  | Act_on_lines (** [s u x] in Visual: phase 4. *)
+  | Act_on_lines of Verb.t (** [s u x] in Visual in the diff. *)
   | Submit of Submission.t (** A confirmed plan. *)
   | Next_hunk of
       { forward : bool
@@ -1130,7 +1130,9 @@ let interpret t (keys : Key.t list) : action Content_key.t =
      | [ key ], _ when is 'e' key -> Action Open_file
      | _, (_, [ key ]) when Option.is_some (Verb.of_key key) ->
        let verb = Option.value_exn (Verb.of_key key) in
-       if visual && Verb.targeted verb then Action Act_on_lines else Action (Act verb)
+       if visual && Verb.targeted verb
+       then Action (Act_on_lines verb)
+       else Action (Act verb)
      | _, (count, [ key ]) when (is ']' key || is '[' key) && not visual ->
        Action (Next_hunk { forward = is ']' key; count = Option.value count ~default:1 })
      | keys, _ -> Content_key.map (Text_view.interpret t.diff_view keys) ~f:(fun a -> Text a))
@@ -1269,6 +1271,35 @@ let action_of t (verb : Verb.t) : (B.action * Anchor.t option, string) Result.t 
                  , Some { Anchor.target; path; hunk } )))))
 ;;
 
+(* What Visual [s u x] act on: the lines of one file the diff's selection touches
+   (phase 4), anchored on the first touched hunk. [Error] is the notice instead. *)
+let lines_action_of t (verb : Verb.t) : (B.action * Anchor.t option, string) Result.t =
+  match t.diff with
+  | Loading _ -> Error "The diff is still loading"
+  | Empty | No_diff | Failed _ -> Error "No change at the cursor"
+  | Loaded (target, diff) ->
+    (match B.diff_section target, Text_view.selection t.diff_view with
+     | None, _ -> Error (sprintf "Nothing to %s here: a commit's diff" (Verb.word verb))
+     | Some _, None -> Error "No changes selected; nothing ran"
+     | Some section, Some (start, stop) ->
+       (match Vcs_diff_text.span t.diff_text ~start ~stop with
+        | Error `Several_files -> Error "Select lines within one file; nothing ran"
+        | Ok None -> Error "No changes selected; nothing ran"
+        | Ok (Some span) ->
+          (match List.nth diff.files span.file with
+           | None -> Error "No change at the cursor"
+           | Some file ->
+             let path = Diff.File.path file in
+             let hunks =
+               List.map span.hunks ~f:(fun (hunk, lines) ->
+                 hunk, Git.Patch.Selection.Lines lines)
+             in
+             Ok
+               ( Verb.action verb (Lines { section; file; hunks })
+               , Option.map (List.hd span.hunks) ~f:(fun (hunk, _) ->
+                   { Anchor.target; path; hunk }) ))))
+;;
+
 let join root path =
   if String.is_suffix root ~suffix:"/" then root ^ path else root ^ "/" ^ path
 ;;
@@ -1288,7 +1319,7 @@ let staged_keys t (action : B.action) =
   in
   match action with
   | Stage (File { path; _ }) -> [ path ]
-  | Stage (Hunk { file; _ }) -> [ Diff.File.path file ]
+  | Stage (Hunk { file; _ } | Lines { file; _ }) -> [ Diff.File.path file ]
   | Stage (Section section) -> keys [ section ]
   | Stage_all -> keys [ Unstaged; Untracked ]
   | Unstage _ | Discard _ | Unstage_all -> []
@@ -1415,7 +1446,36 @@ let perform t controller ~context ~rows ~width action =
       (match submit t submission with
        | Error failure -> outcome t ~notice:(`Post failure)
        | Ok (t, job) ->
-         outcome t ~jobs:[ job ] ?notice:(Option.map warning ~f:(fun w -> `Post w)))
+         outcome
+           (end_visual t)
+           ~jobs:[ job ]
+           ?notice:(Option.map warning ~f:(fun w -> `Post w)))
+  in
+  (* Plans the chosen action and runs it or asks; a refusal keeps a Visual selection
+     so it can be adjusted, running or asking ends it. *)
+  let act t chosen =
+    match busy t, t.snapshot with
+    | Some busy, _ -> outcome t ~notice:(`Show busy)
+    | None, None -> outcome t ~notice:(`Show "Nothing loaded yet")
+    | None, Some (snapshot : B.snapshot) ->
+      (match chosen t with
+       | Error notice -> outcome t ~notice:(`Show notice)
+       | Ok (action, anchor) ->
+         let root = Git.Repository.root snapshot.repository in
+         (match t.plan snapshot.repository snapshot action with
+          | Refused message -> outcome t ~notice:(`Show message)
+          | Run plan ->
+            run t { plan; root; anchor } ?warning:(staging_warning t context ~root action)
+          | Confirm { title; message; plan } ->
+            let submission = { Submission.plan; root; anchor } in
+            (match dirty_refusal context submission with
+             | Some refusal -> outcome t ~notice:(`Post refusal)
+             | None ->
+               outcome
+                 (end_visual t)
+                 ~ask:
+                   (View_registry.Ask.Confirm
+                      { title; message; yes = Submit submission; no = None }))))
   in
   match action with
   | Shown -> with_jobs (detect t)
@@ -1424,34 +1484,12 @@ let perform t controller ~context ~rows ~width action =
     let t, jobs, failure, reconcile = mutation_finished t report in
     outcome t ~jobs ~reconcile ?notice:(Option.map failure ~f:(fun f -> `Post f))
   | Event e -> with_jobs (event t e)
-  | Act verb ->
-    (match busy t, t.snapshot with
-     | Some busy, _ -> outcome t ~notice:(`Show busy)
-     | None, None -> outcome t ~notice:(`Show "Nothing loaded yet")
-     | None, Some snapshot ->
-       (match action_of t verb with
-        | Error notice -> outcome t ~notice:(`Show notice)
-        | Ok (action, anchor) ->
-          let root = Git.Repository.root snapshot.repository in
-          (match t.plan snapshot.repository snapshot action with
-           | Refused message -> outcome t ~notice:(`Show message)
-           | Run plan ->
-             run t { plan; root; anchor } ?warning:(staging_warning t context ~root action)
-           | Confirm { title; message; plan } ->
-             let submission = { Submission.plan; root; anchor } in
-             (match dirty_refusal context submission with
-              | Some refusal -> outcome t ~notice:(`Post refusal)
-              | None ->
-                outcome
-                  t
-                  ~ask:(View_registry.Ask.Confirm
-                          { title; message; yes = Submit submission; no = None })))))
+  | Act verb -> act t (fun t -> action_of t verb)
+  | Act_on_lines verb -> act t (fun t -> lines_action_of t verb)
   | Submit submission ->
     (match busy t with
      | Some busy -> outcome t ~notice:(`Show busy)
      | None -> run t submission)
-  | Act_on_lines ->
-    outcome t ~notice:(`Show "Staging selected lines is not supported yet; nothing ran")
   | Next_hunk { forward; count } -> outcome (next_hunk t ~forward ~count)
   | Focus_list focus ->
     let t = end_visual t in
@@ -1530,11 +1568,16 @@ let commands t =
     match t.focus with
     | Diff ->
       let visual = Option.is_some (Text_view.visual t.diff_view) in
-      (* [s u x] act on the cursor's hunk in a diff of the work tree or index, not in
-         Visual (phase 4) or a commit's diff. *)
+      (* [s u x] act on the cursor's hunk, or in Visual on the selected lines, in a
+         diff of the work tree or index, not in a commit's diff. *)
       let at_cursor =
         match t.diff with
-        | Loaded (target, _) when (not visual) && Option.is_some (B.diff_section target) ->
+        | Loaded (target, _) when visual && Option.is_some (B.diff_section target) ->
+          [ c "stage" [ k 's' ] "Stage the selected lines (one file)"
+          ; c "unstage" [ k 'u' ] "Unstage the selected lines (one file)"
+          ; c "discard" [ k 'x' ] "Discard the selected lines (one file); confirmed"
+          ]
+        | Loaded (target, _) when Option.is_some (B.diff_section target) ->
           [ c "stage" [ k 's' ] "Stage the hunk at the cursor (on a file header: the file)"
           ; c "unstage" [ k 'u' ] "Unstage the hunk at the cursor (or the file)"
           ; c "discard" [ k 'x' ] "Discard the hunk at the cursor (or the file); confirmed"
@@ -1894,7 +1937,7 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
         ^ hints
             (if String.is_empty visual
              then "s u x hunk, ] [ hunks, e open, 10j, v V y, Tab/Esc list, g r, @, q"
-             else "S U, y copy, Esc ends, g r, @, q")
+             else "s u x lines, S U, y copy, Esc ends, g r, @, q")
       | (Files | Branches | Commits) as focus ->
         let count = List.length (rows_of t focus) in
         let name =

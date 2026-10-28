@@ -9,8 +9,10 @@ the resize and shift steps, `Space s c` closes the split from either pane, and
 placement/close notices typed inside a view reach the status line. Phase 1 (VCS
 core, git parsing, async runner) and phase 2 (the read-only VCS view, Space g)
 complete; the owner accepted phase 2 (with the post-phase-2 tweaks) and committed
-phases 1-2 as fe0f087 (2026-10-27). Phase 3 (stage/unstage/discard) complete and
-uncommitted (2026-10-27), owner terminal acceptance pending. Phases 4-6 not started.
+phases 1-2 as fe0f087 (2026-10-27). Phase 3 (stage/unstage/discard) accepted and
+committed by the owner as d0cb736 (2026-10-27). Phase 4 (line staging from a Visual selection)
+complete and uncommitted (2026-10-27), owner terminal acceptance pending. Phases 5-6 not
+started.
 
 ## Goal
 
@@ -873,6 +875,85 @@ Notes for V3 beyond the `.mli` files:
   README and docs/editor_reference.md describe the actions, confirmations, the dirty
   refusal and reconciliation.
 
+## Phase 4 contracts (2026-10-27)
+
+Agent G4 fixed the contracts with compiling stubs (`failwith "TODO phase 4: agent
+G4"` / `"... agent V4"`; grep `TODO phase 4`); no existing test reaches them (the
+phase 3 Visual notice still runs until V4 replaces it). Then G4 (patches and plans,
+`vcs/git/`) and V4 (the view, `screen/`) work in parallel.
+
+Decisions (orchestrator, recorded in the `.mli` files):
+- `Patch.Selection.t = Whole | Lines of int list` (indices into `Diff.Hunk.t.lines`,
+  any order, duplicates ignored; only `Added`/`Removed` lines are changes).
+  Forward: unselected `Removed` -> context, unselected `Added` dropped; reverse: the
+  other way round. Headers recomputed: the matched side's start is the diff's, the
+  other side's is shifted by the earlier hunks of the same patch. Each side keeps its
+  lines' newline state (a context line keeps the state of the side it came from); a
+  line that is no longer last on its side gets a newline; a context line whose state
+  differs between sides is written as `-x`/`+x` with the marker where needed.
+  `Selection.changes : Diff.Hunk.t -> t -> int`.
+- `Patch.hunks : Diff.File.t -> (int * Selection.t) list -> reverse:bool -> string
+  Or_error.t`: one patch for several hunks of one file (strictly ascending indices;
+  hunks without a selected change left out). `Patch.hunk` of `Lines` = `hunks` of one
+  hunk; `hunk ... Whole` keeps phase 3's verbatim output. `Patch.changes :
+  Diff.File.t -> (int * Selection.t) list -> int Or_error.t` (same checks, `Ok 0`
+  for no change). Added/deleted files: `new file mode`/`--- /dev/null` only when the
+  patch's old side is empty, `deleted file mode`/`+++ /dev/null` only when its new
+  side is empty; otherwise the patch is a modification of the path (a partial stage of
+  a deletion removes those lines and keeps the file; a partial unstage/discard of a
+  new file keeps it with the unselected lines). Errors say "Line actions do not apply
+  to <path>: <reason>".
+- `Backend.Target.t` gains `Lines of { section; file : Diff.File.t; hunks : (int *
+  Patch.Selection.t) list }`: the lines of one file a Visual selection touches, one
+  patch, one `--check` then one apply (atomic). `Hunk { selection = Lines l }` is
+  planned as `Lines { hunks = [hunk, Lines l] }`. Phase 3's `Hunk ... Whole` is
+  unchanged (texts included). Plan order and texts (`<N lines>`: selected Added +
+  Removed, "1 line"/"3 lines"): Conflicted -> conflict refusal; Untracked -> Stage and
+  Discard "Stage the whole untracked file first (s on its row); nothing ran" (no
+  `git add -N`), Unstage "<path> is not staged; nothing ran"; Ignored as `File`;
+  `Patch.changes` error -> its message; 0 changes -> "No changes selected; nothing
+  ran"; not listed -> the phase 3 refusal; then Stage/Unstaged `--cached` Run "Stage
+  <N lines> of <path>"; Unstage/Staged `--cached --reverse` Run "Unstage <N lines> of
+  <path>"; Discard/Unstaged (intent-to-add, submodule refused) `--reverse`, Confirm
+  "Discard lines" / "Discard <N lines> of <path>? Their unstaged changes are lost."
+  (one: "Discard 1 line of <path>? Its unstaged change is lost.") / plan "Discard <N
+  lines> of <path>"; Discard/Staged (also-unstaged, submodule refused) `--index
+  --reverse`, Confirm "Discard lines" / "Discard <N staged lines> of <path>? Their
+  changes are removed from the index and the work tree and lost." (one: "Discard 1
+  staged line of <path>? Its change is removed from the index and the work tree and
+  lost.") / plan "Discard <N staged lines> of <path>"; Stage in Staged "already
+  staged", Unstage in Unstaged "not staged".
+- View (`screen/vcs_view.mli`, "Actions (phases 3 and 4)"): Visual `s u x`
+  (characterwise or linewise) act on every line the selection touches, via
+  `Vcs_diff_text.span : t -> start:int -> stop:int -> (Span.t option, _) Result.t`
+  (the error is the polymorphic variant `Several_files`) with `Span.t = { file : int;
+  hunks : (int * int list) list }` (a line counts when any of its bytes, its line feed included, is in `[start,
+  stop)`; lines outside files ignored; header lines of a second file make it
+  `Several_files`). `Several_files` -> "Select lines within one file; nothing ran";
+  `Ok None` -> "No changes selected; nothing ran"; otherwise `Target.Lines` (hunks
+  covered whole may be sent as `Whole`). Refusals keep Visual; running or asking
+  ends it. Anchoring after a line action: the first touched hunk's index, as phase
+  3. Discards confirm, the dirty-buffer refusal and the staging warning (the file's
+  path; `staged_keys` already covers `Lines`) apply. The "not supported yet" notice
+  goes. Local commands: `stage`/`unstage`/`discard` listed in Visual in a work-tree
+  or index diff (with line descriptions); `S U` keep working in Visual.
+
+Ownership:
+- G4: `vcs/git/*.ml` (`patch.ml`, `backend.ml`) and `vcs/git/test/`.
+- V4: `screen/vcs_view.ml`, `screen/vcs_diff_text.ml`, `screen/test/test_vcs_*.ml`,
+  README.md, docs/editor_reference.md, docs/backlog/major_minor_tiles.md.
+- Frozen for both after part A: every `.mli` (including `vcs/git/patch.mli`,
+  `backend.mli`, `screen/vcs_view.mli`, `screen/vcs_diff_text.mli`) and everything
+  frozen in phase 3. Changes go to the orchestrator.
+- Part A touched two V4 files only to keep them compiling: `vcs_view.ml`'s
+  `staged_keys` (Lines -> the file's path) and `test_vcs_actions.ml`'s `target_name`.
+
+Testing: G4 builds `@vcs/git/runtest @vcs/runtest`; V4 builds `@screen/runtest`;
+both through the shared lock with `-j 10`. V4 tests with the `?plan` fake (recording
+the `Lines` targets it receives) until G4 reports, then end to end with the real
+planner (stage two of three added lines, a selection across two hunks, a spanning
+refusal, a discard with confirmation).
+
 ## Implementation handoffs
 
 ```text
@@ -1473,6 +1554,67 @@ Next-phase integration notes (phase 4):
     actions where Diff.File.line_actions is false (already refused for hunks).
 ```
 
+```text
+Phase / date / status:
+  4, 2026-10-27, complete (headless checks only; owner terminal acceptance pending).
+  Uncommitted, on d0cb736. Run as G4 (contracts first, then git/patch) with V4 (the
+  view) starting once the contracts compiled. Both were stopped at the owner's
+  session limit and resumed from their saved state after the reset.
+
+Implemented behavior:
+  - Visual (v or V) s/u/x in a work-tree or index diff act on every line the
+    selection touches, across hunks of one file as ONE patch (one --check, one
+    apply: atomic). Refusals: "Select lines within one file; nothing ran", "No
+    changes selected; nothing ran", untracked "Stage the whole untracked file first
+    (s on its row); nothing ran", plus phase 3's (conflicted, binary/mode-only/...,
+    intent-to-add discard, staged discard with unstaged changes).
+  - Discards confirmed ("Discard 3 lines of a.txt? Their unstaged changes are
+    lost."); dirty-buffer refusal, staging warning, Busy, reconcile and refresh as
+    in phase 3. A refusal keeps Visual; running or asking ends it. The diff cursor
+    lands on the first touched hunk's index afterwards. S/U still work in Visual.
+  - Partial selections of new/deleted files: staging some lines of a deletion
+    removes only those lines; unstaging/discarding some lines of a new file keeps
+    it with the rest; no-newline markers kept correct on both sides.
+
+Changed modules and new public contracts:
+  - vcs/git/patch.mli: Selection.Lines, hunks (multi-hunk), changes; backend.mli:
+    Target.Lines { section; file; hunks } and the line plan texts/refusal order;
+    screen/vcs_diff_text.mli: Span, span; vcs_view.mli "Actions (phases 3 and 4)".
+  - G4: vcs/git/{patch,backend}.ml; tests test_patch.ml, new test_lines.ml
+    (exhaustive: all 233 non-empty subsets of changed lines over 7 files applied by
+    real git in stage/unstage/discard and compared with an independent model).
+  - V4: screen/vcs_view.ml, vcs_diff_text.ml; tests test_vcs_diff_text.ml (new),
+    test_vcs_actions.ml, test_vcs_workspace.ml (end to end, real planner); README,
+    docs/editor_reference.md ("Selected lines"), backlog.
+  - Orchestrator: patch.mli/backend.mli doc clarifications from G4 (error order,
+    negative indices, hunk listed once, intent-to-add partial stage).
+
+Policy decisions settled:
+  - Orchestrator: one atomic patch per selection; spanning files refused; no
+    git add -N (untracked lines refused).
+  - G4: discard text "Their unstaged changes are lost" (discarding a removed line
+    restores it, so "removed" would be wrong); untracked Unstage keeps phase 3's
+    "not staged" text.
+  - G4/V4: refusals keep Visual so the selection can be adjusted.
+
+Checks run and results:
+  - G4 baseline and final; V4 final (@screen/runtest, full build).
+  - Orchestrator final (2026-10-27): dune build -j 10 -> 0; dune runtest -j 10 -> 0;
+    rebuild after the .mli doc edits -> 0; git diff --check clean; no TODO phase
+    stubs; no stray git processes or /tmp/ches-vcs* dirs; HEAD d0cb736.
+
+Known gaps or blockers:
+  - No owner terminal acceptance yet. Not tested headlessly: the Visual footer
+    hint text (hints on), how the selection draws, a stale line selection through
+    the view (covered at the git level: --check fails and nothing changes).
+
+Next-phase integration notes (phase 5):
+  - Popups: Ches_vcs.Popup exists (phase 1) but is not in Backend.S; phase 5 adds
+    it, a popup float (the single float slot in Ui_state), and the commit flow
+    (message buffer as a file tab, Space g c / Space g a, View_command work).
+  - The Busy/mutation and dirty-buffer machinery in vcs_view.ml is shared by Act
+    and Act_on_lines; commit and amend should reuse it.
+```
 ### Post-phase-2 tweaks (owner feedback, committed in fe0f087)
 
 - Counts in every read-only Text_view (`Action.Move_count`): `N` before

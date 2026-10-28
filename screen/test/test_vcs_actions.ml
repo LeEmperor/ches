@@ -1,6 +1,7 @@
-(* The VCS view's actions (phase 3): [s u x S U] from the Files panel and the diff,
-   confirmations, the dirty-buffer refusal and the staging warning, busy, failures,
-   reconciliation of open buffers, selection and the diff cursor afterwards, [] [].
+(* The VCS view's actions (phases 3 and 4): [s u x S U] from the Files panel and the
+   diff, Visual [s u x] on selected lines, confirmations, the dirty-buffer refusal and
+   the staging warning, busy, failures, reconciliation of open buffers, selection and
+   the diff cursor afterwards, [] [].
 
    The backend's planner is a fake ([Vcs_view.entry ~plan]) that records the action it
    received and returns canned decisions over real git commands, so the view's flow is
@@ -39,6 +40,28 @@ let target_name : B.Target.t -> string = function
   | Section section -> "Section " ^ section_name section
   | Hunk { section; file; hunk; selection = Whole } ->
     sprintf "Hunk %s %s #%d" (section_name section) (Diff.File.path file) hunk
+  | Hunk { section; file; hunk; selection = Lines lines } ->
+    sprintf
+      "Hunk %s %s #%d lines %s"
+      (section_name section)
+      (Diff.File.path file)
+      hunk
+      (String.concat ~sep:"," (List.map lines ~f:Int.to_string))
+  | Lines { section; file; hunks } ->
+    sprintf
+      "Lines %s %s %s"
+      (section_name section)
+      (Diff.File.path file)
+      (String.concat
+         ~sep:" "
+         (List.map hunks ~f:(fun (hunk, selection) ->
+            match (selection : Git.Patch.Selection.t) with
+            | Whole -> sprintf "#%d:whole" hunk
+            | Lines lines ->
+              sprintf
+                "#%d:%s"
+                hunk
+                (String.concat ~sep:"," (List.map lines ~f:Int.to_string)))))
 ;;
 
 let action_name : B.action -> string = function
@@ -49,14 +72,29 @@ let action_name : B.action -> string = function
   | Unstage_all -> "Unstage_all"
 ;;
 
-(* A whole hunk as [git apply] takes it, for plain names (the fake's own [Patch]). *)
-let hunk_patch (file : Diff.File.t) index =
-  let hunk = List.nth_exn file.hunks index in
+(* Whole hunks as [git apply] takes them, for plain names (the fake's own [Patch]). *)
+let hunks_patch (file : Diff.File.t) indices =
   let path = Diff.File.path file in
-  [ sprintf "diff --git a/%s b/%s" path path; "--- a/" ^ path; "+++ b/" ^ path; hunk.header ]
-  @ List.map hunk.lines ~f:(fun (line : Diff.Line.t) -> line.prefix ^ line.text)
+  [ sprintf "diff --git a/%s b/%s" path path; "--- a/" ^ path; "+++ b/" ^ path ]
+  @ List.concat_map indices ~f:(fun index ->
+    let hunk = List.nth_exn file.hunks index in
+    hunk.header
+    :: List.map hunk.lines ~f:(fun (line : Diff.Line.t) -> line.prefix ^ line.text))
   |> List.map ~f:(fun line -> line ^ "\n")
   |> String.concat
+;;
+
+(* The selected changes of a [Lines] target. *)
+let changes (file : Diff.File.t) hunks =
+  List.sum (module Int) hunks ~f:(fun (hunk, (selection : Git.Patch.Selection.t)) ->
+    List.counti (List.nth_exn file.hunks hunk).lines ~f:(fun i (line : Diff.Line.t) ->
+      (match line.kind with
+       | Added | Removed -> true
+       | Context | No_newline -> false)
+      &&
+      match selection with
+      | Whole -> true
+      | Lines lines -> List.mem lines i ~equal:Int.equal))
 ;;
 
 (* The fake planner: records the action, then plans it with real commands, close to
@@ -83,11 +121,18 @@ let fake ?(override = fun (_ : B.action) -> None) env : Vcs_view.planner =
           then List.map section.items ~f:(fun item -> item.key)
           else []))
     in
-    let apply flags (file : Diff.File.t) hunk =
-      let stdin = Ches_vcs.Exec.Stdin.Data (hunk_patch file hunk) in
+    (* The fake applies a [Lines] target's touched hunks whole; [Patch] (tested in
+       vcs/git) applies only their lines. *)
+    let apply_hunks flags (file : Diff.File.t) hunks =
+      let stdin = Ches_vcs.Exec.Stdin.Data (hunks_patch file hunks) in
       [ git ~stdin ((("apply" :: flags) @ [ "--whitespace=nowarn"; "--check" ]))
       ; git ~stdin (("apply" :: flags) @ [ "--whitespace=nowarn" ])
       ]
+    in
+    let apply flags file hunk = apply_hunks flags file [ hunk ] in
+    let of_lines (file : Diff.File.t) hunks =
+      let n = changes file hunks in
+      sprintf "%d line%s of %s" n (if n = 1 then "" else "s") (Diff.File.path file)
     in
     let of_hunk (file : Diff.File.t) hunk =
       sprintf "hunk %d/%d of %s" (hunk + 1) (List.length file.hunks) (Diff.File.path file)
@@ -153,6 +198,33 @@ let fake ?(override = fun (_ : B.action) -> None) env : Vcs_view.planner =
          ; plan =
              plan ~rewrites_worktree:true ("Discard " ^ of_hunk file hunk)
                (apply [ "--reverse" ] file hunk)
+         }
+     | Stage (Lines { section = Untracked; _ }) | Discard (Lines { section = Untracked; _ })
+       -> Refused "Stage the whole untracked file first (s on its row); nothing ran"
+     | Stage (Lines { file; hunks; _ })
+     | Unstage (Lines { file; hunks; _ })
+     | Discard (Lines { file; hunks; _ })
+       when changes file hunks = 0 -> Refused "No changes selected; nothing ran"
+     | Stage (Lines { section = Unstaged; file; hunks }) ->
+       Run
+         (plan
+            ("Stage " ^ of_lines file hunks)
+            (apply_hunks [ "--cached" ] file (List.map hunks ~f:fst)))
+     | Unstage (Lines { section = Staged; file; hunks }) ->
+       Run
+         (plan
+            ("Unstage " ^ of_lines file hunks)
+            (apply_hunks [ "--cached"; "--reverse" ] file (List.map hunks ~f:fst)))
+     | Unstage (Lines { file; _ }) ->
+       Refused (Diff.File.path file ^ " is not staged; nothing ran")
+     | Discard (Lines { section = Unstaged; file; hunks }) ->
+       Confirm
+         { title = "Discard lines"
+         ; message =
+             sprintf "Discard %s? Their unstaged changes are lost." (of_lines file hunks)
+         ; plan =
+             plan ~rewrites_worktree:true ("Discard " ^ of_lines file hunks)
+               (apply_hunks [ "--reverse" ] file (List.map hunks ~f:fst))
          }
      | Stage _ | Unstage _ | Discard _ -> Refused "fake: not planned; nothing ran")
 ;;
@@ -751,8 +823,8 @@ let%expect_test "s u x in the diff act on the hunk at the cursor, or the file on
       |}])
 ;;
 
-let%expect_test "nothing to act on: a commit's diff, a loading diff, Visual; what help \
-                 lists there"
+let%expect_test "nothing to act on: a commit's diff, a loading diff, header lines in \
+                 Visual; what help lists there"
   =
   with_env (fun env ->
     two_hunks env;
@@ -794,9 +866,10 @@ let%expect_test "nothing to act on: a commit's diff, a loading diff, Visual; wha
     Diff: header unstaged; diff loading (Unstaged())
     commands: stage-all unstage-all next-hunk previous-hunk
     commands: stage unstage discard stage-all unstage-all next-hunk previous-hunk
-    notice: Staging selected lines is not supported yet; nothing ran
+    planned: Stage Lines unstaged a.txt
+    notice: No changes selected; nothing ran
     Diff: header unstaged; diff (Unstaged())
-    commands: stage-all unstage-all
+    commands: stage unstage discard stage-all unstage-all
     notice: Nothing to discard here: a commit's diff
     Diff: recent 4b26c4706468e2271f1d7fb1229d054406fdf98f; diff (Commit 4b26c4706468e2271f1d7fb1229d054406fdf98f)
     commands: stage-all unstage-all next-hunk previous-hunk
@@ -805,4 +878,223 @@ let%expect_test "nothing to act on: a commit's diff, a loading diff, Visual; wha
     Diff: recent 4b26c4706468e2271f1d7fb1229d054406fdf98f; diff (Commit 4b26c4706468e2271f1d7fb1229d054406fdf98f)
     commands:
     |}]
+;;
+
+(* {2 Visual s u x on selected lines (phase 4)} *)
+
+let visual t =
+  printf "visual: %s\n"
+    (Option.value_map (Text_view.visual (diff_view t)) ~default:"none" ~f:(fun kind ->
+       Sexp.to_string [%sexp (kind : Text_view.Kind.t)]))
+;;
+
+let line_commands t =
+  List.iter (Vcs_view.commands (state t)) ~f:(fun (command : Ches_tile.Local_command.t) ->
+    if List.mem [ "stage"; "unstage"; "discard" ] command.name ~equal:String.equal
+    then printf "command %s (%s): %s\n" command.name
+           (Ches_tile.Local_command.keys_hum command) command.description)
+;;
+
+let%expect_test "Visual s acts on the selected lines; a refusal keeps Visual, running \
+                 ends it; the cursor goes to the hunk that took the first one's place"
+  =
+  with_env (fun env ->
+    two_hunks env;
+    let t = run env (run env (create env) " vx") "j<Tab>" in
+    (* The file's header and the first @@ line: an empty [Lines], the planner's
+       refusal. *)
+    let t = run env t "Vjjjj" in
+    line_commands t;
+    let t = run env t "s" in
+    report env t;
+    visual t;
+    [%expect
+      {|
+      command stage (s): Stage the selected lines (one file)
+      command unstage (u): Unstage the selected lines (one file)
+      command discard (x): Discard the selected lines (one file); confirmed
+      planned: Stage Lines unstaged a.txt
+      notice: No changes selected; nothing ran
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      visual: Linewise
+      |}];
+    (* Context lines only; then u in a diff of unstaged changes. *)
+    let t = run env t "<Esc>3jVjs" in
+    report env t;
+    visual t;
+    let t = run env t "<Esc>kkVju" in
+    report env t;
+    visual t;
+    [%expect
+      {|
+      planned: Stage Lines unstaged a.txt #0:2,3
+      notice: No changes selected; nothing ran
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      visual: Linewise
+      planned: Unstage Lines unstaged a.txt #0:1,2
+      notice: a.txt is not staged; nothing ran
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      visual: Linewise
+      |}];
+    (* An added line and a context line of the first hunk. *)
+    let t = run env t "s" in
+    report env t;
+    visual t;
+    printf "%s\n" (diff_cursor t);
+    print_log env t;
+    print_endline (Fixture.git env.repo [ "diff"; "--cached"; "--stat" ]);
+    [%expect
+      {|
+      planned: Stage Lines unstaged a.txt #0:1,2
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      visual: none
+      cursor line 4: @@ -9,4 +9,4 @@ line 8
+      log: [exit 0] --literal-pathspecs apply --cached --whitespace=nowarn --check
+      log: [exit 0] --literal-pathspecs apply --cached --whitespace=nowarn
+       a.txt | 2 +-
+       1 file changed, 1 insertion(+), 1 deletion(-)
+      |}];
+    (* S and U keep working in Visual, on everything. *)
+    let t = run env t "VU" in
+    report env t;
+    visual t;
+    status env;
+    [%expect
+      {|
+      planned: Unstage_all
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      visual: none
+      status:  M a.txt
+      |}])
+;;
+
+let%expect_test "Visual x across two hunks: one target, confirmed; the question ends \
+                 Visual whatever the answer"
+  =
+  with_env (fun env ->
+    two_hunks env;
+    let t = run env (run env (create ~file:"a.txt" env) " vx") "j<Tab>" in
+    (* Characterwise, from the middle of "-line 1" to the middle of "-line 12". *)
+    let t = run env t "5jllv9j" in
+    let t = run env t "x" in
+    report env t;
+    visual t;
+    let t = run env t "n" in
+    report env t;
+    status env;
+    [%expect
+      {|
+      planned: Discard Lines unstaged a.txt #0:0,1,2,3,4 #1:0,1,2,3
+      confirm: Discard lines: Discard 3 lines of a.txt? Their unstaged changes are lost.
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      visual: none
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      status:  M a.txt
+      |}];
+    let t = run env t "gg5jllv9jx" in
+    report env t;
+    let t = run env t "y" in
+    report env t;
+    status env;
+    let t = run env t "q" in
+    editor t;
+    [%expect
+      {|
+      planned: Discard Lines unstaged a.txt #0:0,1,2,3,4 #1:0,1,2,3
+      confirm: Discard lines: Discard 3 lines of a.txt? Their unstaged changes are lost.
+      Diff: unstaged a.txt; diff (Unstaged(a.txt))
+      message: Reloaded from disk: a.txt
+      Diff: none; diff empty
+      status:
+      editor a.txt: "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\n", dirty false, missing false
+      |}])
+;;
+
+(* Two committed files, both changed: one unstaged diff with two files. *)
+let two_files env =
+  Fixture.write env.repo "a.txt" "one\ntwo\nthree\n";
+  Fixture.write env.repo "c.txt" "sea\n";
+  commit env "First";
+  Fixture.write env.repo "a.txt" "one\nTWO\nthree\n";
+  Fixture.write env.repo "c.txt" "SEA\n"
+;;
+
+let%expect_test "Visual across files is refused; busy, the staging warning and the \
+                 dirty-buffer refusal apply to lines, and refusals keep Visual"
+  =
+  with_env (fun env ->
+    two_files env;
+    (* Unsaved text in the editor's a.txt; the diff of the unstaged section. *)
+    let t = run env (run env (create env) "ix<Esc> vx") "<Tab>" in
+    print_diff t;
+    let t = run env t "7jVjj" in
+    let t = run env t "s" in
+    report env t;
+    visual t;
+    [%expect
+      {|
+       0|diff --git a/a.txt b/a.txt
+       1|index 4cb29ea..ddc897f 100644
+       2|--- a/a.txt
+       3|+++ b/a.txt
+       4|@@ -1,3 +1,3 @@
+       5| one
+       6|-two
+       7|+TWO
+       8| three
+       9|diff --git a/c.txt b/c.txt
+      10|index 558ad60..4e95300 100644
+      11|--- a/c.txt
+      12|+++ b/c.txt
+      13|@@ -1 +1 @@
+      14|-sea
+      15|+SEA
+      notice: Select lines within one file; nothing ran
+      Diff: header unstaged; diff (Unstaged())
+      visual: Linewise
+      |}];
+    (* Staging a.txt's lines warns; until its refresh, line actions are busy. *)
+    let t = keys env t "k" in
+    let t = keys env t "s" in
+    report env t;
+    visual t;
+    let t = keys env t "GVx" in
+    report env t;
+    visual t;
+    [%expect
+      {|
+      planned: Stage Lines unstaged a.txt #0:2,3
+      notice: a.txt has unsaved changes: the saved files were staged, not the buffers
+      message: a.txt has unsaved changes: the saved files were staged, not the buffers
+      Diff: header unstaged; diff (Unstaged()); mutation "Stage 1 line of a.txt"
+      visual: none
+      notice: Busy: Stage 1 line of a.txt; nothing ran
+      message: a.txt has unsaved changes: the saved files were staged, not the buffers
+      Diff: header unstaged; diff (Unstaged()); mutation "Stage 1 line of a.txt"
+      visual: Linewise
+      |}];
+    (* A discard of c.txt's lines: refused over the dirty buffer, before any
+       question. *)
+    let t = run env t "" in
+    print_diff t;
+    let t = run env t "5jVx" in
+    report env t;
+    visual t;
+    status env;
+    [%expect
+      {|
+       0|diff --git a/c.txt b/c.txt
+       1|index 558ad60..4e95300 100644
+       2|--- a/c.txt
+       3|+++ b/c.txt
+       4|@@ -1 +1 @@
+       5|-sea
+       6|+SEA
+      planned: Discard Lines unstaged c.txt #0:0
+      notice: Discard 1 line of c.txt refused: unsaved changes in a.txt; save or undo them first; nothing ran
+      message: Discard 1 line of c.txt refused: unsaved changes in a.txt; save or undo them first; nothing ran
+      Diff: header unstaged; diff (Unstaged())
+      visual: Linewise
+      status: M  a.txt,  M c.txt
+      |}])
 ;;

@@ -261,6 +261,47 @@ let start_of t ~file ~hunk =
   |> Option.map ~f:(fun (i, _) -> t.starts.(i))
 ;;
 
+module Span = struct
+  type t =
+    { file : int
+    ; hunks : (int * int list) list
+    }
+  [@@deriving sexp_of, equal]
+end
+
+let span t ~start ~stop : (Span.t option, [ `Several_files ]) Result.t =
+  (* A line's bytes run from its start through its line feed, so the last byte of the
+     range ([stop - 1]) is on the last touched line. *)
+  match index_at t (Int.max 0 start) with
+  | None -> Ok None
+  | Some first ->
+    let last =
+      if stop > start then Option.value (index_at t (stop - 1)) ~default:first else first
+    in
+    let positions =
+      List.filter_map (List.range first (Int.max first last) ~stop:`inclusive) ~f:(fun i ->
+        t.positions.(i))
+    in
+    (match List.dedup_and_sort positions ~compare:(fun (a : Position.t) b ->
+             Int.compare a.file b.file)
+     with
+     | [] -> Ok None
+     | _ :: _ :: _ -> Error `Several_files
+     | [ { file; _ } ] ->
+       let lines =
+         List.filter_map positions ~f:(fun position ->
+           match position.hunk, position.line with
+           | Some hunk, Some line -> Some (hunk, line)
+           | _ -> None)
+       in
+       let hunks =
+         (* Laid out in order: hunks and their lines are already ascending. *)
+         List.group lines ~break:(fun (a, _) (b, _) -> a <> b)
+         |> List.map ~f:(fun group -> fst (List.hd_exn group), List.map group ~f:snd)
+       in
+       Ok (Some { Span.file; hunks }))
+;;
+
 let hunk_starts t =
   Array.filter_mapi t.lines ~f:(fun i line ->
     Option.some_if (Kind.equal line.kind Hunk) t.starts.(i))

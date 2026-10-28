@@ -435,7 +435,7 @@ behave as in problems.
 
 `Space g g` opens a git view of the repository around the startup file (or the
 directory opened), in the spirit of lazygit and Magit. It stages, unstages and
-discards files and hunks; staging selected lines, commits, branches and remotes are
+discards files, hunks and selected lines; commits, branches and remotes are
 planned. The view is a tab the first
 time; `Space g s` moves it into the split beside the editor, `Space g t` back
 into the tab strip, and `Space g h` closes it (its state is simply re-read when it
@@ -463,7 +463,8 @@ command with its exit status and, on failure, its output.
 | `y` (list) | Copy the selected path, branch name or abbreviated commit hash |
 | `s` / `u` / `x` (Files) | Stage / unstage / discard the selected file, or every file of the selected section |
 | `s` / `u` / `x` (diff) | Stage / unstage / discard the hunk at the cursor; on a file's header lines, the whole file |
-| `S` / `U` (Files, diff) | Stage all changes (not conflicts) / unstage all changes |
+| `s` / `u` / `x` (diff, Visual) | Stage / unstage / discard the lines the selection touches (one file, any of its hunks) |
+| `S` / `U` (Files, diff) | Stage all changes (not conflicts) / unstage all changes; also in Visual |
 | `]` / `[` (diff) | Next / previous hunk; with a count, `3]` moves three, stopping at the last |
 | Read-only text keys (diff) | Move, select and copy, as in [Read-only text](#read-only-text-in-supporting-views), with counts: `10j`, `5k`, `12G` |
 | `e`, `Enter` (diff) | Open the file at the cursor's line |
@@ -506,8 +507,32 @@ file's last hunk). Specifics:
 - While an action runs and until the refresh after it arrives, further actions say
   "Busy: <action>; nothing ran". A failed command is reported with git's message and
   its full output is in the command log (`@`).
-- In a commit's diff there is nothing to stage; in Visual, `s u x` say that staging
-  selected lines is not supported yet. `]` and `[` do not move in Visual.
+- In a commit's diff there is nothing to stage. `]` and `[` do not move in Visual.
+
+**Selected lines.** In the diff of the work tree or the index, start a selection with
+`v` or `V` and press `s`, `u` or `x`: the action takes every added or removed line
+the selection touches (a line counts when any of its characters is selected;
+context, `@@` and header lines are ignored). Unselected removed lines stay, and
+unselected added lines are left out. A selection across several hunks of one file is
+one patch, checked with `git apply --check` and then applied, so either all of it
+applies or nothing does. The title says how much: "Stage 2 lines of a.txt",
+"Unstage 1 line of a.txt"; `x` asks "Discard 3 lines of a.txt? Their unstaged
+changes are lost." (in the staged diff: "Discard 3 staged lines of a.txt? Their
+changes are removed from the index and the work tree and lost."). Confirmations, the
+dirty-buffer refusal, the staging warning, reconciliation and busy work as for hunks,
+and the diff cursor goes afterwards to the hunk that took the place of the first
+touched one. Refusals leave the selection in place so it can be adjusted:
+
+- "Select lines within one file; nothing ran" when the selection reaches a second
+  file (its header lines included).
+- "No changes selected; nothing ran" when it holds no added or removed line.
+- An untracked file: "Stage the whole untracked file first (s on its row); nothing
+  ran" (`u`: "<path> is not staged; nothing ran"). A binary, mode-only, rename-only,
+  submodule or conflicted file has no line actions ("Line actions do not apply to
+  <path>: ...", or the conflict refusal).
+- A selection made before the files changed fails at the check and changes nothing.
+
+Running an action, or asking about it, ends the selection whatever the answer.
 
 `e` in the diff opens the work-tree file at the line the cursor is on (for a removed
 line, the next line that survives; for a hunk header, its first line). From a tab, the

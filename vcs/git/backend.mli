@@ -11,7 +11,8 @@
     - Commits (["commits"]): one section ["recent"], keyed by full hash.
 
     Actions arrive with the phases that need them: stage/unstage/discard in 3
-    ({!action}), line staging in 4, commit in 5, push/pull/fetch/checkout in 6. *)
+    ({!action}), line staging in 4 ({!Target.t.Lines}), commit in 5,
+    push/pull/fetch/checkout in 6. *)
 
 open! Core
 open Ches_vcs
@@ -92,13 +93,26 @@ module Target : sig
         { section : Section.t (** {!diff_section} of the diff it was chosen in. *)
         ; file : Diff.File.t (** As parsed from that diff. *)
         ; hunk : int (** 0-based, into [file.hunks]. *)
-        ; selection : Patch.Selection.t (** [Whole] in phase 3. *)
+        ; selection : Patch.Selection.t
+        (** [Whole] from the view. A [Lines] selection is planned exactly as
+            [Lines { section; file; hunks = [ hunk, selection ] }]. *)
         } (** The hunk at the diff's cursor. *)
+    | Lines of
+        { section : Section.t (** {!diff_section} of the diff it was chosen in. *)
+        ; file : Diff.File.t (** As parsed from that diff. *)
+        ; hunks : (int * Patch.Selection.t) list
+        (** 0-based indices into [file.hunks], strictly ascending, each with the
+            lines chosen in it ([Whole] for a hunk the selection covers, which is
+            equivalent to listing its lines). May be empty (nothing but header
+            lines selected): refused as no change. *)
+        }
+    (** The lines of one file a Visual selection in the diff touches (phase 4),
+        acted on by one patch ({!Patch.hunks}) and so atomically. *)
   [@@deriving sexp_of]
 end
 
-(** The phase 3 actions. Line staging (phase 4) is a {!Patch.Selection.t} of a
-    [Hunk] target, not a new action. *)
+(** The phase 3 and 4 actions. Line staging (phase 4) is a {!Target.t.Lines}
+    target, not a new action. *)
 type action =
   | Stage of Target.t (** [s] *)
   | Unstage of Target.t (** [u] *)
@@ -141,7 +155,7 @@ type action =
       {!Diff_output.ok_exits} or was cut at its limit; then {!Diff_output.parse}.
     - [plan]: below.
 
-    {2 [plan]: the phase 3 command plans}
+    {2 [plan]: the phase 3 and 4 command plans}
 
     [plan repo snapshot action] decides against [snapshot] (the one the action was
     chosen in) and never reads anything. Entries are looked up in
@@ -166,7 +180,8 @@ type action =
     - clean: [clean --force --quiet -- P...] (untracked files only).
     - apply: two steps, [apply <flags> --whitespace=nowarn --check] then [apply
       <flags> --whitespace=nowarn], both with [~stdin:(Data patch)] where [patch] is
-      {!Patch.hunk} [file ~hunk selection ~reverse:(flags has --reverse)]; flags are
+      {!Patch.hunk} [file ~hunk selection ~reverse:(flags has --reverse)] (for
+      [Lines], {!Patch.hunks} [file hunks ~reverse]); flags are
       [--cached] (stage), [--cached --reverse] (unstage), [--reverse] (discard
       unstaged), [--index --reverse] (discard staged). A failed check skips the apply.
     For a [Renamed_or_copied] entry, the commands that touch the index side name both
@@ -294,7 +309,49 @@ type action =
     A [File] or [Hunk] target whose path is not in that section of the snapshot is
     refused: ["<path> is no longer listed; refresh (g r); nothing ran"]. The
     intent-to-add discard refusal covers an Unstaged hunk too: reverse-applying its
-    "new file" patch would delete the file. *)
+    "new file" patch would delete the file.
+
+    {3 Lines (phase 4)}
+
+    A [Lines { section; file; hunks }] target is planned like a [Hunk] of the same
+    section, with one patch for all its hunks ({!Patch.hunks}, so a selection across
+    hunks applies atomically: one [--check], one apply) and these texts, where [<N
+    lines>] is the number of selected changes ({!Patch.changes}: [Added] and
+    [Removed] lines; ["1 line"], ["3 lines"]) and [<path>] the file's
+    {!Diff.File.path}. In order, the first that applies:
+    - Conflicted: the conflict refusal (as [Hunk]).
+    - Untracked: [Stage] and [Discard] are refused with ["Stage the whole untracked
+      file first (s on its row); nothing ran"] (no [git add -N] here: line actions
+      need the file in the index); [Unstage]: ["<path> is not staged; nothing ran"].
+      Ignored: as [File Ignored].
+    - A {!Patch.changes} error (a file without line actions, [Type_changed], an
+      index out of range, hunks out of order): refused with its message (["Line
+      actions do not apply to <path>: it is binary"]).
+    - No selected change ({!Patch.changes} is 0: only context, [@@], header or
+      marker lines, or an empty [hunks]): ["No changes selected; nothing ran"].
+    - Not in that section of the snapshot: the "no longer listed" refusal.
+    - Then by verb and section, the apply flags as for [Hunk]:
+      - [Stage], Unstaged: apply [--cached]. Run, ["Stage <N lines> of <path>"].
+        Some lines of an intent-to-add file stage as its creation holding only
+        them; unstaging some lines of a staged new file keeps it, with the
+        unselected lines (both verified).
+      - [Unstage], Staged: apply [--cached --reverse]. Run, ["Unstage <N lines> of
+        <path>"].
+      - [Discard], Unstaged: refused as [Hunk Unstaged] (intent-to-add, submodule);
+        else apply [--reverse], confirmed: title ["Discard lines"], message
+        ["Discard <N lines> of <path>? Their unstaged changes are lost."] (one:
+        ["Discard 1 line of <path>? Its unstaged change is lost."]), plan
+        ["Discard <N lines> of <path>"].
+      - [Discard], Staged: refused as [Hunk Staged] (also has unstaged changes,
+        submodule); else apply [--index --reverse], confirmed: title ["Discard
+        lines"], message ["Discard <N staged lines> of <path>? Their changes are
+        removed from the index and the work tree and lost."] (one: ["Discard 1
+        staged line of <path>? Its change is removed from the index and the work
+        tree and lost."]), plan ["Discard <N staged lines> of <path>"].
+      - [Stage] in Staged: ["<path> is already staged; nothing ran"]; [Unstage] in
+        Unstaged: ["<path> is not staged; nothing ran"].
+    A selection that no longer matches the index or work tree (the diff is stale)
+    fails at the [--check] step and changes nothing. *)
 include
   Ches_vcs.Backend.S
   with type Repository.t = Repository.t
