@@ -1065,6 +1065,41 @@ let paste t ~before ~count =
 let delete_char t = delete_chars_forward t 1
 ;;
 
+(* The region's lines, through the LF after its end line (there is none when it ends
+   the text), become the side's lines. Each of those ends with LF, except that the
+   last one kept gives up its LF when the region ended the text. *)
+let keep_conflict t (side : Conflict.Side.t) =
+  match Conflict.region_at t.text ~line:(cursor_line t) with
+  | None -> { t with message = Some (Error "No conflict at the cursor") }
+  | Some region ->
+    (match Conflict.Region.lines region side with
+     | None ->
+       { t with
+         message =
+           Some (Error "This conflict has no base part (merge.conflictStyle=diff3 shows one)")
+       }
+     | Some lines ->
+       let pos = B.line_start t.text region.start in
+       let at_end = region.stop = B.line_count t.text - 1 in
+       let stop = if at_end then B.length t.text else B.line_start t.text (region.stop + 1) in
+       let kept = String.concat (List.map lines ~f:(fun line -> B.line_text t.text line ^ "\n")) in
+       let kept = if at_end then String.drop_suffix kept 1 else kept in
+       let named name label = if String.is_empty label then name else sprintf "%s (%s)" name label in
+       let kept_message =
+         match side with
+         | Upper -> named "upper" region.upper_label
+         | Lower -> named "lower" region.lower_label
+         | Base -> named "base" region.base_label
+         | Both ->
+           named
+             "both"
+             (List.filter [ region.upper_label; region.lower_label ] ~f:(Fn.non String.is_empty)
+              |> String.concat ~sep:", ")
+       in
+       let t = { t with message = Some (Info ("Kept " ^ kept_message)) } in
+       commit (edit t ~text:(replace t.text ~pos ~len:(stop - pos) kept) ~cursor:pos))
+;;
+
 let restore t ~step ~none_message =
   let t = commit t in
   match step t.history with
@@ -1144,6 +1179,7 @@ let dispatch_command t (command : Command.t) =
      | Some { kind = `Blockwise; _ } -> block_change t, []
      | Some { kind = `Characterwise | `Linewise; _ } | None -> visual_delete t ~change:true, [])
   | Visual_insert { append; count } -> visual_insert t ~append ~count, []
+  | Keep_conflict side -> keep_conflict t side, []
   | Reload ->
     (match t.path with
      | None -> { t with message = Some (Error "No file name") }, []
@@ -1178,11 +1214,11 @@ let dispatch t (command : Command.t) =
         | Paste _
           | Search _ | Search_word _ | Clear_search_highlight
           | Visual_delete | Visual_yank | Visual_change | Visual_insert _
-         | Reload ), Insert -> false
+         | Keep_conflict _ | Reload ), Insert -> false
     | (Visual_delete | Visual_yank | Visual_change | Visual_insert _), Normal -> false
     | ( Move _ | Enter_visual _ | Exit_visual | Visual_delete | Visual_yank | Visual_change
       | Visual_insert _ ), Visual _ -> true
-    | (Delete_char | Delete_chars_forward _ | Delete_chars_backward _ | Delete_motion _ | Delete_lines _ | Delete_inner_word | Yank_motion _ | Yank_lines _ | Paste _ | Search _ | Search_word _ | Clear_search_highlight | Reload), Visual _ -> false
+    | (Delete_char | Delete_chars_forward _ | Delete_chars_backward _ | Delete_motion _ | Delete_lines _ | Delete_inner_word | Yank_motion _ | Yank_lines _ | Paste _ | Search _ | Search_word _ | Clear_search_highlight | Keep_conflict _ | Reload), Visual _ -> false
     | _, Visual _ -> false
     | _ -> true
   in

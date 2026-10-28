@@ -143,6 +143,14 @@ let default =
     ; move [ 'g'; 'g' ] First_line
     ; move [ 'G' ] Last_line
      ; move [ '%' ] Matching_delimiter
+    (* Conflict markers: vim-unimpaired's jumps, and smerge's letters for the side
+       kept. *)
+    ; move [ ']'; 'n' ] Next_conflict
+    ; move [ '['; 'n' ] Previous_conflict
+    ; editor [ ' '; 'x'; 'u' ] (Keep_conflict Upper)
+    ; editor [ ' '; 'x'; 'l' ] (Keep_conflict Lower)
+    ; editor [ ' '; 'x'; 'a' ] (Keep_conflict Both)
+    ; editor [ ' '; 'x'; 'b' ] (Keep_conflict Base)
      ; [ Key.char 'f' ], Find { direction = Ches_core.Motion.Find.Forward; till = false }
      ; [ Key.char 'F' ], Find { direction = Ches_core.Motion.Find.Backward; till = false }
      ; [ Key.char 't' ], Find { direction = Ches_core.Motion.Find.Forward; till = true }

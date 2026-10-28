@@ -19,6 +19,7 @@
       Normal  _ / g _                Move First_nonblank_down / Last_nonblank
       Normal  g g / G                Move First_line / Last_line
        Normal  %                      Move Matching_delimiter (no count)
+      Normal  ] n / [ n              Move Next_conflict / Previous_conflict
        Normal  f/F/t/T + character    Find character forward/backward, on/before it
        Normal  ;/,                    Repeat last find / opposite direction
       Normal  i / a                  Enter_insert (Before_cursor / After_cursor)
@@ -43,6 +44,7 @@
       Normal  Space w                Save
       Normal  Space q                Quit
       Normal  Space Q                Force_quit
+      Normal  Space x u / l / a / b  Keep_conflict Upper / Lower / Both / Base
       Normal  Space v c              View Toggle_centered
       Normal  Space v h / l          View (Shift -2) / (Shift 2); count repeats
       Normal  Space v H / L          View (Shift -10) / (Shift 10); count repeats

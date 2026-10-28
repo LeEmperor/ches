@@ -4,7 +4,7 @@ open Ches_input
 let action_of_target : Bindings.Target.t -> Keymap.Action.t option = function
   | Editor command -> Some (Editor command)
   | View command -> Some (View command)
-  | Move _
+  | Move motion -> Some (Editor (Move { motion; count = None }))
   | Scroll _
   | Delete_operator
   | Yank_operator

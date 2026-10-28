@@ -52,6 +52,7 @@ type t =
   | Visual_yank
   | Visual_change
   | Visual_insert of { append : bool; count : int }
+  | Keep_conflict of Conflict.Side.t
   | Reload
   | Undo
   | Redo

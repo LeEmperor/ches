@@ -1,5 +1,6 @@
 (** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines;
-    phase 5: commit; phase 6: remotes and branches), a registered view ({!View_registry}) over the
+    phase 5: commit; phase 6: remotes and branches; phase 7: merges and conflicts), a
+    registered view ({!View_registry}) over the
     git backend ([Ches_vcs_git.Backend], a {!Ches_vcs.Backend.S}). Lazygit's layout
     and Magit's context keys: the Files, Branches and Commits list panels beside a diff
     panel that follows the selection, a head summary above the lists, and a
@@ -222,11 +223,8 @@
     - [P]: the same with [Git.Remote.Push.popup status]; [{ target; flags }] ->
       [plan (Push { target; flags })] (a force push is confirmed). Local command
       [push].
-    - [r]: while {!Git.Abort.in_progress} [Rebase], the popup [Git.Abort.popup
-      Rebase], whose [a] gives [plan (Abort Rebase)] (confirmed); otherwise [`Show]
-      ["No rebase in progress; nothing ran"]. [m]: the same for [Merge] (["No merge
-      in progress; nothing ran"]). Local commands [rebase] ([r]) and [merge] ([m]),
-      listed only while that operation is in progress.
+    - [r], [m]: the rebase and merge popups; phase 7 below (phase 6 offered only
+      abort).
     In the Branches panel:
     - Enter on a branch: [plan (Checkout name)] (Enter on the current branch is
       refused by the plan: ["Already on <name>; nothing ran"]). Local command
@@ -252,8 +250,41 @@
     a terminal shows); the log's stderr tail keeps last segments too. While it runs the view stays usable (moving, diffs, [g r], the
     log); other actions are refused as busy, as during any mutation.
 
-    The head summary marks how to leave an operation: a [Rebase] row ends with [" (r
-    a aborts)"], a [Merge] row with [" (m a aborts)"].
+    {2 Merges, rebases and conflicts (phase 7)}
+
+    Through the actions' machinery as above; plans and texts are [Git.Backend]'s
+    ("Merges, rebases and conflicts"). Every plan here rewrites the work tree, so
+    unsaved buffers in the repository refuse it (save the resolutions first). Keys
+    while a snapshot is loaded, in any panel and the diff outside Visual:
+    - [r]: while {!Git.Operation.in_progress} [Rebase], {!View_registry.Ask.t.Popup}
+      of [Git.Operation.popup Rebase]: [r] -> [plan (Continue Rebase)], [s] -> [plan
+      Skip_rebase_commit] (confirmed), [a] -> [plan (Abort Rebase)] (confirmed).
+      Otherwise [`Show] ["No rebase in progress; nothing ran"]. Local command
+      [rebase] only while rebasing.
+    - [m]: while merging, the popup of [Git.Operation.popup Merge]: [m] -> [plan
+      (Continue Merge)], [a] -> [plan (Abort Merge)]. Otherwise the merge popup
+      [Git.Operation.merge_popup ~branch], [branch] the Branches panel's selected
+      branch item (its cursor, whatever panel is focused; [None] on a header or
+      with no branches); its [{ branch = Some b; flags }] -> [plan (Merge { branch =
+      b; flags })], [{ branch = None; _ }] -> [`Show] ["Select the branch to merge in
+      Branches (2) first; nothing ran"]. Local command [merge] always (its
+      description says which popup).
+    - [x] on a Conflicted item (the Files panel's selected item, or the diff's file
+      when its target is a Conflicted one and the cursor is on that file's header
+      lines; a hunk there is the backend's hunk refusal): the popup of
+      [Git.Resolution.popup ~path conflict snapshot.operations]; its side -> [plan
+      (Resolve { path; side })], confirmed. [x] on the Conflicted header plans
+      [Discard (Section Conflicted)] as before (refused with the backend's text).
+      Local command [discard] keeps its name; on a Conflicted item its description
+      is ["Resolve the conflicted file (take a side)"].
+    Failure notices: for [Merge], [Continue] and [Skip_rebase_commit], ["<title>
+    failed: <reason>"], [<reason>] being {!Git.Operation.stopped_hint} if any, else
+    the one-line failure ({!Git.Remote.hint} does not apply: its fast-forward
+    advice is about pulls); for network plans, {!Git.Remote.hint}, else
+    [stopped_hint] (a rebase pull that stopped), else the one-line failure.
+
+    The head summary marks how to go on: a [Rebase] row ends with [" (r r continues,
+    r a aborts)"], a [Merge] row with [" (m m commits, m a aborts)"].
 
     {2 Layout}
 

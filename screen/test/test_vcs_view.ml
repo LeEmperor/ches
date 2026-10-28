@@ -613,6 +613,7 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     f        fetch           Fetch from the default remote, pruning gone branches
     p        pull            Pull from the upstream (the pull popup)
     P        push            Push the branch (the push popup)
+    m        merge           Merge the branch selected in Branches (the merge popup)
     y        copy            Copy the file's path
     j        next            Select next item
     k        previous        Select previous item
@@ -636,6 +637,7 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     f        fetch           Fetch from the default remote, pruning gone branches
     p        pull            Pull from the upstream (the pull popup)
     P        push            Push the branch (the push popup)
+    m        merge           Merge the branch selected in Branches (the merge popup)
     j        cursor-down     Move down a row
     k        cursor-up       Move up a row
     w        word-forward    Move to the next word
@@ -1065,7 +1067,7 @@ let%expect_test "a conflict: the section, its combined diff, conflict markers, h
      1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 1d0798b                    │ 0 Diff: Conflicted: aa.txt, du.txt, ud.txt, uu.txt       │|
-    │ Merging 1cca8e7 (m a aborts)          │ diff --cc aa.txt                                         │|
+    │ Merging 1cca8e7 (m m commits, m a abo>│ diff --cc aa.txt                                         │|
     │                                       │ index b19a1e9,950b81b..0000000                           │|
     │ 1 Files (4)                           │ --- a/aa.txt                                             │|
     │ > - Conflicted (4)                    │ +++ b/aa.txt                                             │|
@@ -1139,7 +1141,7 @@ let%expect_test "a rebase in progress, then a detached HEAD" =
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: work (detached at 1cca8e7) ────────────────────────────────────────────────────────────────╮|
     │ Head: detached at 1cca8e7             │ 0 Diff: Conflicted: aa.txt, du.txt, ud.txt, uu.txt       │|
-    │ Rebasing main onto 1cca8e7 (r a abort>│ diff --cc aa.txt                                         │|
+    │ Rebasing main onto 1cca8e7 (r r conti>│ diff --cc aa.txt                                         │|
     │                                       │ index 950b81b,b19a1e9..0000000                           │|
     │ 1 Files (4)                           │ --- a/aa.txt                                             │|
      1:a.txt [2:VCS: 7b0842b]                                                                           |
@@ -1233,7 +1235,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      NORMAL  VCS VCS focused                                                                            |
     cursor: none
     (Not_a_repository(cwd $DIR/plain))
-    notice: VCS: s/u/x stage/unstage/discard, c commit, f/p/P fetch/pull/push, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: VCS: s/u/x stage/unstage/discard, c commit, m merge, f/p/P fetch/pull/push, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
     g r refresh
     @ toggle-log
     q leave
@@ -1249,7 +1251,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
     │                                                                                                  │|
     │                                                                                                  │|
     ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS: s/u/x stage/unstage/discard, c commit, f/p/P fetch/pull/push, 1/2/3 panels, Tab > |
+     NORMAL  VCS VCS: s/u/x stage/unstage/discard, c commit, m merge, f/p/P fetch/pull/push, 1/2/3 pan> |
     cursor: none
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: no work tree ──────────────────────────────────────────────────────────────────────────────╮|

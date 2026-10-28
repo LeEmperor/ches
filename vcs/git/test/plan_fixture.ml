@@ -1,8 +1,9 @@
-(* Helpers shared by the phase 6 tests (test_remote.ml, test_branches.ml): snapshots of
-   real fixture repositories, plans printed without Cli.prefix (paths under the fixture's
-   temp directory as $DIR), and plans run the way the runner runs a mutation or network
-   job (stopping at the first failed step). Failures print git's error lines only:
-   progress lines vary (throughput, timing). *)
+(* Helpers shared by the phase 6 and 7 tests (test_remote.ml, test_branches.ml,
+   test_merges.ml, test_resolution.ml): snapshots of real fixture repositories, plans
+   printed without Cli.prefix (paths under the fixture's temp directory as $DIR), and
+   plans run the way the runner runs a mutation or network job (stopping at the first
+   failed step). Failures print git's error lines only: progress lines vary (throughput,
+   timing). *)
 
 open! Core
 open Ches_vcs
@@ -45,10 +46,12 @@ let print_plan t (plan : Ches_vcs.Backend.Plan.t) =
   List.iter plan.steps ~f:(function
     | Run spec ->
       printf
-        "  $ %s (%s%s)\n"
+        "  $ %s (%s%s%s)\n"
         (relative t (command spec))
         (Sexp.to_string [%sexp (spec.kind : Exec.Kind.t)])
         (if spec.stream then ", streamed" else "")
+        (String.concat
+           (List.map spec.env ~f:(fun (name, value) -> sprintf ", %s=%s" name value)))
     | Read_file _ -> print_endline "  (file read)")
 ;;
 
@@ -84,8 +87,16 @@ let error_lines text =
 ;;
 
 (* Run [plan]'s steps (each spec's environment extended with [env]) as a mutation job runs
-   them. Prints ["ok"], or the failure with git's error lines and the hint. *)
-let execute ?(env = []) t (plan : Ches_vcs.Backend.Plan.t) =
+   them. Prints ["ok"], or the failure with git's error lines (also stdout's with
+   [~stdout:true]: git prints CONFLICT lines there) and [hint] (default
+   {!Git.Remote.hint}). *)
+let execute
+  ?(env = [])
+  ?(stdout = false)
+  ?(hint = Git.Remote.hint)
+  t
+  (plan : Ches_vcs.Backend.Plan.t)
+  =
   let with_env : Job.Step.t -> Job.Step.t = function
     | Run spec -> Run { spec with env = spec.env @ env }
     | Read_file _ as step -> step
@@ -99,9 +110,13 @@ let execute ?(env = []) t (plan : Ches_vcs.Backend.Plan.t) =
          then go rest
          else (
            printf "  failed: %s\n" (Exec.Result.status_hum result);
+           if stdout
+           then
+             List.iter (error_lines result.stdout) ~f:(fun line ->
+               printf "  > %s\n" (relative t line));
            List.iter (error_lines result.stderr) ~f:(fun line ->
              printf "  | %s\n" (relative t line));
-           printf "  hint: %s\n" (Option.value (Git.Remote.hint report) ~default:"(none)");
+           printf "  hint: %s\n" (Option.value (hint report) ~default:"(none)");
            List.iter rest ~f:(fun _ -> print_endline "  (skipped)"))
        | _ -> failwith "unexpected report")
   in
@@ -109,8 +124,9 @@ let execute ?(env = []) t (plan : Ches_vcs.Backend.Plan.t) =
 ;;
 
 (* Decide, then run what was decided. *)
-let act ?snapshot ?env t action =
-  Option.iter (decide ?snapshot t action) ~f:(fun plan -> execute ?env t plan)
+let act ?snapshot ?env ?stdout ?hint t action =
+  Option.iter (decide ?snapshot t action) ~f:(fun plan ->
+    execute ?env ?stdout ?hint t plan)
 ;;
 
 (* A second clone of the bare remote, in [dir/<name>]: another pusher. *)

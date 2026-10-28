@@ -481,11 +481,11 @@ let%expect_test "Escape cancels a pending leader silently" =
 ;;
 
 let%expect_test "an unknown continuation cancels the sequence without editing" =
-  let t = run (create "abc") (keys " x") in
+  let t = run (create "abc") (keys " z") in
   show t;
   [%expect
     {|
-    NORMAL 0:0 notice="Space x is not bound"
+    NORMAL 0:0 notice="Space z is not bound"
     > |abc
     |}];
   let t = run t (keys "  ") in
@@ -1783,6 +1783,41 @@ let%expect_test "% is a motion that rejects a count, even a huge one" =
     (Move(motion Right))
     NORMAL 0:1
     > (|a)
+    |}]
+;;
+
+let%expect_test "conflict keys: ] n and [ n are counted moves, Space x keeps a side" =
+  (* Every default binding under [\]], [\[] and [Space x]. *)
+  List.iter (Bindings.to_list Bindings.default) ~f:(fun (sequence, target) ->
+    let name = String.concat ~sep:" " (List.map sequence ~f:Key.to_string_hum) in
+    if List.exists [ "]"; "["; "Space x" ] ~f:(fun prefix -> String.is_prefix name ~prefix)
+    then printf "%-10s %s\n" name (Sexp.to_string [%sexp (target : Bindings.Target.t)]));
+  [%expect {|
+    ] n        (Move Next_conflict)
+    [ n        (Move Previous_conflict)
+    Space x u  (Editor(Keep_conflict Upper))
+    Space x l  (Editor(Keep_conflict Lower))
+    Space x a  (Editor(Keep_conflict Both))
+    Space x b  (Editor(Keep_conflict Base))
+    |}];
+  (* [\]] and [Space x] are prefixes only; keeping a side takes no count. *)
+  let t = run (create "abc") (keys "2]") in
+  show t;
+  let t = run t (keys "x") in
+  show t;
+  let t = run t (keys "2 x") in
+  show t;
+  let t = run t (keys "u") in
+  show t;
+  [%expect {|
+    NORMAL 0:0 pending="2 ]"
+    > |abc
+    NORMAL 0:0 notice="2 ] x is not bound"
+    > |abc
+    NORMAL 0:0 pending="2 Space x"
+    > |abc
+    NORMAL 0:0 notice="Space x u does not take a count"
+    > |abc
     |}]
 ;;
 

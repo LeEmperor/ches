@@ -483,13 +483,13 @@ let%expect_test "n on an unborn branch is refused; the branch keys are local to 
       jobs: detect g1.1, refresh g1.2
       focused vcs
       notice: There is no commit yet: commit before branching; nothing ran
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff new-branch previous-branch commit fetch pull push copy next previous first last half-page-down half-page-up
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff new-branch previous-branch commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
       |}])
 ;;
 
-let%expect_test "a rebase pull stops on a conflict: the summary says r a aborts; r a \
-                 asks; y aborts"
+let%expect_test "a rebase pull stops on a conflict: the summary says r r continues, r a \
+                 aborts; r a asks; y aborts"
   =
   with_remote (fun repo ->
     let other = clone repo "other" in
@@ -497,7 +497,7 @@ let%expect_test "a rebase pull stops on a conflict: the summary says r a aborts;
     Fixture.write repo "a.txt" "ours\n";
     ignore (Fixture.commit_all repo "Ours" : string);
     let t = run repo (create repo) " gg" in
-    let t = run repo t "m" in
+    let t = run repo t "r" in
     where repo t;
     print_endline (names t);
     let t = run repo t "p-rp" in
@@ -509,20 +509,20 @@ let%expect_test "a rebase pull stops on a conflict: the summary says r a aborts;
       {|
       jobs: detect g1.1, refresh g1.2
       focused vcs
-      notice: No merge in progress; nothing ran
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all commit fetch pull push copy next previous first last half-page-down half-page-up
+      notice: No rebase in progress; nothing ran
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
       jobs: - g1.3, refresh g1.4, diff g1.5
       focused vcs
-      message: Pull from origin/main (rebase) failed: error: could not apply fb912c6... Ours (exit 1)
+      message: Pull from origin/main (rebase) failed: Stopped on conflicts: resolve each file (x, or Space x in the editor), mark it resolved with s, then continue
       | Head: detached at 143c3f4
-      | Rebasing main onto 143c3f4 (r a aborts)
+      | Rebasing main onto 143c3f4 (r r continues, r >
       log: [exit 1] git pull --progress --rebase
             "hint: Resolve all conflicts manually, mark them as resolved with"
             "hint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\"."
             "hint: You can instead skip this commit: run \"git rebase --skip\"."
             "hint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\"."
             "Could not apply fb912c6... Ours"
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push rebase copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push rebase merge copy next previous first last half-page-down half-page-up
       |}];
     let t = run repo t "r" in
     where repo t;
@@ -539,10 +539,11 @@ let%expect_test "a rebase pull stops on a conflict: the summary says r a aborts;
     [%expect
       {|
       focused popup; popup Rebasing []
-      ╭─ Rebasing ───────────────────╮
-      │ Actions                      │
-      │   a  Abort                   │
-      ╰──────────────────────────────╯
+      ╭─ Rebasing ─────────────────────────────────────────╮
+      │ Actions                                            │
+      │   r  Continue             a  Abort                 │
+      │   s  Skip this commit                              │
+      ╰────────────────────────────────────────────────────╯
       focused confirm; confirm Abort rebase
       ╭─ Abort rebase ───────────────────────────────────────────────╮
       │ Abort the rebase? The branch returns to where it was before  │
@@ -588,7 +589,7 @@ let%expect_test "a merge stopped on a conflict: m a asks; y aborts it" =
       jobs: detect g1.1, refresh g1.2, diff g1.3
       | Head: main fb912c6
       | Upstream: origin/main, ahead 1
-      | Merging 143c3f4 (m a aborts)
+      | Merging 143c3f4 (m m commits, m a aborts)
       focused vcs
       notice: No rebase in progress; nothing ran
       focused confirm; confirm Abort merge

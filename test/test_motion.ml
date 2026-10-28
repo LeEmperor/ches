@@ -368,6 +368,8 @@ let%expect_test "motion kinds and counts" =
     (First_line Linewise (takes_count true))
     (Last_line Linewise (takes_count true))
     (Matching_delimiter (Characterwise (inclusive true)) (takes_count false))
+    (Next_conflict Linewise (takes_count true))
+    (Previous_conflict Linewise (takes_count true))
     |}];
   Expect_test_helpers_core.require_does_raise (fun () ->
     move (create "ab") First_nonblank ~count:1);

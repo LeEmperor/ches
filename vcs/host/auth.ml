@@ -18,7 +18,8 @@ let set bindings name value =
 ;;
 
 let environment ~(kind : Exec.Kind.t) ~base ~ssh_command_configured =
-  let env = set (dedup base) "GIT_TERMINAL_PROMPT" "0" in
+  (* No prompt and no editor on the terminal: [true] keeps a prepared message. *)
+  let env = set (set (dedup base) "GIT_TERMINAL_PROMPT" "0") "GIT_EDITOR" "true" in
   match kind with
   | Read | Mutate -> env
   | Network ->

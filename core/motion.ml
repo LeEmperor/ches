@@ -38,6 +38,8 @@ type t =
   | First_line
   | Last_line
   | Matching_delimiter
+  | Next_conflict
+  | Previous_conflict
   | Find of Find.t
 [@@deriving sexp_of, equal]
 
@@ -46,6 +48,7 @@ let all =
   ; Word_forward Small; Word_forward Big; Word_backward Small; Word_backward Big
   ; Word_end Small; Word_end Big; Line_start; First_nonblank; First_nonblank_down
   ; Line_end; Last_nonblank; First_line; Last_line; Matching_delimiter
+  ; Next_conflict; Previous_conflict
   ]
 
 module Failure = struct
@@ -54,6 +57,7 @@ module Failure = struct
     | Unmatched of char
     | No_character of Uchar.t
     | No_previous_find
+    | No_more_conflicts
   [@@deriving sexp_of, equal]
 
   let to_string = function
@@ -61,6 +65,7 @@ module Failure = struct
     | Unmatched c -> sprintf "No match for %c" c
     | No_character u -> sprintf "Character not found: %s" (Uchar.Utf8.to_string u)
     | No_previous_find -> "No previous find"
+    | No_more_conflicts -> "No more conflicts"
   ;;
 end
 
@@ -72,7 +77,8 @@ module Kind = struct
 end
 
 let kind : t -> Kind.t = function
-  | Up | Down | First_nonblank_down | First_line | Last_line -> Linewise
+  | Up | Down | First_nonblank_down | First_line | Last_line | Next_conflict
+  | Previous_conflict -> Linewise
   | Word_end _ | Line_end | Last_nonblank | Matching_delimiter | Find { till = false; _ } ->
     Characterwise { inclusive = true }
   | Find { till = true; _ } -> Characterwise { inclusive = false }
@@ -93,7 +99,9 @@ let takes_count = function
   | Line_end
   | Last_nonblank
   | First_line
-  | Last_line | Find _ -> true
+  | Last_line
+  | Next_conflict
+  | Previous_conflict | Find _ -> true
 ;;
 
 let keeps_preferred_column = function
@@ -110,7 +118,9 @@ let keeps_preferred_column = function
   | Last_nonblank
   | First_line
   | Last_line
-  | Matching_delimiter | Find _ -> false
+  | Matching_delimiter
+  | Next_conflict
+  | Previous_conflict | Find _ -> false
 ;;
 
 (* Word classes *)
@@ -340,6 +350,20 @@ let find_destination text find ~cursor ~count ~skip =
     Ok (destination, matched)
 ;;
 
+(* The start of the [count]th region start line below (or above) [line], or of the
+   farthest one when fewer remain. *)
+let conflict_start text ~line ~count ~forward =
+  let starts = List.map (Conflict.regions text) ~f:(fun (region : Conflict.Region.t) -> region.start) in
+  let ahead =
+    if forward
+    then List.filter starts ~f:(fun start -> start > line)
+    else List.rev (List.filter starts ~f:(fun start -> start < line))
+  in
+  match List.take ahead count |> List.last with
+  | None -> Error Failure.No_more_conflicts
+  | Some start -> Ok (B.line_start text start)
+;;
+
 let clamp_line text line = Int.clamp_exn line ~min:0 ~max:(B.line_count text - 1)
 
 (* The boundary of [line] at display column [column], or its end when the line is
@@ -386,5 +410,7 @@ let destination text t ~cell_width ~cursor ~preferred_column ~count : (int, Fail
          (Option.value_map count ~default:(B.line_count text - 1) ~f:(fun n ->
             clamp_line text (n - 1))))
   | Matching_delimiter -> matching_delimiter text ~cursor
+  | Next_conflict -> conflict_start text ~line ~count:n ~forward:true
+  | Previous_conflict -> conflict_start text ~line ~count:n ~forward:false
   | Find find -> find_destination text find ~cursor ~count:n ~skip:None |> Result.map ~f:fst
 ;;

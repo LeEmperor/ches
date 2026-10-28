@@ -655,12 +655,12 @@ let%expect_test "conflicts: s marks resolved; u, x and hunks refused; S leaves t
       status |DD dd.txt
       status |UU uu.txt
       status |?? loose.txt
-    refused: uu.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
-    refused: uu.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
-    refused: Conflict resolution is not supported yet; nothing ran
-    refused: Conflict resolution is not supported yet; nothing ran
-    refused: uu.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
-    refused: uu.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
+    refused: uu.txt is conflicted: take a side with x, or resolve it in the editor (Space x), then stage it (s) to mark it resolved; nothing ran
+    refused: uu.txt is conflicted: take a side with x, or resolve it in the editor (Space x), then stage it (s) to mark it resolved; nothing ran
+    refused: Resolve conflicted files one at a time (x on a file); nothing ran
+    refused: Resolve conflicted files one at a time (x on a file); nothing ran
+    refused: Resolve conflicts in the editor: Enter opens the file at the conflict, Space x u, l, a or b keeps a side; nothing ran
+    refused: Resolve conflicts in the editor: Enter opens the file at the conflict, Space x u, l, a or b keeps a side; nothing ran
     run
       plan "Stage all changes (1 file)"
       $ --literal-pathspecs add --all -- loose.txt
@@ -962,7 +962,7 @@ let%expect_test "section texts, left-out entries, and every refusal" =
     refused: c.txt is no longer listed; refresh (g r); nothing ran
     refused: gone.txt is no longer listed; refresh (g r); nothing ran
     refused: Nothing here; nothing ran
-    refused: Conflict resolution is not supported yet; nothing ran
+    refused: Resolve conflicted files one at a time (x on a file); nothing ran
     refused: nested/ is a nested repository: Ches does not stage it; nothing ran
     refused: Nothing staged; nothing ran
     refused: Nothing here; nothing ran

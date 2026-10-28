@@ -16,9 +16,10 @@
 
     [Move] goes to {!Motion.destination}, which clamps at line and document
     boundaries rather than failing; a move already at its boundary is a no-op. The
-    exception is [Matching_delimiter], which can fail: the cursor stays and the
-    message is an [Error] such as [No match for (]. Its
-    cost does not grow with the count beyond those boundaries. A count outside 1 to
+    exceptions are [Matching_delimiter] and the conflict motions, which can fail: the
+    cursor stays and the message is an [Error] such as [No match for (] or
+    [No more conflicts], as for a search that finds nothing. A move's cost does not
+    grow with the count beyond those boundaries. A count outside 1 to
     [Command.max_count], or any count for a motion that does not
     [Motion.takes_count], raises [Invalid_argument]. Moves change no text, revision,
     dirty state, or history (beyond closing an Insert transaction).
@@ -51,12 +52,29 @@
        Delete_char, Delete_chars_*      yes     -   (never delete an LF)
         Delete_motion, Delete_lines,
         Yank_motion, Yank_lines, Paste  yes     -
+      Keep_conflict                    yes     -
       Undo, Redo, Save, Quit,
       Force_quit                       yes     yes
     v}
 
     In Visual mode only [Move], [Enter_visual], [Exit_visual] and the [Visual_*]
     commands apply. [Enter_visual] switches the selection kind, keeping the anchor.
+
+    {2 Conflict markers}
+
+    [Keep_conflict side] edits the conflict region ({!Conflict.region_at}) that
+    contains the cursor's line, markers included: its lines, through the LF after its
+    end line, are replaced by the side's lines ({!Conflict.Region.lines}), as one
+    undo step. The document becomes dirty; nothing is saved. When the region ends the
+    text without a final LF, the last kept line gives up its LF, so none is added.
+    The cursor goes to the start of the first kept line, or, when nothing is kept, of
+    the line that now follows where the region was. The message is an [Info] naming
+    what was kept and its labels: [Kept upper (HEAD)], [Kept lower (feature)],
+    [Kept both (HEAD, feature)], [Kept base (merged common ancestors)], dropping
+    empty labels ([Kept both], [Kept upper]). Nothing changes, and the message is an
+    [Error], when the cursor's line is in no region ([No conflict at the cursor]) or
+    [Base] is asked of a region without a base part
+    ([This conflict has no base part (merge.conflictStyle=diff3 shows one)]).
 
     {2 Blockwise operators}
 

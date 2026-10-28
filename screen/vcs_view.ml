@@ -1,9 +1,10 @@
 (* The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines;
-   phase 5: commit; phase 6: remotes and branches): see vcs_view.mli. The diff panel's
-   text, its per-line open targets and positions are [Vcs_diff_text]'s; the command
-   plans are the backend's ([plan]); the commit popup, message file and template are
-   [Git.Commit]'s; the push, pull and abort popups and the network hints are
-   [Git.Remote]'s and [Git.Abort]'s. *)
+   phase 5: commit; phase 6: remotes and branches; phase 7: merges and conflicts): see
+   vcs_view.mli. The diff panel's text, its per-line open targets and positions are
+   [Vcs_diff_text]'s; the command plans are the backend's ([plan]); the commit popup,
+   message file and template are [Git.Commit]'s; the push and pull popups and the
+   network hints are [Git.Remote]'s; the rebase and merge popups and the stopped hint
+   [Git.Operation]'s; the resolve popup [Git.Resolution]'s. *)
 
 open! Core
 open Ches_vcs
@@ -206,6 +207,9 @@ module Mutation = struct
     ; network : bool
     (** A [Network] step (push, pull, fetch): streamed, with a progress row and a
         notice at its end. *)
+    ; stops : bool
+    (** A merge, continue or skip, which may stop on conflicts
+        ([Git.Operation.stopped_hint]). *)
     ; anchor : Anchor.t option
     ; commit : Committing.t option
     ; settling : bool (** Finished: waiting for the refresh after it. *)
@@ -513,11 +517,11 @@ let progress_row t =
   | Some _ | None -> None
 ;;
 
-(* How to leave an operation in progress, after its summary row. *)
-let abort_mark (operation : Git.In_progress.t) =
+(* How to go on with an operation in progress, after its summary row. *)
+let operation_mark (operation : Git.In_progress.t) =
   match operation with
-  | Rebase _ -> " (r a aborts)"
-  | Merge _ -> " (m a aborts)"
+  | Rebase _ -> " (r r continues, r a aborts)"
+  | Merge _ -> " (m m commits, m a aborts)"
   | Apply_mailbox | Cherry_pick _ | Revert _ | Bisect -> ""
 ;;
 
@@ -557,7 +561,7 @@ let summary_rows t : (Style.t * string) list =
       ((Style.Status, head ^ if loading then "  (refreshing)" else "") :: upstream)
       @ progress
       @ List.map snapshot.operations ~f:(fun operation ->
-        Style.Warning, Git.In_progress.describe operation ^ abort_mark operation)
+        Style.Warning, Git.In_progress.describe operation ^ operation_mark operation)
       @ problems
   in
   (if Option.is_none t.snapshot then head @ progress else head)
@@ -1147,13 +1151,20 @@ let mutation_finished t (report : Job.Report.t) =
     when Job.Id.equal job report.id && never_ran report ->
     { t with mutation = None }, Finished_mutation.nothing
   | Some mutation when Job.Id.equal mutation.job report.id ->
-    (* A network step's failure is explained by its hint when git's stderr has one. *)
+    (* A network step's failure is explained by its hint when git's stderr has one; a
+       merge, continue or skip (or a rebase pull) that stopped on conflicts says what
+       to do next. *)
     let failure =
       Option.map (Job.Report.first_failure report) ~f:(fun step_report ->
+        let hints =
+          (if mutation.network then [ Git.Remote.hint ] else [])
+          @
+          if mutation.network || mutation.stops
+          then [ Git.Operation.stopped_hint ]
+          else []
+        in
         let reason =
-          match
-            if mutation.network then Git.Remote.hint step_report else None
-          with
+          match List.find_map hints ~f:(fun hint -> hint step_report) with
           | Some hint -> hint
           | None -> failure_line step_report
         in
@@ -1285,8 +1296,29 @@ module Submission = struct
     { plan : Backend.Plan.t
     ; root : string
     ; anchor : Anchor.t option
+    ; stops : bool (** See [Mutation.t.stops]. *)
     }
   [@@deriving sexp_of]
+
+  (* Whether [action] may stop on conflicts. *)
+  let stops : B.action -> bool = function
+    | Merge _ | Continue _ | Skip_rebase_commit -> true
+    | Stage _
+    | Unstage _
+    | Discard _
+    | Stage_all
+    | Unstage_all
+    | Finish_commit _
+    | Extend _
+    | Fetch
+    | Pull _
+    | Push _
+    | Checkout _
+    | Checkout_previous
+    | Create_branch _
+    | Abort _
+    | Resolve _ -> false
+  ;;
 end
 
 type action =
@@ -1321,8 +1353,15 @@ type action =
   | Pull_choice of Git.Remote.Pull.Choice.t (** The pull popup's answer. *)
   | Push_popup (** [P]. *)
   | Push_choice of Git.Remote.Push.Choice.t (** The push popup's answer. *)
-  | Abort_popup of Git.Abort.Operation.t (** [r], [m]. *)
-  | Abort_choice of Git.Abort.Operation.t (** The abort popup's [a]. *)
+  | Rebase_popup (** [r]. *)
+  | Merge_popup (** [m]. *)
+  | Operation_choice of Git.Operation.Choice.t
+  (** The answer of the popup of the rebase or merge in progress. *)
+  | Merge_choice of Git.Operation.Merge_choice.t (** The merge popup's answer. *)
+  | Resolve_choice of
+      { path : string
+      ; side : Git.Resolution.Side.t
+      } (** The resolve popup's answer ([x] on a Conflicted item). *)
   | Checkout (** Enter on a branch: the selected one. *)
   | Checkout_previous (** [-] in Branches. *)
   | New_branch (** [n] in Branches: the name prompt. *)
@@ -1337,12 +1376,7 @@ let is c key = Key.equal key (Key.char c)
 (* [f p P r m]: anywhere a snapshot is loaded (the diff outside Visual), as [c]. *)
 let remote_key key =
   List.find_map
-    [ 'f', Fetch
-    ; 'p', Pull_popup
-    ; 'P', Push_popup
-    ; 'r', Abort_popup Rebase
-    ; 'm', Abort_popup Merge
-    ]
+    [ 'f', Fetch; 'p', Pull_popup; 'P', Push_popup; 'r', Rebase_popup; 'm', Merge_popup ]
     ~f:(fun (c, action) -> Option.some_if (is c key) action)
 ;;
 
@@ -1536,6 +1570,32 @@ let action_of t (verb : Verb.t) : (B.action * Anchor.t option, string) Result.t 
                  , Some { Anchor.target; path; hunk } )))))
 ;;
 
+(* The conflicted file [x] resolves (phase 7): a Conflicted item selected in Files, or
+   the header lines of a file in a Conflicted diff, with its conflict from the
+   snapshot. [None] otherwise ([x] then plans a discard, which the backend refuses for
+   a Conflicted section or hunk). *)
+let conflicted_at t =
+  match t.snapshot, action_of t Discard with
+  | Some snapshot, Ok (Discard (File { section = Conflicted; path }), _) ->
+    List.find_map snapshot.status.entries ~f:(function
+      | Unmerged { conflict; path = entry; _ } when String.equal entry path ->
+        Some (path, conflict)
+      | Unmerged _ | Changed _ | Renamed_or_copied _ | Untracked _ | Ignored _ -> None)
+  | _ -> None
+;;
+
+(* The branch [m] merges: the Branches panel's selected item, whatever has focus. *)
+let merge_branch t =
+  match selected_item t Branches with
+  | Some { value = Branch branch; _ } -> Some branch.name
+  | Some { value = File _ | Commit _; _ } | None -> None
+;;
+
+let in_progress t kind =
+  Option.exists t.snapshot ~f:(fun (snapshot : B.snapshot) ->
+    Git.Operation.in_progress snapshot.operations kind)
+;;
+
 (* What Visual [s u x] act on: the lines of one file the diff's selection touches
    (phase 4), anchored on the first touched hunk. [Error] is the notice instead. *)
 let lines_action_of t (verb : Verb.t) : (B.action * Anchor.t option, string) Result.t =
@@ -1598,7 +1658,11 @@ let staged_keys t (action : B.action) =
   | Checkout _
   | Checkout_previous
   | Create_branch _
-  | Abort _ -> []
+  | Abort _
+  | Continue _
+  | Skip_rebase_commit
+  | Merge _
+  | Resolve _ -> []
 ;;
 
 (* The warning for staging paths whose buffers have unsaved text. *)
@@ -1666,6 +1730,7 @@ let submit ?commit t (submission : Submission.t) =
               ; root = submission.root
               ; rewrites_worktree = submission.plan.rewrites_worktree
               ; network
+              ; stops = submission.stops
               ; anchor = submission.anchor
               ; commit
               ; settling = false
@@ -1777,11 +1842,13 @@ let perform t controller ~context ~rows ~width action =
           | Run plan ->
             run
               t
-              { plan; root; anchor }
+              { plan; root; anchor; stops = Submission.stops action }
               ?commit
               ?warning:(staging_warning t context ~root action)
           | Confirm { title; message; plan } ->
-            let submission = { Submission.plan; root; anchor } in
+            let submission =
+              { Submission.plan; root; anchor; stops = Submission.stops action }
+            in
             (match dirty_refusal context submission with
              | Some refusal -> outcome t ~notice:(`Post refusal)
              | None ->
@@ -1820,6 +1887,15 @@ let perform t controller ~context ~rows ~width action =
      | t, `Error message -> outcome t ~notice:(`Post message)
      | t, `Open location -> outcome t ~open_file:location)
   | Event e -> with_jobs (event t e)
+  | Act Discard when Option.is_some (conflicted_at t) ->
+    let path, conflict = Option.value_exn (conflicted_at t) in
+    (match busy t with
+     | Some busy -> outcome t ~notice:(`Show busy)
+     | None ->
+       ask_popup t (fun snapshot ->
+         Popup.map
+           (Git.Resolution.popup ~path conflict snapshot.operations)
+           ~f:(fun side -> Resolve_choice { path; side })))
   | Act verb -> act t (fun t -> action_of t verb)
   | Act_on_lines verb -> act t (fun t -> lines_action_of t verb)
   | Commit_popup ->
@@ -1874,7 +1950,7 @@ let perform t controller ~context ~rows ~width action =
           (* The message buffer cannot show a question; git's plans never ask. *)
           outcome t ~notice:(`Post (sprintf "%s needs a confirmation; nothing ran" title))
         | Run plan ->
-          (match submit ~commit:(Finish pending) t { plan; root; anchor = None } with
+          (match submit ~commit:(Finish pending) t { plan; root; anchor = None; stops = false } with
            | Error failure -> outcome t ~notice:(`Post failure)
            | Ok (t, job) -> outcome (end_visual t) ~save:[ pending.path ] ~jobs:[ job ])))
   | Abort_commit ->
@@ -1909,24 +1985,32 @@ let perform t controller ~context ~rows ~width action =
         Push_choice choice))
   | Pull_choice { flags } -> act t (fun _ -> Ok (B.Pull { flags }, None))
   | Push_choice { target; flags } -> act t (fun _ -> Ok (B.Push { target; flags }, None))
-  | Abort_popup operation ->
-    (match t.snapshot with
-     | None -> outcome t ~notice:(`Show "Nothing loaded yet")
-     | Some snapshot when Git.Abort.in_progress snapshot.operations operation ->
-       let popup =
-         Popup.map (Git.Abort.popup operation) ~f:(fun operation ->
-           Abort_choice operation)
-       in
-       outcome t ~ask:(View_registry.Ask.Popup { popup; cancel = None })
-     | Some _ ->
-       outcome
-         t
-         ~notice:
-           (`Show
-               (match operation with
-                | Rebase -> "No rebase in progress; nothing ran"
-                | Merge -> "No merge in progress; nothing ran")))
-  | Abort_choice operation -> act t (fun _ -> Ok (B.Abort operation, None))
+  | Rebase_popup when Option.is_some t.snapshot && not (in_progress t Rebase) ->
+    outcome t ~notice:(`Show "No rebase in progress; nothing ran")
+  | Rebase_popup ->
+    ask_popup t (fun _ ->
+      Popup.map (Git.Operation.popup Rebase) ~f:(fun choice -> Operation_choice choice))
+  | Merge_popup when in_progress t Merge ->
+    ask_popup t (fun _ ->
+      Popup.map (Git.Operation.popup Merge) ~f:(fun choice -> Operation_choice choice))
+  | Merge_popup ->
+    let branch = merge_branch t in
+    ask_popup t (fun _ ->
+      Popup.map (Git.Operation.merge_popup ~branch) ~f:(fun choice ->
+        Merge_choice choice))
+  | Operation_choice choice ->
+    act t (fun _ ->
+      Ok
+        ( (match choice with
+           | Continue kind -> B.Continue kind
+           | Skip -> Skip_rebase_commit
+           | Abort kind -> Abort kind)
+        , None ))
+  | Merge_choice { branch = None; _ } ->
+    outcome t ~notice:(`Show "Select the branch to merge in Branches (2) first; nothing ran")
+  | Merge_choice { branch = Some branch; flags } ->
+    act t (fun _ -> Ok (B.Merge { branch; flags }, None))
+  | Resolve_choice { path; side } -> act t (fun _ -> Ok (B.Resolve { path; side }, None))
   | Checkout ->
     act t (fun t ->
       match selected_item t Branches with
@@ -2032,24 +2116,26 @@ let commands t =
       ]
     in
     let commit = c "commit" [ k 'c' ] "Commit, amend or extend (the commit popup)" in
-    (* [f p P] always; [r] and [m] only while there is something for them to abort. *)
-    let in_progress operation =
-      Option.exists t.snapshot ~f:(fun (snapshot : B.snapshot) ->
-        Git.Abort.in_progress snapshot.operations operation)
-    in
+    (* [f p P m] always; [r] only while rebasing. *)
     let remote =
       [ c "fetch" [ k 'f' ] "Fetch from the default remote, pruning gone branches"
       ; c "pull" [ k 'p' ] "Pull from the upstream (the pull popup)"
       ; c "push" [ k 'P' ] "Push the branch (the push popup)"
       ]
-      @ (if in_progress Rebase
-         then [ c "rebase" [ k 'r' ] "Abort the rebase in progress (the rebase popup)" ]
+      @ (if in_progress t Rebase
+         then
+           [ c "rebase" [ k 'r' ] "Continue, skip or abort the rebase (the rebase popup)" ]
          else [])
-      @
-      if in_progress Merge
-      then [ c "merge" [ k 'm' ] "Abort the merge in progress (the merge popup)" ]
-      else []
+      @ [ c
+            "merge"
+            [ k 'm' ]
+            (if in_progress t Merge
+             then "Commit or abort the merge in progress (the merge popup)"
+             else "Merge the branch selected in Branches (the merge popup)")
+        ]
     in
+    let resolve = "Resolve the conflicted file (take a side)" in
+    let conflicted = Option.is_some (conflicted_at t) in
     match t.focus with
     | Diff ->
       let visual = Option.is_some (Text_view.visual t.diff_view) in
@@ -2065,7 +2151,12 @@ let commands t =
         | Loaded (target, _) when Option.is_some (B.diff_section target) ->
           [ c "stage" [ k 's' ] "Stage the hunk at the cursor (on a file header: the file)"
           ; c "unstage" [ k 'u' ] "Unstage the hunk at the cursor (or the file)"
-          ; c "discard" [ k 'x' ] "Discard the hunk at the cursor (or the file); confirmed"
+          ; c
+              "discard"
+              [ k 'x' ]
+              (if conflicted
+               then resolve
+               else "Discard the hunk at the cursor (or the file); confirmed")
           ]
         | Empty | No_diff | Loading _ | Loaded _ | Failed _ -> []
       in
@@ -2107,7 +2198,12 @@ let commands t =
         | Files ->
           [ c "stage" [ k 's' ] "Stage the file or section (a conflict: mark it resolved)"
           ; c "unstage" [ k 'u' ] "Unstage the file or section"
-          ; c "discard" [ k 'x' ] "Discard the file's or section's changes; confirmed"
+          ; c
+              "discard"
+              [ k 'x' ]
+              (if conflicted
+               then resolve
+               else "Discard the file's or section's changes; confirmed")
           ]
           @ all
         | Branches ->
@@ -2413,6 +2509,14 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
   let parts = parts @ Option.to_list log in
   let default =
     let hints keys = if hotkey_hints then " | " ^ keys else "" in
+    (* How to go on with the operation in progress, else how to start a merge. *)
+    let operation =
+      if in_progress t Rebase
+      then "r r continue"
+      else if in_progress t Merge
+      then "m m commit"
+      else "m merge"
+    in
     if not (loaded t)
     then (if hotkey_hints then "g r retry, @ log, q leave" else "")
     else (
@@ -2430,11 +2534,19 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
         in
         sprintf "Diff %d-%d/%d%s" (top + 1) (Int.min total (top + h)) total visual
         ^ hints
-            (if String.is_empty visual
-             then
-               "s u x hunk, ] [ hunks, c commit, f p P fetch/pull/push, e open, 10j, v V \
-                y, Tab/Esc list, g r, @, q"
-             else "s u x lines, S U, y copy, Esc ends, g r, @, q")
+            (match t.diff with
+             | _ when not (String.is_empty visual) ->
+               "s u x lines, S U, y copy, Esc ends, g r, @, q"
+             | Loaded (Conflicted _, _) ->
+               sprintf
+                 "e edit, s x on the file header (resolved, take a side), ] [ hunks, c \
+                  commit, %s, f p P fetch/pull/push, 10j, v V y, Tab/Esc list, g r, @, q"
+                 operation
+             | Empty | No_diff | Loading _ | Loaded _ | Failed _ ->
+               sprintf
+                 "s u x hunk, ] [ hunks, c commit, %s, f p P fetch/pull/push, e open, \
+                  10j, v V y, Tab/Esc list, g r, @, q"
+                 operation)
       | (Files | Branches | Commits) as focus ->
         let count = List.length (rows_of t focus) in
         let name =
@@ -2448,14 +2560,25 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
         ^ hints
             (match focus with
              | Files ->
-               "s u x S U, c commit, f p P fetch/pull/push, 1 2 3 panels, Tab diff, \
-                Enter, y copy, g r, @, q"
+               sprintf
+                 "%s, c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab diff, \
+                  Enter, y copy, g r, @, q"
+                 (if Option.is_some (conflicted_at t)
+                  then "s resolved, x take a side"
+                  else "s u x S U")
+                 operation
              | Branches ->
-               "Enter checkout, n new, - previous, c commit, f p P fetch/pull/push, 1 \
-                2 3 panels, Tab diff, y copy, g r, @, q"
+               sprintf
+                 "Enter checkout, n new, - previous, %s, c commit, f p P \
+                  fetch/pull/push, 1 2 3 panels, Tab diff, y copy, g r, @, q"
+                 (if in_progress t Rebase || in_progress t Merge
+                  then operation
+                  else "m merge this")
              | Commits | Diff ->
-               "c commit, f p P fetch/pull/push, 1 2 3 panels, Tab diff, Enter, y copy, \
-                g r, @, q"))
+               sprintf
+                 "c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab diff, Enter, y \
+                  copy, g r, @, q"
+                 operation))
   in
   { title = title t
   ; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default)
@@ -2496,8 +2619,8 @@ let adapter : (t, action) View_registry.Adapter.t =
   ; interpret
   ; escape
   ; hint =
-      "VCS: s/u/x stage/unstage/discard, c commit, f/p/P fetch/pull/push, 1/2/3 panels, \
-       Tab diff, g r refresh, @ log, q leaves, ? help"
+      "VCS: s/u/x stage/unstage/discard, c commit, m merge, f/p/P fetch/pull/push, 1/2/3 \
+       panels, Tab diff, g r refresh, @ log, q leaves, ? help"
   ; perform
   ; commands
   ; signal

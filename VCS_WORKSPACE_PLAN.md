@@ -13,9 +13,11 @@ phases 1-2 as fe0f087 (2026-10-27). Phase 3 (stage/unstage/discard) accepted and
 committed by the owner as d0cb736 (2026-10-27). Phase 4 (line staging from a
 Visual selection) complete and committed by the owner as 117f230 (2026-10-28).
 Phase 5 (popups and the commit flow) complete and committed by the owner as
-a6d6c31 (2026-10-28). Phase 6 (remotes and branches) complete and uncommitted
-(2026-10-28), owner terminal acceptance pending. All six phases of this plan are
-implemented; the tier-2 choice (merge/conflict resolution or log/history) is open.
+a6d6c31 (2026-10-28). Phase 6 (remotes and branches) complete and committed by
+the owner as 68af093 (2026-10-28). The owner chose conflict resolution as the first
+tier-2 item: phase 7 (merges and conflicts) complete and uncommitted (2026-10-28,
+resumed after a host reset), owner terminal acceptance pending. Next tier-2 item
+not chosen (log/history browsing was the other candidate).
 
 ## Goal
 
@@ -55,8 +57,8 @@ switching and pull.
   `Space g a`, never by save or close.
 - **First milestone** includes push, pull and fetch.
 - **Registry first:** no new per-name wiring in `Ui_state`/`View_command`.
-- **Open:** which tier-2 item comes after this plan: merge/conflict resolution or
-  log/history browsing.
+- **Tier 2 (2026-10-28):** merge/conflict resolution first (phase 7); log/history
+  browsing later.
 
 ## Interaction model
 
@@ -356,6 +358,21 @@ appends a handoff below.
   diagnostic source as `Document_saved`). Test: a headless directory save of a
   tracked file's delete or rename refreshes the view's status.
 
+### Phase 7: Merges and conflict resolution (tier 2, owner 2026-10-28)
+
+- Merge a branch (`m m` on the branch selected in Branches; `-n --no-ff`, `-f
+  --ff-only`). While merging, `m m` commits the merge, `m a` aborts; while
+  rebasing, `r r` continues, `r s` skips the commit being applied, `r a` aborts.
+- Whole-file resolution in the VCS view: `x` on a conflicted file takes ours or
+  theirs (and stages it, Magit's way) or restores the conflict markers, confirmed,
+  with the sides named for what they are in a rebase.
+- Hunk resolution in the editor, on the file's conflict markers (smerge's model):
+  keep the upper, lower, both or base side of the conflict at the cursor; jump to
+  the next or previous conflict. Then save and `s` marks the file resolved.
+- No git child may start an editor (`GIT_EDITOR=true` for every child).
+- Tests: fixture merges and rebases with conflicts carried through to a commit,
+  each resolution kind including deletions, and the editor commands on marker text.
+
 ## Agent execution and handoff protocol
 
 Phases run strictly sequentially. An orchestrating session splits each phase across
@@ -406,8 +423,6 @@ Next-phase integration notes:
 
 ## Deferred beyond this plan (tier 2 and later)
 
-- Merge a branch, and conflict resolution (pick ours/theirs/both per hunk,
-  continue/abort).
 - Log graph, commit file lists, file history, blame.
 - Interactive rebase as an editable todo buffer applied on save (the directory-buffer
   pattern), fixup/squash, cherry-pick, revert.
@@ -1194,6 +1209,120 @@ Ownership:
 - Frozen for everyone: every `.mli` except A6's `session.mli`/`ui_state.mli`
   additions; `vcs/` outside `vcs/git/`. A needed contract change goes to the
   orchestrator.
+
+## Phase 7 contracts (2026-10-28)
+
+Run as three agents: G7 (git plans and the editor safety net, `vcs/git/`,
+`vcs/host/auth.ml`) and E7 (the editor's conflict commands: `core/`, `input/`,
+`palette/`, `app/` if needed) in parallel, then V7 (the view, docs) once G7 lands.
+Stubs fail with `"TODO phase 7: agent G7"` (grep `TODO phase 7`).
+
+Done by the orchestrator before the agents (compiling, no test reaches the stubs):
+- `vcs/git/operation.mli` (new): `Kind` (`Rebase | Merge`, re-exporting
+  `Abort.Operation.t` until V7 retires `Git.Abort`), `Choice` (`Continue kind |
+  Skip | Abort kind`), `popup kind`, `in_progress`, `Merge_choice { branch; flags }`,
+  `merge_popup ~branch`, `merge_flags`, `stopped_hint`.
+- `vcs/git/resolution.mli` (new): `Side` (`Ours | Theirs | Markers`), `has_file`,
+  `labels` (what ours/theirs mean in a merge and a rebase), `popup ~path conflict
+  operations`.
+- `vcs/git/backend.mli`: `Abort of Operation.Kind.t`; new `Continue`,
+  `Skip_rebase_commit`, `Merge { branch; flags }`, `Resolve { path; side }`; the
+  plan contract "Merges, rebases and conflicts (phase 7)"; new refusal texts for
+  conflicted files, sections and hunks (pointing at `x` and `Space x`).
+- `vcs/host/auth.mli`: `GIT_EDITOR=true` forced for every child.
+- `screen/vcs_view.mli`: section "Merges, rebases and conflicts (phase 7)"
+  (`r`, `m`, `x` on Conflicted, failure reasons, summary marks); the phase 6 `r`/`m`
+  bullet points to it.
+- Compile fixes: `staged_keys` in `vcs_view.ml`, the fake planner in
+  `test_vcs_actions.ml`.
+
+Editor conflict commands (E7; generic, no git; E7 writes the `.mli` wording):
+- A pure module in `core/` (e.g. `Conflict`) finds conflict regions in a text: a
+  line starting with exactly seven `<` followed by a space or the line end, an
+  optional base line (seven `|`), a separator line (exactly seven `=`), and an end
+  line (seven `>`, space or line end); labels are the text after the markers. An
+  unterminated or malformed region is ignored; a new start line before the end
+  restarts. Only the default marker size (7) is recognised.
+- Side: `Upper` (the `<<<<<<<` part: ours, HEAD; the upstream while rebasing),
+  `Lower` (the `>>>>>>>` part: theirs; your commit while rebasing), `Both` (upper
+  then lower), `Base` (the `|||||||` part, present with `merge.conflictStyle=diff3`
+  or `zdiff3`).
+- An editor command (in `Command.t`) keeps a side of the region containing the
+  Normal-mode cursor's line: the region's lines are replaced by that side's lines as
+  one undoable change (the buffer becomes dirty; nothing is saved); the cursor goes
+  to the first kept line (or to where the region was, if nothing is kept); feedback
+  names what was kept, e.g. "Kept upper (HEAD)". Outside a region: "No conflict at
+  the cursor", nothing changes. `Base` without a base part: "This conflict has no
+  base part (merge.conflictStyle=diff3 shows one)", nothing changes.
+- A motion to the next / previous region's start line, with counts, usable where
+  other jumps are; none left: the cursor stays, with the feedback a failed search
+  gives ("No more conflicts" or the closest existing wording).
+- Bindings (Normal mode): `] n` / `[ n` (vim-unimpaired's conflict-marker jumps),
+  `Space x u` keep upper, `Space x l` keep lower, `Space x a` keep all (both),
+  `Space x b` keep base (smerge's letters). Palette entries ("Conflict: keep upper
+  (ours)" and the like; next/previous conflict). Hotkey hints for the new `Space x`
+  prefix if prefixes are hinted. Expectation updates they cause.
+- Tests: the pure parser (plain, diff3, labels, malformed, several regions, CRLF
+  not supported if the editor has no CR), each command end to end through the
+  default bindings in a headless session (text after, undo restores, dirty flag,
+  feedback), motions with counts. Docs: `docs/editor_reference.md` (a "Conflict
+  markers" part with the keys), README feature line.
+
+Git (G7):
+- `operation.ml`, `resolution.ml`, the plan branches and new refusal texts in
+  `backend.ml`, `vcs/host/auth.ml` (`GIT_EDITOR`) with a test in `vcs/host/test/`;
+  per the `.mli` files. Existing tests that use `Git.Abort` keep working (it stays
+  until V7); add `Operation` equivalents.
+- Verify against git 2.43 and record deviations: `rebase --continue` with
+  `GIT_EDITOR=true` keeps the message; `commit --no-edit` during a merge uses
+  `MERGE_MSG`; `checkout --ours/--theirs` then `add` per conflict kind, and `rm
+  --quiet` for a deletion side (including `Both_deleted`, where the work-tree file
+  is already gone); `checkout --merge` restores markers (and fails once the file
+  was staged); `merge --ff-only` refusal and `--no-ff` commit; which output stream
+  carries `CONFLICT (` lines for merge, `rebase --continue` and `pull --rebase`.
+- Fixture tests: a conflicting merge carried through resolution (ours, theirs,
+  markers) and `Continue Merge` to a merge commit (check the parents and message);
+  a rebase with two conflicting commits: resolve, continue, stop again, skip, end;
+  each `Resolution.has_file` case (modify/delete both ways, add/add, both deleted
+  via a rename/rename conflict or as git produces it); refusals; `stopped_hint`.
+
+View (V7, after G7): per `vcs_view.mli`. Retire `Git.Abort`: the view uses
+`Git.Operation`; delete `vcs/git/abort.ml(i)` once nothing uses it (V7 may move
+G7's and G6's remaining `Abort` test uses to `Operation`); the orchestrator then
+gives `Operation.Kind` its own definition. New `screen/test/test_vcs_conflicts.ml`
+end to end: a merge from `m m` stopping on conflicts, `x` take theirs on one file,
+the editor's `Space x` on another (open it with Enter from the diff, keep a side,
+save), `s`, `m m` committing; a rebase pull stopping, `r r` with an unsaved buffer
+refused, then continuing; `r s` confirmation; `x` restore markers; summary marks;
+expectation updates. Docs: README, docs/editor_reference.md (the VCS keys and a
+"Resolving conflicts" walk-through), backlog.
+
+Decisions (orchestrator; Magit and smerge defaults):
+- Taking a whole side stages the file (Magit's `magit-checkout-stage`); restoring
+  markers leaves it conflicted.
+- Hunk resolution is the editor's, on markers, with smerge's upper/lower naming
+  (ours/theirs swap meaning in a rebase); the VCS diff's `x` on a conflict hunk
+  points there.
+- `m m` merges the branch selected in Branches (no branch-name prompt; no
+  remote-tracking branches: pull covers those); `--no-edit` always.
+- `r s` (skip) and every resolution are confirmed; continue and commit-merge are
+  not, but unsaved buffers refuse them.
+- Starting a rebase, cherry-pick/revert continue, and `c c` pre-filling
+  `MERGE_MSG` stay deferred (`m m` commits with git's message).
+- `GIT_EDITOR=true` for every child, beside `GIT_TERMINAL_PROMPT=0`.
+
+Ownership:
+- G7: `vcs/git/*.ml`, `vcs/git/test/`, `vcs/host/auth.ml`, `vcs/host/test/`. Builds
+  `@vcs/runtest` (all of vcs/).
+- E7: `core/`, `input/`, `palette/`, `app/` only if a command needs routing there,
+  their tests (`test/`, `core/test` or wherever the existing ones are), `.mli`
+  files in those directories, docs/editor_reference.md's editing part, README's
+  feature line. Builds its directories' tests plus `@screen/runtest` if bindings or
+  palette expectations live there (coordinate: only after G7 reports, or tolerate
+  G7's in-progress state in `vcs/`).
+- V7 (after G7): `screen/vcs_view.ml`, `screen/vcs_*.ml`, `screen/test/test_vcs_*.ml`,
+  deleting `vcs/git/abort.ml(i)`, test moves off `Abort`, README/docs VCS parts.
+- Frozen: every other `.mli` (contract changes go to the orchestrator).
 
 ## Implementation handoffs
 
@@ -2065,6 +2194,142 @@ Next-phase integration notes (tier 2):
     In_progress and the (r a)/(m a) marks exist; Backend.S still has no popups (only
     git has them).
   - Log/history: the Commits panel and Commit diff target are the base.
+```
+
+```text
+Phase 7 interrupted (2026-10-28), resume notes:
+  State: uncommitted on 68af093. The host reset at 16:18 while E7 and V7 ran. Repo
+  checked afterwards: git fsck clean, no empty or NUL-filled source files; _build
+  had zero-length artifacts, so it was deleted and rebuilt. dune build -j 6 -> 0;
+  dune runtest -j 6 -> 0; git diff --check clean.
+  Done:
+  - Orchestrator contracts (see "Phase 7 contracts"), plus after G7: Continue
+    Merge is commit --no-edit --cleanup=strip; failure reasons for merge/continue/
+    skip use Operation.stopped_hint, never Remote.hint.
+  - G7 (complete, reported): operation.ml, resolution.ml, backend.ml plans and the
+    new Conflicted texts, GIT_EDITOR=true in vcs/host/auth.ml; tests
+    vcs/git/test/test_merges.ml (9), test_resolution.ml (7), test_auth.ml, and
+    test_branches.ml moved off Git.Abort. git 2.43 findings: checkout --merge
+    recreates markers even after staging (the plan's own refusal guards it);
+    restored markers are labelled ours/theirs; CONFLICT lines are on stdout.
+  - E7 (work complete in the tree and tested, but its final report was lost):
+    core/conflict.ml(i), Command.Keep_conflict, Next_conflict/Previous_conflict
+    motions, bindings ] n / [ n and Space x u/l/a/b, palette entries,
+    test/test_conflict.ml (18), keymap/catalog expectation updates,
+    docs/editor_reference.md and README. Review its diff before acceptance.
+  - Orchestrator after the reset: test_vcs_workspace.ml's conflicted refusal text
+    updated to G7's new wording.
+  Not done (V7, per the contract's "View (V7, after G7)"):
+  - vcs_view.ml: r/m Operation popups (continue, skip, commit merge, abort), m m
+    merge popup from the Branches selection, x on a Conflicted item -> resolve
+    popup, failure reasons, summary marks "(r r continues, r a aborts)" / "(m m
+    commits, m a aborts)", commands/hints. Today r/m still open phase 6's
+    abort-only popups (Git.Abort), and x on a conflicted file is refused.
+  - Retire Git.Abort (vcs/git/abort.ml(i)) and give Operation.Kind its own type.
+  - screen/test/test_vcs_conflicts.ml; README/docs VCS parts ("Resolving
+    conflicts" walk-through); backlog; the phase 7 handoff.
+  To resume: start V7 with the "Phase 7 contracts" View part (its original brief
+  is that section plus the vcs_view.mli phase 7 section); E7 and G7 need no rerun.
+  The owner keeps three agents in parallel despite the resets (2026-10-28).
+```
+
+```text
+Phase / date / status:
+  7, 2026-10-28, complete (headless checks only; owner terminal acceptance pending).
+  Uncommitted, on 68af093. Run as the orchestrator's contracts, then G7 (git) and
+  E7 (editor) in parallel; a host reset at 16:18 stopped E7 (work complete, report
+  lost) and V7 (not started); resumed as V7 (view) and D7 (E7 review, docs) in
+  parallel. See "Phase 7 contracts" and "Phase 7 interrupted".
+
+Implemented behavior:
+  - m: the merge popup for the branch selected in Branches (-n --no-ff, -f
+    --ff-only, one group; m merges with --no-edit); while merging, m commits the
+    merge (commit --no-edit --cleanup=strip: git's message without its # Conflicts
+    lines), a aborts (confirmed). r: while rebasing, r continues, s skips the
+    commit being applied (confirmed), a aborts (confirmed); else "No rebase in
+    progress". Summary marks "(m m commits, m a aborts)", "(r r continues, r a
+    aborts)". Unsaved buffers in the repository refuse every one of them.
+  - x on a conflicted file (Files, or its diff's header lines): "Resolve <path>":
+    o take ours, t take theirs (checkout --ours/--theirs, then add: resolved; a
+    side without the file deletes it), m restore the conflict markers (checkout
+    --merge, still conflicted); confirmed; the sides named "the upstream" / "your
+    commit" while rebasing. x on the header or a hunk is refused, pointing at x on
+    a file or the editor.
+  - Editor (generic, any file): ] n / [ n jump to the next / previous conflict
+    (counts, Visual, linewise operator motion); Space x u / l / a / b keep the
+    upper, lower, both or base side of the conflict at the cursor as one undoable,
+    unsaved change ("Kept upper (HEAD)"); palette conflict.* entries.
+  - Failure reasons: merge, continue, skip and rebase pulls that stop say "Stopped
+    on conflicts: resolve each file (x, or Space x in the editor), mark it resolved
+    with s, then continue"; merge failures never get the pull advice.
+  - Every git child runs with GIT_EDITOR=true (no editor can start on the terminal).
+
+Changed modules and new public contracts:
+  - Orchestrator: vcs/git/operation.mli, resolution.mli (new); backend.mli phase 7
+    actions (Continue, Skip_rebase_commit, Merge, Resolve; Abort of Operation.Kind)
+    and "Merges, rebases and conflicts (phase 7)", new Conflicted refusal texts,
+    --cleanup=strip after G7; auth.mli GIT_EDITOR; vcs_view.mli phase 7 section
+    (failure reasons revised after G7).
+  - G7: operation.ml, resolution.ml, backend.ml plans, vcs/host/auth.ml;
+    test_merges.ml (9), test_resolution.ml (7), test_auth.ml, plan_fixture.ml
+    (env, ?stdout, ?hint), test_branches.ml off Git.Abort; expectation updates.
+  - E7: core/conflict.ml(i) (new), Command.Keep_conflict, Motion
+    Next_conflict/Previous_conflict, editor dispatch, bindings, palette catalog and
+    shortcut (an uncounted Move binding shows as a shortcut); test/test_conflict.ml
+    (19) and keymap/motion/editor/palette expectation updates.
+  - V7: screen/vcs_view.ml (popups, resolve, stops flag for failure reasons,
+    marks, commands, hints); Git.Abort deleted (vcs/git/abort.ml(i)); Operation.Kind
+    its own type; screen/test/test_vcs_conflicts.ml (3, end to end: a merge with
+    three conflicts resolved by x t, x m then x o, and the editor's Space x u, then m
+    m; a rebase pull through x o, r r, r s; refusals); test_vcs_remote.ml,
+    test_vcs_workspace.ml, test_vcs_view.ml updates.
+  - D7: reviewed E7 against its spec (no functional change; one editor.mli
+    sentence); docs/editor_reference.md (conflict markers part, VCS m/r/x rows,
+    "Merges and rebases.", a "Resolving conflicts" section), README, backlog.
+
+Policy decisions settled (orchestrator unless noted; Magit and smerge defaults):
+  - Taking a side stages the file; restoring markers leaves it conflicted.
+  - Hunk resolution is the editor's, on markers, with smerge's upper/lower naming.
+  - m m merges the Branches selection (no name prompt, local branches only),
+    always --no-edit; the merge commit uses git's message, stripped.
+  - Skip and every resolution are confirmed; continue and commit merge are not,
+    but unsaved buffers refuse them. GIT_EDITOR=true for every child.
+  - Deferred: starting a rebase, cherry-pick/revert continue, c c pre-filling
+    MERGE_MSG, conflict-marker highlighting, marker sizes other than 7.
+
+Checks run and results:
+  - Baseline after the contract stubs: dune runtest -j 10 -> 0.
+  - G7: @vcs/runtest -> 0 (and after its follow-up). git 2.43: rebase --continue
+    keeps the message with GIT_EDITOR=true (fails with EDITOR=/bin/false without
+    it); commit --no-edit keeps # Conflicts lines (hence --cleanup=strip);
+    checkout --ours/--theirs + add works per kind, rm --quiet for a deletion side
+    (both deleted included); checkout --merge recreates markers even after staging
+    (the plan's own "not conflicted" refusal guards it) and labels them
+    ours/theirs; CONFLICT lines are on stdout for merge, continue and pull
+    --rebase.
+  - After the reset: git fsck clean, no damaged sources; _build had zero-length
+    artifacts and was rebuilt from clean; build and runtest -> 0.
+  - D7: @core @input @palette @test @app @screen runtest -> 0. V7: @vcs/runtest,
+    @screen/runtest, full build and runtest -> 0.
+  - Orchestrator final (2026-10-28), through the lock: dune build -j 10 -> 0; dune
+    runtest -j 10 -> 0; git diff --check clean; no TODO phase 7 stubs; no stray
+    fixture dirs; HEAD 68af093, nothing committed.
+
+Known gaps or blockers:
+  - No owner terminal acceptance.
+  - The rebase mark is cut in the lists column below ~135 terminal columns
+    ("Rebasing main onto 143c3f4 (r r continues, r >"); a shorter mark or a
+    wrapped row would fix it.
+  - Footer hint texts are not covered by tests (tests run with hints off).
+  - Taking the upstream side can empty a commit, which r r then drops silently
+    (git's behavior). Popups describe the snapshot of the key press.
+  - Editor: nothing kept from a region that ended the file without a final LF
+    leaves the previous line's LF.
+
+Next-phase integration notes:
+  - Log/history: the Commits panel and the Commit diff target are the base.
+  - Conflict highlighting in the editor would use Core.Conflict's regions.
+  - A cherry-pick/revert continue would extend Operation.Kind and its popups.
 ```
 
 ### Post-phase-2 tweaks (owner feedback, committed in fe0f087)

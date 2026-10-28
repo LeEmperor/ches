@@ -107,6 +107,21 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   paths they changed apart from file saves, so they never become diagnostic
   document saves).
 
+**Done in VCS workspace phase 7 (2026-10-28):** merges and conflict resolution.
+- The editor's conflict commands are generic and in `core/`, knowing nothing of
+  git: `Conflict` finds marker regions in any text, `Command.Keep_conflict` keeps a
+  side as one undo step, and `Next_conflict` / `Previous_conflict` are ordinary
+  motions (`] n` / `[ n`, `Space x u/l/a/b`, palette `conflict.*`). The VCS view
+  only points at them (its hunk refusal on a conflict, `Enter` to open the file).
+- `m`, `r` and `x` on a Conflicted file reuse the phase 5/6 seams: the merge,
+  operation and resolve popups (`Git.Operation`, `Git.Resolution`, replacing
+  `Git.Abort`) answer with the view's own actions, planned and confirmed through the
+  same mutation machinery, with the dirty-buffer refusal and reconciliation. No new
+  registry seam.
+- Safety net: every git child runs with `GIT_EDITOR=true` (`vcs/host/auth.ml`,
+  beside `GIT_TERMINAL_PROMPT=0`), so a continue or commit never waits on an editor
+  the terminal cannot show.
+
 **What is not done:**
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.

@@ -16,6 +16,9 @@ for general distribution.
   Visual modes; counted motions, delete and yank operators, paste, and undo/redo.
 - **Navigation and search:** word and delimiter motions, literal forward and
   backward search, character finds, and independent viewport scrolling.
+- **Conflict markers:** `]n` / `[n` jump between merge conflict regions, and
+  `Space x u` / `l` / `a` / `b` keep the upper (ours), lower (theirs), both, or base
+  side of the one at the cursor as a single undo step, smerge-style.
 - **Workspace:** adjustable document placement and width, configurable status
   placement, line-number styles, zen mode, and supporting views with read-only
   selection and copying.
@@ -47,10 +50,14 @@ for general distribution.
   lease, confirmed), streaming git's progress into the summary and the log and
   explaining common failures (no ssh key loaded, diverged branches); in Branches,
   `Enter` checks out, `n` creates a branch (the name checked as you type) and `-`
-  returns to the previous one. A rebase or merge left in progress can be aborted
-  (`r a`, `m a`). `e`
-  in the diff opens the file at that line. Git runs in the background, never
-  prompting on the terminal; saving a file in the repository refreshes it.
+  returns to the previous one. `m m` merges the selected branch (`-n` no
+  fast-forward, `-f` fast-forward only); when a merge or rebase stops on conflicts,
+  `x` on a conflicted file takes ours or theirs (or restores its markers), the
+  editor's `Space x` resolves hunk by hunk, `s` marks a file resolved, and `m m`
+  commits the merge, `r r` continues the rebase (`r s` skips a commit, `r a` / `m a`
+  abort). `e` in the diff opens the file at that line. Git runs in the background,
+  never prompting on the terminal or starting an editor; saving a file in the
+  repository refreshes it.
 
 Ches retains multiple files and visited directories per session. Files accept UTF-8 text with LF line endings
 and preserves the file's contents, including whether it ends with a newline.

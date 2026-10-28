@@ -17,6 +17,12 @@ let bindings =
   [ keys "d", Bindings.Target.Delete_operator
   ; keys "/", Search_prompt { forward = true }
   ; keys "j", Move Down
+  ; keys "]n", Move Next_conflict
+  ; keys "[n", Move Previous_conflict
+  ; editor " xu" (Keep_conflict Upper)
+  ; editor " xl" (Keep_conflict Lower)
+  ; editor " xa" (Keep_conflict Both)
+  ; editor " xb" (Keep_conflict Base)
   ; editor "u" Undo
   ; [ Ctrl 'r' ], Editor Redo
   ; editor " w" Save
@@ -116,6 +122,12 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     vcs.close                      VCS: close
     vcs.commit-finish              VCS: finish commit
     vcs.commit-abort               VCS: abort commit
+    conflict.keep-upper            Conflict: keep upper (ours)            Space x u
+    conflict.keep-lower            Conflict: keep lower (theirs)          Space x l
+    conflict.keep-both             Conflict: keep both                    Space x a
+    conflict.keep-base             Conflict: keep base                    Space x b
+    conflict.next                  Conflict: next                         ] n
+    conflict.previous              Conflict: previous                     [ n
     source.restart                 Restart diagnostic source
     document.lines                 Search current document lines
     project.contents               Search project contents
@@ -137,7 +149,11 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
 let%expect_test "shortcuts ignore targets that are not complete actions" =
   print_endline (shortcuts (Editor (Delete_lines 1)));
   print_endline (shortcuts (Editor (Search { query = None; forward = true; count = 1; whole_word = false })));
-  [%expect {| |}]
+  [%expect {| |}];
+  (* A move target is the uncounted move, never a counted one. *)
+  print_endline (shortcuts (Editor (Move { motion = Down; count = None })));
+  print_endline (shortcuts (Editor (Move { motion = Down; count = Some 2 })));
+  [%expect {| j |}]
 ;;
 
 (* The top few results for [query], with title matches marked. *)
@@ -207,6 +223,29 @@ let%expect_test "realistic queries" =
     |}];
   search "zzzz";
   [%expect {| |}]
+;;
+
+let%expect_test "conflict commands are found by either name of a side" =
+  List.iter [ "ours"; "theirs"; "head"; "ancestor"; "next conflict"; "merge" ] ~f:(fun query ->
+    printf "%s:\n" query;
+    search ~limit:2 query);
+  [%expect {|
+    ours:
+    conflict.keep-upper            Conflict: keep upper ([ours])
+    buffers.top                    Show [o]pen b[u]ffe[rs] in top strip
+    theirs:
+    conflict.keep-lower            Conflict: keep lower ([theirs])
+    head:
+    conflict.keep-upper            Conflict: keep upper (ours)
+    views.to-band                  Move focused view to t[he] bottom b[a]n[d]
+    ancestor:
+    conflict.keep-base             Conflict: keep base
+    next conflict:
+    conflict.next                  [Conflict]: [next]
+    merge:
+    conflict.keep-upper            Conflict: keep upper (ours)
+    conflict.keep-lower            Conflict: keep lower (theirs)
+    |}]
 ;;
 
 let%expect_test "empty query lists available commands in catalog order" =

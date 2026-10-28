@@ -12,8 +12,8 @@
 
     Actions arrive with the phases that need them: stage/unstage/discard in 3
     ({!action}), line staging in 4 ({!Target.t.Lines}), commit in 5 ({!Commit}),
-    push/pull/fetch, branches and abort in 6 ({!Remote}, {!Branch_name},
-    {!Abort}). *)
+    push/pull/fetch, branches and abort in 6 ({!Remote}, {!Branch_name}), merges,
+    continue/skip and whole-file resolution in 7 ({!Operation}, {!Resolution}). *)
 
 open! Core
 open Ches_vcs
@@ -135,7 +135,17 @@ type action =
   | Checkout of string (** Enter on a Branches item: the branch's name. *)
   | Checkout_previous (** [-] in Branches: [git switch -]. *)
   | Create_branch of string (** [n] in Branches: the prompt's name. *)
-  | Abort of Abort.Operation.t (** [r a], [m a]. *)
+  | Abort of Operation.Kind.t (** [r a], [m a]. *)
+  | Continue of Operation.Kind.t (** [r r], [m m] (phase 7). *)
+  | Skip_rebase_commit (** [r s]. *)
+  | Merge of
+      { branch : string
+      ; flags : string list (** {!Operation.merge_flags}. *)
+      } (** The merge popup's [m]. *)
+  | Resolve of
+      { path : string (** A Conflicted item's key. *)
+      ; side : Resolution.Side.t
+      } (** The resolve popup ([x] on a Conflicted item). *)
 [@@deriving sexp_of]
 
 (** Contract details beyond {!Ches_vcs.Backend.S}:
@@ -301,10 +311,14 @@ type action =
       ["Ignored files are not discarded; nothing ran"]).
 
     Conflicted (owner decision): [Unstage], [Discard] and every [Hunk] action on a
-    Conflicted file or section are refused with ["<path> is conflicted: conflict
-    resolution is not supported yet; resolve it in the editor, then stage it (s) to
-    mark it resolved; nothing ran"] (a section: ["Conflict resolution is not
-    supported yet; nothing ran"]). Only [Stage] (add) applies.
+    Conflicted file or section are refused (phase 7 texts): a file: ["<path> is
+    conflicted: take a side with x, or resolve it in the editor (Space x), then
+    stage it (s) to mark it resolved; nothing ran"]; a section: ["Resolve conflicted
+    files one at a time (x on a file); nothing ran"]; a hunk or lines: ["Resolve
+    conflicts in the editor: Enter opens the file at the conflict, Space x u, l, a
+    or b keeps a side; nothing ran"]. Only [Stage] (add) applies, and [Resolve]
+    (phase 7) takes a whole side. The view opens {!Resolution.popup} for [x] on a
+    Conflicted item instead of planning [Discard].
 
     Hunk targets, before the rules above: a file without line actions
     ({!Diff.File.line_actions}), an out-of-range index, or any other {!Patch.hunk}
@@ -451,7 +465,7 @@ type action =
       appended. Else Run [switch --create <name>] (the new branch at HEAD, checked
       out, uncommitted changes kept), title ["Create branch <name>"],
       [rewrites_worktree = false].
-    - [Abort operation]: refused unless {!Abort.in_progress}: ["No rebase in
+    - [Abort operation]: refused unless {!Operation.in_progress}: ["No rebase in
       progress; nothing ran"] (["No merge in progress; nothing ran"]). Else a
       [Confirm], [rewrites_worktree = true]:
       - [Rebase]: title ["Abort rebase"], message ["Abort the rebase? The branch
@@ -459,7 +473,56 @@ type action =
         made during it are lost."], plan [rebase --abort], title ["Abort rebase"].
       - [Merge]: title ["Abort merge"], message ["Abort the merge? Its changes and
         your conflict resolutions are lost; HEAD stays where it is."], plan [merge
-        --abort], title ["Abort merge"]. *)
+        --abort], title ["Abort merge"].
+
+    {3 Merges, rebases and conflicts (phase 7)}
+
+    One or two [Run (Cli.mutate ~cwd:repo.root args)] steps, refusal texts as in
+    phase 6 (in progress, conflicted, unborn), plus not-in-progress: ["No rebase in
+    progress; nothing ran"] / ["No merge in progress; nothing ran"]. Steps that git
+    may answer by starting an editor ([rebase --continue] and [--skip], [commit
+    --no-edit --cleanup=strip]) also set [GIT_EDITOR=true] in the spec's [env] (the runner forces it
+    for every child as well, {!Ches_vcs_host.Auth}), so the prepared message is kept
+    as it is. Every plan below has [rewrites_worktree = true]: it is refused while a
+    buffer in the repository is dirty (save the resolutions first) and followed by
+    reconciliation.
+    - [Merge { branch; flags }]: refused, the first that applies: an unknown flag
+      (["Unknown merge switch <flag>; nothing ran"]); unborn; in progress;
+      conflicted; [branch] not among [snapshot.branches] (["<branch> is no longer
+      listed; refresh (g r); nothing ran"]); [branch] is the current branch
+      (["Cannot merge <branch> into itself; nothing ran"]). Else Run [merge --no-edit
+      <flags> --end-of-options <branch>] ([<flags>] in {!Operation.merge_flags}
+      order), title ["Merge <branch>"], with [" (no fast-forward)"] or [" (fast-forward
+      only)"] appended for [--no-ff] / [--ff-only]. Conflicts stop it: the step fails
+      and a merge is in progress ({!Operation.stopped_hint}).
+    - [Continue Rebase]: refused: not in progress; conflicted. Else Run [rebase
+      --continue], title ["Continue rebase"]. It may stop again on the next commit's
+      conflicts.
+    - [Continue Merge]: refused: not in progress; conflicted. Else Run [commit
+      --no-edit --cleanup=strip] (git's prepared merge message, without its [#
+      Conflicts:] comment lines, which [--no-edit] alone would keep), title
+      ["Commit merge"].
+    - [Skip_rebase_commit]: refused: not in progress. Else a [Confirm]: title ["Skip
+      commit"], message ["Skip the commit being applied? Its changes are left out of
+      the rebased branch."], plan [rebase --skip], title ["Skip commit"].
+    - [Resolve { path; side }]: refused unless [path] is an [Unmerged] entry:
+      ["<path> is not conflicted; nothing ran"]; [Markers] for a conflict other than
+      [Both_modified] or [Both_added]: ["<path> has no conflict markers to restore
+      (<Conflict.to_string_hum>); nothing ran"]. Else a [Confirm], the steps with
+      [--literal-pathspecs] and [-- <path>] as the phase 3 commands are:
+      - [Ours] or [Theirs] where {!Resolution.has_file}: [checkout --ours] (or
+        [--theirs]) then [add], so the file is marked resolved. Confirm title
+        ["Resolve <path>"], message ["Take <label> for <path>? The other side's
+        changes and any edits to the file are lost; it is marked resolved."], plan
+        ["Take ours for <path>"] / ["Take theirs for <path>"]. [<label>] is ["ours
+        (<ours label>)"] or ["theirs (<theirs label>)"], {!Resolution.labels}.
+      - [Ours] or [Theirs] without the file on that side: [rm --quiet] (the
+        resolution is the deletion). Message ["Resolve <path> by deleting it, as
+        <label> did? Any edits to the file are lost."], plan ["Delete <path>
+        (resolved)"].
+      - [Markers]: [checkout --merge] (the file is conflicted again, with markers;
+        it stays unstaged). Message ["Restore the conflict markers in <path>? Edits
+        to the file are lost."], plan ["Restore conflict markers in <path>"]. *)
 include
   Ches_vcs.Backend.S
   with type Repository.t = Repository.t

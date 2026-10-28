@@ -2,9 +2,9 @@
     they always reflect the active bindings rather than a second copy of the defaults.
 
     The table is supplied as the [(keys, target)] pairs that {!Bindings.create}
-    validates. Only targets that are complete actions on their own, [Editor] and
-    [View], can show as a shortcut; operators, prompts, and other targets that need
-    further keys never do. *)
+    validates. Only targets that are complete actions on their own can show as a
+    shortcut: [Editor], [View], and [Move] (for the uncounted move); operators,
+    prompts, and other targets that need further keys never do. *)
 
 open! Core
 open Ches_input

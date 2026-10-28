@@ -118,7 +118,17 @@ type action =
   | Checkout of string
   | Checkout_previous
   | Create_branch of string
-  | Abort of Abort.Operation.t
+  | Abort of Operation.Kind.t
+  | Continue of Operation.Kind.t
+  | Skip_rebase_commit
+  | Merge of
+      { branch : string
+      ; flags : string list
+      }
+  | Resolve of
+      { path : string
+      ; side : Resolution.Side.t
+      }
 [@@deriving sexp_of]
 
 let name = "git"
@@ -538,9 +548,18 @@ let refused fmt = ksprintf (fun message : Decision.t -> Refused message) fmt
 
 let conflicted path =
   sprintf
-    "%s is conflicted: conflict resolution is not supported yet; resolve it in the \
-     editor, then stage it (s) to mark it resolved; nothing ran"
+    "%s is conflicted: take a side with x, or resolve it in the editor (Space x), then \
+     stage it (s) to mark it resolved; nothing ran"
     path
+;;
+
+let conflicted_section =
+  "Resolve conflicted files one at a time (x on a file); nothing ran"
+;;
+
+let conflicted_hunk =
+  "Resolve conflicts in the editor: Enter opens the file at the conflict, Space x u, l, \
+   a or b keeps a side; nothing ran"
 ;;
 
 (* An entry a section or [S]/[U] action leaves out: [label] for the confirmation's "Left
@@ -740,8 +759,7 @@ let section_plan repository snapshot verb (section : Section.t) : Decision.t =
           (restore_staged repository snapshot paths))
   | Unstage_verb, (Unstaged | Untracked | Ignored) ->
     Refused "Nothing staged here; nothing ran"
-  | (Unstage_verb | Discard_verb), Conflicted ->
-    Refused "Conflict resolution is not supported yet; nothing ran"
+  | (Unstage_verb | Discard_verb), Conflicted -> Refused conflicted_section
   | Discard_verb, Unstaged ->
     collective
       ~classify:discard_unstaged
@@ -798,7 +816,7 @@ let hunk_plan
   =
   let path = Diff.File.path file in
   match section with
-  | Conflicted -> Refused (conflicted path)
+  | Conflicted -> Refused conflicted_hunk
   | Untracked | Ignored ->
     (* An untracked file's diff is one hunk: the whole file. *)
     file_plan repository snapshot verb section path
@@ -864,7 +882,7 @@ let lines_plan
     | Unstage_verb | Discard_verb -> true
   in
   match section with
-  | Conflicted -> Refused (conflicted path)
+  | Conflicted -> Refused conflicted_hunk
   | Untracked ->
     (match verb with
      | Unstage_verb -> refused "%s is not staged; nothing ran" path
@@ -1122,7 +1140,7 @@ let create_branch_plan repository (snapshot : snapshot) name : Decision.t =
         [ commit_step repository [ "switch"; "--create"; name ] ])
 ;;
 
-let abort_plan repository (snapshot : snapshot) (operation : Abort.Operation.t)
+let abort_plan repository (snapshot : snapshot) (operation : Operation.Kind.t)
   : Decision.t
   =
   (* The subcommand is the noun: [rebase --abort], [merge --abort]. *)
@@ -1137,11 +1155,153 @@ let abort_plan repository (snapshot : snapshot) (operation : Abort.Operation.t)
       , "Abort the merge? Its changes and your conflict resolutions are lost; HEAD stays \
          where it is." )
   in
-  if not (Abort.in_progress snapshot.operations operation)
+  if not (Operation.in_progress snapshot.operations operation)
   then refused "No %s in progress; nothing ran" noun
   else (
     let title = "Abort " ^ noun in
     confirm ~title ~message title [ commit_step repository [ noun; "--abort" ] ])
+;;
+
+(* Phase 7: merges, rebases and conflicts; the texts are in the contract comment of
+   backend.mli. *)
+
+(* A step git may answer by starting an editor: [true] keeps the prepared message (the
+   runner forces it for every child as well). *)
+let editor_step (repository : Repository.t) args =
+  let spec = Cli.mutate ~cwd:repository.root args in
+  Job.Step.Run { spec with env = spec.env @ [ "GIT_EDITOR", "true" ] }
+;;
+
+let noun : Operation.Kind.t -> string = function
+  | Rebase -> "rebase"
+  | Merge -> "merge"
+;;
+
+let not_in_progress (snapshot : snapshot) kind =
+  Option.some_if
+    (not (Operation.in_progress snapshot.operations kind))
+    (sprintf "No %s in progress; nothing ran" (noun kind))
+;;
+
+let continue_plan repository (snapshot : snapshot) (kind : Operation.Kind.t) : Decision.t =
+  match
+    Option.first_some (not_in_progress snapshot kind) (conflicted_refusal snapshot)
+  with
+  | Some message -> Refused message
+  | None ->
+    (match kind with
+     | Rebase ->
+       run
+         ~rewrites_worktree:true
+         "Continue rebase"
+         [ editor_step repository [ "rebase"; "--continue" ] ]
+     | Merge ->
+       run
+         ~rewrites_worktree:true
+         "Commit merge"
+         [ editor_step repository [ "commit"; "--no-edit"; "--cleanup=strip" ] ])
+;;
+
+let merge_plan repository (snapshot : snapshot) ~branch flags : Decision.t =
+  let known = Operation.merge_flags in
+  let listed =
+    match
+      List.find snapshot.branches ~f:(fun (b : Branch_list.Branch.t) ->
+        String.equal b.name branch)
+    with
+    | None -> Some (sprintf "%s is no longer listed; refresh (g r); nothing ran" branch)
+    | Some { current = true; _ } ->
+      Some (sprintf "Cannot merge %s into itself; nothing ran" branch)
+    | Some _ -> None
+  in
+  (* The first that applies, in the contract's order. *)
+  let refusal =
+    List.find_map
+      ~f:Fn.id
+      [ unknown_flag ~verb:"merge" ~known flags
+      ; Option.some_if (unborn snapshot) "There is no commit yet; nothing ran"
+      ; in_progress_refusal snapshot
+      ; conflicted_refusal snapshot
+      ; listed
+      ]
+  in
+  match refusal with
+  | Some message -> Refused message
+  | None ->
+    let flags = ordered ~known flags in
+    let suffix =
+      List.map flags ~f:(function
+        | "--no-ff" -> " (no fast-forward)"
+        | "--ff-only" -> " (fast-forward only)"
+        | _ -> "")
+      |> String.concat
+    in
+    run
+      ~rewrites_worktree:true
+      (sprintf "Merge %s%s" branch suffix)
+      [ commit_step
+          repository
+          (("merge" :: "--no-edit" :: flags) @ [ "--end-of-options"; branch ])
+      ]
+;;
+
+let resolve_plan repository (snapshot : snapshot) ~path (side : Resolution.Side.t)
+  : Decision.t
+  =
+  match
+    List.find_map snapshot.status.entries ~f:(function
+      | Unmerged { conflict; path = p; _ } when String.equal p path -> Some conflict
+      | _ -> None)
+  with
+  | None -> refused "%s is not conflicted; nothing ran" path
+  | Some conflict ->
+    let title = "Resolve " ^ path in
+    let ours, theirs = Resolution.labels snapshot.operations in
+    (* [checkout --ours] (or [--theirs]) then [add]; [rm] when that side deleted it. *)
+    let take ~name ~flag ~label =
+      let label = sprintf "%s (%s)" name label in
+      if Resolution.has_file conflict side
+      then
+        confirm
+          ~title
+          ~message:
+            (sprintf
+               "Take %s for %s? The other side's changes and any edits to the file are \
+                lost; it is marked resolved."
+               label
+               path)
+          (sprintf "Take %s for %s" name path)
+          (git repository [ "checkout"; flag; "--"; path ] :: add repository [ path ])
+      else
+        confirm
+          ~title
+          ~message:
+            (sprintf
+               "Resolve %s by deleting it, as %s did? Any edits to the file are lost."
+               path
+               label)
+          (sprintf "Delete %s (resolved)" path)
+          [ git repository [ "rm"; "--quiet"; "--"; path ] ]
+    in
+    (match side with
+     | Markers ->
+       (match conflict with
+        | Both_modified | Both_added ->
+          confirm
+            ~title
+            ~message:
+              (sprintf
+                 "Restore the conflict markers in %s? Edits to the file are lost."
+                 path)
+            ("Restore conflict markers in " ^ path)
+            [ git repository [ "checkout"; "--merge"; "--"; path ] ]
+        | Both_deleted | Added_by_us | Deleted_by_them | Added_by_them | Deleted_by_us ->
+          refused
+            "%s has no conflict markers to restore (%s); nothing ran"
+            path
+            (Status.Conflict.to_string_hum conflict))
+     | Ours -> take ~name:"ours" ~flag:"--ours" ~label:ours
+     | Theirs -> take ~name:"theirs" ~flag:"--theirs" ~label:theirs)
 ;;
 
 let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : Decision.t =
@@ -1229,4 +1389,18 @@ let plan (repository : Repository.t) (snapshot : snapshot) (action : action) : D
          [ commit_step repository [ "switch"; "-" ] ])
   | Create_branch name -> create_branch_plan repository snapshot name
   | Abort operation -> abort_plan repository snapshot operation
+  | Continue kind -> continue_plan repository snapshot kind
+  | Skip_rebase_commit ->
+    (match not_in_progress snapshot Rebase with
+     | Some message -> Refused message
+     | None ->
+       confirm
+         ~title:"Skip commit"
+         ~message:
+           "Skip the commit being applied? Its changes are left out of the rebased \
+            branch."
+         "Skip commit"
+         [ editor_step repository [ "rebase"; "--skip" ] ])
+  | Merge { branch; flags } -> merge_plan repository snapshot ~branch flags
+  | Resolve { path; side } -> resolve_plan repository snapshot ~path side
 ;;

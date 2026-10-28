@@ -917,6 +917,7 @@ let gen_command =
      ; Paste { before = true; count = 2 }
      ; Yank_lines 1
      ]
+     @ List.map Conflict.Side.all ~f:(fun side -> Command.Keep_conflict side)
      @ List.concat_map Motion.all ~f:(fun m ->
        if Motion.takes_count m
        then [ move m; move ~count:3 m; move ~count:max_count m ]

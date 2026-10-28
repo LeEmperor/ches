@@ -14,6 +14,8 @@ checks for [Ches](../README.md).
 | Normal | `_` / `g_` | First / last non-blank; with a count N, of the line N-1 below |
 | Normal | `gg` / `G` | First / last line, or line N with a count (`20G`) |
 | Normal | `%` | Matching `()`, `[]`, or `{}` (see [Matching delimiters](#matching-delimiters)) |
+| Normal | `]n` / `[n` | Next / previous conflict region (see [Conflict markers](#conflict-markers)); with a count N, the Nth (`3]n`) |
+| Normal | `Space x u` / `l` / `a` / `b` | Keep the upper (ours) / lower (theirs) / both / base side of the conflict at the cursor |
 | Normal | `f` / `F` / `t` / `T` + character | Find character forward/backward, on/before it |
 | Normal | `;` / `,` | Repeat the last find / repeat it in the opposite direction |
 | Normal | `/` / `?` then text and `Enter` | Search forward / backward (literal, case-sensitive) |
@@ -75,7 +77,7 @@ checks for [Ches](../README.md).
 | Normal | `Space f f` | Find project files; open/activate retained buffers |
 | Normal | `Space f g` | Search project contents on disk; validate and jump |
 | Normal | `Escape` | Cancel pending input; when idle, clear search highlights and acknowledge the presented problem |
-| Visual | motions, `%` | Extend the selection |
+| Visual | motions, `%`, `]n` / `[n` | Extend the selection |
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
 | Visual | `d` / `c` / `y` | Delete / change / yank the selected range |
 | Visual | `I` / `A` | On a block: insert before / append after it on every line; `2I` repeats the text |
@@ -437,7 +439,9 @@ behave as in problems.
 `Space g g` opens a git view of the repository around the startup file (or the
 directory opened), in the spirit of lazygit and Magit. It stages, unstages and
 discards files, hunks and selected lines, commits, amends and extends HEAD,
-fetches, pulls and pushes, and checks out and creates branches. The view is a tab the
+fetches, pulls and pushes, checks out, creates and merges branches, and carries a
+merge or rebase that stopped on conflicts through to its end (see
+[Resolving conflicts](#resolving-conflicts)). The view is a tab the
 first time (labelled `VCS:
 <branch>`, or `VCS: <revision>` on a detached HEAD); `Space g s` moves it into the
 split beside the editor, `Space g t` back into the tab strip, and `Space g h`
@@ -465,6 +469,7 @@ keeps its last lines of output, and shows its progress while it runs).
 | `Enter` (list) | Fold or unfold a section header; on a file or commit, focus the diff; on a branch, check it out |
 | `y` (list) | Copy the selected path, branch name or abbreviated commit hash |
 | `s` / `u` / `x` (Files) | Stage / unstage / discard the selected file, or every file of the selected section |
+| `x` (a conflicted file, or its diff's header lines) | Resolve it whole: take ours or theirs (marking it resolved), or restore its conflict markers; asks first |
 | `s` / `u` / `x` (diff) | Stage / unstage / discard the hunk at the cursor; on a file's header lines, the whole file |
 | `s` / `u` / `x` (diff, Visual) | Stage / unstage / discard the lines the selection touches (one file, any of its hunks) |
 | `S` / `U` (Files, diff) | Stage all changes (not conflicts) / unstage all changes; also in Visual |
@@ -474,7 +479,8 @@ keeps its last lines of output, and shows its progress while it runs).
 | `c` | Commit popup: commit, amend or extend HEAD, with switches |
 | `f` | Fetch from the default remote (`git fetch --prune`) |
 | `p` / `P` | Pull popup / push popup |
-| `r` / `m` | While a rebase / merge is in progress: its popup, whose `a` aborts it |
+| `m` | Merge popup for the branch selected in Branches; while merging, its popup: `m` commits the merge, `a` aborts it |
+| `r` | While rebasing, its popup: `r` continues, `s` skips the commit being applied, `a` aborts |
 | `n` (Branches) | New branch at HEAD, checked out: prompts for the name |
 | `-` (Branches) | Check out the previous branch (`git switch -`) |
 | `g r` | Refresh (or look for a repository again) |
@@ -510,8 +516,12 @@ file's last hunk). Specifics:
   untracked file. What an action cannot apply to (a nested repository, a submodule's
   discard, ...) is left out and named in the title or question.
 - `s` on a conflicted file (or the Conflicted header) runs `git add`, marking it
-  resolved, without checking for leftover markers. `u`, `x` and hunk actions on
-  conflicts are refused: resolve the conflict in the editor, then stage it.
+  resolved, without checking for leftover markers. `x` on a conflicted file
+  resolves it instead of discarding (see [Resolving conflicts](#resolving-conflicts));
+  `u`, `x` on the Conflicted header ("Resolve conflicted files one at a time (x on a
+  file); nothing ran") and hunk and line actions on conflicts ("Resolve conflicts in
+  the editor: Enter opens the file at the conflict, Space x u, l, a or b keeps a
+  side; nothing ran") are refused.
 - `x` always asks first; the default answer is No and only `y` confirms. Discarding
   unstaged changes restores the file from the index; discarding an untracked file
   deletes it (`git clean`); discarding staged changes returns the file to HEAD in the
@@ -643,13 +653,38 @@ Git and ssh never prompt: Ches cannot ask for a passphrase or accept a host key,
 use ssh-agent or a credential helper, and connect once with ssh in a terminal to
 accept a new host.
 
-If a pull with `-r` stops on a conflict (or a merge was started outside Ches), the
-head summary shows the operation with how to leave it: "Rebasing main onto 1a2b3c4
-(r a aborts)", "Merging 1a2b3c4 (m a aborts)". `r` and `m` open the rebase and merge
-popups, whose only action, `a`, asks before running `git rebase --abort` or `git
-merge --abort`; the branch returns to where it was. Resolving and continuing are not
-supported yet. Without an operation in progress they say "No rebase in progress;
-nothing ran" ("No merge ...").
+**Merges and rebases.** `m` and `r` work where `f` does. While a merge or rebase is
+in progress (started by Ches or outside it), the head summary shows it with how to
+go on: "Merging 1a2b3c4 (m m commits, m a aborts)", "Rebasing main onto 1a2b3c4 (r r
+continues, r a aborts)".
+
+- `m` with no merge in progress opens the merge popup for the branch under the
+  Branches cursor, whichever panel has focus (`2` to choose one): `m` runs `git
+  merge --no-edit <branch>` ("Merge feature"). `-n` (`--no-ff`) always creates a
+  merge commit and `-f` (`--ff-only`) merges only by fast-forward; at most one is
+  on. Only local branches are listed (pull covers remote ones). With the cursor on
+  a header: "Select the branch to merge in Branches (2) first; nothing ran"; on the
+  current branch: "Cannot merge main into itself; nothing ran". Like a pull it is
+  refused on a branch with no commits, while another operation is in progress, and
+  with conflicted files.
+- While merging, `m` opens the `Merging` popup: `m` commits the merge with git's
+  prepared message (`git commit --no-edit --cleanup=strip`, which drops its
+  `# Conflicts:` comment lines), `a` asks before `git merge --abort`.
+- While rebasing, `r` opens the `Rebasing` popup: `r` continues (`git rebase
+  --continue`, keeping each commit's message), `s` skips the commit being applied
+  ("Skip the commit being applied? Its changes are left out of the rebased
+  branch."), `a` asks before `git rebase --abort`; the branch returns to where it
+  was. Without a rebase, `r` says "No rebase in progress; nothing ran". Starting a
+  rebase other than by pulling (`p -r p`) is not offered.
+- Committing the merge and continuing are refused while a file is still conflicted
+  ("Resolve the conflicted files first (s marks one resolved); nothing ran"). A
+  merge, pull, continue or skip that stops on (new) conflicts fails with "<title>
+  failed: Stopped on conflicts: resolve each file (x, or Space x in the editor),
+  mark it resolved with s, then continue".
+- Every one of these, and every resolution, rewrites the work tree: refused while a
+  file in the repository has unsaved changes ("Continue rebase refused: unsaved
+  changes in a.txt; save or undo them first; nothing ran"), and followed by
+  comparing open buffers with disk.
 
 `e` in the diff opens the work-tree file at the line the cursor is on (for a removed
 line, the next line that survives; for a hunk header, its first line). From a tab, the
@@ -661,10 +696,50 @@ repository (at most once per save; saves inside `.git`, such as the commit
 message, do not count); it never polls or watches files. Its git
 commands run in the background, so the editor never waits for them; while one runs,
 the last state stays drawn. Git never prompts on the terminal
-(`GIT_TERMINAL_PROMPT=0`), and git's lock files are released on quit: Ches waits up
-to three seconds after the terminal closes for its git children to end. Outside a
+(`GIT_TERMINAL_PROMPT=0`) nor starts an editor (`GIT_EDITOR=true`, so a continued
+rebase keeps each commit's message), and git's lock files are released on quit:
+Ches waits up to three seconds after the terminal closes for its git children to
+end. Outside a
 repository the view says `VCS: not a repository`; `g r` looks again. Paths,
 subjects and output from git are shown with control bytes escaped.
+
+### Resolving conflicts
+
+A merge (`m m`) or a rebase pull (`p -r p`) that cannot apply every change stops
+with the conflicted files in the Files panel's **Conflicted** section, each with its
+kind (`both modified`, `deleted by them`, ...), and the head summary saying how to
+go on. Then, for each file:
+
+- Take a whole side: `x` on the file opens `Resolve <path>`: `o` takes ours, `t`
+  theirs, and, for `both modified` and `both added`, `m` writes the conflict
+  markers again, dropping edits made to the file (to start it over; the file stays
+  conflicted). Taking a side checks that version out and stages it, which marks the
+  file resolved; when that side has no file (`Take ours: delete the file (HEAD)`),
+  the file is removed instead. Each asks first: "Take theirs (1a2b3c4) for a.txt?
+  The other side's changes and any edits to the file are lost; it is marked
+  resolved.", "Resolve a.txt by deleting it, as ours (HEAD) did? Any edits to the
+  file are lost.", "Restore the conflict markers in a.txt? Edits to the file are
+  lost." The popup names the sides:
+
+  | Stopped in | Ours (`o`) | Theirs (`t`) |
+  | --- | --- | --- |
+  | A merge | `HEAD`, the branch you are on | The merged branch, by its abbreviated commit |
+  | A rebase | `the upstream` being rebased onto | `your commit` being applied |
+
+- Or resolve it hunk by hunk: `Enter` on the file focuses its diff, which shows
+  the conflict markers, and `Enter` (or `e`) on a line opens the file there. In the
+  editor, `]n` / `[n` go to the next / previous conflict and `Space x u` / `l` / `a`
+  / `b` keep its upper / lower / both / base side (see
+  [Conflict markers](#conflict-markers); upper is ours, lower theirs, with the same
+  swap while rebasing). Edit freely, `Space w` to save, return to the view and press
+  `s` on the file to mark it resolved. `s` does not look for leftover markers:
+  `G` then `[n` finds any.
+
+When the Conflicted section is empty, `m m` commits the merge, or `r r` continues
+the rebase. A rebase may stop again on a later commit's conflicts (resolve them the
+same way, or `r s` to leave that commit out); `m a` / `r a` abandon the whole
+operation. Unsaved buffers in the repository refuse continuing, committing, taking
+a side and aborting: save the resolutions first (or undo them).
 
 ### Read-only text in supporting views
 
@@ -722,6 +797,76 @@ closing one, across lines, skipping properly nested pairs of all three kinds.
 - With no delimiter from the cursor to the line end, it shows
   `No delimiter on this line` and the cursor stays.
 - It takes no count: `50%` (Vim's jump to a percentage of the file) is rejected.
+
+### Conflict markers
+
+When git cannot merge a file it writes both versions into it between marker
+lines. The editor finds these regions in any buffer, whatever wrote them, and
+resolves one at a time, as Emacs's smerge does:
+
+```text
+  <<<<<<< HEAD                 the upper side follows
+  ours
+  ||||||| merged ancestors     the base part (only with merge.conflictStyle=diff3 or zdiff3)
+  base
+  =======                      the lower side follows
+  theirs
+  >>>>>>> feature              the end of the region
+```
+
+(Indented here so that this file is not itself conflicted: real markers start
+their lines.)
+
+| Keys | Action |
+| --- | --- |
+| `]n` / `[n` | Go to the start line (`<<<<<<<`) of the next / previous region; `3]n` goes three on |
+| `Space x u` | Keep the upper side |
+| `Space x l` | Keep the lower side |
+| `Space x a` | Keep both: the upper side, then the lower |
+| `Space x b` | Keep the base part |
+
+The palette lists them as `Conflict: keep upper (ours)`, `Conflict: keep lower
+(theirs)`, `Conflict: keep both`, `Conflict: keep base`, `Conflict: next` and
+`Conflict: previous` (`conflict.keep-upper`, ..., `conflict.next`,
+`conflict.previous`).
+
+What the sides are depends on what stopped:
+
+| Stopped in | Upper (`<<<<<<<`) | Lower (`>>>>>>>`) |
+| --- | --- | --- |
+| A merge (`m m` in the VCS view, `git merge`) | Ours: `HEAD`, the branch you are on | Theirs: the branch being merged |
+| A rebase (`p -r p` in the VCS view, `git pull --rebase`) | The upstream you are rebasing onto | Your commit being replayed |
+
+The labels after the markers say which is which (`HEAD`, a branch name, or a
+commit and its subject while rebasing; markers written again by the VCS view's
+`x` then `m` say `ours` and `theirs`), and the feedback repeats them.
+
+- `Space x` acts on the region containing the cursor's line, markers included: the
+  whole region is replaced by the side's lines, and the cursor goes to the first of
+  them (or, when that side is empty, to the line now where the region was). The
+  feedback says what was kept, e.g. `Kept upper (HEAD)` or
+  `Kept both (HEAD, feature)`.
+- It is one undo step: `u` brings the markers back. The buffer is marked modified
+  and nothing is saved until `Space w`; marking the file resolved in git is a
+  separate step (`s` in the VCS view, see [Resolving conflicts](#resolving-conflicts)).
+- Outside a region it shows `No conflict at the cursor`; `Space x b` on a region
+  without a base part shows
+  `This conflict has no base part (merge.conflictStyle=diff3 shows one)`. Neither
+  changes anything.
+- `]n` and `[n` count only complete regions. From inside a region, `[n` goes to
+  its start line. A count beyond the last region stops at the last; with none in
+  that direction they show `No more conflicts` and the cursor stays. They extend a
+  Visual selection, and after `d` or `y` they are linewise (`d]n` deletes through
+  the next start line).
+- `Space x` works in Normal mode only, and, like other edits, not from a
+  supporting view's read-only text.
+- A region is recognised only in git's default form: start, base and end lines
+  begin with exactly seven `<`, `|` or `>` followed by a space or the line end, and
+  the separator is exactly seven `=`. Other marker sizes
+  (`conflict-marker-size`), indented markers, and regions that are unterminated or
+  out of order (an end before the separator, a second base or separator) are left
+  alone as ordinary text; a new start line before the end starts over. Markers are
+  not highlighted.
 
 ### Counts
 

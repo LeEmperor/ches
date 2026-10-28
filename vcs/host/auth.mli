@@ -1,6 +1,6 @@
 (** The non-interactive environment every child runs with (plan: "Authentication
     constraints"). Ches owns the terminal, so no child may prompt on it: git's own
-    credential prompt is disabled, and ssh, which opens [/dev/tty] itself for
+    credential prompt and editor are disabled, and ssh, which opens [/dev/tty] itself for
     passphrases and host keys, runs in batch mode unless the user chose their own ssh
     command. Credentials come from ssh-agent or a credential helper.
 
@@ -15,7 +15,10 @@ val batch_ssh_command : string
 
 (** The complete environment for a child, given [base] (the runner's inherited
     environment overlaid with the spec's [env], later bindings winning):
-    - every kind: [GIT_TERMINAL_PROMPT=0], replacing any binding in [base];
+    - every kind: [GIT_TERMINAL_PROMPT=0] and (phase 7) [GIT_EDITOR=true], replacing
+      any binding in [base]: no child may start an editor on the terminal either
+      (git would for [rebase --continue] or a merge without [--no-edit]; [true]
+      keeps the prepared message as it is);
     - [Network]: also [GIT_SSH_COMMAND=]{!batch_ssh_command}, unless [base] binds
       [GIT_SSH_COMMAND] or [GIT_SSH] to a non-empty value or [ssh_command_configured]
       (the user chose their own ssh, which then must not prompt on the terminal).

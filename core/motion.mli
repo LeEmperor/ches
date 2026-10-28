@@ -51,7 +51,18 @@
     where it is, when the line has no delimiter from the cursor on
     ({!Failure.No_delimiter}) or the delimiter has no properly nested mate
     ({!Failure.Unmatched}). It takes no count (Vim's [50%] is not supported). The
-    scan is linear in the text it crosses. *)
+    scan is linear in the text it crosses.
+
+    {2 Conflict markers}
+
+    [Next_conflict] ([\] n]) and [Previous_conflict] ([\[ n]) go to the beginning
+    of the nearest conflict region's start line ([<<<<<<<], see {!Conflict}) below or
+    above the cursor's line; from inside a region, [Previous_conflict] goes to its
+    own start line. A count [n] goes to the [n]th such line, or to the farthest one
+    when fewer remain. With none, they fail with {!Failure.No_more_conflicts},
+    leaving the cursor where it is. Both are linewise, so under an operator they take
+    whole lines from the cursor's line through the start line. Each move scans the
+    whole text. *)
 
 open! Core
 
@@ -83,9 +94,12 @@ type t =
   | First_line
   | Last_line
   | Matching_delimiter
+  | Next_conflict
+  | Previous_conflict
   | Find of Find.t
 [@@deriving sexp_of, equal]
 
+(** Every motion but [Find]. *)
 val all : t list
 
 module Failure : sig
@@ -94,9 +108,11 @@ module Failure : sig
     | Unmatched of char (** This delimiter has no properly nested mate. *)
     | No_character of Uchar.t
     | No_previous_find
+    | No_more_conflicts (** No conflict region start line in that direction. *)
   [@@deriving sexp_of, equal]
 
-  (** For feedback: [No delimiter on this line], [No match for (]. *)
+  (** For feedback: [No delimiter on this line], [No match for (],
+      [No more conflicts]. *)
   val to_string : t -> string
 end
 
@@ -109,9 +125,9 @@ module Kind : sig
   [@@deriving sexp_of, equal]
 end
 
-(** [Up]/[Down]/[First_nonblank_down]/[First_line]/[Last_line] are linewise;
-    [Word_end], [Line_end], [Last_nonblank], and [Matching_delimiter] are inclusive;
-    the rest are exclusive. *)
+(** [Up]/[Down]/[First_nonblank_down]/[First_line]/[Last_line] and the conflict
+    motions are linewise; [Word_end], [Line_end], [Last_nonblank], and
+    [Matching_delimiter] are inclusive; the rest are exclusive. *)
 val kind : t -> Kind.t
 
 (** All but [Line_start], [First_nonblank], and [Matching_delimiter]. *)
@@ -123,8 +139,8 @@ val keeps_preferred_column : t -> bool
 
 (** The destination from [cursor]. [count] is [None] when none was given; a given
     count must be positive. [preferred_column] is the display column [Up]/[Down]
-    aim for, measured with [cell_width]. Only [Matching_delimiter] can fail; the
-    others clamp. *)
+    aim for, measured with [cell_width]. Only [Matching_delimiter] and the conflict
+    motions can fail; the others clamp. *)
 val destination
   :  Text_buffer.t
   -> t

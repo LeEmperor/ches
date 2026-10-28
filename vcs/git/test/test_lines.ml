@@ -791,8 +791,8 @@ let%expect_test "conflicted files have no line actions" =
       ignore (decide s action : Ches_vcs.Backend.Plan.t option)));
   [%expect
     {|
-    refused: c.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
-    refused: c.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
-    refused: c.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
+    refused: Resolve conflicts in the editor: Enter opens the file at the conflict, Space x u, l, a or b keeps a side; nothing ran
+    refused: Resolve conflicts in the editor: Enter opens the file at the conflict, Space x u, l, a or b keeps a side; nothing ran
+    refused: Resolve conflicts in the editor: Enter opens the file at the conflict, Space x u, l, a or b keeps a side; nothing ran
     |}]
 ;;

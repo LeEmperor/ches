@@ -500,7 +500,9 @@ let%expect_test "a discard is refused while a buffer in the repository is dirty"
       |}])
 ;;
 
-let%expect_test "s on a conflicted file marks it resolved; u and x are refused" =
+let%expect_test "s on a conflicted file marks it resolved; u is refused; x opens the \
+                 resolve popup (phase 7)"
+  =
   Fixture.with_repo (fun repo ->
     let git args = ignore (Fixture.git repo args : string) in
     Fixture.write repo "a.txt" "base\n";
@@ -518,15 +520,18 @@ let%expect_test "s on a conflicted file marks it resolved; u and x are refused" 
     let t = act repo t "ju" in
     outcome repo t;
     let t = act repo t "x" in
+    Option.iter (Ui_state.popup t) ~f:(fun popup ->
+      printf "popup: %s\n" (Popup_tile.title popup));
+    let t = act repo t "<Esc>" in
     outcome repo t;
     let t = act repo t "s" in
     outcome repo t;
     mutations t;
     [%expect {|
-      notice: a.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
+      notice: a.txt is conflicted: take a side with x, or resolve it in the editor (Space x), then stage it (s) to mark it resolved; nothing ran
       Files at ((Item(section conflicted)(key a.txt)))
       status: UU a.txt
-      notice: a.txt is conflicted: conflict resolution is not supported yet; resolve it in the editor, then stage it (s) to mark it resolved; nothing ran
+      popup: Resolve a.txt
       Files at ((Item(section conflicted)(key a.txt)))
       status: UU a.txt
       Files at ((Header staged))

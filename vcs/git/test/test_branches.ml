@@ -1,13 +1,14 @@
-(* Branches and aborts (phase 6): Branch_name.refusal and the Abort popup as pure
-   functions, the name rules cross-checked against git check-ref-format --branch; then the
-   Checkout, Checkout_previous, Create_branch and Abort plans against fixture
-   repositories. Helpers in plan_fixture.ml. *)
+(* Branches and aborts (phase 6): Branch_name.refusal and the abort actions of the
+   operation popups (Git.Operation, phase 7) as pure functions, the name rules
+   cross-checked against git check-ref-format --branch; then the Checkout,
+   Checkout_previous, Create_branch and Abort plans against fixture repositories. Helpers
+   in plan_fixture.ml. *)
 
 open! Core
 open Ches_vcs
 open Plan_fixture
 module Branch_name = Ches_vcs_git.Branch_name
-module Abort = Ches_vcs_git.Abort
+module Operation = Ches_vcs_git.Operation
 
 let%expect_test "Branch_name.refusal: every rule, in order" =
   let show ?(existing = [ "main"; "feature/x" ]) name =
@@ -245,15 +246,13 @@ let%expect_test "Branch_name.refusal agrees with git check-ref-format --branch" 
     |}]
 ;;
 
-let%expect_test "Abort: popups, in_progress" =
-  List.iter [ Abort.Operation.Rebase; Merge ] ~f:(fun operation ->
-    let popup = Abort.popup operation in
+let%expect_test "Abort: the operation popups' a, in_progress" =
+  List.iter [ Operation.Kind.Rebase; Merge ] ~f:(fun kind ->
+    let popup = Operation.popup kind in
     printf "%s:" popup.title;
-    List.iter (Popup.help popup) ~f:(fun (key, description) ->
-      printf " %s %s" key description);
     match Popup.press popup (Popup.initial popup) 'a' with
-    | Run operation ->
-      printf " -> %s\n" (Sexp.to_string [%sexp (operation : Abort.Operation.t)])
+    | Run choice ->
+      printf " a -> %s\n" (Sexp.to_string [%sexp (choice : Operation.Choice.t)])
     | _ -> assert false);
   let rebase interactive_backend : Git.In_progress.t =
     Rebase { interactive_backend; branch = Some "main"; onto = None }
@@ -272,12 +271,12 @@ let%expect_test "Abort: popups, in_progress" =
       printf
         "%s: rebase %b, merge %b\n"
         (Sexp.to_string [%sexp (operations : Git.In_progress.t list)])
-        (Abort.in_progress operations Rebase)
-        (Abort.in_progress operations Merge));
+        (Operation.in_progress operations Rebase)
+        (Operation.in_progress operations Merge));
   [%expect
     {|
-    Rebasing: a Abort -> Rebase
-    Merging: a Abort -> Merge
+    Rebasing: a -> (Abort Rebase)
+    Merging: a -> (Abort Merge)
     (): rebase false, merge false
     ((Rebase(interactive_backend true)(branch(main))(onto()))): rebase true, merge false
     ((Rebase(interactive_backend false)(branch(main))(onto()))): rebase true, merge false

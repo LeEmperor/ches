@@ -75,6 +75,7 @@ let default =
     Entry.create ~id ~title ?keywords (View command)
   in
   let numbers = [ "gutter"; "numbering"; "line numbers" ] in
+  let conflict = [ "merge"; "rebase"; "markers"; "resolve"; "smerge" ] in
   let problems = View_id.of_string "problems"
   and history = View_id.of_string "history"
   and demo_report = View_id.of_string "demo-report"
@@ -323,6 +324,36 @@ let default =
         ~title:"VCS: abort commit"
         ~keywords:[ "git"; "commit"; "message"; "cancel" ]
         (Request_view { view = vcs; request = "commit-abort" })
+    ; editor
+        ~id:"conflict.keep-upper"
+        ~title:"Conflict: keep upper (ours)"
+        ~keywords:(conflict @ [ "ours"; "head"; "mine"; "upstream" ])
+        (Keep_conflict Upper)
+    ; editor
+        ~id:"conflict.keep-lower"
+        ~title:"Conflict: keep lower (theirs)"
+        ~keywords:(conflict @ [ "theirs"; "other" ])
+        (Keep_conflict Lower)
+    ; editor
+        ~id:"conflict.keep-both"
+        ~title:"Conflict: keep both"
+        ~keywords:(conflict @ [ "all"; "union" ])
+        (Keep_conflict Both)
+    ; editor
+        ~id:"conflict.keep-base"
+        ~title:"Conflict: keep base"
+        ~keywords:(conflict @ [ "ancestor"; "original"; "diff3" ])
+        (Keep_conflict Base)
+    ; editor
+        ~id:"conflict.next"
+        ~title:"Conflict: next"
+        ~keywords:(conflict @ [ "jump"; "go to" ])
+        (Move { motion = Next_conflict; count = None })
+    ; editor
+        ~id:"conflict.previous"
+        ~title:"Conflict: previous"
+        ~keywords:(conflict @ [ "jump"; "go to" ])
+        (Move { motion = Previous_conflict; count = None })
     ; view
         ~id:"source.restart"
         ~title:"Restart diagnostic source"
