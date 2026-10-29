@@ -488,8 +488,8 @@ let%expect_test "n on an unborn branch is refused; the branch keys are local to 
       |}])
 ;;
 
-let%expect_test "a rebase pull stops on a conflict: the summary says r r continues, r a \
-                 aborts; r a asks; y aborts"
+let%expect_test "a rebase pull stops on a conflict: the summary says press r; r a asks; y \
+                 aborts"
   =
   with_remote (fun repo ->
     let other = clone repo "other" in
@@ -515,7 +515,7 @@ let%expect_test "a rebase pull stops on a conflict: the summary says r r continu
       focused vcs
       message: Pull from origin/main (rebase) failed: Stopped on conflicts: resolve each file (x, or Space x in the editor), mark it resolved with s, then continue
       | Head: detached at 143c3f4
-      | Rebasing main onto 143c3f4 (r r continues, r >
+      | Rebasing main onto 143c3f4 (press r)
       log: [exit 1] git pull --progress --rebase
             "hint: Resolve all conflicts manually, mark them as resolved with"
             "hint: \"git add/rm <conflicted_files>\", then run \"git rebase --continue\"."
@@ -589,7 +589,7 @@ let%expect_test "a merge stopped on a conflict: m a asks; y aborts it" =
       jobs: detect g1.1, refresh g1.2, diff g1.3
       | Head: main fb912c6
       | Upstream: origin/main, ahead 1
-      | Merging 143c3f4 (m m commits, m a aborts)
+      | Merging 143c3f4 (press m)
       focused vcs
       notice: No rebase in progress; nothing ran
       focused confirm; confirm Abort merge

@@ -520,8 +520,8 @@ let progress_row t =
 (* How to go on with an operation in progress, after its summary row. *)
 let operation_mark (operation : Git.In_progress.t) =
   match operation with
-  | Rebase _ -> " (r r continues, r a aborts)"
-  | Merge _ -> " (m m commits, m a aborts)"
+  | Rebase _ -> " (press r)"
+  | Merge _ -> " (press m)"
   | Apply_mailbox | Cherry_pick _ | Revert _ | Bisect -> ""
 ;;
 

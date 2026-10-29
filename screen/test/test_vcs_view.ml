@@ -1067,7 +1067,7 @@ let%expect_test "a conflict: the section, its combined diff, conflict markers, h
      1:a.txt [2:VCS: main]                                                                              |
     ╭─ VCS: work (main) ───────────────────────────────────────────────────────────────────────────────╮|
     │ Head: main 1d0798b                    │ 0 Diff: Conflicted: aa.txt, du.txt, ud.txt, uu.txt       │|
-    │ Merging 1cca8e7 (m m commits, m a abo>│ diff --cc aa.txt                                         │|
+    │ Merging 1cca8e7 (press m)             │ diff --cc aa.txt                                         │|
     │                                       │ index b19a1e9,950b81b..0000000                           │|
     │ 1 Files (4)                           │ --- a/aa.txt                                             │|
     │ > - Conflicted (4)                    │ +++ b/aa.txt                                             │|
@@ -1141,7 +1141,7 @@ let%expect_test "a rebase in progress, then a detached HEAD" =
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: work (detached at 1cca8e7) ────────────────────────────────────────────────────────────────╮|
     │ Head: detached at 1cca8e7             │ 0 Diff: Conflicted: aa.txt, du.txt, ud.txt, uu.txt       │|
-    │ Rebasing main onto 1cca8e7 (r r conti>│ diff --cc aa.txt                                         │|
+    │ Rebasing main onto 1cca8e7 (press r)  │ diff --cc aa.txt                                         │|
     │                                       │ index 950b81b,b19a1e9..0000000                           │|
     │ 1 Files (4)                           │ --- a/aa.txt                                             │|
      1:a.txt [2:VCS: 7b0842b]                                                                           |

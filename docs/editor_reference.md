@@ -654,9 +654,9 @@ use ssh-agent or a credential helper, and connect once with ssh in a terminal to
 accept a new host.
 
 **Merges and rebases.** `m` and `r` work where `f` does. While a merge or rebase is
-in progress (started by Ches or outside it), the head summary shows it with how to
-go on: "Merging 1a2b3c4 (m m commits, m a aborts)", "Rebasing main onto 1a2b3c4 (r r
-continues, r a aborts)".
+in progress (started by Ches or outside it), the head summary shows it and the key
+whose popup goes on: "Merging 1a2b3c4 (press m)", "Rebasing main onto 1a2b3c4
+(press r)".
 
 - `m` with no merge in progress opens the merge popup for the branch under the
   Branches cursor, whichever panel has focus (`2` to choose one): `m` runs `git

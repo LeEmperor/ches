@@ -283,8 +283,9 @@
     advice is about pulls); for network plans, {!Git.Remote.hint}, else
     [stopped_hint] (a rebase pull that stopped), else the one-line failure.
 
-    The head summary marks how to go on: a [Rebase] row ends with [" (r r continues,
-    r a aborts)"], a [Merge] row with [" (m m commits, m a aborts)"].
+    The head summary marks how to go on: a [Rebase] row ends with [" (press r)"]
+    and a [Merge] row with [" (press m)"] (the popup lists continue, skip or commit,
+    and abort); short, so the row fits the lists column.
 
     {2 Layout}
 

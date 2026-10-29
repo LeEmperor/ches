@@ -2317,9 +2317,10 @@ Checks run and results:
 
 Known gaps or blockers:
   - No owner terminal acceptance.
-  - The rebase mark is cut in the lists column below ~135 terminal columns
-    ("Rebasing main onto 143c3f4 (r r continues, r >"); a shorter mark or a
-    wrapped row would fix it.
+  - Fixed after the handoff (owner): the marks were cut in the lists column
+    ("Rebasing main onto 143c3f4 (r r continues, r >"); they are now " (press r)"
+    and " (press m)" (the popups list the rest), so the rows fit even at the
+    38-column lists width. A very long branch name can still cut the rebase row.
   - Footer hint texts are not covered by tests (tests run with hints off).
   - Taking the upstream side can empty a commit, which r r then drops silently
     (git's behavior). Popups describe the snapshot of the key press.

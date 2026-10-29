@@ -231,7 +231,7 @@ let%expect_test "a merge from m m stops on conflicts; x takes theirs, restores m
       focused vcs
       message: Merge other failed: Stopped on conflicts: resolve each file (x, or Space x in the editor), mark it resolved with s, then continue
       | Head: main b986162
-      | Merging 93dff37 (m m commits, m a aborts)
+      | Merging 93dff37 (press m)
       log: [exit 1] git merge --no-edit --end-of-options other
       status: UU f, UU g, UU h
       refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
@@ -448,7 +448,7 @@ let%expect_test "a rebase pull stops; r r with an unsaved buffer is refused; r r
       focused vcs
       message: Pull from origin/main (rebase) failed: Stopped on conflicts: resolve each file (x, or Space x in the editor), mark it resolved with s, then continue
       | Head: detached at 143c3f4
-      | Rebasing main onto 143c3f4 (r r continues, r >
+      | Rebasing main onto 143c3f4 (press r)
       refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push rebase merge copy next previous first last half-page-down half-page-up
       rebase: Continue, skip or abort the rebase (the rebase popup)
       focused popup; popup Rebasing
@@ -505,7 +505,7 @@ let%expect_test "a rebase pull stops; r r with an unsaved buffer is refused; r r
       focused vcs
       message: Continue rebase failed: Stopped on conflicts: resolve each file (x, or Space x in the editor), mark it resolved with s, then continue
       | Head: detached at 143c3f4
-      | Rebasing main onto 143c3f4 (r r continues, r >
+      | Rebasing main onto 143c3f4 (press r)
       status: UU a.txt
       |}];
     let t = run repo t "rs" in
