@@ -11,7 +11,7 @@ let run ui s = Helpers.run ~width ~height ui (keys s)
 let active ui = Session.active_id (Ui_state.session ui)
 let editor ui = Controller.editor (Ui_state.controller ui)
 let with_files f =
-  let dir = Core_unix.mkdtemp "/tmp/opencode/ches-tabs-" in
+  let dir = scratch_dir "ches-tabs-" in
   let one = Filename.concat dir "one" and two = Filename.concat dir "two" in
   Core_unix.mkdir one; Core_unix.mkdir two;
   let a = Filename.concat one "same.txt" and b = Filename.concat two "same.txt" in

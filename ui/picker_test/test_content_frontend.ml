@@ -56,7 +56,7 @@ let%expect_test "content frontend deactivation closes session and rejects late s
 ;;
 
 let%expect_test "real rg content frontend: scheduling, edits, raw byte intent and released cursor" =
-  let root = Filename_unix.realpath (Filename_unix.temp_dir ~in_dir:"/tmp/opencode" "ches-content-ui" "") in
+  let root = Filename_unix.realpath (Filename_unix.temp_dir "ches-content-ui" "") in
   List.iter (List.init 300 ~f:(fun n -> sprintf "file%03d.ml" n)) ~f:(fun p ->
     Out_channel.write_all (root ^ "/" ^ p) ~data:"界\tneedle needle\n");
   let runtime = Runtime.create

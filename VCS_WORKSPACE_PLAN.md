@@ -404,10 +404,12 @@ any parallel work starts; it reviews, runs the full suite, and writes the handof
 Every agent starts by reading this plan, all earlier handoffs, and the current
 interfaces. Earlier phases may have changed the architecture described here.
 
-- **Load limit (2026-10-25):** the total dune job budget is 10. Every dune
-  invocation passes `-j 10` and goes through one shared lock, so at most one runs
-  at a time: `flock /tmp/claude-1000/ches-dune.lock dune build -j 10`, likewise
-  `dune runtest -j 10`. (Dune itself aborts a second instance in the same tree with
+- **Load limit (2026-11-01, owner; was 10 from 2026-10-25):** the total dune job
+  budget is 4, after two host resets on 2026-11-01 (one during a `-j 10` build).
+  Every dune invocation passes `-j 4` and goes through one shared lock, so at most
+  one runs at a time: `flock /tmp/claude-1000/ches-dune.lock dune build -j 4`,
+  likewise `dune runtest -j 4`. (Older handoffs below say `-j 10`: that was the
+  limit then.) (Dune itself aborts a second instance in the same tree with
   "Another Dune instance is currently running".) Agents working in parallel build
   only their own directories (e.g. `dune build -j 10 @vcs/git/runtest`) until
   the final full run. Never background or watch mode. The host is unstable under
@@ -2674,7 +2676,8 @@ Known gaps or blockers:
     has no Commits section, so no title names the log: the panel reads
     "3 Commits (0)" / "(none)", and a deleted branch adds "1 problem reading the
     repository (@: log)". This contradicts "the section title always names it";
-    owner decision pending (fix in vcs/git/backend.ml's single_section).
+    owner decided (2026-11-01) to leave it as is for now (a fix would go in
+    vcs/git/backend.ml's single_section). Pinned by test_vcs_log.ml's last test.
   - The empty-log view and footer hint texts are not covered by tests.
 
 Next-phase integration notes:

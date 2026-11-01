@@ -555,11 +555,18 @@ In the diff, digits belong to the text: `10j` scrolls ten rows and `0` is the li
 start, so `1`/`2`/`3` do not switch panels there. `Tab` or `Escape` returns to the
 lists, where they do.
 
+With hotkey hints on (`Space v ?`), the footer names only the keys that act where
+the cursor is, after `? help`, which lists them all: for example `Files 1/4 | ? help,
+s x S, Enter fold, Tab diff, c commit, p P pull/push, 2 3 panels, q` on the Untracked
+header, `u x` in Staged, `s resolved` on the Conflicted header, no staging keys in a
+commit's diff and no line keys in Visual on a conflict. Each footer fits a 100-column
+view; a narrower one cuts the end first.
+
 A popup (such as `c`'s) floats over the view, listing its switches and actions:
 
 | Popup keys | Action |
 | --- | --- |
-| `-` then a switch's key | Toggle the switch (`* ` marks an enabled one; one per group) |
+| `-` then a switch's key | Toggle the switch (`* ` marks an enabled one; one per group); in a popup without switches (Resolve, Merging, Rebasing) `-` is unbound and leaves nothing pending |
 | An action's key | Run it with the enabled switches; the popup closes |
 | `Escape` | Clear a pending `-`; otherwise close, running nothing |
 | `q`, `Tab`, `Ctrl-c` | Close, running nothing |
@@ -1617,7 +1624,7 @@ moved tile, relative and no line numbers, and a save error at 80x24 and
 160x48, plus tiny sizes and floating-palette open/close/resize/zen screens) and prints
 their directory (`cat` a file to view it).
 
-`picker_smoke.py` uses its own tmux socket and `/tmp/opencode` fixture, retaining
+`picker_smoke.py` uses its own tmux socket and a temporary fixture, retaining
 text/colored captures under the printed fixture's hidden `.captures` directory.
 It covers file/content binding and palette activation, query/select/cancel/accept,
 dirty retained text/undo, missing/stale failures, Unicode/TAB location reveal, zen

@@ -10,6 +10,7 @@
    ches_highlight_tree_sitter
   core
   core_unix
+  core_unix.filename_unix
   expect_test_helpers_core)
  ; See core/dune for why this flag is needed.
  (inline_tests

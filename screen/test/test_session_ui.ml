@@ -8,7 +8,7 @@ module Feedback = Ches_error.Error
 let width = 60
 let height = 12
 let with_files f =
-  let directory = Core_unix.mkdtemp "/tmp/opencode/ches-session-ui-" in
+  let directory = scratch_dir "ches-session-ui-" in
   let a = Filename.concat directory "a.ml" and b = Filename.concat directory "b.ml" in
   let lines = String.concat (List.init 50 ~f:(fun i -> sprintf "line %d\n" i)) in
   Out_channel.write_all a ~data:lines;

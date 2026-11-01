@@ -64,7 +64,7 @@ val hint : string
     enabled)] for an action key (the float then closes and answers
     {!View_registry.Answer.t.Choose}); [`Unbound] with the dash cleared and the
     footer hint ["<key> is unbound; ? lists keys"] (["-x"]
-    after a dash). *)
+    after a dash; ["-"] itself in a popup without switches). *)
 val press
   :  t
   -> char
@@ -85,7 +85,7 @@ val help : t -> (string * string) list
     column); a group without entries is left out, and rows past [rows] are cut. The
     footer: a notice (an unbound key's hint), else a pending prefix ([pending], the
     host's, else ["-"] while a dash is pending), else, with [hotkey_hints], ["-
-    switch  ? help  q close"]. *)
+    switch  ? help  q close"] (["? help  q close"] when the popup has no switches). *)
 val render
   :  ?hotkey_hints:bool
   -> ?notice:string

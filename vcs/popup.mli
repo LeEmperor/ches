@@ -81,7 +81,9 @@ module Reply : sig
 end
 
 (** One key while the popup is open. After [-], a switch key toggles that switch
-    (enabling it disables its group's others); [-] again keeps the dash pending. *)
+    (enabling it disables its group's others); [-] again keeps the dash pending. In a
+    popup without switches [-] is [Unbound] like any other key that is not an
+    action's. *)
 val press : 'a t -> State.t -> char -> 'a Reply.t
 
 (** [Escape]: clears a pending dash, otherwise closes the popup. *)

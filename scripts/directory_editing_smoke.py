@@ -14,7 +14,9 @@ from pathlib import Path
 
 def main():
     executable = Path(__file__).resolve().parents[1] / "_build/default/bin/ches.exe"
-    root = Path(tempfile.mkdtemp(prefix="directory-phase6-pty-", dir="/tmp/opencode"))
+    # Under /tmp whatever TMPDIR is: checks match messages that show this path on
+    # a fixed-width screen, so it must stay short.
+    root = Path(tempfile.mkdtemp(prefix="directory-phase6-pty-", dir="/tmp"))
     (root / "a.txt").write_text("original\n")
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
@@ -71,7 +73,7 @@ def main():
         print("      hidden dirty quit guard, fresh-row refusal, apply/undo boundary")
         print("Fixture:", root)
     finally:
-        Path("/tmp/opencode/directory-phase6-pty.log").write_bytes(capture)
+        Path("/tmp/directory-phase6-pty.log").write_bytes(capture)
         if proc.poll() is None:
             proc.terminate()
             proc.wait(timeout=5)

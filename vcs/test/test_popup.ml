@@ -99,6 +99,38 @@ let%expect_test "groups exclude, unknown keys are unbound, escape clears the das
     |}]
 ;;
 
+let%expect_test "without switches, a dash is unbound and leaves nothing pending" =
+  let merging =
+    Popup.create
+      ~title:"Merging"
+      ~switches:[]
+      ~actions:
+        [ action 'c' "Commit" (fun enabled -> Commit enabled)
+        ; action 'a' "Amend" (fun enabled -> Amend enabled)
+        ]
+    |> Or_error.ok_exn
+  in
+  let press state key =
+    let reply = Popup.press merging state key in
+    print_s [%sexp (reply : action Popup.Reply.t)];
+    match reply with
+    | Updated state | Unbound { state; _ } -> state
+    | Run _ -> state
+  in
+  let state = press (Popup.initial merging) '-' in
+  let state = press state '-' in
+  let (_ : Popup.State.t) = press state 'a' in
+  print_s
+    [%sexp (Popup.escape state : [ `Close | `Updated of Popup.State.t ])];
+  [%expect
+    {|
+    (Unbound (state ((enabled ()) (dash false))) (key -))
+    (Unbound (state ((enabled ()) (dash false))) (key -))
+    (Run (Amend ()))
+    Close
+    |}]
+;;
+
 let%expect_test "initial switches are filtered, ordered, and grouped" =
   print_s
     [%sexp

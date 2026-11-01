@@ -2719,6 +2719,134 @@ let compose ~width ~rows parts =
     Span.merge (spans @ if x < width then [ Span.blank Status (width - x) ] else []))
 ;;
 
+(* Footer hints (with hotkey hints on), after ["? help"], which lists every key: only
+   keys that act where the cursor is, most used first, so that each footer fits 100
+   columns and a narrower one cuts the least used. *)
+
+(* Whether the Files panel lists an item in one of [sections]. *)
+let files_lists t sections =
+  Option.exists (panel t Files) ~f:(fun (panel : _ Panel.t) ->
+    List.exists panel.sections ~f:(fun (section : _ Panel.Section.t) ->
+      (not (List.is_empty section.items))
+      && List.exists sections ~f:(fun s ->
+        Panel.Section_id.equal (B.Section.id s) section.id)))
+;;
+
+(* [S] when something is unstaged or untracked, [U] when something is staged. *)
+let all_keys t =
+  List.filter_opt
+    [ Option.some_if (files_lists t [ Unstaged; Untracked ]) "S"
+    ; Option.some_if (files_lists t [ Staged ]) "U"
+    ]
+;;
+
+(* [s u x] that a file, section or hunk of [section] takes; the callers hint
+   conflicts ([s] marks resolved, [x] takes a side) by name. *)
+let section_keys (section : B.Section.t) =
+  match section with
+  | Unstaged | Untracked -> [ "s"; "x" ]
+  | Staged -> [ "u"; "x" ]
+  | Conflicted | Ignored -> []
+;;
+
+(* How to go on with the operation in progress. *)
+let operation_hint t =
+  if in_progress t Rebase
+  then Some "r r continue"
+  else if in_progress t Merge
+  then Some "m m commit"
+  else None
+;;
+
+let words keys = Option.some_if (not (List.is_empty keys)) (String.concat ~sep:" " keys)
+
+let list_hints t (focus : Focus.t) =
+  let operation = Option.to_list (operation_hint t) in
+  let header =
+    match selected t focus with
+    | Some (Header _) -> true
+    | Some (Item _) | None -> false
+  in
+  let fold = if header then [ "Enter fold" ] else [] in
+  match focus with
+  | Files ->
+    let selection =
+      match conflicted_at t, selected t Files with
+      | Some _, _ -> [ "s resolved"; "x take a side" ] @ Option.to_list (words (all_keys t))
+      | None, Some (Header section | Item { section; _ }) ->
+        (match B.Section.of_id section with
+         | Some Conflicted -> "s resolved" :: Option.to_list (words (all_keys t))
+         | Some section -> Option.to_list (words (section_keys section @ all_keys t))
+         | None -> Option.to_list (words (all_keys t)))
+      | None, None -> Option.to_list (words (all_keys t))
+    in
+    (* [c] is refused while a file is conflicted, a pull while an operation runs. *)
+    let commit = if files_lists t [ Conflicted ] then [] else [ "c commit" ] in
+    let remote = if List.is_empty operation then [ "p P pull/push" ] else operation in
+    selection @ fold @ [ "Tab diff" ] @ commit @ remote @ [ "2 3 panels"; "q" ]
+  | Branches ->
+    let branch =
+      match selected_item t Branches with
+      | Some { value = Branch _; _ } -> true
+      | Some { value = File _ | Commit _; _ } | None -> false
+    in
+    let merge =
+      if not (List.is_empty operation)
+      then operation
+      else if branch
+      then [ "m merge this" ]
+      else []
+    in
+    (if branch then [ "Enter checkout" ] else fold)
+    @ [ "n new"; "- previous" ]
+    @ merge
+    @ [ "1 3 panels"; "q" ]
+  | Commits | Diff ->
+    [ "l log"; "+ more" ] @ fold @ [ "Tab diff" ] @ operation @ [ "1 2 panels"; "q" ]
+;;
+
+let diff_hints t ~visual =
+  let section =
+    match t.diff with
+    | Loaded (target, _) -> B.diff_section target
+    | Empty | No_diff | Loading _ | Failed _ -> None
+  in
+  if visual
+  then (
+    (* Line actions take unstaged or staged lines, never a conflict's or an untracked
+       file's; a commit's diff stages nothing. *)
+    let lines =
+      match section with
+      | Some ((Unstaged | Staged) as section) ->
+        Option.to_list
+          (Option.map (words (section_keys section)) ~f:(fun keys -> keys ^ " lines"))
+      | Some (Untracked | Conflicted | Ignored) | None -> []
+    in
+    let all = if Option.is_some section then Option.to_list (words (all_keys t)) else [] in
+    lines @ all @ [ "y copy"; "Esc ends"; "q" ])
+  else (
+    match t.diff with
+    | Empty | No_diff | Loading _ | Failed _ -> [ "Tab list"; "q" ]
+    | Loaded (target, diff) ->
+      let files = if List.length diff.files > 1 then [ "} { files" ] else [] in
+      (match target, section with
+       | _, Some Conflicted ->
+         (if Option.is_some (conflicted_at t)
+          then [ "s resolved"; "x take a side" ]
+          else [])
+         @ [ "e edit"; "] [ hunks" ]
+         @ files
+         @ [ "Tab list"; "q" ]
+       | Untracked _, _ -> [ "s x file"; "e open"; "v V select"; "Tab list"; "q" ]
+       | _, Some section ->
+         Option.to_list
+           (Option.map (words (section_keys section)) ~f:(fun keys -> keys ^ " hunk"))
+         @ [ "] [ hunks" ]
+         @ files
+         @ [ "e open"; "v V select"; "Tab list"; "q" ]
+       | _, None -> [ "] [ hunks" ] @ files @ [ "e open"; "v V select"; "Tab list"; "q" ]))
+;;
+
 let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell.Content.t =
   let width = Int.max 0 width
   and rows = Int.max 0 rows in
@@ -2756,17 +2884,11 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
   in
   let parts = parts @ Option.to_list log in
   let default =
-    let hints keys = if hotkey_hints then " | " ^ keys else "" in
-    (* How to go on with the operation in progress, else how to start a merge. *)
-    let operation =
-      if in_progress t Rebase
-      then "r r continue"
-      else if in_progress t Merge
-      then "m m commit"
-      else "m merge"
+    let hints keys =
+      if hotkey_hints then " | " ^ String.concat ~sep:", " ("? help" :: keys) else ""
     in
     if not (loaded t)
-    then (if hotkey_hints then "g r retry, @ log, q leave" else "")
+    then (if hotkey_hints then "? help, g r retry, @ log, q leave" else "")
     else (
       match t.focus with
       | Diff ->
@@ -2781,21 +2903,7 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
           | Some Linewise -> " | VISUAL LINE"
         in
         sprintf "Diff %d-%d/%d%s" (top + 1) (Int.min total (top + h)) total visual
-        ^ hints
-            (match t.diff with
-             | _ when not (String.is_empty visual) ->
-               "s u x lines, S U, y copy, Esc ends, g r, @, q"
-             | Loaded (Conflicted _, _) ->
-               sprintf
-                 "e edit, s x on the file header (resolved, take a side), ] [ hunks, } { \
-                  files, c commit, %s, f p P fetch/pull/push, 10j, v V y, Tab/Esc list, g \
-                  r, @, q"
-                 operation
-             | Empty | No_diff | Loading _ | Loaded _ | Failed _ ->
-               sprintf
-                 "s u x hunk, ] [ hunks, } { files, c commit, %s, f p P \
-                  fetch/pull/push, e open, 10j, v V y, Tab/Esc list, g r, @, q"
-                 operation)
+        ^ hints (diff_hints t ~visual:(not (String.is_empty visual)))
       | (Files | Branches | Commits) as focus ->
         let count = List.length (rows_of t focus) in
         let name =
@@ -2806,28 +2914,7 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
           name
           (Option.value_map (selected_index t focus) ~default:0 ~f:succ)
           count
-        ^ hints
-            (match focus with
-             | Files ->
-               sprintf
-                 "%s, l log, c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab \
-                  diff, Enter, y copy, g r, @, q"
-                 (if Option.is_some (conflicted_at t)
-                  then "s resolved, x take a side"
-                  else "s u x S U")
-                 operation
-             | Branches ->
-               sprintf
-                 "Enter checkout, n new, - previous, %s, l log, c commit, f p P \
-                  fetch/pull/push, 1 2 3 panels, Tab diff, y copy, g r, @, q"
-                 (if in_progress t Rebase || in_progress t Merge
-                  then operation
-                  else "m merge this")
-             | Commits | Diff ->
-               sprintf
-                 "l log, + more, c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab \
-                  diff, Enter, y copy, g r, @, q"
-                 operation))
+        ^ hints (list_hints t focus))
   in
   { title = title t
   ; footer = Some (Tile_shell.Label.footer ~notice ~pending ~default)

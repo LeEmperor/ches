@@ -55,7 +55,7 @@ let current t =
 ;;
 
 let with_dir f =
-  let dir = Core_unix.mkdtemp "/tmp/opencode/ches-highlight-test.XXXXXX" in
+  let dir = Temp_fixture.scratch_dir "ches-highlight-test." in
   Exn.protect ~f:(fun () -> f dir) ~finally:(fun () ->
     Array.iter (Stdlib.Sys.readdir dir) ~f:(fun file -> Core_unix.unlink (dir ^/ file));
     Core_unix.rmdir dir)

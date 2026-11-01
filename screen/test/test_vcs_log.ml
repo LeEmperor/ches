@@ -691,3 +691,88 @@ let%expect_test "Space g l from a directory buffer and for a file outside the re
     message: note.txt is not in the repository at $DIR/work
     |}]
 ;;
+
+(* The head summary: the lists column's rows above the Files panel. *)
+let summary t =
+  List.drop (frame_lines t) 2
+  |> List.map ~f:(fun line -> String.rstrip (cut line ~x:2 ~width:lists_width))
+  |> List.take_while ~f:(fun row -> not (String.is_prefix row ~prefix:"1 Files"))
+  |> List.filter ~f:(Fn.non String.is_empty)
+  |> List.iter ~f:(fun row -> printf "| %s\n" row)
+;;
+
+(* The Branches panel as drawn: its title row, then its rows up to the first blank. *)
+let branches t =
+  List.map (frame_lines t) ~f:(fun line -> String.rstrip (cut line ~x:2 ~width:lists_width))
+  |> List.drop_while ~f:(fun row -> not (String.is_prefix row ~prefix:"2 Branches"))
+  |> List.take_while ~f:(Fn.non String.is_empty)
+  |> List.iter ~f:(fun row -> printf "| %s\n" row)
+;;
+
+(* Records the behaviour while the owner decides whether the title should name the
+   log when it is empty (VCS_WORKSPACE_PLAN.md, phase 8's known gaps). *)
+let%expect_test "an empty chosen log: the logged branch deleted outside the view, and an \
+                 unborn branch"
+  =
+  with_history (fun repo ->
+    let t = run repo (create repo) " gg" in
+    let t = run repo t "2jj" in
+    let t = run repo t "lb" in
+    where repo t;
+    commits t;
+    git repo [ "branch"; "-D"; "-q"; "other" ];
+    let t = run repo t "gr" in
+    where repo t;
+    summary t;
+    commits t;
+    scope t;
+    log_commands repo t);
+  [%expect {|
+    jobs: detect g1.1, refresh g1.2
+    jobs: refresh g1.3
+    focused vcs (Commits)
+    | 3 Commits (2)
+    | > - Commits on other (2)
+    |   ● ef11f02 (other) other work
+    |   ● fbcd33d one
+    jobs: refresh g1.4
+    focused vcs (Commits)
+    | Head: main ae77634
+    | 1 problem reading the repository (@: >
+    | 3 Commits (0)
+    |   (none)
+    ((range (Branch other)) (path ()) (graph true) (merges true)
+     (first_parent false) (limit 200))
+    log: [exit 0] git --literal-pathspecs log -z --no-color --no-show-signature --decorate=short --max-count=200 --topo-order ... HEAD --
+    log: [exit 0] git --literal-pathspecs log -z --no-color --no-show-signature --decorate=short --max-count=200 --topo-order ... refs/heads/other --
+    log: [exit 128] git --literal-pathspecs log -z --no-color --no-show-signature --decorate=short --max-count=200 --topo-order ... refs/heads/other --
+    |}];
+  (* An unborn branch is not listed in Branches, so l b cannot choose it; HEAD's log
+     on it (l l) is empty too. *)
+  with_history (fun repo ->
+    git repo [ "switch"; "-q"; "--orphan"; "fresh" ];
+    let t = run repo (create repo) " gg" in
+    summary t;
+    branches t;
+    let t = run repo t "ll" in
+    where repo t;
+    summary t;
+    commits t;
+    scope t);
+  [%expect {|
+    jobs: detect g1.1, refresh g1.2
+    | Head: fresh (no commits yet)
+    | 2 Branches (3)
+    | > - Local branches (3)
+    |     main  edit b
+    |     other  other work
+    |     side  side work
+    jobs: refresh g1.3
+    focused vcs (Commits)
+    | Head: fresh (no commits yet)
+    | 3 Commits (0)
+    |   (none)
+    ((range Head) (path ()) (graph true) (merges true) (first_parent false)
+     (limit 200))
+    |}]
+;;

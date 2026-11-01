@@ -225,6 +225,8 @@ scripts/smoke.sh --palette-only
 python3 scripts/directory_workspace_smoke.py
 python3 scripts/picker_smoke.py
 python3 scripts/theme_smoke.py
+# The VCS view over a sandbox repository (scripts/vcs_sandbox.sh), phases 2-8:
+python3 scripts/vcs_smoke.py
 ```
 
 `ches.opam` is generated from `dune-project`; package metadata changes belong in
@@ -233,7 +235,10 @@ python3 scripts/theme_smoke.py
 The test suite covers editing, input, file I/O, highlighting, screen geometry,
 and frontend behavior. The separate terminal smoke test uses tmux, bash, and a
 UTF-8 locale to check the built editor's screen output, saved bytes, and terminal
-restoration. Visual checks and the `ppx_expect` source-path workaround are
+restoration. `scripts/vcs_smoke.py` drives the VCS view through staging,
+committing, a rebase pull stopped on a conflict, a push and the log, checking the
+resulting git state (see [`VCS_MANUAL_TEST.md`](VCS_MANUAL_TEST.md) for what is left
+to check by hand). Visual checks and the `ppx_expect` source-path workaround are
 documented in the [editor reference](docs/editor_reference.md#terminal-smoke-test).
 The [current phase-9 check record](FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete)
 records passing build/full tests and real file/content, directory and existing

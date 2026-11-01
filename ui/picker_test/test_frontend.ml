@@ -9,7 +9,7 @@ module Model = Ches_file_picker.Model
 module Expect_test_config = Async.Expect_test_config
 
 let%expect_test "frontend chains async turns and consumes only after release, without a live binding" =
-  let root = Filename_unix.realpath (Filename_unix.temp_dir ~in_dir:"/tmp/opencode" "ches-picker-ui" "") in
+  let root = Filename_unix.realpath (Filename_unix.temp_dir "ches-picker-ui" "") in
   List.iter (List.init 300 ~f:(fun n -> sprintf "file%03d.ml" n)) ~f:(fun p ->
     Out_channel.write_all (root ^ "/" ^ p) ~data:"");
   let runtime = Runtime.create () in

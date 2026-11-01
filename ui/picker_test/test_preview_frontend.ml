@@ -10,8 +10,7 @@ module Preview = Ches_file_preview_model.Model
 module Expect_test_config = Async.Expect_test_config
 
 let%expect_test "production frontend preview follows rapid selection, dirty buffer, resize and closure" =
-  let root = Filename_unix.realpath
-    (Filename_unix.temp_dir ~in_dir:"/tmp/opencode" "ches-preview-frontend" "") in
+  let root = Filename_unix.realpath (Filename_unix.temp_dir "ches-preview-frontend" "") in
   let a = root ^ "/a.ml" and b = root ^ "/b.ml" in
   Out_channel.write_all a ~data:"ON_DISK_A\n";
   Out_channel.write_all b ~data:"DISK_B_PREVIEW\n";

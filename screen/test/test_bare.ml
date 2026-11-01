@@ -138,7 +138,7 @@ let%test_unit "numbered bare tiny fallback refits tab and wide text and restores
 ;;
 
 let%test_unit "bare numbers survive opening and activating buffers and workspace focus" =
-  let root = Core_unix.mkdtemp "/tmp/opencode/ches-bare-numbers-" in
+  let root = Helpers.scratch_dir "ches-bare-numbers-" in
   let path = Filename.concat root "other.txt" in
   Out_channel.write_all path ~data:"other\nfile";
   Exn.protect ~f:(fun () ->
@@ -225,7 +225,7 @@ let%test_unit "bare restores prior zen and retained workspace preferences withou
 let%test_unit "entering bare from view tab or focused minor returns to file and retains placements" =
   List.iter [ " vo"; " vo st"; " vo ss"; " gt" ] ~f:(fun commands ->
     let base = create "file contents" in
-    let t = Ui_state.create ~views:[ Vcs_view.entry ~cwd:"/tmp/opencode" () ]
+    let t = Ui_state.create ~views:[ Vcs_view.entry ~cwd:"/nonexistent/ches-bare" () ]
         (Ui_state.controller base) in
     let t = run t commands in
     let placements = View_registry.placements (Ui_state.views t) in
@@ -327,7 +327,7 @@ let%test_unit "entering bare from a help float releases capture and pending work
 ;;
 
 let%test_unit "directory-only startup remains operable; side directory focus yields to active file" =
-  let root = Core_unix.mkdtemp "/tmp/opencode/ches-bare-" in
+  let root = Helpers.scratch_dir "ches-bare-" in
   let path = Filename.concat root "file.txt" in
   Out_channel.write_all path ~data:"file contents";
   Exn.protect ~f:(fun () ->

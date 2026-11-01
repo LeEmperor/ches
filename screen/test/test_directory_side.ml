@@ -15,7 +15,7 @@ let files ui = List.map (Session.buffers (Ui_state.session ui)) ~f:(fun (_, c) -
   Filename.basename (Option.value_exn (Editor.path (Controller.editor c))))
 
 let fixture f =
-  let root = Core_unix.mkdtemp "/tmp/opencode/ches-side-test-" in
+  let root = scratch_dir "ches-side-test-" in
   let names = [ "a.txt"; "b.txt"; "bad.txt" ] @ List.init 40 ~f:(fun i -> sprintf "z%02d.txt" i) in
   List.iter names ~f:(fun name -> Out_channel.write_all (Filename.concat root name)
     ~data:(if String.equal name "bad.txt" then "\000" else "one\ntwo\nthree\n"));

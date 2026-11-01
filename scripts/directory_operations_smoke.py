@@ -14,7 +14,9 @@ from pathlib import Path
 
 def main():
     executable = Path(__file__).resolve().parents[1] / "_build/default/bin/ches.exe"
-    root = Path(tempfile.mkdtemp(prefix="directory-phase8-pty-", dir="/tmp/opencode"))
+    # Under /tmp whatever TMPDIR is: checks match messages that show this path on
+    # a fixed-width screen, so it must stay short.
+    root = Path(tempfile.mkdtemp(prefix="directory-phase8-pty-", dir="/tmp"))
     (root / "a").write_text("original\n")
     (root / "zdir").mkdir()
     master, slave = pty.openpty()
@@ -66,7 +68,7 @@ def main():
         print("PASS: explicit copy/delete, missing-save refusal, palette recovery, cross-directory move and next-save")
         print("Fixture:", root)
     finally:
-        Path("/tmp/opencode/directory-phase8-pty.log").write_bytes(capture)
+        Path("/tmp/directory-phase8-pty.log").write_bytes(capture)
         if proc.poll() is None:
             proc.terminate()
             proc.wait(timeout=5)

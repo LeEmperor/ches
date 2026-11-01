@@ -17,7 +17,7 @@ let rec remove_fixture path =
   else Core_unix.unlink path
 ;;
 let fixture ?directory_config f =
-  let root = Core_unix.mkdtemp "/tmp/opencode/ches-edit-directory-" in
+  let root = scratch_dir "ches-edit-directory-" in
   let a = Filename.concat root "a.txt" in
   let b = Filename.concat root "b.txt" in
   Out_channel.write_all a ~data:"a contents";

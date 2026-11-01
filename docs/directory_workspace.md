@@ -246,12 +246,12 @@ After `dune build` and `dune runtest`, run:
 
 ```sh
 python3 scripts/directory_workspace_smoke.py
-TMPDIR=/tmp/opencode scripts/smoke.sh
+scripts/smoke.sh
 ```
 
 The directory runner executes isolated PTY scenarios for navigation/batch opening,
 placement/focus, dirty guards, copy/delete/recovery/move and save reconciliation.
-Fixtures/captures stay under `/tmp/opencode`; it does not mutate repository files.
+Fixtures and captures stay under `/tmp`; it does not mutate repository files.
 Fault-injected retries, destination races and runtime lifetimes have durable
 headless coverage in `test/`, `screen/test/` and `source/test/`. These automated
 checks are not human sign-off of colors, cursor shape or flicker.

@@ -162,7 +162,7 @@ let press t (state : State.t) key : _ Reply.t =
       match List.find t.switches ~f:(fun s -> Char.equal s.key key) with
       | Some switch -> Updated (toggle t state switch)
       | None -> Unbound { state = { state with dash = false }; key = sprintf "-%c" key })
-  else if Char.equal key '-'
+  else if Char.equal key '-' && not (List.is_empty t.switches)
   then Updated { state with dash = true }
   else (
     match List.find t.actions ~f:(fun a -> Char.equal a.key key) with

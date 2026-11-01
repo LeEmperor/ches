@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Real file/content picker smoke; private tmux and /tmp/opencode fixtures only.
+"""Real file/content picker smoke; private tmux and temp-dir fixtures only.
 
 Requires tmux, rg and a built ches. Captures are automated evidence, not visual,
 ranking or performance acceptance. Fixtures/captures are retained for diagnosis.
 """
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -14,7 +15,7 @@ from pathlib import Path
 
 def main():
     binary = Path(__file__).resolve().parents[1] / "_build/default/bin/ches.exe"
-    root = Path(tempfile.mkdtemp(prefix="picker-terminal-", dir="/tmp/opencode"))
+    root = Path(tempfile.mkdtemp(prefix="picker-terminal-"))
     artifacts = root / ".captures"
     artifacts.mkdir()  # Hidden: screenshots must never become search candidates.
     (root / "dune-project").write_text("")
@@ -32,7 +33,9 @@ def main():
     (root / "empty.txt").write_text("")
     (root / "binary.txt").write_bytes(b"\x00binary")
     (root / "controls.txt").write_text("\t界é\x1b[31m\r\x01\u202ertl\nshort\n")
-    tmux = ["tmux", "-S", str(root / "tmux.sock"), "-f", "/dev/null"]
+    # A socket path must stay short (108 bytes), whatever TMPDIR is.
+    socket_dir = Path(tempfile.mkdtemp(prefix="ches-picker-tmux.", dir="/tmp"))
+    tmux = ["tmux", "-S", str(socket_dir / "sock"), "-f", "/dev/null"]
     captures = 0
 
     def t(*args):
@@ -329,6 +332,7 @@ def main():
             save("final")
         finally:
             subprocess.run(tmux + ["kill-server"], check=False)
+            shutil.rmtree(socket_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

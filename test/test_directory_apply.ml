@@ -13,7 +13,7 @@ let rec remove_fixture path =
   else Core_unix.unlink path
 ;;
 let fixture f =
-  let root = Core_unix.mkdtemp "/tmp/opencode/ches-directory-apply-" in
+  let root = Temp_fixture.scratch_dir "ches-directory-apply-" in
   Exn.protect ~f:(fun () -> f root) ~finally:(fun () -> remove_fixture root)
 ;;
 let write root name text = Out_channel.write_all (child root name) ~data:text

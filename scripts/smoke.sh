@@ -52,8 +52,10 @@ if [ ! -x "$ches" ]; then
 fi
 export LC_ALL=C.UTF-8
 
-work=$(mktemp -d "${TMPDIR:-/tmp/opencode}/ches-smoke.XXXXXX")
-screens=$(mktemp -d "${TMPDIR:-/tmp/opencode}/ches-smoke-screens.XXXXXX")
+# The fixture lives under /tmp whatever TMPDIR is: checks match its paths on an
+# 80-column status line, and the tmux socket inside it must stay short (108 bytes).
+work=$(mktemp -d /tmp/ches-smoke.XXXXXX)
+screens=$(mktemp -d "${TMPDIR:-/tmp}/ches-smoke-screens.XXXXXX")
 # A per-run socket prevents another checkout's smoke run from sharing this session.
 tmux_cmd=(tmux -S "$work/tmux.sock" -f /dev/null)
 session=smoke
@@ -1417,6 +1419,8 @@ keys Space q
 expect_exit 0
 expect_file "$work/workspace.txt" "$work/workspace.expected"
 # A controlled save failure remains visible when moving/hiding status or using zen.
+# The narrow status cell cuts the message after the first 7 characters of the path.
+save_failure_cell="Failed to write ${work:0:7}>"
 resize 80 24
 launch ro/workspace.txt
 keys i X Escape Space w
@@ -1424,25 +1428,25 @@ resize 160 24
 expect_status "Permission denied"
 resize 80 24
 keys Space v t
-expect_screen "Failed to write /tmp/op>"
+expect_screen "$save_failure_cell"
 keys Space v p h
-expect_screen "Failed to write /tmp/op>"
+expect_screen "$save_failure_cell"
 keys Space v z
 expect_status "Failed to write $work/ro/workspace.txt:"
 save_screen "workspace-error-zen-80x24"
 keys Space v z
-expect_screen "Failed to write /tmp/op>"
+expect_screen "$save_failure_cell"
 # Editing and keymap notices cannot replace unacknowledged persistence attention.
 keys l i Y Escape 3 '^'
-expect_screen "Failed to write /tmp/op>"
+expect_screen "$save_failure_cell"
 keys Escape
 expect_screen "1 problem: Space v e"
 expect_no_screen "Failed to write"
 save_screen "workspace-problem-acknowledged-80x24"
 keys Space v e
-expect_screen "Failed to write /tmp/op>"
+expect_screen "$save_failure_cell"
 keys Space w
-expect_screen "Failed to write /tmp/op>"
+expect_screen "$save_failure_cell"
 keys Escape
 expect_screen "1 problem: Space v e"
 # Matching save recovery removes the retained save problem.

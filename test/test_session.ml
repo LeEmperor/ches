@@ -4,7 +4,7 @@ open Ches_app
 
 let width _ = 1
 let with_files f =
-  let directory = Core_unix.mkdtemp "/tmp/opencode/ches-session-" in
+  let directory = Temp_fixture.scratch_dir "ches-session-" in
   let a = Filename.concat directory "a.ml" and b = Filename.concat directory "b.ml" in
   Out_channel.write_all a ~data:"alpha\n";
   Out_channel.write_all b ~data:"beta\n";

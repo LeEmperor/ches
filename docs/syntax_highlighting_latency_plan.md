@@ -225,7 +225,7 @@ opam exec --switch=5.2.0+ox -- dune build -j 10
 opam exec --switch=5.2.0+ox -- dune exec -j 10 ./scripts/syntax_incremental_probe/probe.exe
 opam exec --switch=5.2.0+ox -- dune exec -j 10 ./scripts/syntax_live_probe/probe.exe
 opam exec --switch=5.2.0+ox -- dune runtest -j 10 --force
-TMPDIR=/tmp/opencode scripts/smoke.sh
+scripts/smoke.sh
 ```
 
 These commands are proposed for the future session, not rerun when creating this

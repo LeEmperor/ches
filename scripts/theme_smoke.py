@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Dynamic-theme terminal checks. Run after dune build; requires tmux.
 
-Uses a private socket and retains ANSI captures under /tmp/opencode for diagnosis.
+Uses a private socket and retains ANSI captures under the system temp dir ($TMPDIR or /tmp) for diagnosis.
 The existing smoke.sh bare and palette scenarios remain independent.
 """
 from pathlib import Path
 import re
+import shutil
 import shlex
 import subprocess
 import sys
@@ -29,11 +30,13 @@ def main():
     assert missing.returncode and "PATH is required" in missing.stderr, missing
     print("ok: CLI catalog, light/dark kinds, invalid theme and required edit path")
 
-    root = Path(tempfile.mkdtemp(prefix="theme-terminal-", dir="/tmp/opencode"))
+    root = Path(tempfile.mkdtemp(prefix="theme-terminal-"))
     fixture = root / "document.txt"
     original = b"THEME document\nsecond line\n"
     fixture.write_bytes(original)
-    tmux = ["tmux", "-S", str(root / "tmux.sock"), "-f", "/dev/null"]
+    # A socket path must stay short (108 bytes), whatever TMPDIR is.
+    socket_dir = Path(tempfile.mkdtemp(prefix="ches-theme-tmux.", dir="/tmp"))
+    tmux = ["tmux", "-S", str(socket_dir / "sock"), "-f", "/dev/null"]
 
     def t(*args):
         return subprocess.check_output(tmux + list(args), text=True)
@@ -126,6 +129,7 @@ def main():
         print("ok: unchanged save bytes, clean exits, restored terminal modes and visible cursor")
     finally:
         subprocess.run(tmux + ["kill-server"], check=False, capture_output=True)
+        shutil.rmtree(socket_dir, ignore_errors=True)
         print(f"Theme terminal captures: {root}")
 
 

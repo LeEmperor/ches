@@ -74,11 +74,17 @@ let from_column line from =
 let show ?(from = 0) repo t =
   Frame.to_string (Frame.render t ~width ~height)
   |> String.split_lines
-  |> List.iter ~f:(fun line ->
-    print_endline
-      (if String.is_prefix line ~prefix:"cursor:"
-       then line
-       else scrub repo (from_column line from)))
+  |> List.folding_map ~init:false ~f:(fun after_label line ->
+    (* The row under "Not a git repository:" is the directory: its width (and
+       whether it is cut) depends on where the temp dir is ($TMPDIR), so it is
+       masked. *)
+    ( String.is_substring line ~substring:"Not a git repository:"
+    , if after_label
+      then "│ <the directory>"
+      else if String.is_prefix line ~prefix:"cursor:"
+      then line
+      else scrub repo (from_column line from) ))
+  |> List.iter ~f:print_endline
 ;;
 
 let where t =
@@ -294,7 +300,7 @@ let%expect_test "outside any repository, the view says so" =
        1:a.txt [2:VCS]                                                                                    |
       ╭─ VCS: not a repository ──────────────────────────────────────────────────────────────────────────╮|
       │ Not a git repository:                                                                            │|
-      │ $DIR/elsewhere │|
+      │ <the directory>
       │                                                                                                  │|
       │ g r looks again; q leaves                                                                        │|
       │                                                                                                  │|

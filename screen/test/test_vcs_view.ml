@@ -51,8 +51,24 @@ let run env t keys =
 let keys env t keys = Helpers.run ~width:env.width ~height:env.height t (Helpers.keys keys)
 let state t = Option.value_exn (View_registry.find (Ui_state.views t) Vcs_view.key)
 
+(* The row under "Not a git repository:" / "No work tree here:" is the directory,
+   whose width (and whether it is cut) depends on where the temp dir is ($TMPDIR);
+   it is masked here and checked exactly through [Vcs_view.repository]. *)
+let mask_path_rows lines =
+  List.folding_map lines ~init:false ~f:(fun after_label line ->
+    let label =
+      List.exists [ "Not a git repository:"; "No work tree here:" ] ~f:(fun substring ->
+        String.is_substring line ~substring)
+    in
+    label, if after_label then "│ <the directory>" else line)
+;;
+
 let screen env t =
-  print_endline (relative env (Frame.to_string (Frame.render t ~width:env.width ~height:env.height)))
+  Frame.to_string (Frame.render t ~width:env.width ~height:env.height)
+  |> relative env
+  |> String.split_lines
+  |> mask_path_rows
+  |> List.iter ~f:print_endline
 ;;
 
 let focused env t = View_id.to_string (Ui_state.focused_view t ~width:env.width ~height:env.height)
@@ -1227,7 +1243,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: not a repository ──────────────────────────────────────────────────────────────────────────╮|
     │ Not a git repository:                                                                            │|
-    │ $DIR/plain                                         │|
+    │ <the directory>
     │                                                                                                  │|
     │ g r looks again; q leaves                                                                        │|
     │                                                                                                  │|
@@ -1246,7 +1262,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: not a repository ──────────────────────────────────────────────────────────────────────────╮|
     │ Not a git repository:                                                                            │|
-    │ $DIR/plain                                         │|
+    │ <the directory>
     │                                                                                                  │|
     │ g r looks again; q leaves                                                                        │|
     │                                                                                                  │|
@@ -1259,7 +1275,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: no work tree ──────────────────────────────────────────────────────────────────────────────╮|
     │ No work tree here:                                                                               │|
-    │ $DIR/work/.git                                     │|
+    │ <the directory>
     │ fatal: this operation must be run in a work tree                                                 │|
     │                                                                                                  │|
     │ g r looks again; q leaves                                                                        │|

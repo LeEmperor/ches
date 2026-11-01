@@ -45,3 +45,10 @@ let show_cursor ?(width = 40) ?(height = 8) ui =
 let show_styled ?(width = 40) ?(height = 8) ui =
   print_endline (Frame.to_string_styled (Frame.render ui ~width ~height))
 ;;
+
+(* A fresh directory [<prefix><random>] under the system temp dir ($TMPDIR, else /tmp),
+   with symlinks resolved so paths compare equal to the ones the session canonicalizes.
+   The caller removes it. *)
+let scratch_dir prefix =
+  Filename_unix.realpath (Core_unix.mkdtemp (Filename.concat Filename.temp_dir_name prefix))
+;;

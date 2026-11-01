@@ -146,7 +146,11 @@ let render ?(hotkey_hints = false) ?notice ?pending t ~width ~rows : Tile_shell.
   ; footer =
       Some
         (Tile_shell.Label.footer ~notice ~pending
-           ~default:(if hotkey_hints then "- switch  ? help  q close" else ""))
+           ~default:
+             (match hotkey_hints, t.popup.switches with
+              | false, _ -> ""
+              | true, [] -> "? help  q close"
+              | true, _ :: _ -> "- switch  ? help  q close"))
   ; body = List.take (lines t ~width) (Int.max 0 rows)
   }
 ;;

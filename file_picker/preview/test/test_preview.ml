@@ -2,8 +2,8 @@ open! Core
 open! Async
 open Ches_file_preview
 module Picker = Ches_file_picker.Model
-let session n : Picker.Discovery.request = { run_id = Picker.Run_id.of_int n; root = "/tmp/opencode" }
-let candidate name = Picker.Candidate.create ~root:"/tmp/opencode" ~relative_path:name |> Or_error.ok_exn
+let session n : Picker.Discovery.request = { run_id = Picker.Run_id.of_int n; root = "/nonexistent/ches-preview" }
+let candidate name = Picker.Candidate.create ~root:"/nonexistent/ches-preview" ~relative_path:name |> Or_error.ok_exn
 let payload = function Model.Ready p | Truncated (p, _) -> p | _ -> failwith "Expected preview text"
 let collect text =
   let pos = ref 0 in
@@ -203,7 +203,7 @@ let%expect_test "teardown wakes idle waiter; lookup/read exceptions become expli
   timeout (Provider.finished p)
 ;;
 let with_root f =
-  let root = Core_unix.mkdtemp "/tmp/opencode/ches-preview-" in
+  let root = Filename_unix.realpath (Core_unix.mkdtemp (Filename.concat Filename.temp_dir_name "ches-preview-")) in
   Monitor.protect (fun () -> f root) ~finally:(fun () ->
     Array.iter (Sys_unix.readdir root) ~f:(fun name -> Core_unix.unlink (Filename.concat root name));
     Core_unix.rmdir root; return ())

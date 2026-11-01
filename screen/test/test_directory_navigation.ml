@@ -13,7 +13,7 @@ let text ui = Text_buffer.to_string (Editor.text (Controller.editor (Ui_state.co
 let create path = Ui_state.create ~tiles_visible:false ~source_attached:true
   (Startup.open_path ~cell_width:Cell_map.width path |> Or_error.ok_exn)
 let fixture f =
-  let root = Core_unix.mkdtemp "/tmp/opencode/ches-directory-test-" in
+  let root = scratch_dir "ches-directory-test-" in
   let child = Filename.concat root "child" in
   Core_unix.mkdir child;
   let names = [ ".hidden"; "a.txt"; "b.txt"; "bad.txt"; "odd\n\255" ]

@@ -3,8 +3,8 @@
 Run sequentially using the documented toolchain:
 
 ```sh
-rg --files --null --glob '!FILE_PICKER_PLAN.md' --glob '!file_picker/**' > /tmp/opencode/file-picker-paths.nul
-opam exec --switch=5.2.0+ox -- dune exec file_picker/bench/query_latency.exe -- /tmp/opencode/file-picker-paths.nul > /tmp/opencode/file-picker-query.log
+rg --files --null --glob '!FILE_PICKER_PLAN.md' --glob '!file_picker/**' > /tmp/file-picker-paths.nul
+opam exec --switch=5.2.0+ox -- dune exec file_picker/bench/query_latency.exe -- /tmp/file-picker-paths.nul > /tmp/file-picker-query.log
 ```
 
 The optional first argument is a NUL-delimited list of normalized relative paths
@@ -172,7 +172,7 @@ python3 - <<'PY'
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import subprocess
-with TemporaryDirectory(prefix='picker-discovery-10k-', dir='/tmp/opencode') as directory:
+with TemporaryDirectory(prefix='picker-discovery-10k-') as directory:
     root = Path(directory)
     for i in range(10000):
         folder = ['src', 'test', 'lib', 'docs', 'vendor'][i % 5]

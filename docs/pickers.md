@@ -179,11 +179,11 @@ Run the isolated terminal checks after building:
 ```sh
 python3 scripts/picker_smoke.py
 python3 scripts/directory_workspace_smoke.py
-TMPDIR=/tmp/opencode bash scripts/smoke.sh
+bash scripts/smoke.sh
 ```
 
-The file/content smoke uses a private tmux socket and fixtures under
-`/tmp/opencode`, never repository files. It checks real binding/catalog activation,
+The file/content smoke uses a private tmux socket and fixtures in a temporary
+directory, never repository files. It checks real binding/catalog activation,
 query/selection/cancel/accept, dirty revisits, missing/stale failures, Unicode/TAB
 navigation, undo, zen restoration, minimum/tiny/resized floats, interrupted paste,
 unchanged disk bytes and terminal-mode restoration. Captures stay in the printed
