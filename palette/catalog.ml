@@ -208,12 +208,19 @@ let default =
         ~id:"workspace.toggle-zen"
         ~title:"Toggle zen mode"
         ~keywords:[ "distraction free"; "focus"; "hide" ]
-        Toggle_zen
+         Toggle_zen
     ; view
-        ~id:"views.to-tab"
+        ~id:"workspace.toggle-bare"
+        ~title:"Toggle bare mode"
+        ~keywords:[ "distraction free"; "minimal"; "focus" ]
+        Toggle_bare
+     ; view
+         ~id:"views.to-tab"
         ~title:"Move focused view to a tab"
         ~keywords:[ "placement"; "tab strip"; "major" ]
-        (Place_view { view = None; placement = Tab })
+         (Place_view { view = None; placement = Tab })
+     ; view ~id:"appearance.choose-theme" ~title:"Choose theme"
+         ~keywords:[ "appearance"; "colors"; "dark"; "light" ] Open_theme_picker
     ; view
         ~id:"views.to-split"
         ~title:"Move focused view to the split"
@@ -324,6 +331,11 @@ let default =
         ~title:"VCS: abort commit"
         ~keywords:[ "git"; "commit"; "message"; "cancel" ]
         (Request_view { view = vcs; request = "commit-abort" })
+    ; view
+        ~id:"vcs.file-log"
+        ~title:"VCS: history of this file"
+        ~keywords:[ "git"; "log"; "history"; "file"; "follow" ]
+        (Request_view { view = vcs; request = "file-log" })
     ; editor
         ~id:"conflict.keep-upper"
         ~title:"Conflict: keep upper (ours)"

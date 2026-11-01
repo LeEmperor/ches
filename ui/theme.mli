@@ -1,8 +1,5 @@
-(** The one place colors and font styles are defined: a palette of semantic roles, the
-    font styles of each {!Ches_screen.Style.t}, and the attributes they make. Several
-    dark presets share one shape: a near-black ground, muted chrome, and color kept for
-    the mode badge, the dirty marker, feedback, syntax, and escape forms. {!selected}
-    picks the one drawn. Every label is also readable without color. *)
+(** Terminal mapping of the shared immutable theme library. The same palette applies
+    to Workspace, Zen, and Bare presentations. Every label is readable without color. *)
 
 open! Core
 open Bonsai_term
@@ -16,40 +13,12 @@ module Preset : sig
   [@@deriving sexp_of, equal, enumerate]
 end
 
-(** The preset ches draws with; a hardcoded choice, changed in theme.ml. *)
+(** Legacy default preset (Crimson), corresponding to [Ches_theme.Theme.default]. *)
 val selected : Preset.t
 
 module Role : sig
-  type t =
-    | Backdrop
-    (** Outside the tiles and under their frames: a shade darker, so tiles stand out. *)
-    | Background (** The document tile. *)
-    | Foreground
-    | Surface (** Status line. *)
-    | Muted (** Gutter and secondary text. *)
-    | Border
-    | Current_line
-    | Normal_accent
-    | Insert_accent
-    | Special (** Escape forms and clip markers. *)
-    | Warning
-    | Error
-    | Block_cursor
-    (** During a block insert: the cursor itself, the insertion point the others
-        copy. Change it here to recolor it. *)
-    | Block_copy (** During a block insert: the insertion points on the other lines. *)
-    | Smear
-    (** The animated cursor trail. Notty cannot query or set the terminal's native
-        cursor color, so the trail matches the theme rather than that cursor. *)
-    | Syntax_keyword
-    | Syntax_string
-    | Syntax_number
-    | Syntax_comment
-    | Syntax_type
-    | Syntax_function
-    | Syntax_module
-    | Syntax_constant
-  [@@deriving sexp_of, enumerate]
+  include module type of Ches_theme.Theme.Role
+    with type t = Ches_theme.Theme.Role.t
 
   (** The role's color in [preset] (default {!selected}). *)
   val color : ?preset:Preset.t -> t -> Attr.Color.t
@@ -75,13 +44,11 @@ module Font : sig
   val default : Ches_screen.Style.t -> t list
 end
 
-(** The colors of [style] from {!Role}, and its font styles from [font] (default
-    {!Font.default}). The font callback API is unchanged; document styles now match
-    [Document { special; overlay; current_line; syntax }] rather than flat variants
-    such as [Special_cursor_line] or [Search_match_current]. Interaction overlays
-    replace foreground/background for contrast, without erasing underlying data.
-    Frame cells (borders and their titles/hints) are on the backdrop. *)
+(** Colors from [theme] (default [Ches_theme.Theme.default]) and fonts from
+    [font] (default {!Font.default}). Overlays replace foreground/background;
+    frames sit on the backdrop. No global state is changed. *)
 val attrs
-  :  ?font:(Ches_screen.Style.t -> Font.t list)
+  :  ?theme:Ches_theme.Theme.t
+  -> ?font:(Ches_screen.Style.t -> Font.t list)
   -> Ches_screen.Style.t
   -> Attr.t list

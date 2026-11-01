@@ -103,7 +103,7 @@ let%expect_test "wide: lists beside the diff, which follows the selection" =
     │                                       │                                                          │|
     │ 3 Commits (1)                         │                                                          │|
     │ > - Recent commits (1)                │                                                          │|
-    │   10cf1ae First                       │                                                          │|
+    │   ● 10cf1ae (HEAD -> main) First      │                                                          │|
     │                                       │                                                          │|
     ╰─ Files 1/7 ──────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
@@ -268,7 +268,7 @@ let%expect_test "hidden, the view runs nothing; shown, it detects, refreshes and
     │                                       │                                                          │|
     │ 3 Commits (1)                         │                                                          │|
     │ > - Recent commits (1)                │                                                          │|
-    │   10cf1ae First                       │                                                          │|
+    │   ● 10cf1ae (HEAD -> main) First      │                                                          │|
     │                                       │                                                          │|
     ╰─ Files 2/7 ──────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
@@ -350,7 +350,7 @@ let%expect_test "stacked and single frames, in both focuses" =
     │                                                          │|
     │ 3 Commits (1)                                            │|
     │ > - Recent commits (1)                                   │|
-    │   10cf1ae First                                          │|
+    │   ● 10cf1ae (HEAD -> main) First                         │|
     │                                                          │|
     │ ──────────────────────────────────────────────────────── │|
     │  0 Diff: Unstaged: a.txt                                 │|
@@ -439,7 +439,7 @@ let%expect_test "the command log, on and off" =
     │ [exit 0] git rev-parse --show-toplevel --absolute-git-dir                                        │|
     │ [exit 0] git status --porcelain=v2 -z --branch --untracked-files=all --find-renames              │|
     │ [exit 0] git for-each-ref '--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00> │|
-    │ [exit 0] git log -z --no-color --no-show-signature --max-count=200 --format=%H%x00%P%x00%an%x00> │|
+    │ [exit 0] git --literal-pathspecs log -z --no-color --no-show-signature --decorate=short --max-c> │|
     │                                                                                                  │|
     ╰─ Files 4/7 ──────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
@@ -609,6 +609,7 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     x        discard         Discard the file's or section's changes; confirmed
     S        stage-all       Stage all changes (not conflicts)
     U        unstage-all     Unstage all changes
+    l        log             Log: HEAD, a branch, all branches or a file's history (the log popup)
     c        commit          Commit, amend or extend (the commit popup)
     f        fetch           Fetch from the default remote, pruning gone branches
     p        pull            Pull from the upstream (the pull popup)
@@ -633,6 +634,8 @@ let%expect_test "g r refreshes; @ toggles the log; ? and the palette list the co
     U        unstage-all     Unstage all changes
     ]        next-hunk       Next hunk
     [        previous-hunk   Previous hunk
+    }        next-file       Next file
+    {        previous-file   Previous file
     c        commit          Commit, amend or extend (the commit popup)
     f        fetch           Fetch from the default remote, pruning gone branches
     p        pull            Pull from the upstream (the pull popup)
@@ -731,17 +734,17 @@ let%expect_test "the diff follows the selection across files, headers and commit
     │                                       │                                                          │|
     │ 2 Branches (1)                        │     First                                                │|
     │   - Local branches (1)                │                                                          │|
-    │ > * main  First                       │ diff --git a/a.txt b/a.txt                               │|
+    │ > * main  First                       │ A a.txt  +3 -0                                           │|
+    │                                       │ A b.txt  +1 -0                                           │|
+    │ 3 Commits (1)                         │ A gone.txt  +1 -0                                        │|
+    │   - Recent commits (1)                │                                                          │|
+    │ > ● 10cf1ae (HEAD -> main) First      │ diff --git a/a.txt b/a.txt                               │|
     │                                       │ new file mode 100644                                     │|
-    │ 3 Commits (1)                         │ index 0000000..4cb29ea                                   │|
-    │   - Recent commits (1)                │ --- /dev/null                                            │|
-    │ > 10cf1ae First                       │ +++ b/a.txt                                              │|
+    │                                       │ index 0000000..4cb29ea                                   │|
+    │                                       │ --- /dev/null                                            │|
+    │                                       │ +++ b/a.txt                                              │|
     │                                       │ @@ -0,0 +1,3 @@                                          │|
     │                                       │ +one                                                     │|
-    │                                       │ +two                                                     │|
-    │                                       │ +three                                                   │|
-    │                                       │ diff --git a/b.txt b/b.txt                               │|
-    │                                       │ new file mode 100644                                     │|
     ╰─ Commits 2/2 ────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
@@ -835,7 +838,7 @@ let%expect_test "padding: a blank column each side of the diff, blank rows betwe
     │                                       │                                                          │|
     │ 3 Commits (1)                         │                                                          │|
     │ > - Recent commits (1)                │                                                          │|
-    │   0e161fa First                       │                                                          │|
+    │   ● 0e161fa (HEAD -> main) First      │                                                          │|
     │                                       │                                                          │|
     ╰─ Files 2/2 ──────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
@@ -861,7 +864,7 @@ let%expect_test "padding: a blank column each side of the diff, blank rows betwe
     │                                       │                                                          │|
     │ 3 Commits (1)                         │                                                          │|
     │ > - Recent commits (1)                │                                                          │|
-    │   0e161fa First                       │                                                          │|
+    │   ● 0e161fa (HEAD -> main) First      │                                                          │|
     │                                       │                                                          │|
     ╰─ Diff 1-8/8 ─────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
@@ -1084,7 +1087,7 @@ let%expect_test "a conflict: the section, its combined diff, conflict markers, h
     │                                       │ @@@ -1,1 -1,1 +1,5 @@@                                   │|
     │ 3 Commits (2)                         │ ++<<<<<<< HEAD                                           │|
     │ > - Recent commits (2)                │  +ours                                                   │|
-    │   1d0798b main                        │ ++=======                                                │|
+    │   ● 1d0798b (HEAD -> main) main       │ ++=======                                                │|
     │                                       │ + theirs                                                 │|
     ╰─ Files 1/5 ──────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
@@ -1235,7 +1238,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
      NORMAL  VCS VCS focused                                                                            |
     cursor: none
     (Not_a_repository(cwd $DIR/plain))
-    notice: VCS: s/u/x stage/unstage/discard, c commit, m merge, f/p/P fetch/pull/push, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
+    notice: VCS: s/u/x stage/unstage/discard, c commit, m merge, l log, f/p/P fetch/pull/push, 1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help
     g r refresh
     @ toggle-log
     q leave
@@ -1251,7 +1254,7 @@ let%expect_test "not a repository, and no work tree: said plainly; g r looks aga
     │                                                                                                  │|
     │                                                                                                  │|
     ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯|
-     NORMAL  VCS VCS: s/u/x stage/unstage/discard, c commit, m merge, f/p/P fetch/pull/push, 1/2/3 pan> |
+     NORMAL  VCS VCS: s/u/x stage/unstage/discard, c commit, m merge, l log, f/p/P fetch/pull/push, 1/> |
     cursor: none
      1:a.txt [2:VCS]                                                                                    |
     ╭─ VCS: no work tree ──────────────────────────────────────────────────────────────────────────────╮|
@@ -1510,7 +1513,7 @@ let%expect_test "paths with spaces, unicode and control bytes are escaped for di
     │   * main  One                         │                                                          │|
     │ 3 Commits (1)                         │                                                          │|
     │ > - Recent commits (1)                │                                                          │|
-    │   c17d7cb One                         │                                                          │|
+    │   ● c17d7cb (HEAD -> main) One        │                                                          │|
     ╰─ Files 2/5 ──────────────────────────────────────────────────────────────────────────────────────╯|
      NORMAL  VCS: main VCS focused                                                                      |
     cursor: none
@@ -1548,6 +1551,6 @@ let%expect_test "diff lines are styled by kind" =
     Border_focused[│] Status[   * main  First                 ] Border[│] Status[ ] Diff_added[+TWO                                         ] Status[  ] Border_focused[│]
     Border_focused[│] Status[ ] Title[3 Commits (1)] Status[                   ] Border[│] Status[  three                                         ] Border_focused[│]
     Border_focused[│] Status[ ] Diff_meta[> - Recent commits (1)] Status[          ] Border[│] Status[ ] Diff_added[+four                                        ] Status[  ] Border_focused[│]
-    Border_focused[│] Status[   10cf1ae First                 ] Border[│] Status[                                                ] Border_focused[│]
+    Border_focused[│] Status[   ● 10cf1ae (HEAD -> main) First] Border[│] Status[                                                ] Border_focused[│]
     |}]
 ;;

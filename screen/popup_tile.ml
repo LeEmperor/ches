@@ -12,7 +12,9 @@ type t =
   }
 [@@deriving sexp_of]
 
-let create ~origin popup = { origin; popup; state = Popup.initial popup }
+let create ?enabled ~origin popup =
+  { origin; popup; state = Popup.initial ?enabled popup }
+;;
 let origin t = t.origin
 let title t = t.popup.title
 let popup t = t.popup

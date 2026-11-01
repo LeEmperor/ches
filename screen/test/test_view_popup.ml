@@ -10,7 +10,8 @@ let width = 80
 let height = 16
 
 (* A test-only view that asks with a popup: a kiln. [c] asks the "Fire" popup
-   (declining performs [Cancelled]), [C] the same popup with no cancel action. Its
+   (declining performs [Cancelled]), [C] the same popup with no cancel action, [r] the
+   same popup opening with switches on (as a popup that remembers them would). Its
    actions log what they were given; nothing in [Ui_state] names it. *)
 module Kiln = struct
   let id = View_id.of_string "kiln"
@@ -18,7 +19,10 @@ module Kiln = struct
   type t = { log : string list (** Newest first. *) } [@@deriving sexp_of]
 
   type action =
-    | Ask of { cancel : bool }
+    | Ask of
+        { cancel : bool
+        ; enabled : string list
+        }
     | Fire of string list
     | Bisque of string list
     | Cancelled
@@ -43,8 +47,11 @@ module Kiln = struct
     match keys with
     | [ Char c ] ->
       (match Uchar.to_char c with
-       | Some 'c' -> Action (Ask { cancel = true })
-       | Some 'C' -> Action (Ask { cancel = false })
+       | Some 'c' -> Action (Ask { cancel = true; enabled = [] })
+       | Some 'C' -> Action (Ask { cancel = false; enabled = [] })
+       (* Out of order, one flag the popup lacks, two of one group. *)
+       | Some 'r' ->
+         Action (Ask { cancel = true; enabled = [ "--low"; "--wet"; "--no-glaze"; "--hot" ] })
        | _ -> Unbound)
     | _ -> Unbound
   ;;
@@ -53,10 +60,10 @@ module Kiln = struct
     let outcome ?notice ?ask () = View_registry.Outcome.create ?notice ?ask controller in
     let log line = { log = line :: t.log }, outcome ~notice:(`Show line) () in
     match action with
-    | Ask { cancel } ->
+    | Ask { cancel; enabled } ->
       ( t
       , outcome
-          ~ask:(Ask.Popup { popup; cancel = Option.some_if cancel Cancelled })
+          ~ask:(Ask.Popup { popup; enabled; cancel = Option.some_if cancel Cancelled })
           () )
     | Fire flags -> log (String.concat ~sep:" " ("fire" :: flags))
     | Bisque flags -> log (String.concat ~sep:" " ("bisque" :: flags))
@@ -245,6 +252,43 @@ let%expect_test "- then a switch key toggles it; a group keeps one; an action an
   [%expect {|
     no popup; focused kiln; log [fire --low; bisque --hot]; pending false; notice bisque --hot
     popup []; focused popup; log [fire --low; bisque --hot]; pending true; notice (none)
+    |}]
+;;
+
+let%expect_test "a popup asked with switches on opens with them; the answer carries what \
+                 is shown"
+  =
+  (* As [Popup.initial] keeps them: in declaration order, the popup's own, one per
+     group. *)
+  let t = run (create ()) " vxr" in
+  show t;
+  float_rows t;
+  [%expect {|
+    popup [--no-glaze --low]; focused popup; log []; pending true; notice (none)
+    ╭─ Fire ───────────────────────╮
+    │ Switches                     │
+    │ * -n  No glaze (--no-glaze)  │
+    │   -h  Fire hot (--hot)       │
+    │ * -l  Fire low (--low)       │
+    │ Actions                      │
+    │   f  Fire       b  Bisque    │
+    ╰──────────────────────────────╯
+    cursor: none
+    |}];
+  let t = run t "-nf" in
+  show t;
+  [%expect {| no popup; focused kiln; log [fire --low]; pending false; notice fire --low |}];
+  (* Asked again, it opens as asked again: the float remembers nothing. *)
+  let t = run t "r" in
+  show t;
+  let t = run t "-l-hb" in
+  show t;
+  let t = run t "c" in
+  show t;
+  [%expect {|
+    popup [--no-glaze --low]; focused popup; log [fire --low]; pending true; notice (none)
+    no popup; focused kiln; log [fire --low; bisque --no-glaze --hot]; pending false; notice bisque --no-glaze --hot
+    popup []; focused popup; log [fire --low; bisque --no-glaze --hot]; pending true; notice (none)
     |}]
 ;;
 

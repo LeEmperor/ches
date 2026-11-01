@@ -32,7 +32,7 @@ end
     performs [yes]. A prompt's [accept] runs only on text that [validate] passes
     ([None]; [Some error] is shown inline). A popup ({!Ches_vcs.Popup}: switches
     toggled with [-] and a key, actions run with one key) performs the chosen
-    action's [run ~enabled]; its switches start disabled at every opening. [no] and
+    action's [run ~enabled]; its switches start as its [enabled] gives them. [no] and
     [cancel] are performed when the user declines; a question withdrawn without an
     answer (its float cannot fit, the view is left or hidden) performs nothing. *)
 module Ask : sig
@@ -52,6 +52,10 @@ module Ask : sig
         }
     | Popup of
         { popup : 'action Ches_vcs.Popup.t
+        ; enabled : string list
+        (** The switches' flags it opens with ({!Ches_vcs.Popup.initial}): [[]] for
+            popups that remember nothing, the current choice for one that does (the
+            VCS log popup, phase 8). *)
         ; cancel : 'action option
         }
 
@@ -67,9 +71,13 @@ module Ask : sig
           ; initial : string
           ; validate : string -> string option
           }
-    | Popup of unit Ches_vcs.Popup.t
-    (** The view's popup with its actions' results dropped ({!Ches_vcs.Popup.map}):
-        what the popup float renders and presses keys on. *)
+    | Popup of
+        { popup : unit Ches_vcs.Popup.t
+        (** The view's popup with its actions' results dropped
+            ({!Ches_vcs.Popup.map}): what the popup float renders and presses keys
+            on. *)
+        ; enabled : string list (** As asked. *)
+        }
   end
 
   val question : _ t -> Question.t
@@ -198,16 +206,24 @@ module Outcome : sig
         editor area's input ({!Context.active}: the user was in it), focus goes to
         the disposing view where it is placed (its tab activated, the split or band
         pane focused); a hidden view leaves the editor showing the next tab, as
-        closing does. Otherwise focus and the active tab stay. The one way a
-        signalled outcome may move focus (the user's buffer was taken away).
+        closing does. Otherwise focus and the active tab stay. One of the two ways
+        a signalled outcome may move focus (the user's buffer was taken away; the
+        other is [show]).
         Applied after [jobs], from key and signal outcomes. *)
     ; ask : 'ask option
-    (** A question to ask on a float over the view, applied last; it replaces any
-        question still pending. *)
+    (** A question to ask on a float over the view, applied last (before [show]);
+        it replaces any question still pending. *)
+    ; show : bool
+    (** Show and focus the view, as {!View_command.t.Focus_view} does (a hidden view
+        is placed where it opens, its {!Entry.install} [opens_in], and is signalled
+        [Shown] after the input), after the rest of the outcome; nothing when it is
+        focused already. Only from a {!Signal.t.Request} (typed by the user, e.g.
+        [Space g l] from a buffer); ignored from keys (the view is focused already),
+        answers and other signals. *)
     }
 
-  (** No effect, notice, return, file, jobs, reconciliation, saves, disposals or
-      question; [controller] unchanged. *)
+  (** No effect, notice, return, file, jobs, reconciliation, saves, disposals,
+      question or show; [controller] unchanged. *)
   val create
     :  ?effect:Ches_tile.Text_view.Effect.t
     -> ?notice:[ `Post of string | `Show of string ]
@@ -218,6 +234,7 @@ module Outcome : sig
     -> ?save:string list
     -> ?dispose:string list
     -> ?ask:'ask
+    -> ?show:bool
     -> Ches_app.Controller.t
     -> 'ask t
 end
@@ -227,7 +244,8 @@ end
     key's action, focused or not. The outcome of a signalled action is applied
     without moving focus or disturbing the focused view (its prefix and footer
     notice): its [controller], [reconcile], [save], [jobs] and [dispose] apply (only
-    [dispose] may move focus, see {!Outcome.t.dispose}); a [`Post] notice goes to
+    [dispose] may move focus, see {!Outcome.t.dispose}, and [show] from a
+    [Request], see {!Outcome.t.show}); a [`Post] notice goes to
     the feedback line only; [`Show] notices, [effect] and [return] are ignored;
     [open_file] and [ask] apply only while the view itself is focused (so a file
     read in the background opens only if the user is still there), and are

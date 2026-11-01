@@ -25,7 +25,7 @@ module Target : sig
   (** What a bound sequence asks for. Only [Move] of a motion that
       [Motion.takes_count] and [Scroll] of a scroll that [View_command.Scroll.takes_count]
       take a count; the keymap rejects a count before any other target, except
-      [Paste], which repeats the register. *)
+      [Paste], which repeats the register, and the counted editing targets below. *)
   type t =
     | Move of Ches_core.Motion.t (** [Command.Move], with the count if one was typed. *)
     | Editor of Command.t (** An editor command, which takes no count. *)
@@ -34,6 +34,9 @@ module Target : sig
     (** [View_command.Scroll], with the count if one was typed. *)
     | Delete_operator (** [d], whose following motion is parsed by the keymap. *)
     | Yank_operator (** [y], whose following motion is parsed by the keymap. *)
+    | Shift_lines of { right : bool }
+    (** Shift the counted number of lines (default 1). The editor owns indent width;
+        defaults bind complete [>>] and [<<] sequences, not motion operators. *)
     | Delete_chars_forward (** [x], taking a count. *)
     | Delete_chars_backward (** [X], taking a count. *)
     | Delete_to_line_end (** [D], taking a count like [d$]. *)

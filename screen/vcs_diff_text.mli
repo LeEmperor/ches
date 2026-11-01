@@ -4,7 +4,10 @@
     it.
 
     Layout: a [show]'s preamble (header lines; the indented message as plain text),
-    then per file its raw header lines, then its hunks (the [@@] header, then each
+    then, when there is a preamble and at least one file, the commit's file list
+    (phase 8: one {!Kind.t.Listed} line per file, in order, separated from the
+    message and from the first file by exactly one blank line), then per file its
+    raw header lines, then its hunks (the [@@] header, then each
     line as its prefix and text). Binary, mode-only, rename-only and submodule files
     are their headers only (a submodule adds one note naming the commits its hidden
     hunk shows). An [Unmerged] file shows its combined hunks when git gave any (the
@@ -30,6 +33,13 @@ module Kind : sig
     | Context
     | No_newline (** ["\ No newline at end of file"]. *)
     | Note (** Placeholders and notes the view adds. *)
+    | Listed
+    (** A line of a commit's file list (phase 8): a change letter ([A] added, [D]
+        deleted, [M] modified, [R] renamed, [C] copied, [T] type changed, [U]
+        unmerged), a space, {!Ches_vcs.Diff.File.path}, then, when its shown hunks
+        add or remove lines, two spaces and ["+<added> -<removed>"] counted over
+        them, and [" (truncated)"] when the file is {!Ches_vcs.Diff.File.truncated}.
+        Its target is the file's ([line = None]); it has no {!Position.t}. *)
   [@@deriving sexp_of, equal]
 
   val style : t -> Style.t
@@ -121,6 +131,14 @@ val span : t -> start:int -> stop:int -> (Span.t option, [ `Several_files ]) Res
 
 (** The byte offsets of every [@@] line, in order ([\]] and [\[] in the view). *)
 val hunk_starts : t -> int list
+
+(** The byte offset of every laid-out file's first header line, in file order
+    ([\}] and [\{] in the view, phase 8). *)
+val file_starts : t -> int list
+
+(** The file (index into [Diff.t.files]) of the {!Kind.t.Listed} line containing
+    byte [offset]; [None] on any other line (Enter there jumps to the file). *)
+val listed_file_at : t -> int -> int option
 
 (** The kind of the line starting at byte [offset], if one starts there. *)
 val kind_at_start : t -> int -> Kind.t option

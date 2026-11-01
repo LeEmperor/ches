@@ -14,6 +14,8 @@ for general distribution.
 
 - **Modal editing:** Normal, Insert, and characterwise, linewise, and blockwise
   Visual modes; counted motions, delete and yank operators, paste, and undo/redo.
+- **Indentation:** literal autoindent, soft tabs, `>>` / `<<`, Visual `>` / `<`,
+  and Insert `Ctrl-t` / `Ctrl-d`; shifts default to two spaces.
 - **Navigation and search:** word and delimiter motions, literal forward and
   backward search, character finds, and independent viewport scrolling.
 - **Conflict markers:** `]n` / `[n` jump between merge conflict regions, and
@@ -22,9 +24,19 @@ for general distribution.
 - **Workspace:** adjustable document placement and width, configurable status
   placement, line-number styles, zen mode, and supporting views with read-only
   selection and copying.
+- **Bare mode:** `ches --bare PATH` or `Space v B` for a borderless, top-left
+  document with quiet bottom-row feedback. Toggle back to restore the workspace
+  or zen presentation, retaining buffers, edits, and undo history. `Space v n` / `N`
+  toggle line numbers using bare's own session-local preferences.
 - **Command palette:** centered floating fuzzy search over Normal-mode commands,
   with shortcuts derived from the active bindings; works in zen without resizing
   the document or docked tiles.
+- **Live themes:** 44 built-in dark/light palettes, including monochrome and
+  retro-terminal styles. `Space v T` opens a fuzzy live-preview chooser; Enter
+  applies, Escape restores. `--theme NAME` selects at startup; `--list-themes`
+  lists the collection without opening the editor.
+  `vim-classic` pairs true black with neon syntax; `solarized-light`, `linen-solar`,
+  and `sandstone-solar` offer warm paper with Solarized-inspired accents.
 - **Persistent file tabs:** independent text, undo, cursor and scroll, with a shared
   unnamed register and resource-addressed diagnostics.
 - **Directory workspace:** editable listings in the main editor or a left side tile;
@@ -36,8 +48,13 @@ for general distribution.
   SystemVerilog, with a problems view, freshness tracking, and explicit restart
   controls.
 - **VCS view:** a lazygit/Magit-style git view (`Space g g`) in a tab or the split:
-  files by section, branches, recent commits, a diff panel that follows the
-  selection, and a command log. `s` `u` `x` stage, unstage and discard the selected
+  files by section, branches, a commit log with a lazygit-style graph and ref
+  decorations, a diff panel that follows the selection (a commit's diff starts with
+  its file list: `Enter` jumps to a file, `}` `{` move between files), and a command
+  log. `l` opens a Magit-style log popup (`l` HEAD, `b` the selected branch, `a` all
+  branches, `f` a file's history across renames; `-g` graph, `-m` no merges, `-p`
+  first parent) and `+` reads more commits; `Space g l` shows the history of the
+  file you are editing. `s` `u` `x` stage, unstage and discard the selected
   file or section, the hunk at the diff's cursor, or the lines of a Visual selection
   in the diff (`S` `U`: everything; `]` `[` move between hunks). Discards ask first (only `y` confirms) and are refused while
   a file in the repository has unsaved changes; open buffers reload afterwards. `c`
@@ -78,12 +95,18 @@ The local shell command points to the built executable at
 
 ```sh
 ches PATH
+# Start directly in the stripped-down presentation:
+ches --bare PATH
+# Choose a palette, or browse the available IDs:
+ches --bare --theme glacier PATH
+ches --list-themes
 ```
 
 An existing file is opened for editing; a nonexistent path starts an empty
 document that is created on save. A directory (including `ches .`) opens a listing
 with no file tabs initially. Special files, invalid UTF-8 file contents,
-CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
+CR line endings, and NUL bytes are rejected. Standard input must be a terminal
+when editing; `--list-themes` needs neither a terminal nor a PATH argument.
 
 | Keys | Action |
 | --- | --- |
@@ -92,6 +115,11 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Escape`, or `j` then `k` in Insert mode | Return to Normal mode |
 | `v` / `V` / `Ctrl-v` | Start characterwise / linewise / blockwise selection |
 | `u` / `Ctrl-r` | Undo / redo |
+| `>>` / `<<` | Shift line indentation right / left; `3>>` shifts three lines |
+| Visual `>` / `<` | Shift selected lines; `3>` shifts by three indentation steps |
+| Insert `Ctrl-t` / `Ctrl-d` | Increase / decrease current-line indentation |
+| `Space v B` | Toggle bare mode (also available in the command palette) |
+| `Space v T` | Choose theme; filter/navigate to preview, Enter applies, Escape restores |
 | `/` / `?`, then text and `Enter` | Search forward / backward |
 | `Space w` | Save focused file / apply focused directory edits |
 | `Space o` | File's parent directory / return to file |
@@ -114,6 +142,7 @@ CR line endings, and NUL bytes are rejected. Standard input must be a terminal.
 | `Space g g` / `Space g f` | Open the VCS view as a tab, or focus it where it is / toggle focus with the editor |
 | `Space g t/s/h` | Move the VCS view to a tab / the split, or close it |
 | `Space g c` / `Space g a` | In a commit message opened from the VCS view (`c`): commit / abort |
+| `Space g l` | Show the current file's history in the VCS view |
 
 See the [editor reference](docs/editor_reference.md) for the complete keybindings,
 editing semantics, workspace controls, and diagnostic-source behavior.
@@ -155,6 +184,7 @@ those frames.
 | `source/` | Asynchronous diagnostic sources and language-server client |
 | `tile/` | Shared tile host, focus, and input routing |
 | `palette/` | Command catalog and fuzzy matching |
+| `theme/` | Immutable semantic RGB palettes, built-in registry, and Base16 adapter |
 | `file_picker/` | Project file discovery/matching and Async floating-picker runtime |
 | `line_picker/` | Bounded fuzzy search over current in-memory document lines |
 | `content_picker/` | On-disk literal search provider and Async floating-picker runtime |
@@ -188,10 +218,13 @@ dune build
 dune runtest
 dune exec ches -- PATH
 scripts/smoke.sh
+# Just bare presentation, indentation, and terminal restoration:
+scripts/smoke.sh --bare-only
 # Just the floating palette's terminal scenarios:
 scripts/smoke.sh --palette-only
 python3 scripts/directory_workspace_smoke.py
 python3 scripts/picker_smoke.py
+python3 scripts/theme_smoke.py
 ```
 
 `ches.opam` is generated from `dune-project`; package metadata changes belong in
@@ -240,11 +273,11 @@ acceptance remain separate and unperformed.
   checker retains per-file runtimes. No session persistence or multiple editor groups.
 - **Version control:** the VCS view stages, unstages and discards files, hunks and
   the lines of a Visual selection, commits, amends and extends HEAD, fetches, pulls
-  and pushes, and checks out and creates branches (a stopped rebase or merge can only
-  be aborted, not resolved and continued; no merge message pre-fill or switch
-  memory; authentication only through ssh-agent or a credential helper); it
-  refreshes on open,
-  `g r`, saves and its own commands, never by watching files.
+  and pushes, checks out, creates and merges branches, resolves a stopped merge or
+  rebase, and browses logs and file history (no blame, stash, cherry-pick or
+  interactive rebase; only the log popup remembers its switches; authentication
+  only through ssh-agent or a credential helper); it refreshes on open, `g r`,
+  saves and its own commands, never by watching files.
 - **Editing and tooling:** literal search, an unnamed
   register, and a limited `:` prompt. Language-server integration currently
   consumes diagnostics only.

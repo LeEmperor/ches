@@ -80,7 +80,12 @@ let fields ui : Status_field.t list =
       ~side:Right
       [ Span.create Status s ~width:(String.length s) ]
   in
-  List.filter_opt [ mode; filename; dirty; message; pending; position ]
+  if Ui_state.bare ui then
+    List.filter_opt
+      [ message
+      ; Option.map pending ~f:(fun field -> { field with priority = 0; side = Left })
+      ]
+  else List.filter_opt [ mode; filename; dirty; message; pending; position ]
 ;;
 
 (* Fields that are shown cut must keep at least this many cells. *)

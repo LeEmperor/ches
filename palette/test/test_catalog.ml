@@ -44,7 +44,9 @@ let bindings =
   ; view 'n' Toggle_absolute_numbers
   ; view 'N' Toggle_relative_numbers
   ; view 's' Toggle_smear
-  ; view 'r' Reset
+   ; view 'r' Reset
+   ; view 'B' Toggle_bare
+   ; view 'T' Open_theme_picker
   ]
 ;;
 
@@ -99,7 +101,9 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     workspace.shrink-status        Shrink status tile by 2
     workspace.grow-status          Grow status tile by 2
     workspace.toggle-zen           Toggle zen mode
+    workspace.toggle-bare          Toggle bare mode                       Space v B
     views.to-tab                   Move focused view to a tab
+    appearance.choose-theme        Choose theme                           Space v T
     views.to-split                 Move focused view to the split
     views.to-band                  Move focused view to the bottom band
     views.close                    Close focused view
@@ -122,6 +126,7 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     vcs.close                      VCS: close
     vcs.commit-finish              VCS: finish commit
     vcs.commit-abort               VCS: abort commit
+    vcs.file-log                   VCS: history of this file
     conflict.keep-upper            Conflict: keep upper (ours)            Space x u
     conflict.keep-lower            Conflict: keep lower (theirs)          Space x l
     conflict.keep-both             Conflict: keep both                    Space x a
@@ -294,6 +299,20 @@ let%expect_test "find by ID" =
     (Redo)
     ()
     |}]
+;;
+
+let%test_unit "bare mode is discoverable and advertises its actual default shortcut" =
+  let id = Catalog.Id.of_string "workspace.toggle-bare" in
+  let entry = Catalog.find Catalog.default id |> Option.value_exn in
+  [%test_eq: string] (Catalog.Entry.title entry) "Toggle bare mode";
+  assert (Keymap.Action.equal (Catalog.Entry.action entry) (View Toggle_bare));
+  let shortcuts =
+    Shortcut.sequences (Bindings.to_list Bindings.default) (Catalog.Entry.action entry)
+    |> List.map ~f:Shortcut.to_string_hum
+  in
+  [%test_eq: string list] shortcuts [ "Space v B" ];
+  let found = Catalog.search Catalog.default normal ~query:"bare" in
+  assert (List.exists found ~f:(fun result -> Catalog.Id.equal (Catalog.Entry.id result.item) id))
 ;;
 
 let%expect_test "create rejects malformed and duplicate IDs and empty titles" =

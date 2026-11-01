@@ -137,7 +137,14 @@ let commands ?(after = 0) repo t =
     in
     if not
          (List.exists
-            [ "status"; "for-each-ref"; "log"; "diff"; "rev-parse"; "-c" ]
+            [ "status"
+            ; "for-each-ref"
+            ; "log"
+            ; "--literal-pathspecs log "
+            ; "diff"
+            ; "rev-parse"
+            ; "-c"
+            ]
             ~f:(fun prefix -> String.is_prefix command ~prefix))
     then (
       printf
@@ -234,7 +241,7 @@ let%expect_test "a merge from m m stops on conflicts; x takes theirs, restores m
       | Merging 93dff37 (press m)
       log: [exit 1] git merge --no-edit --end-of-options other
       status: UU f, UU g, UU h
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all log commit fetch pull push merge copy next previous first last half-page-down half-page-up
       |}];
     (* The section header: the backend's refusal. *)
     let t = run repo t "ggx" in
@@ -407,7 +414,7 @@ let%expect_test "a merge from m m stops on conflicts; x takes theirs, restores m
       parents: b986162 93dff37
       message:
       | Merge branch 'other'
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all log commit fetch pull push merge copy next previous first last half-page-down half-page-up
       |}])
 ;;
 
@@ -449,7 +456,7 @@ let%expect_test "a rebase pull stops; r r with an unsaved buffer is refused; r r
       message: Pull from origin/main (rebase) failed: Stopped on conflicts: resolve each file (x, or Space x in the editor), mark it resolved with s, then continue
       | Head: detached at 143c3f4
       | Rebasing main onto 143c3f4 (press r)
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push rebase merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all log commit fetch pull push rebase merge copy next previous first last half-page-down half-page-up
       rebase: Continue, skip or abort the rebase (the rebase popup)
       focused popup; popup Rebasing
       ╭─ Rebasing ─────────────────────────────────────────╮
@@ -530,7 +537,7 @@ let%expect_test "a rebase pull stops; r r with an unsaved buffer is refused; r r
       | Upstream: origin/main, up to date
       HEAD: Theirs < One; branch main
       status: clean
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all log commit fetch pull push merge copy next previous first last half-page-down half-page-up
       |}])
 ;;
 
@@ -560,7 +567,7 @@ let%expect_test "m with no branch selected; m on the current branch; a refused \
     where repo t;
     [%expect {|
       jobs: detect g1.1, refresh g1.2
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all log commit fetch pull push merge copy next previous first last half-page-down half-page-up
       merge: Merge the branch selected in Branches (the merge popup)
       focused popup; popup Merge
       ╭─ Merge ────────────────────────────────────────╮

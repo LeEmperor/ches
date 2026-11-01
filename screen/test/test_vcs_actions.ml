@@ -321,6 +321,7 @@ let print_log env t =
         ~prefix:(String.concat ~sep:" " ("git" :: Git.Cli.prefix) ^ " ")
     in
     if String.is_prefix command ~prefix:"--literal-pathspecs"
+       && not (String.is_prefix command ~prefix:"--literal-pathspecs log ")
     then
       printf "log: [%s] %s%s\n"
         (Option.value entry.status ~default:"running")

@@ -1,5 +1,6 @@
 (** The VCS view (phase 2: read-only; phase 3: stage, unstage, discard; phase 4: lines;
-    phase 5: commit; phase 6: remotes and branches; phase 7: merges and conflicts), a
+    phase 5: commit; phase 6: remotes and branches; phase 7: merges and conflicts;
+    phase 8: log and history), a
     registered view ({!View_registry}) over the
     git backend ([Ches_vcs_git.Backend], a {!Ches_vcs.Backend.S}). Lazygit's layout
     and Magit's context keys: the Files, Branches and Commits list panels beside a diff
@@ -30,8 +31,9 @@
     stale) and detects the repository, then refreshes; the previous snapshot stays
     drawn until the new one arrives. Jobs, by lane (all [Read]):
     - ["detect"]: [Backend.detect ~cwd]; its report goes to [Backend.detected].
-    - ["refresh"]: [Backend.refresh repo Refresh.default]; the report goes to
-      [Backend.snapshot]. On success the panels are rebuilt, each cursor reconciled
+    - ["refresh"]: [Backend.refresh repo { Refresh.default with log = scope }] (the
+      view's log scope, phase 8); the report goes to [Backend.snapshot] with the
+      [Refresh.t] that job was issued with (never the current scope). On success the panels are rebuilt, each cursor reconciled
       ({!Ches_vcs.Panel.Cursor.reconcile}, the selection rule), and the diff refetched.
     - ["diff"]: [Backend.diff repo target] for the diff target of the list selection
       ([Backend.diff_target]), whenever that target changes and after every refresh;
@@ -201,8 +203,8 @@
       would race git and its hooks). Else [dispose = [path]], the pending commit
       cleared, [`Post] ["Commit aborted"] (["Amend aborted"] for an amend); nothing
       runs.
-    Other requests are ignored (the application says "VCS: nothing to do for
-    <request>").
+    ["file-log"] is phase 8's (below). Other requests are ignored (the application
+    says "VCS: nothing to do for <request>").
 
     [Saved] signals for paths inside the repository's git directory
     ([Git.Repository.t.git_dir], where the message file lives) do not refresh; other
@@ -286,6 +288,55 @@
     The head summary marks how to go on: a [Rebase] row ends with [" (press r)"]
     and a [Merge] row with [" (press m)"] (the popup lists continue, skip or commit,
     and abort); short, so the row fits the lists column.
+
+    {2 Log and history (phase 8)}
+
+    The view keeps a log scope ({!Ches_vcs.Log_scope.t}: [Log_scope.default] at
+    creation, kept across hiding and reopening) that every refresh reads; the Commits
+    section's title names it (the backend's {!Ches_vcs.Log_scope.title}).
+    - [l] in a list panel (any of the three; in the diff it stays the text motion),
+      while a snapshot is loaded: {!View_registry.Ask.t.Popup} [{ popup =
+      Git.Log.popup ~branch ~file; enabled = Git.Log.enabled scope; cancel = None }]
+      (so the switches open as the scope has them). [branch]: the Branches panel's
+      selected branch, whatever has focus (as [m]'s). [file]: in Files the selected
+      item's key (not a key ending in ["/"]); in Branches and Commits the path
+      ({!Vcs_diff_text.Target.t.path}) of the diff's line at its cursor; else [None].
+      Nothing loaded: [`Show] ["Nothing loaded yet"]. The answer goes to
+      {!Git.Log.scope}: [Error text] is [`Show text]; [Ok scope] becomes the scope,
+      the Commits cursor is reset ({!Ches_vcs.Panel.Cursor.empty}: the next snapshot
+      selects its first row), focus goes to Commits, and a refresh follows. Local
+      command [log] in the list panels.
+    - [+] in Commits: {!Ches_vcs.Log_scope.more}; [None] is [`Show] ["Showing the
+      most commits already (12800)"]; else the scope doubles and a refresh follows,
+      the cursor kept. Local command [more-commits].
+    - Commit rows read [<graph row><short hash> <refs><subject>]: the graph row
+      ({!Ches_vcs.Graph.rows}, computed once per snapshot from full hashes and
+      parents, first parents only with [first_parent]) only when
+      {!Ches_vcs.Log_scope.graph_shown} of the snapshot's own refresh; [<refs>] is
+      ["(" ^ String.concat ~sep:", " refs ^ ") "] when the commit has any.
+    - In a file's history (the snapshot's scope has [path = Some p]), the first time
+      a commit's diff is shown for a target (not when a refresh reloads it), its
+      cursor starts at the first file whose path or original path is [p], else at
+      the top. The diff is still the whole commit.
+    - In the diff, outside Visual: [\}] and [\{] move the cursor to the next and
+      previous file ({!Vcs_diff_text.file_starts}), with counts as [\]] and [\[];
+      when the cursor cannot move, [`Show] ["No next file"] / ["No previous file"]
+      (local commands [next-file], [previous-file]). Enter on a commit's file list
+      line ({!Vcs_diff_text.Kind.t.Listed}) jumps to that file's first line instead of
+      opening it; [e] still opens.
+    - The ["file-log"] request ([Space g l] from a file buffer): with no
+      {!View_registry.Context.active} file, [`Post] ["No file buffer here: Space g l
+      shows the history of the file you are in"]. With the repository found, a file
+      outside its root gives [`Post] ["<label> is not in the repository at <root>"];
+      inside, the scope becomes [{ Log_scope.default with path = Some <relative
+      path> }], the Commits cursor is reset, focus goes to Commits, a refresh is
+      issued and the outcome has [show = true] (a hidden view is placed, focused and
+      [Shown], whose detection supersedes that refresh). While the root is not known
+      (never shown, or detecting) the absolute path is remembered and the outcome
+      shows the view; in the not-a-repository, no-work-tree and failed states it is
+      remembered too and the view detects again. When a detection finds a
+      repository, a remembered path is applied as above (outside the root: the same
+      [`Post], the scope unchanged); any other detection result drops it.
 
     {2 Layout}
 
@@ -534,6 +585,9 @@ val log : t -> Log_entry.t list
 
 (** The current generation's stamps (ids and lanes the view issued). *)
 val stamps : t -> Stamps.t
+
+(** The log scope the next refresh reads (phase 8). *)
+val scope : t -> Log_scope.t
 
 (** The title of this view's mutation ({!Backend.Plan.t.title}) from its submission
     until the refresh after its [Finished] report is applied: actions are refused as

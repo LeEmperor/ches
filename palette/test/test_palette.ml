@@ -40,7 +40,7 @@ let%expect_test "opening lists available commands and selects the first" =
       tabs.next
       tabs.previous
       tabs.close
-      ... 72 more
+      ... 75 more
     |}]
 ;;
 
@@ -146,7 +146,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 75 more
+      ... 78 more
     |}]
 ;;
 
@@ -227,6 +227,16 @@ let%expect_test "accept returns a request for the invoking target" =
      ((token 1) (id view.toggle-relative-numbers)
       (action (View Toggle_relative_numbers))))
     |}]
+;;
+
+let%test_unit "bare mode accepts the stable workspace action" =
+  let palette = type_ (create ()) "bare" in
+  match Palette.accept palette ~context:(Some normal) with
+  | Execute { token; id; action } ->
+    [%test_eq: int] token 1;
+    assert (Catalog.Id.equal id (Catalog.Id.of_string "workspace.toggle-bare"));
+    assert (Ches_input.Keymap.Action.equal action (View Toggle_bare))
+  | _ -> failwith "Expected bare-mode action"
 ;;
 
 (* A fake adapter: tokens are view numbers, and [views] is the mode of each view that

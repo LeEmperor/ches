@@ -62,10 +62,19 @@ module Input : sig
 end
 
 type t
+(** The global effective appearance: live preview while the theme picker is open,
+    otherwise the committed choice. Independent of presentation and file buffers. *)
+val theme : t -> Ches_theme.Theme.t
+val theme_picker : t -> Theme_picker_tile.t option
+val theme_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 val file_picker_visible_stamp : t -> (int * int * int) option
 
 val create
-  :  ?prefs:Geometry.Prefs.t
+  :  ?theme:Ches_theme.Theme.t
+  -> ?prefs:Geometry.Prefs.t
+  -> ?bare_prefs:Presentation.Bare_prefs.t
+       (** Independent Bare profile; default numbers [Off]. May be supplied even
+           when starting in Workspace, and is retained across files/presentations. *)
   -> ?workspace_prefs:Workspace.Prefs.t
        (** Explicit status layout/visibility overrides [tiles_visible] for status. *)
   -> ?tiles_visible:bool
@@ -77,6 +86,7 @@ val create
   -> ?directory_config:Ches_app.Directory_buffer.Config.t
        (** Protected hidden row identities by default; [Exposed] uses legacy tokens. *)
   -> ?smear_enabled:bool
+  -> ?bare:bool (** Start borderless, with only transient bottom-row feedback. *)
   -> ?report:Report_tile.Item.t list
        (** Installs the static demo report ([--demo-report]); shown initially. *)
   -> ?source_attached:bool
@@ -116,12 +126,20 @@ val close_buffer : t -> width:int -> height:int -> Ches_app.Buffer_id.t -> force
 val save_all : t -> width:int -> height:int -> t * (Ches_app.Buffer_id.t * bool) list
 val quit_session : t -> width:int -> height:int -> force:bool -> t * Ches_app.Controller.Status.t
 val prefs : t -> Geometry.Prefs.t
+(** Bare-only number preferences. Number toggles and reset in Bare update this
+    profile; other layout controls still update the saved workspace preferences. *)
+val bare_prefs : t -> Presentation.Bare_prefs.t
 val workspace_prefs : t -> Workspace.Prefs.t
 val hotkey_hints : t -> bool
 val buffer_presentation : t -> View_command.Buffer_presentation.t
 (** Effective placement: false in zen or when status cannot fit/is hidden. *)
 val buffers_in_status : t -> width:int -> height:int -> bool
+
+(** True only in [Zen], not in [Bare]. Both suppress workspace panes; only Bare
+    also suppresses document decorations and permanent feedback fields. *)
 val zen : t -> bool
+val bare : t -> bool
+val presentation : t -> Presentation.t
 
 (** The registered views and their placements. *)
 val views : t -> View_registry.t
@@ -309,7 +327,7 @@ val capture_pending : t -> string option
 val update_feedback
   : t -> width:int -> height:int -> Ches_error.Error.update -> t
 
-(** Effective workspace allocation. Zen suppresses status without changing requested
+(** Effective workspace allocation. Zen and Bare suppress status without changing requested
     visibility/placement/sizes. Width and height requests are remembered separately.
     Status remains non-focusable. Problems focus is effective only while its
     allocation exists. Resize events persistently restore document focus when hidden. *)
@@ -437,10 +455,13 @@ val cursor_position : t -> width:int -> height:int -> (int * int) option
     ({!View_registry.Outcome.t.dispose}): their buffers closed, the files deleted,
     and, when the user was in one, focus given to the view where it is placed.
 
-    [Request_view] ([Space g c], [Space g a]) signals a named request to a view,
-    focused or not ({!View_registry.Signal.t.Request}); a view that is not installed
-    gives its notice, one that ignores the request says ["<Title>: nothing to do for
-    <request>"], on the feedback line (and in the focused view's or float's footer).
+    [Request_view] ([Space g c], [Space g a], [Space g l]) signals a named request
+    to a view, focused or not ({!View_registry.Signal.t.Request}); a view that is not
+    installed gives its notice, one that ignores the request says ["<Title>: nothing
+    to do for <request>"], on the feedback line (and in the focused view's or float's
+    footer). An answer with {!View_registry.Outcome.t.show} then shows and focuses
+    the view as [Focus_view] does, unless it is focused already (a hidden view takes
+    its install placement and is signalled [Shown]).
 
     It may ask for open-buffer reconciliation ({!View_registry.Outcome.t.reconcile}),
     from a key or a signal: the session rereads the retained file buffers within

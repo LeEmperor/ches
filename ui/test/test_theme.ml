@@ -4,6 +4,46 @@ open Ches_ui
 
 let same_attrs a b = Attr.equal (Attr.many a) (Attr.many b)
 
+let%test_unit "explicit palettes map syntax, overlays and diffs through semantic roles" =
+  let module Palette = Ches_theme.Theme in
+  List.iter Palette.all ~f:(fun theme ->
+    let color role =
+      let r, g, b = Palette.color theme role in
+      Attr.Color.rgb ~r ~g ~b
+    in
+    let check style fg bg =
+      assert (same_attrs (Theme.attrs ~theme ~font:(fun _ -> []) style)
+        [ Attr.fg (color fg); Attr.bg (color bg) ])
+    in
+    let open Ches_screen in
+    List.iter Style.Syntax.all ~f:(fun syntax ->
+      List.iter [ false; true ] ~f:(fun current_line ->
+        List.iter [ false; true ] ~f:(fun special ->
+          let document ?overlay () = Style.document ~syntax ~current_line ~special ?overlay () in
+          check (document ())
+            (if special then Special else Theme.syntax_role syntax)
+            (if current_line then Current_line else Background);
+          List.iter
+            [ Style.Overlay.Selection, Palette.Role.Selection_foreground, Palette.Role.Selection_background
+            ; Search_match, Search_foreground, Search_background
+            ; Search_current, Search_current_foreground, Search_current_background
+            ; Insert_cursor, Background, Block_cursor
+            ; Insert_point, Background, Block_copy ]
+            ~f:(fun (overlay, fg, bg) -> check (document ~overlay ()) fg bg))));
+    check Diff_added Diff_added Surface;
+    check Diff_removed Diff_removed Surface;
+    check Diff_hunk Diff_hunk Surface;
+    check Border Border Backdrop;
+    check Status Foreground Surface;
+    assert (same_attrs (Theme.attrs ~theme Title)
+      [ Attr.fg (color Foreground); Attr.bg (color Backdrop); Attr.bold ]));
+  (* Interleaved calls must never change the implicit default. *)
+  let before = Theme.attrs (Ches_screen.Style.document ()) in
+  List.iter Palette.all ~f:(fun theme ->
+    ignore (Theme.attrs ~theme (Ches_screen.Style.document ()) : Attr.t list));
+  assert (same_attrs before (Theme.attrs (Ches_screen.Style.document ())))
+;;
+
 let%test_unit "syntax foreground yields to specials and every interaction overlay" =
   let open Ches_screen in
   List.iter Style.Syntax.all ~f:(fun syntax ->

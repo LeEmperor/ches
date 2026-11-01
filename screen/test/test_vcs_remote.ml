@@ -169,7 +169,14 @@ let commands ?(after = 0) repo t =
     in
     if not
          (List.exists
-            [ "status"; "for-each-ref"; "log"; "diff"; "rev-parse"; "-c" ]
+            [ "status"
+            ; "for-each-ref"
+            ; "log"
+            ; "--literal-pathspecs log "
+            ; "diff"
+            ; "rev-parse"
+            ; "-c"
+            ]
             ~f:(fun prefix -> String.is_prefix command ~prefix))
     then (
       printf
@@ -483,8 +490,8 @@ let%expect_test "n on an unborn branch is refused; the branch keys are local to 
       jobs: detect g1.1, refresh g1.2
       focused vcs
       notice: There is no commit yet: commit before branching; nothing ran
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff new-branch previous-branch commit fetch pull push merge copy next previous first last half-page-down half-page-up
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff new-branch previous-branch log commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all log commit fetch pull push merge copy next previous first last half-page-down half-page-up
       |}])
 ;;
 
@@ -510,7 +517,7 @@ let%expect_test "a rebase pull stops on a conflict: the summary says press r; r 
       jobs: detect g1.1, refresh g1.2
       focused vcs
       notice: No rebase in progress; nothing ran
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all commit fetch pull push merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff stage unstage discard stage-all unstage-all log commit fetch pull push merge copy next previous first last half-page-down half-page-up
       jobs: - g1.3, refresh g1.4, diff g1.5
       focused vcs
       message: Pull from origin/main (rebase) failed: Stopped on conflicts: resolve each file (x, or Space x in the editor), mark it resolved with s, then continue
@@ -522,7 +529,7 @@ let%expect_test "a rebase pull stops on a conflict: the summary says press r; r 
             "hint: You can instead skip this commit: run \"git rebase --skip\"."
             "hint: To abort and get back to the state before \"git rebase\", run \"git rebase --abort\"."
             "Could not apply fb912c6... Ours"
-      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all commit fetch pull push rebase merge copy next previous first last half-page-down half-page-up
+      refresh toggle-log leave focus-files focus-branches focus-commits focus-diff toggle-diff toggle-fold stage unstage discard stage-all unstage-all log commit fetch pull push rebase merge copy next previous first last half-page-down half-page-up
       |}];
     let t = run repo t "r" in
     where repo t;

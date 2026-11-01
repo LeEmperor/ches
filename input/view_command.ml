@@ -93,7 +93,9 @@ type t =
   | Restart_source
   | Kill_source
   | Toggle_zen
+  | Toggle_bare
   | Open_palette
+  | Open_theme_picker
   | Open_line_picker
   | Open_file_picker
   | Open_content_picker
@@ -150,7 +152,9 @@ let scale t ~count =
   | Restart_source
   | Kill_source
   | Toggle_zen
+  | Toggle_bare
   | Open_palette
+  | Open_theme_picker
   | Open_line_picker
   | Open_file_picker
   | Open_content_picker

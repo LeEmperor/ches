@@ -3,6 +3,29 @@ open Bonsai_term
 open Ches_screen
 open Ches_ui
 
+let%test_unit "explicit themes color both base spans and smear without losing custom fonts" =
+  let frame : Frame.t =
+    { width = 4; height = 1
+    ; rows = [ [ { text = "text"; width = 4; style = Style.document () } ] ]
+    ; cursor = None; smear = [ 1, 0 ] } in
+  let image = View.Private.notty_image in
+  let find id = Option.value_exn (Ches_theme.Theme.find id) in
+  let crimson = find "crimson" and glacier = find "glacier" in
+  let fonts_seen = ref [] in
+  let font style = fonts_seen := style :: !fonts_seen; [ Theme.Font.Bold ] in
+  let draw theme = Editor_view.draw ~theme ~font frame in
+  let dark = draw crimson and light = draw glacier in
+  let smear view = View.crop ~l:1 ~r:2 view |> image in
+  assert (not (Notty.I.equal (image dark) (image light)));
+  assert (not (Notty.I.equal (smear dark) (smear light)));
+  List.iter [ crimson; glacier ] ~f:(fun theme ->
+    let base = Editor_view.draw_base ~theme ~font frame in
+    let split = Editor_view.draw_overlay ~theme ~font ~base frame in
+    assert (Notty.I.equal (image split) (image (draw theme))));
+  assert (List.exists !fonts_seen ~f:(Style.equal Style.Smear));
+  assert (List.exists !fonts_seen ~f:(Style.equal (Style.document ())))
+;;
+
 let%expect_test "production app animation ticks retain base image work" =
   let text = Ches_core.Text_buffer.of_string "abcdef\nsecond"
     |> Result.map_error ~f:Ches_core.Text_buffer.Invalid_text.to_string_hum

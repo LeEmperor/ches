@@ -160,7 +160,7 @@ let refresh (repository : Repository.t) (refresh : Ches_vcs.Backend.Refresh.t)
   let cwd = repository.root in
   [ Job.Step.Run (Status.command ~ignored:refresh.ignored ~cwd ())
   ; Run (Branch_list.command ~cwd)
-  ; Run (Log.command ~cwd ~limit:refresh.log_limit)
+  ; Run (Log.command ~cwd refresh.log)
   ]
   @ List.map (In_progress.reads ~git_dir:repository.git_dir) ~f:(fun read ->
     Job.Step.Read_file read)
@@ -364,7 +364,8 @@ let panels (snapshot : snapshot) =
       ~id:commits_panel
       ~title:"Commits"
       ~section:recent_section
-      ~section_title:"Recent commits"
+      ~section_title:
+        (Log_scope.title snapshot.refresh.log ~shown:(List.length snapshot.commits))
       (List.map snapshot.commits ~f:(fun (commit : Log.Commit.t) ->
          { Panel.Item.key = commit.hash; value = (Commit commit : item) }))
   ]

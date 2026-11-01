@@ -12,10 +12,11 @@ module Kind = struct
     | Context
     | No_newline
     | Note
+    | Listed
   [@@deriving sexp_of, equal]
 
   let style : t -> Style.t = function
-    | Preamble | Meta -> Diff_meta
+    | Preamble | Meta | Listed -> Diff_meta
     | Message | Context -> Status
     | Hunk -> Diff_hunk
     | Added -> Diff_added
@@ -54,6 +55,7 @@ end
 type t =
   { lines : Line.t array
   ; positions : Position.t option array (** Each line's place in the [Diff.t]. *)
+  ; listed : int option array (** The file a [Listed] line names. *)
   ; starts : int array (** Byte offset of each line in [text]. *)
   ; text : string
   }
@@ -63,9 +65,18 @@ let lines t = Array.to_list t.lines
 let text t = t.text
 let one_line s = String.concat ~sep:"^J" (String.split s ~on:'\n')
 
-(* Lines, each with its position in the diff ([None] outside any file). *)
+(* Lines, each with its position in the diff ([None] outside any file). The file
+   list is the only source of [Listed] lines, one per file in order, so the [n]th
+   names file [n]. *)
 let create (lines : (Line.t * Position.t option) list) =
   let positions = Array.of_list (List.map lines ~f:snd) in
+  let listed =
+    List.folding_map lines ~init:0 ~f:(fun n ((line : Line.t), _) ->
+      match line.kind with
+      | Listed -> n + 1, Some n
+      | _ -> n, None)
+    |> Array.of_list
+  in
   let lines =
     Array.of_list
       (List.map lines ~f:(fun (line, _) -> { line with text = one_line line.text }))
@@ -78,6 +89,7 @@ let create (lines : (Line.t * Position.t option) list) =
   in
   { lines
   ; positions
+  ; listed
   ; starts
   ; text = String.concat ~sep:"\n" (Array.to_list (Array.map lines ~f:(fun l -> l.text)))
   }
@@ -204,9 +216,63 @@ let file_lines index (file : Diff.File.t) =
   header @ body @ truncated
 ;;
 
+let change_letter : Diff.File.Change.t -> string = function
+  | Added -> "A"
+  | Deleted -> "D"
+  | Modified -> "M"
+  | Renamed _ -> "R"
+  | Copied _ -> "C"
+  | Type_changed -> "T"
+  | Unmerged -> "U"
+;;
+
+(* A commit's file list line for [file]: counts over the hunk lines laid out (none
+   for a header-only file, whose hunks are hidden or absent). *)
+let listed_line (file : Diff.File.t) : Line.t =
+  let added, removed =
+    if header_only file
+    then 0, 0
+    else
+      List.fold file.hunks ~init:(0, 0) ~f:(fun counts (hunk : Diff.Hunk.t) ->
+        List.fold hunk.lines ~init:counts ~f:(fun (added, removed) line ->
+          match line.kind with
+          | Added -> added + 1, removed
+          | Removed -> added, removed + 1
+          | Context | No_newline -> added, removed))
+  in
+  let display = Diff.File.path file in
+  { text =
+      String.concat
+        [ change_letter file.change
+        ; " "
+        ; display
+        ; (if added + removed > 0 then sprintf "  +%d -%d" added removed else "")
+        ; (if Option.is_some file.truncated then " (truncated)" else "")
+        ]
+  ; kind = Listed
+  ; target = Some { Target.path = file.new_path; display; line = None }
+  }
+;;
+
 let of_diff (diff : Diff.t) =
+  let blank : Line.t * Position.t option =
+    { text = ""; kind = Message; target = None }, None
+  in
+  (* With a file list, the preamble's trailing blank lines become exactly one. *)
+  let with_list = (not (List.is_empty diff.preamble)) && not (List.is_empty diff.files) in
   let preamble =
-    List.map diff.preamble ~f:(fun text ->
+    if with_list
+    then List.drop_while (List.rev diff.preamble) ~f:String.is_empty |> List.rev
+    else diff.preamble
+  in
+  let listed =
+    if with_list
+    then
+      (blank :: List.map diff.files ~f:(fun file -> listed_line file, None)) @ [ blank ]
+    else []
+  in
+  let preamble =
+    List.map preamble ~f:(fun text ->
       ( ({ text
          ; kind =
              (if String.is_empty text || String.is_prefix text ~prefix:"    "
@@ -223,7 +289,7 @@ let of_diff (diff : Diff.t) =
   in
   match preamble, files, cut with
   | [], [], [] -> of_message "No changes"
-  | _ -> create (preamble @ files @ cut)
+  | _ -> create (preamble @ listed @ files @ cut)
 ;;
 
 (* The last line starting at or before [offset]. *)
@@ -307,3 +373,16 @@ let hunk_starts t =
     Option.some_if (Kind.equal line.kind Hunk) t.starts.(i))
   |> Array.to_list
 ;;
+
+let file_starts t =
+  (* Lines are laid out in file order, so a file starts where the file changes. *)
+  Array.foldi t.positions ~init:(None, []) ~f:(fun i (previous, starts) position ->
+    match position with
+    | Some { file; _ } when not (Option.equal Int.equal previous (Some file)) ->
+      Some file, t.starts.(i) :: starts
+    | Some _ | None -> previous, starts)
+  |> snd
+  |> List.rev
+;;
+
+let listed_file_at t offset = Option.bind (index_at t offset) ~f:(fun i -> t.listed.(i))

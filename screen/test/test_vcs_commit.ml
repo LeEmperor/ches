@@ -297,8 +297,8 @@ let%expect_test "c c opens the message buffer; Space g c commits it, closes it, 
       │                                       │                                                          │|
       │ 3 Commits (2)                         │                                                          │|
       │ > - Recent commits (2)                │                                                          │|
-      │   a0515a6 Add TWO                     │                                                          │|
-      │   42c8e24 first                       │                                                          │|
+      │   ● a0515a6 (HEAD -> main) Add TWO    │                                                          │|
+      │   ● 42c8e24 first                     │                                                          │|
       │                                       │                                                          │|
       ╰─ Files 0/0 ──────────────────────────────────────────────────────────────────────────────────────╯|
        NORMAL  VCS: main [main a0515a6] Add TWO                                                           |

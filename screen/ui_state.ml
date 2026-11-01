@@ -45,11 +45,13 @@ type t =
   ; scrolls : Scroll.t Buffer_id.Map.t
   ; paste_buffer : Buffer_id.t option
   ; prefs : Geometry.Prefs.t
+  ; bare_prefs : Presentation.Bare_prefs.t
   ; workspace_prefs : Workspace.Prefs.t
   ; other_status_size : int (** Requested size for the inactive split axis. *)
   ; hotkey_hints : bool
   ; buffer_presentation : View_command.Buffer_presentation.t
-  ; zen : bool
+  ; presentation : Presentation.t
+  ; bare_return : Presentation.t
   ; directory_size : int
   ; hide_tabs : bool (** Rendering-only directory surface snapshot. *)
   ; host : Host.t (** Focus, capture prefix/notice, and paste owner. *)
@@ -59,6 +61,9 @@ type t =
   ; tabs : Tab_strip.t (** View tabs' order among the file tabs, and the active one. *)
   ; split : Workspace.Major_split.t (** Requested side and share of the split view. *)
   ; palette : Palette_tile.t option (** Open, and then focused, or closed. *)
+  ; theme : Ches_theme.Theme.t
+  ; theme_picker : Theme_picker_tile.t option
+  ; theme_picker_return : View_id.t
   ; palette_origin : View_id.t option
   (** The registered view the palette was opened over: its local commands are listed
       first, and it is not left until the palette closes. *)
@@ -115,13 +120,16 @@ let directory_id = View_id.of_string "directory"
 let demo_report_unavailable = "Demo report unavailable; launch with --demo-report"
 
 let create
+  ?(theme = Ches_theme.Theme.default)
   ?(prefs = Geometry.Prefs.default)
+  ?(bare_prefs = Presentation.Bare_prefs.default)
   ?workspace_prefs
   ?(tiles_visible = true)
   ?(hotkey_hints = false)
   ?(buffer_presentation = View_command.Buffer_presentation.Top)
   ?directory_config
   ?(smear_enabled = false)
+  ?(bare = false)
   ?report
   ?(source_attached = false)
   ?(views = [])
@@ -146,12 +154,15 @@ let create
       ~default:{ Workspace.Prefs.default with status_visible = tiles_visible }
   in
   let session = Session.create ?directory_config ~cell_width:Cell_map.width controller in
+  let session = if bare && Option.is_some (Session.active_id session)
+    then Session.focus_directory session false else session in
   let controller = Option.value_exn (Session.active_controller session) in
   { controller
   ; session
   ; scrolls = Buffer_id.Map.empty
   ; paste_buffer = None
   ; prefs
+  ; bare_prefs
   ; workspace_prefs
   ; other_status_size =
       (match workspace_prefs.split.axis with
@@ -159,7 +170,8 @@ let create
        | Vertical -> 28)
   ; hotkey_hints
   ; buffer_presentation
-  ; zen = false
+  ; presentation = (if bare then Bare else Workspace)
+  ; bare_return = Workspace
   ; directory_size = 32
   ; hide_tabs = false
   ; host =
@@ -171,6 +183,7 @@ let create
          ]
          @ View_registry.specs views
          @ [ Palette_tile.spec
+            ; Theme_picker_tile.spec
            ; File_picker_tile.spec
            ; Line_picker_tile.spec
            ; Content_picker_tile.spec
@@ -184,6 +197,9 @@ let create
   ; tabs = Tab_strip.empty
   ; split = Workspace.Major_split.default
   ; palette = None
+  ; theme
+  ; theme_picker = None
+  ; theme_picker_return = document_id
   ; palette_origin = None
   ; help = None
   ; confirm = None
@@ -221,13 +237,20 @@ let create
 ;;
 
 let controller t = t.controller
+let theme t = Option.value_map t.theme_picker ~f:Theme_picker_tile.preview ~default:t.theme
+let theme_picker t = t.theme_picker
 let session t = Session.replace_active t.session t.controller
 let has_document t = Option.is_some (Session.context_id t.session)
 let prefs t = t.prefs
+let bare_prefs t = t.bare_prefs
 let workspace_prefs t = t.workspace_prefs
 let hotkey_hints t = t.hotkey_hints
 let buffer_presentation t = t.buffer_presentation
-let zen t = t.zen
+let presentation t = t.presentation
+let zen t = Presentation.equal t.presentation Zen
+let bare t = Presentation.equal t.presentation Bare
+let suppress_workspace t = Presentation.suppress_workspace t.presentation
+let leave_bare t = if bare t then { t with presentation = Workspace; rows = None } else t
 let views t = t.views
 
 (* The session's file buffers for a view's context ([View_registry.Context]), by id,
@@ -321,7 +344,12 @@ let message t =
   let count = Problems.count feedback in
   let presented = Ches_error.Error.presented_problem feedback in
   let notification = Ches_error.Error.notification feedback in
-  match presented, notification with
+  if bare t then
+    Option.map notification ~f:(fun notification ->
+      let kind = match notification.severity with
+        | Hint | Info -> Message.Info | Warning -> Warning | Error -> Error in
+      { Message.kind; text = notification.text })
+  else match presented, notification with
   | Some _, Some notification ->
     let kind =
       match notification.severity with
@@ -401,14 +429,14 @@ let take_source_requests t =
 ;;
 
 let exited t = t.exited
-let animation t = t.animation
+let animation t = if bare t then Animation.create ~enabled:false else t.animation
 
 let tab_rect ?(buffers_in_status = false) t ~(allocation : Geometry.Rect.t) =
   if not buffers_in_status && not t.hide_tabs
      && not (Option.is_some (Session.input_directory t.session)
        && Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side))
      && List.length (tab_entries t) > 1
-     && not t.zen && allocation.width > 0 && allocation.height >= 3
+     && not (suppress_workspace t) && allocation.width > 0 && allocation.height >= 3
   then Some { allocation with height = 1 }
   else None
 ;;
@@ -416,7 +444,7 @@ let tab_rect ?(buffers_in_status = false) t ~(allocation : Geometry.Rect.t) =
 let directory_rect ?(buffers_in_status = false) t ~(allocation : Geometry.Rect.t) =
   let allocation = match tab_rect ~buffers_in_status t ~allocation with None -> allocation | Some _ ->
     { allocation with y = allocation.y + 1; height = allocation.height - 1 } in
-  if Option.is_some (Session.input_directory t.session) && Option.is_none (active_tab_view t)
+  if not (bare t) && Option.is_some (Session.input_directory t.session) && Option.is_none (active_tab_view t)
      && allocation.height >= 2 && allocation.width > 0
   then Some { allocation with height = 1 } else None
 ;;
@@ -429,7 +457,9 @@ let geometry_in ?(buffers_in_status = false) t ~allocation ~reserve_status_row =
   let allocation = match header with None -> allocation | Some _ ->
     { allocation with y = allocation.y + 1; height = allocation.height - 1 } in
   Geometry.compute_in
-    (if Option.is_some (Session.input_directory t.session) then
+    ~decorated:(not (bare t))
+    (if bare t then { t.prefs with centered = false; offset = 0; left_padding = 0; line_numbers = t.bare_prefs.line_numbers }
+     else if Option.is_some (Session.input_directory t.session) then
        if Option.exists (Session.directory_presentation t.session) ~f:(fun p -> Poly.equal p.placement Side)
        then { t.prefs with line_numbers = Absolute; centered = false; left_padding = 0 }
        else { t.prefs with line_numbers = Absolute }
@@ -441,15 +471,15 @@ let geometry_in ?(buffers_in_status = false) t ~allocation ~reserve_status_row =
 
 let workspace t ~width ~height =
   let prefs = t.workspace_prefs in
-  let minors = if t.zen then [] else View_registry.band t.views in
+  let minors = if suppress_workspace t then [] else View_registry.band t.views in
   Workspace.allocate
     ~minors
-    ?split:(if t.zen then None
+    ?split:(if suppress_workspace t then None
       else Option.map (View_registry.split t.views) ~f:(fun id -> id, t.split))
     ?side:(Option.bind (Session.directory_presentation t.session) ~f:(fun p ->
-      Option.some_if (Poly.equal p.placement Side && not t.zen && Option.is_some (Session.active_id t.session))
+      Option.some_if (Poly.equal p.placement Side && not (suppress_workspace t) && Option.is_some (Session.active_id t.session))
         (directory_id, t.directory_size)))
-    (if t.zen then { prefs with status_visible = false } else prefs)
+    (if suppress_workspace t then { prefs with status_visible = false } else prefs)
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
 ;;
 
@@ -487,6 +517,10 @@ let palette_placement ~width ~height =
 
 let palette_layout t ~width ~height =
   Option.bind t.palette ~f:(fun _ -> palette_placement ~width ~height)
+;;
+
+let theme_picker_layout t ~width ~height =
+  Option.bind t.theme_picker ~f:(fun _ -> palette_placement ~width ~height)
 ;;
 
 let picker_placement ~width ~height =
@@ -567,6 +601,8 @@ let prompt_layout t ~width ~height =
 let effective_floating floating t ~width ~height =
   match floating with
   | Some _ -> floating
+  | None when Option.is_some t.theme_picker ->
+    Some (Theme_picker_tile.id, theme_picker_layout t ~width ~height)
   | None ->
     (match t.content_picker with
      | Some _ -> Some (Content_picker_tile.id, content_picker_layout t ~width ~height)
@@ -598,7 +634,7 @@ let view_layout_in ?floating t (workspace : Workspace.t) id =
     if View_id.equal id status_id
     then Option.map workspace.status ~f:(fun pane ->
       Tile_shell.layout Tile_shell.Policy.status pane.rect)
-    else if Option.exists (active_tab_view t) ~f:(View_id.equal id)
+    else if not (bare t) && Option.exists (active_tab_view t) ~f:(View_id.equal id)
     then tab_view_layout t workspace
     else
       Option.map (Workspace.minor workspace id) ~f:(fun pane ->
@@ -715,7 +751,9 @@ let text_view t id = View_registry.text_view t.views id
    puts a bar after its query; a view with open read-only text puts a block on its text
    cursor; others want none. *)
 let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option =
-  if View_id.equal id Palette_tile.id
+  if View_id.equal id Theme_picker_tile.id
+  then Option.map t.theme_picker ~f:(Theme_picker_tile.cursor ~width:content.width)
+  else if View_id.equal id Palette_tile.id
   then Option.map t.palette ~f:(Palette_tile.cursor ~width:content.width)
   else if View_id.equal id File_picker_tile.id
   then Option.map t.file_picker ~f:(File_picker_tile.cursor ~width:content.width)
@@ -802,6 +840,8 @@ let leave t id =
   let t = { t with host = Host.invalidate_paste t.host id } in
   if View_registry.installed t.views id
   then { t with views = View_registry.leave t.views id }
+  else if View_id.equal id Theme_picker_tile.id
+  then { t with theme_picker = None }
   else if View_id.equal id Palette_tile.id
   then (* Leaving closes the palette and discards its query; nothing runs. *)
     { t with palette = None; palette_origin = None }
@@ -833,7 +873,7 @@ let leave t id =
 (* Every view with state to leave: the registered views, then the floats. *)
 let leave_ids t =
   View_registry.ids t.views
-  @ [ Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
+  @ [ Theme_picker_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
     ; Confirm_tile.id; Prompt_tile.id; Popup_tile.id ]
 ;;
 
@@ -934,6 +974,13 @@ let withdraw_ask t ~width ~height =
 (* Fit each minor view's state to its viewport and source. When the source changes
    the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
+  let t = if Option.is_some t.theme_picker then
+    if Option.is_none (theme_picker_layout t ~width ~height)
+    then return_to_document t
+    else if not (View_id.equal (Host.focused t.host ~available:(fun _ -> true)) Theme_picker_tile.id)
+    then leave t Theme_picker_tile.id
+    else t
+    else t in
   let t =
     if Option.is_some t.content_picker && Option.is_none (content_picker_layout t ~width ~height)
     then close_content_picker t ~width ~height else t in
@@ -987,6 +1034,8 @@ let synchronize t ~width ~height =
     ; palette =
         Option.map t.palette
           ~f:(Palette_tile.fit ~rows:(minor_rows t ~width ~height Palette_tile.id))
+    ; theme_picker = Option.map t.theme_picker
+        ~f:(Theme_picker_tile.fit ~rows:(minor_rows t ~width ~height Theme_picker_tile.id))
     }
   in
   let after = List.map ids ~f:(text_view t) in
@@ -1035,6 +1084,13 @@ let geometry t ~width ~height =
    [keep_focus] (a buffer closed under a view the user is in), neither the active tab
    nor focus moves. *)
 let adopt_session_state ?(keep_view_tab = false) ?(keep_focus = false) t session ~width ~height =
+  (* Session-owned navigation (notably [Toggle_directory]) may consume its view
+     command before it reaches the screen. An explicitly focused browser must
+     become visible, including when its retained placement is a side pane. *)
+  let t = if bare t && Option.is_none (Session.input_directory t.session)
+      && Option.is_some (Session.input_directory session)
+      && Option.is_some (Session.active_id session)
+    then leave_bare t else t in
   let major_directory s =
     Option.is_some (Session.input_directory s)
     && Option.exists (Session.directory_presentation s) ~f:(fun p -> Poly.equal p.placement Major)
@@ -1087,6 +1143,7 @@ let adopt_session_state ?(keep_view_tab = false) ?(keep_focus = false) t session
   if (not keep_focus)
       && Option.is_some (Session.input_directory t.session) && Option.is_some (side_layout t ~width ~height)
       && Option.is_none t.palette
+      && Option.is_none t.theme_picker
       && Option.is_none t.file_picker && Option.is_none t.line_picker
       && Option.is_none t.content_picker && Option.is_none t.help
       && Option.is_none t.confirm && Option.is_none t.prompt && Option.is_none t.popup
@@ -1112,6 +1169,7 @@ let show_file_tab t =
 
 (* Activate view tab [id] and focus it, leaving the view focused before. *)
 let show_view_tab t ~width ~height id =
+  let t = leave_bare t in
   let current = focused_view t ~width ~height in
   let t = if View_id.equal current id then t else leave t current in
   { t with
@@ -1252,7 +1310,8 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Position_status _
   | Adjust_status_size _
   | Toggle_zen
-   | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> prefs
+  | Toggle_bare
+   | Open_theme_picker | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> prefs
   | Shift cells ->
     { prefs with
       centered = true
@@ -1287,7 +1346,8 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   | Present_buffers presentation -> Some
       (match presentation with
        | Top -> "Open buffers in top strip"
-       | Status_rows -> if t.zen then "Buffer rows saved for workspace; zen"
+       | Status_rows -> if zen t then "Buffer rows saved for workspace; zen"
+         else if bare t then "Buffer rows saved for workspace; bare"
          else if buffers_in_status t ~width ~height then "Open buffers in status rows"
          else "Status rows requested (top strip fallback)")
   | Focus_view _ | Focus_other_pane ->
@@ -1339,7 +1399,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
        through the session. *)
     if Option.is_some (active_tab_view before) then Host.notice t.host else None
   | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Recreate_missing_file -> None
-     | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> Host.notice t.host
+     | Open_theme_picker | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> Host.notice t.host
   | Toggle_problems_filter ->
     Some (if problems_current_document t then "Problems: current document" else "Problems: workspace")
   | Toggle_smear ->
@@ -1349,7 +1409,8 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
        else "Smear cursor disabled")
   | Toggle_hotkey_hints ->
     Some (if t.hotkey_hints then "Hotkey hints shown" else "Hotkey hints hidden")
-  | Toggle_zen -> Some (if t.zen then "Zen (status hidden)" else "Workspace restored")
+  | Toggle_zen -> Some (if zen t then "Zen (status hidden)" else "Workspace restored")
+  | Toggle_bare -> Some (if bare t then "Bare" else if zen t then "Zen restored" else "Workspace restored")
   | Toggle_status | Position_status _ | Adjust_status_size _ ->
     let requested = t.workspace_prefs in
     let location =
@@ -1362,8 +1423,9 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
     in
     let fitted = workspace t ~width ~height in
     let state =
-      if t.zen
+      if zen t
       then "saved for workspace; zen"
+      else if bare t then "saved for workspace; bare"
       else if not requested.status_visible
       then "hidden"
       else if Option.is_none fitted.status
@@ -1384,7 +1446,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
     Some (sprintf "Status %s %s (%s)" location size state)
   | Toggle_centered -> Some (if t.prefs.centered then "Centered" else "Full width")
   | Toggle_absolute_numbers | Toggle_relative_numbers ->
-    let style = t.prefs.line_numbers in
+    let style = if bare t then t.bare_prefs.line_numbers else t.prefs.line_numbers in
     let no_room = (not (Line_numbers.equal style Off)) && geometry.gutter.width = 0 in
     Some
       (sprintf
@@ -1498,8 +1560,8 @@ let open_ask t ~width ~height ~source (question : View_registry.Ask.Question.t) 
           prompt = Some (Prompt_tile.create ~origin:source ~title ~initial ~validate)
         ; host = Host.focus t.host Prompt_tile.id
         }
-    | Popup popup ->
-      let popup = Popup_tile.create ~origin:source popup in
+    | Popup { popup; enabled } ->
+      let popup = Popup_tile.create ~enabled ~origin:source popup in
       if Option.is_none (popup_placement popup ~width ~height)
       then refuse (Popup_tile.title popup) Popup_tile.minimum
       else { t with popup = Some popup; host = Host.focus t.host Popup_tile.id })
@@ -1687,10 +1749,11 @@ let dispose_files t ~width ~height ~source ~footer paths =
    only; [`Show], the effect and [return] are ignored; [open_file] and a question
    apply only while the view is focused (a question is withdrawn otherwise). Jobs
    whose id is in flight, or all of them after a failed save, are answered at once
-   with their never-started report. Only [dispose] may move focus. *)
+   with their never-started report. Only [dispose] may move focus here; [show] is
+   ignored ([request_view] applies it afterwards). *)
 let rec apply_signal_outcome t ~width ~height ~source
           ({ View_registry.Outcome.controller; notice; jobs; reconcile; save; dispose; ask
-           ; open_file; effect = _; return = _ } : _ View_registry.Outcome.t)
+           ; open_file; effect = _; return = _; show = _ } : _ View_registry.Outcome.t)
   =
   let t = reconcile_buffers { t with controller } ~width ~height reconcile in
   let t =
@@ -1764,6 +1827,7 @@ let apply_outcome t ~width ~height ~source
       ; save
       ; dispose
       ; ask
+      ; show = _
       }
   =
   let t = reconcile_buffers { t with controller } ~width ~height reconcile in
@@ -1949,6 +2013,23 @@ let local_entries t origin =
    local commands first and keeps the view as it is, to run one there; any other
    command, or closing, returns to the document as before. From another view it
    leaves that view. Refusal does not disturb the current focus. *)
+let open_theme_picker t ~width ~height =
+  if not (Mode.equal (Editor.mode (Controller.editor t.controller)) Normal)
+     || Host.pasting t.host || Option.is_none (palette_placement ~width ~height)
+  then { t with host = Host.with_notice t.host
+    "Themes unavailable: finish paste, leave Insert/Visual, and allow at least 14 columns and 4 rows" }
+  else
+    let previous = match t.theme_picker with Some _ -> t.theme_picker_return
+      | None -> focused_view t ~width ~height in
+    let t = List.fold (leave_ids t) ~init:t ~f:leave in
+    let picker = Theme_picker_tile.create t.theme in
+    let t = { t with theme_picker = Some picker; theme_picker_return = previous
+      ; host = Host.focus t.host Theme_picker_tile.id
+      ; controller = Controller.cancel_pending t.controller } in
+    { t with theme_picker = Some (Theme_picker_tile.fit picker
+      ~rows:(minor_rows t ~width ~height Theme_picker_tile.id)) }
+;;
+
 let open_palette t ~width ~height =
   let notice text = { t with host = Host.with_notice t.host text } in
   let editor = Controller.editor t.controller in
@@ -2085,6 +2166,7 @@ let split_needs = Workspace.min_document_width + Workspace.gap + Workspace.min_s
    after the active entry and activated; tab and split views are focused when they
    can be shown. The notice says where the view went. *)
 let place_view t ~width ~height id (placement : View_registry.Placement.t) =
+  let t = if View_registry.Placement.equal placement Hidden then t else leave_bare t in
   let title = view_title t id in
   let previous = View_registry.placement t.views id in
   let was_active_tab = Option.exists (active_tab_view t) ~f:(View_id.equal id) in
@@ -2123,7 +2205,7 @@ let place_view t ~width ~height id (placement : View_registry.Placement.t) =
     let where =
       match placement with
       | Split when shown -> " in split"
-      | Split when t.zen -> " split requested (zen)"
+      | Split when zen t -> " split requested (zen)"
       | Split -> sprintf " split hidden: needs %d columns" split_needs
       | Hidden | Band | Tab when shown -> " in bottom band"
       | Hidden | Band | Tab -> " band requested (compact/zen)"
@@ -2135,6 +2217,7 @@ let place_view t ~width ~height id (placement : View_registry.Placement.t) =
    tab added after the active entry and activated, or in the split (closing the view
    there). *)
 let show_hidden t id =
+  let t = leave_bare t in
   match View_registry.opens_in t.views id with
   | Band -> { t with views = View_registry.set_placement t.views id Band }
   | Split -> { t with views = View_registry.set_placement t.views id Split; rows = None }
@@ -2181,7 +2264,28 @@ let workspace_notice t ~width ~height text =
   else { t with host = Host.with_notice t.host text }
 ;;
 
-(* [Request_view]: a named request to view [id], focused or not, as a signal. *)
+(* [Focus_view] of installed view [id]: show it (a hidden view where it opens, a view
+   tab activated) and focus it, or return to the document when it is focused. *)
+let focus_view t ~width ~height id =
+  let t = leave_bare t in
+  match View_registry.placement t.views id with
+  | Some Tab
+    when Option.exists (active_tab_view t) ~f:(View_id.equal id)
+         && View_id.equal (focused_view t ~width ~height) id ->
+    (* The focused view tab gives way to the active file tab. *)
+    return_to_document (file_tab t)
+  | Some Tab ->
+    toggle_focus t ~width ~height id ~show:(fun t ->
+      { t with tabs = Tab_strip.activate t.tabs (Some id); rows = None })
+  | Some (Hidden | Band | Split) | None ->
+    toggle_focus t ~width ~height id ~show:(fun t ->
+      if view_visible t id then t else show_hidden t id)
+;;
+
+(* [Request_view]: a named request to view [id], focused or not, as a signal. An
+   outcome's [show] then shows and focuses the view as [Focus_view] does, unless it is
+   focused already (a hidden view is signalled [Shown] after the input, as any newly
+   placed view is). *)
 let request_view t ~width ~height id request =
   if not (View_registry.installed t.views id)
   then workspace_notice t ~width ~height (view_unavailable t id)
@@ -2194,11 +2298,16 @@ let request_view t ~width ~height id request =
     | views, None ->
       workspace_notice { t with views } ~width ~height
         (sprintf "%s: nothing to do for %s" (view_title t id) request)
-    | views, Some outcome -> apply_signal_outcome { t with views } ~width ~height ~source:id outcome)
+    | views, Some outcome ->
+      let t = apply_signal_outcome { t with views } ~width ~height ~source:id outcome in
+      if outcome.show && not (View_id.equal (focused_view t ~width ~height) id)
+      then focus_view t ~width ~height id
+      else t)
 ;;
 
 (* In the major split, focus the split view or return to the active tab. *)
 let focus_other_pane t ~width ~height =
+  let t = leave_bare t in
   match View_registry.split t.views with
   | Some id when available t ~width ~height id ->
     let current = focused_view t ~width ~height in
@@ -2219,7 +2328,24 @@ let close_split t ~width ~height =
 ;;
 
 let apply_view_command t ~width ~height (view : View_command.t) =
+  let t = if Option.is_some t.theme_picker then return_to_document t else t in
+  let t = match view with
+    | Directory_major | Directory_side | Focus_directory | Toggle_directory -> leave_bare t
+    | _ -> t in
   match view with
+  | Toggle_bare ->
+    if bare t then { t with presentation = t.bare_return; rows = None }
+    else (
+      let previous = t.presentation in
+      let t = return_to_document (file_tab t) in
+      let session = session t in
+      let session = if Option.is_some (Session.active_id session)
+        then Session.focus_directory session false else session in
+      let t = { t with presentation = Bare; bare_return = previous
+        ; host = Host.return t.host; paste_buffer = None
+        ; file_picker_activation = false; content_picker_activation = false
+        ; rows = None; animation_time = None } in
+      adopt_session_state t session ~width ~height)
   | Present_buffers buffer_presentation ->
     { t with buffer_presentation; rows = None
       ; animation = Animation.create ~enabled:(Animation.enabled t.animation) }
@@ -2251,25 +2377,14 @@ let apply_view_command t ~width ~height (view : View_command.t) =
      | None, None -> t
      | None, Some id -> fst (close_buffer_state t ~width ~height id ~force:(View_command.equal view Force_close_tab)))
   | Open_palette -> open_palette t ~width ~height
+  | Open_theme_picker -> open_theme_picker t ~width ~height
   | Open_line_picker -> open_line_picker t ~width ~height
   | Open_file_picker -> { t with file_picker_activation = true }
   | Open_content_picker -> { t with content_picker_activation = true }
   | Focus_view id ->
     if not (View_registry.installed t.views id)
     then { t with host = Host.with_notice t.host (view_unavailable t id) }
-    else (
-      match View_registry.placement t.views id with
-      | Some Tab
-        when Option.exists (active_tab_view t) ~f:(View_id.equal id)
-             && View_id.equal (focused_view t ~width ~height) id ->
-        (* The focused view tab gives way to the active file tab. *)
-        return_to_document (file_tab t)
-      | Some Tab ->
-        toggle_focus t ~width ~height id ~show:(fun t ->
-          { t with tabs = Tab_strip.activate t.tabs (Some id); rows = None })
-      | Some (Hidden | Band | Split) | None ->
-        toggle_focus t ~width ~height id ~show:(fun t ->
-          if view_visible t id then t else show_hidden t id))
+    else focus_view t ~width ~height id
   | Toggle_view id ->
     if not (View_registry.installed t.views id)
     then t
@@ -2299,7 +2414,8 @@ let apply_view_command t ~width ~height (view : View_command.t) =
       animation = Animation.set_enabled t.animation (not (Animation.enabled t.animation))
     }
   | Toggle_hotkey_hints -> { t with hotkey_hints = not t.hotkey_hints }
-  | Toggle_zen -> { t with zen = not t.zen }
+  | Toggle_zen ->
+    { t with presentation = (if zen t then Workspace else Zen); rows = None }
   | Toggle_status ->
     { t with
       workspace_prefs =
@@ -2334,6 +2450,11 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     { t with
       workspace_prefs = { t.workspace_prefs with split = { split with status_size } }
     }
+  | Toggle_absolute_numbers when bare t ->
+    { t with bare_prefs = { line_numbers = Line_numbers.toggle_absolute t.bare_prefs.line_numbers } }
+  | Toggle_relative_numbers when bare t ->
+    { t with bare_prefs = { line_numbers = Line_numbers.toggle_relative t.bare_prefs.line_numbers } }
+  | Reset when bare t -> { t with bare_prefs = Presentation.Bare_prefs.default }
   | Toggle_centered
   | Shift _
   | Adjust_width _
@@ -2351,7 +2472,7 @@ let split_shown t ~width ~height =
    the split placement either way. [before] is whether it fit the last dimensions. *)
 let split_notice t ~before ~width ~height =
   match View_registry.split t.views, before with
-  | Some id, Some before when (not t.zen) && Bool.(before <> split_shown t ~width ~height) ->
+  | Some id, Some before when (not (suppress_workspace t)) && Bool.(before <> split_shown t ~width ~height) ->
     let text =
       if before
       then sprintf "%s split hidden: needs %d columns" (view_title t id) split_needs
@@ -2495,6 +2616,9 @@ let paste_capture t ~width ~height id text =
   then pane_notice t ~source:id (sprintf "%s closed; paste dropped" title)
   else (
     match t.palette with
+    | _ when View_id.equal id Theme_picker_tile.id ->
+      { t with theme_picker = Option.map t.theme_picker ~f:(fun picker ->
+          Theme_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text)) }
     | _ when View_id.equal id Content_picker_tile.id ->
       Option.iter t.content_picker ~f:(fun picker ->
         Content_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text));
@@ -2605,6 +2729,29 @@ let feed_palette t ~width ~height palette key =
 
 let route t ~width ~height key =
   match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id when View_id.equal id Theme_picker_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Theme_picker_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    let close t =
+      let previous = t.theme_picker_return in
+      let t = leave t Theme_picker_tile.id in
+      let host = Host.return t.host in
+      { t with host = (if available t ~width ~height previous
+        then Host.focus host previous else host) } in
+    (match decision, t.theme_picker with
+     | Return, _ -> close t, Controller.Status.Running
+     | Content (Event event), Some picker ->
+       { t with theme_picker = Some (Theme_picker_tile.update picker
+          ~rows:(minor_rows t ~width ~height id) event) }, Running
+     | Content Accept, Some picker ->
+       (match Theme_picker_tile.selected picker with
+        | None -> { t with host = Host.with_notice t.host "No matching theme" }, Running
+        | Some theme -> close { t with theme }, Running)
+     | Workspace command, _ -> apply_view_command (close t) ~width ~height command, Running
+     | Notice text, _ -> { t with host = Host.with_notice t.host text }, Running
+     | _ -> t, Running)
   | Some id when View_id.equal id Content_picker_tile.id ->
     let host, decision = Host.key t.host key
       ~lookup:(Keymap.lookup (Controller.keymap t.controller))
@@ -2987,7 +3134,7 @@ and apply_regular t ~width ~height (input : Input.t) =
     let before_workspace = t.workspace_prefs
     and before_focus = focused_view t ~width ~height
     and before_placements = View_registry.placements t.views
-    and before_zen = t.zen in
+    and before_presentation = t.presentation in
     let before_buffer = Session.context_id t.session in
     let t, status =
       match input with
@@ -3015,13 +3162,13 @@ and apply_regular t ~width ~height (input : Input.t) =
     let after = cursor_position t ~width ~height in
     let was_active = Animation.active t.animation in
     let animation =
-      if (not (Workspace.Prefs.equal before_workspace t.workspace_prefs))
+      if bare t || (not (Workspace.Prefs.equal before_workspace t.workspace_prefs))
           || not (Option.equal Buffer_id.equal before_buffer (Session.context_id t.session))
          || not
               ([%equal: (View_id.t * View_registry.Placement.t) list]
                  before_placements (View_registry.placements t.views))
          || not (View_id.equal before_focus (focused_view t ~width ~height))
-         || Bool.(before_zen <> t.zen)
+         || not (Presentation.equal before_presentation t.presentation)
       then Animation.create ~enabled:(Animation.enabled t.animation)
       else Animation.retarget t.animation ~from:before ~to_:after
     in
@@ -3110,7 +3257,7 @@ let activate_buffer t ~width ~height id =
     adopt_session (show_file_tab t) session ~width ~height)
 ;;
 let show_directory ?select t ~width ~height path =
-  Or_error.map (Session.show_directory ?select (session t) path) ~f:(fun session -> adopt_session t session ~width ~height)
+  Or_error.map (Session.show_directory ?select (session t) path) ~f:(fun session -> adopt_session (leave_bare t) session ~width ~height)
 ;;
 let close_buffer t ~width ~height id ~force =
   let t, closed = close_buffer_state t ~width ~height id ~force in

@@ -122,6 +122,22 @@ under "Shared tile direction — Major/minor roles and consumer-independent plum
   beside `GIT_TERMINAL_PROMPT=0`), so a continue or commit never waits on an editor
   the terminal cannot show.
 
+**Done in VCS workspace phase 8 (2026-10-31):** log and history browsing.
+- `l` asks `Ask.Popup` with `Git.Log.popup`; its answer sets the view's log scope
+  (`Ches_vcs.Log_scope`, part of every `Backend.Refresh.t`), drawn with the pure
+  `Ches_vcs.Graph`. The commit diff's file list, `}` / `{` and `Enter` on a listed
+  file are `Vcs_diff_text` (`Kind.Listed`, `file_starts`, `listed_file_at`) and
+  view keys. `Space g l` is `Request_view { view = vcs; request = "file-log" }`.
+- Generic seams it introduced, usable by any later view:
+  - `Ask.Popup.enabled` (and `Ask.Question.Popup.enabled`): the switches a popup
+    opens with (`Popup_tile.create ~enabled`), so a popup can remember a choice;
+    `[]` for every popup that remembers nothing.
+  - `Outcome.show`: show and focus the view after the rest of the outcome, through
+    the same path as `Focus_view` (a hidden view is placed where it opens and
+    signalled `Shown`; nothing when already focused). Honoured only from a
+    `Signal.Request` the user typed, so with `dispose` it is one of the two ways a
+    signal moves focus; keys, answers and other signals ignore it.
+
 **What is not done:**
 - Moving `Tile_shell` out of `ches_screen` into a library that dune keeps away from
   `ches_error`.

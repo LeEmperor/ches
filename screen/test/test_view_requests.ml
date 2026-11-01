@@ -18,7 +18,10 @@ let height = 16
    and opens it when the read finishes (a signalled [open_file]), [w] logs who has the
    editor's input ([Context.active]), [s] saves the note and submits a job that needs
    it, [d] disposes of it. Requests (signals): ["where"], ["save"] and ["drop"] do
-   the same as [w], [s] and [d]; any other is ignored. Its tab label counts its log. *)
+   the same as [w], [s] and [d]; any other is ignored. [Outcome.show]: the ["show"]
+   request answers with it, as do [v] (a key), the [y] answer to [a]'s question, and
+   the [Finished] of the job the ["show-later"] request submits (another signal).
+   It counts [Shown] signals. Its tab label counts its log. *)
 module Desk = struct
   let id = View_id.of_string "desk"
 
@@ -28,6 +31,8 @@ module Desk = struct
     ; version : int
     ; save_target : string option (** Instead of the note, for a failing save. *)
     ; reading : bool (** The next [Finished] is the read's: open the note. *)
+    ; showing : bool (** The next [Finished] answers with [show]. *)
+    ; shown : int (** [Shown] signals received. *)
     ; log : string list (** Newest first. *)
     }
   [@@deriving sexp_of]
@@ -38,6 +43,10 @@ module Desk = struct
     | Where of string
     | Save of string
     | Drop of string
+    | Show_me of string
+    | Ask_show
+    | Later
+    | Was_shown
     | Event of Event.t
 
   let note t = Filename.concat t.root "note.txt"
@@ -54,8 +63,9 @@ module Desk = struct
   ;;
 
   let perform t controller ~context ~rows:_ ~width:_ action =
-    let outcome ?notice ?open_file ?jobs ?save ?dispose () =
-      View_registry.Outcome.create ?notice ?open_file ?jobs ?save ?dispose controller
+    let outcome ?notice ?open_file ?jobs ?save ?dispose ?ask ?show () =
+      View_registry.Outcome.create ?notice ?open_file ?jobs ?save ?dispose ?ask ?show
+        controller
     in
     match action with
     | Open ->
@@ -72,12 +82,15 @@ module Desk = struct
       let t, job = job { t with version = t.version + 1; reading = true } in
       log t "read", outcome ~jobs:[ job ] ()
     | Event (Finished report) ->
-      let reading = t.reading in
+      let reading = t.reading
+      and showing = t.showing in
       let t =
-        log { t with reading = false }
+        log { t with reading = false; showing = false }
           (sprintf "finished%s" (if report.cancelled then " (never started)" else ""))
       in
-      if reading
+      if showing
+      then t, outcome ~show:true ()
+      else if reading
       then
         ( t
         , outcome
@@ -101,6 +114,18 @@ module Desk = struct
       , outcome ~save:[ Option.value t.save_target ~default:(note t) ] ~jobs:[ job ]
           ~notice:(`Post "Desk saved") () )
     | Drop why -> log t (sprintf "%s: drop" why), outcome ~dispose:[ note t ] ()
+    | Show_me why -> log t (sprintf "%s: show" why), outcome ~show:true ()
+    | Ask_show ->
+      ( t
+      , outcome
+          ~ask:
+            (View_registry.Ask.Confirm
+               { title = "Show"; message = "Show the desk?"; yes = Show_me "answer"; no = None })
+          () )
+    | Later ->
+      let t, job = job { t with showing = true } in
+      log t "later", outcome ~jobs:[ job ] ()
+    | Was_shown -> { t with shown = t.shown + 1 }, outcome ()
   ;;
 
   let interpret _ (keys : Key.t list) : action Ches_tile.Content_key.t =
@@ -112,6 +137,8 @@ module Desk = struct
        | Some 'w' -> Action (Where "key")
        | Some 's' -> Action (Save "key")
        | Some 'd' -> Action (Drop "key")
+       | Some 'v' -> Action (Show_me "key")
+       | Some 'a' -> Action Ask_show
        | _ -> Unbound)
     | _ -> Unbound
   ;;
@@ -120,8 +147,11 @@ module Desk = struct
     | Request "where" -> Some (Where "request")
     | Request "save" -> Some (Save "request")
     | Request "drop" -> Some (Drop "request")
+    | Request "show" -> Some (Show_me "request")
+    | Request "show-later" -> Some Later
     | Job event -> Some (Event event)
-    | Request _ | Shown | Saved _ -> None
+    | Shown -> Some Was_shown
+    | Request _ | Saved _ -> None
   ;;
 
   let adapter : (t, action) View_registry.Adapter.t =
@@ -167,6 +197,8 @@ let create ?(placement = View_registry.Placement.Hidden) ?save_target root =
          ; request 'w' "save"
          ; request 'd' "drop"
          ; request 'i' "polish"
+         ; request 'v' "show"
+         ; request 'l' "show-later"
          ; request ~view:absent 'a' "where"
          ; request ~view:(View_id.of_string "nowhere") 'n' "where"
          ])
@@ -176,7 +208,15 @@ let create ?(placement = View_registry.Placement.Hidden) ?save_target root =
   Ui_state.create ~tiles_visible:false
     ~views:
       [ View_registry.Entry.install ~placement ~opens_in:Tab Desk.adapter
-          { root; stamps = Stamps.create (); version = 0; save_target; reading = false; log = [] }
+          { root
+          ; stamps = Stamps.create ()
+          ; version = 0
+          ; save_target
+          ; reading = false
+          ; showing = false
+          ; shown = 0
+          ; log = []
+          }
       ; View_registry.Entry.unavailable absent ~title:"Absent" ~notice:"Absent unavailable here"
       ]
     (Controller.create ~keymap_config:{ Keymap.Config.default with normal = bindings } editor)
@@ -419,4 +459,80 @@ let%expect_test "dispose closes the buffer, deletes the file, and returns the us
       focused desk; tabs [a.txt *Desk (2)]; a.txt: "alpha\n" line 1
       disk (none)
       |}])
+;;
+
+let%expect_test "a request's show places a hidden view and focuses it; elsewhere ignored" =
+  let where_desk t =
+    let desk = Option.value_exn (View_registry.find (Ui_state.views t) Desk.key) in
+    sprintf "desk %s, shown %d"
+      (Sexp.to_string
+         [%sexp
+           (View_registry.placement (Ui_state.views t) Desk.id
+            : View_registry.Placement.t option)])
+      desk.shown
+  in
+  (* Hidden: placed where it opens (a tab), focused, and signalled [Shown]. *)
+  Fixture.with_repo (fun repo ->
+    let t = create repo.work in
+    let t = run t " kv" in
+    show t;
+    printf "%s; %s\n" (where_desk t) (message t);
+    print_log t;
+    [%expect {|
+      focused desk; tabs [a.txt *Desk (1)]; a.txt: "alpha\n" line 1
+      desk (Tab), shown 1; (none)
+      log: request: show
+      |}];
+    (* Focused already: nothing moves (a [Focus_view] would return to the document). *)
+    let t = run t " kv" in
+    show t;
+    [%expect {| focused desk; tabs [a.txt *Desk (2)]; a.txt: "alpha\n" line 1 |}]);
+  (* In the split, the document focused: the split pane is focused. *)
+  Fixture.with_repo (fun repo ->
+    let t = create ~placement:Split repo.work in
+    let t = run t " kv" in
+    show t;
+    printf "%s\n" (where_desk t);
+    [%expect {|
+      focused desk; tabs [*a.txt]; a.txt: "alpha\n" line 1
+      desk (Split), shown 1
+      |}]);
+  (* From a key and from an answer the view is focused, and stays so: [show] is not a
+     focus toggle there. *)
+  Fixture.with_repo (fun repo ->
+    let t = create ~placement:Tab repo.work in
+    let t = run t " vxv" in
+    show t;
+    let t = run t "ay" in
+    show t;
+    print_log t;
+    [%expect {|
+      focused desk; tabs [a.txt *Desk (1)]; a.txt: "alpha\n" line 1
+      focused desk; tabs [a.txt *Desk (2)]; a.txt: "alpha\n" line 1
+      log: key: show; answer: show
+      |}]);
+  (* From another signal (a job's report), hidden and in the split: nothing moves. *)
+  let later placement =
+    Fixture.with_repo (fun repo ->
+      let t = create ~placement repo.work in
+      let t = run t " kl" in
+      let t, jobs = Ui_state.take_vcs_jobs t in
+      let t =
+        Helpers.run ~width ~height t
+          (List.map jobs ~f:(fun job -> Ui_state.Input.Vcs (finished job)))
+      in
+      show t;
+      printf "%s\n" (where_desk t);
+      print_log t)
+  in
+  later Hidden;
+  later Split;
+  [%expect {|
+    focused document; tabs [*a.txt]; a.txt: "alpha\n" line 1
+    desk (Hidden), shown 0
+    log: later; finished
+    focused document; tabs [*a.txt]; a.txt: "alpha\n" line 1
+    desk (Split), shown 1
+    log: later; finished
+    |}]
 ;;

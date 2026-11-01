@@ -4,6 +4,18 @@ open Ches_input
 
 let keys = Key_notation.keys
 
+let%test_unit "Space v T opens themes only in Normal and does not take a count" =
+  let feed mode text =
+    List.fold (keys text) ~init:(Keymap.create Keymap.Config.default, [])
+      ~f:(fun (keymap, actions) input ->
+        let keymap, next = Keymap.feed keymap ~mode input in keymap, actions @ next)
+    |> snd in
+  assert ([%equal: Keymap.Action.t list] (feed Normal " vT") [ View Open_theme_picker ]);
+  assert (not (List.exists (feed Insert " vT") ~f:(function
+    | View Open_theme_picker -> true | _ -> false)));
+  assert (Option.is_none (View_command.scale Open_theme_picker ~count:3))
+;;
+
 type session =
   { editor : Editor.t
   ; keymap : Keymap.t
@@ -61,6 +73,105 @@ let show { editor; keymap } =
   String.prefix text cursor ^ "|" ^ String.drop_prefix text cursor
   |> String.split ~on:'\n'
   |> List.iter ~f:(fun line -> print_endline ("> " ^ line))
+;;
+
+(* Check routing independently of dispatch: the caller supplies the current mode. *)
+let route_keys ?(config = Keymap.Config.default) ~mode inputs =
+  List.fold inputs ~init:(Keymap.create config, []) ~f:(fun (keymap, actions) input ->
+    let keymap, next = Keymap.feed keymap ~mode input in
+    keymap, actions @ next)
+;;
+
+let%test_unit "line shifts are counted configurable complete bindings" =
+  let check ?(config = Keymap.Config.default) notation expected =
+    let keymap, actions = route_keys ~config ~mode:Normal (keys notation) in
+    assert ([%equal: Keymap.Action.t list] actions expected);
+    assert (Option.is_none (Keymap.pending keymap));
+    assert (Option.is_none (Keymap.notice keymap))
+  in
+  ignore (Bindings.create (Bindings.to_list Bindings.default) |> ok_exn : Bindings.t);
+  check "3>><<999999>>"
+    [ Editor (Shift_lines { right = true; count = 3 })
+    ; Editor (Shift_lines { right = false; count = 1 })
+    ; Editor (Shift_lines { right = true; count = 999999 })
+    ];
+  let normal =
+    Bindings.create
+      [ [ Key.char 's' ], Shift_lines { right = true }
+      ; [ Key.char 'g'; Key.char 's' ], Shift_lines { right = false }
+      ]
+    |> ok_exn
+  in
+  check ~config:{ Keymap.Config.default with normal } "4s2gs>"
+    [ Editor (Shift_lines { right = true; count = 4 })
+    ; Editor (Shift_lines { right = false; count = 2 })
+    ]
+;;
+
+let%test_unit "shift prefixes show counts and cancel without leaking state" =
+  let keymap, actions = route_keys ~mode:Normal (keys "3>") in
+  assert (List.is_empty actions);
+  [%test_eq: string option] (Keymap.pending keymap) (Some "3 >");
+  List.iter
+    [ Keymap.Input.Key Escape; Key (Ctrl 'c'); Paste ">"; Key (Key.char 'j') ]
+    ~f:(fun input ->
+      let keymap, actions = Keymap.feed keymap ~mode:Normal input in
+      assert (List.is_empty actions);
+      assert (Option.is_none (Keymap.pending keymap));
+      let keymap, actions = Keymap.feed keymap ~mode:Normal (Key (Key.char 'j')) in
+      assert ([%equal: Keymap.Action.t list] actions [ Editor (Move { motion = Down; count = None }) ]);
+      assert (Option.is_none (Keymap.notice keymap)));
+  let keymap, actions = route_keys ~mode:Normal (keys "2<") in
+  assert (List.is_empty actions);
+  [%test_eq: string option] (Keymap.pending keymap) (Some "2 <");
+  let keymap = Keymap.reset keymap in
+  assert (Option.is_none (Keymap.pending keymap));
+  let keymap, actions = route_keys ~mode:Normal (keys "1000000") in
+  assert (List.is_empty actions);
+  assert (Option.is_none (Keymap.pending keymap));
+  assert (Option.is_some (Keymap.notice keymap))
+;;
+
+let%test_unit "Visual shifts count steps in every selection kind and respect pending finds" =
+  List.iter [ `Characterwise; `Linewise; `Blockwise ] ~f:(fun kind ->
+    let _, actions = route_keys ~mode:(Visual kind) (keys "3><") in
+    assert ([%equal: Keymap.Action.t list] actions
+      [ Editor (Visual_shift { right = true; count = 3 })
+      ; Editor (Visual_shift { right = false; count = 1 })
+      ]);
+    let _, actions = route_keys ~mode:(Visual kind) (keys "2<Esc>>f<") in
+    assert ([%equal: Keymap.Action.t list] actions
+      [ Editor Exit_visual
+      ; Editor (Visual_shift { right = true; count = 1 })
+      ; Editor (Move { motion = Find { target = Uchar.of_char '<'; direction = Forward; till = false }; count = None })
+      ]))
+;;
+
+let%test_unit "Insert shifts interrupt escape chords and paste stays literal" =
+  List.iter [ Keymap.Config.Spaces 8; Literal_tab ] ~f:(fun tab ->
+    let config = { Keymap.Config.default with tab; insert_escape = Some ('a', 'b') } in
+    let keymap, actions = route_keys ~config ~mode:Insert
+        (keys "a<C-t>b<C-d>" @ [ Keymap.Input.Paste "jk\020\004>><<" ] @ keys "b") in
+    assert ([%equal: Keymap.Action.t list] actions
+      [ Editor (Insert_text "a")
+      ; Editor (Insert_shift { right = true })
+      ; Editor (Insert_text "b")
+      ; Editor (Insert_shift { right = false })
+      ; Editor (Insert_text "jk\020\004>><<")
+      ; Editor (Insert_text "b")
+      ]);
+    assert (Option.is_none (Keymap.pending keymap)))
+;;
+
+let%test_unit "bare mode uses uppercase B and preserves the problems shortcut" =
+  let keymap, actions = route_keys ~mode:Normal (keys " vB vb") in
+  assert ([%equal: Keymap.Action.t list] actions
+    [ View Toggle_bare; View (Toggle_view (View_id.of_string "problems")) ]);
+  assert (Option.is_none (Keymap.pending keymap));
+  let keymap, actions = route_keys ~mode:Normal (keys "2 vB") in
+  assert (List.is_empty actions);
+  assert (Option.is_none (Keymap.pending keymap));
+  assert (Option.is_some (Keymap.notice keymap))
 ;;
 
 let%expect_test "Visual bindings select, cancel, and apply a selection" =
@@ -1821,8 +1932,8 @@ let%expect_test "conflict keys: ] n and [ n are counted moves, Space x keeps a s
     |}]
 ;;
 
-let%expect_test "Space g places and focuses the VCS view; g c and g a are its commit requests" =
-  (* Every default binding under Space g: the five workspace keys and the two requests. *)
+let%expect_test "Space g places and focuses the VCS view; g c, g a and g l are its requests" =
+  (* Every default binding under Space g: the five workspace keys and the three requests. *)
   List.iter (Bindings.to_list Bindings.default) ~f:(fun (sequence, target) ->
     if List.is_prefix sequence ~prefix:[ Key.char ' '; Key.char 'g' ] ~equal:Key.equal
     then
@@ -1838,6 +1949,7 @@ let%expect_test "Space g places and focuses the VCS view; g c and g a are its co
     Space g h  (View(Place_view(view(vcs))(placement Hidden)))
     Space g c  (View(Request_view(view vcs)(request commit-finish)))
     Space g a  (View(Request_view(view vcs)(request commit-abort)))
+    Space g l  (View(Request_view(view vcs)(request file-log)))
     |}];
   let t = run (create "abc") (keys " g") in
   show_position t;
@@ -1863,6 +1975,13 @@ let%expect_test "Space g places and focuses the VCS view; g c and g a are its co
   show_position t;
   [%expect {|
     (View(Request_view(view vcs)(request commit-abort)))
+    NORMAL 0:0
+    |}];
+  (* A file's history (phase 8): a request too. *)
+  let t = run t (keys " gl") in
+  show_position t;
+  [%expect {|
+    (View(Request_view(view vcs)(request file-log)))
     NORMAL 0:0
     |}];
   (* Placement commands take no count. *)

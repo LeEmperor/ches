@@ -34,6 +34,7 @@ let command =
        line at the middle/top/bottom.\n\
        Space v c/h/l/H/L/-/+/r: toggle centering, move, resize, reset the layout;\n\
          Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor (off by default; --smear opts in);\n\
+          Space v T chooses a theme with live preview (Enter accepts; Escape restores).\n\
         Space v t toggles status; Space v p h/l/k/j places it, p -/+ sizes it;\n\
          Space v z toggles zen; Space v e cycles retained problems; idle Escape acknowledges.\n\
          Space v b toggles the problems preview; Space v f filters workspace/current document;\n\
@@ -55,7 +56,16 @@ let command =
          `dune build --watch`. For .sv, .svh, .v, or .vh, ches runs slang-server\n\
          from PATH, rooted at .slang, then .git, else PATH's directory. Configure it\n\
           in .slang/server.json. Space v R restarts all managed servers; --no-lsp disables them.")
-    (let%map_open.Command path = anon ("PATH" %: Filename_unix.arg_type)
+    (let%map_open.Command path = anon (maybe ("PATH" %: Filename_unix.arg_type))
+      and list_themes = flag "--list-themes" no_arg
+        ~doc:" List theme IDs, titles and dark/light kinds without opening the editor"
+      and theme = flag "--theme"
+        (optional_with_default Ches_theme.Theme.default
+           (Command.Arg_type.create (fun name ->
+              match Ches_theme.Theme.find name with
+              | Some theme -> theme
+              | None -> failwithf "Unknown theme %S; use --list-themes for available IDs" name ())))
+        ~doc:"NAME Initial color theme (default crimson; Space v T chooses at runtime)"
      and demo_problems = flag "--demo-problems" no_arg
        ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"
      and demo_diagnostics = flag "--demo-diagnostics" no_arg
@@ -66,6 +76,8 @@ let command =
         ~doc:" Do not run a language server (ocamllsp or slang-server)"
      and smear_enabled = flag "--smear" no_arg
        ~doc:" Enable the animated smear cursor (default off; Space v s toggles)"
+     and bare = flag "--bare" no_arg
+       ~doc:" Start borderless with transient feedback only (Space v B toggles)"
      and demo_report = flag "--demo-report" no_arg
        ~doc:" Install a static, error-free report view for manual tile testing"
      and buffer_presentation = flag "--buffers"
@@ -82,7 +94,17 @@ let command =
        in
        (* Bonsai_term reads keys from stdin; without a terminal there it fails with a
           long message meant for its developers. *)
-       if not (Core_unix.isatty Core_unix.stdin)
+        if list_themes then (
+          List.iter Ches_theme.Theme.all ~f:(fun theme ->
+            printf "%s\t%s\t%s\n" (Ches_theme.Theme.id theme)
+              (Ches_theme.Theme.title theme)
+              (match Ches_theme.Theme.kind theme with Dark -> "dark" | Light -> "light"));
+          return ())
+        else
+        let%bind path = match path with
+          | Some path -> return path
+          | None -> fail (Error.of_string "PATH is required when editing (use --list-themes to list themes)") in
+        if not (Core_unix.isatty Core_unix.stdin)
        then fail (Error.of_string "standard input is not a terminal")
        else (
          match
@@ -109,7 +131,7 @@ let command =
            (* One runner for the VCS view's git commands (Space g g); it inherits this
               process's environment and never prompts on the terminal. *)
            let vcs = Ches_ui.Vcs_host.create () in
-            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~buffer_presentation ?report ?source ~vcs controller with
+            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~bare ~theme ~buffer_presentation ?report ?source ~vcs controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

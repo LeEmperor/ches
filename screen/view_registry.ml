@@ -29,6 +29,7 @@ module Ask = struct
         }
     | Popup of
         { popup : 'action Ches_vcs.Popup.t
+        ; enabled : string list
         ; cancel : 'action option
         }
 
@@ -43,13 +44,17 @@ module Ask = struct
           ; initial : string
           ; validate : string -> string option
           }
-      | Popup of unit Ches_vcs.Popup.t
+      | Popup of
+          { popup : unit Ches_vcs.Popup.t
+          ; enabled : string list
+          }
   end
 
   let question : _ t -> Question.t = function
     | Confirm { title; message; _ } -> Confirm { title; message }
     | Prompt { title; initial; validate; _ } -> Prompt { title; initial; validate }
-    | Popup { popup; _ } -> Popup (Ches_vcs.Popup.map popup ~f:(fun _ -> ()))
+    | Popup { popup; enabled; _ } ->
+      Popup { popup = Ches_vcs.Popup.map popup ~f:(fun _ -> ()); enabled }
   ;;
 end
 
@@ -116,6 +121,7 @@ module Outcome = struct
     ; save : string list
     ; dispose : string list
     ; ask : 'ask option
+    ; show : bool
     }
 
   let create
@@ -128,9 +134,21 @@ module Outcome = struct
         ?(save = [])
         ?(dispose = [])
         ?ask
+        ?(show = false)
         controller
     =
-    { controller; effect; notice; return; open_file; jobs; reconcile; save; dispose; ask }
+    { controller
+    ; effect
+    ; notice
+    ; return
+    ; open_file
+    ; jobs
+    ; reconcile
+    ; save
+    ; dispose
+    ; ask
+    ; show
+    }
   ;;
 end
 
@@ -450,7 +468,7 @@ let answer t id (answer : Answer.t) ~controller ~context ~rows ~width =
       | Some (Prompt { validate; accept; _ }), Text text ->
         if Option.is_some (validate text) then `Keep else `Perform (Some (accept text))
       | Some (Prompt { cancel; _ }), (Yes | No | Choose _) -> `Perform cancel
-      | Some (Popup { popup; cancel }), Choose { key; enabled } ->
+      | Some (Popup { popup; cancel; _ }), Choose { key; enabled } ->
         (match
            List.find popup.actions ~f:(fun (action : _ Ches_vcs.Popup.Action.t) ->
              Char.equal action.key key)

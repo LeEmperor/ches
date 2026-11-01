@@ -3,8 +3,8 @@ open Bonsai_term
 open Bonsai.Let_syntax
 open Ches_screen
 
-let draw_span ?font ({ text; width; style } : Frame.Span.t) =
-  let attrs = Theme.attrs ?font style in
+let draw_span ?theme ?font ({ text; width; style } : Frame.Span.t) =
+  let attrs = Theme.attrs ?theme ?font style in
   let view = View.text ~attrs text in
   let drawn = View.width view in
   if drawn = width
@@ -14,7 +14,7 @@ let draw_span ?font ({ text; width; style } : Frame.Span.t) =
   else View.hcat [ view; View.rectangle ~attrs ~width:(width - drawn) ~height:1 () ]
 ;;
 
-let draw_smear ?font (frame : Frame.t) =
+let draw_smear ?theme ?font (frame : Frame.t) =
   let cells = List.sort frame.smear ~compare:(fun (x1, y1) (x2, y2) -> [%compare: int * int] (y1, x1) (y2, x2)) in
   match cells with
   | [] -> View.none
@@ -27,7 +27,7 @@ let draw_smear ?font (frame : Frame.t) =
         | (x, _) :: rest ->
           let gap = Int.max 0 (x - previous_x) in
           View.transparent_rectangle ~width:gap ~height:1
-          :: View.text ~attrs:(Theme.attrs ?font Smear) "█"
+          :: View.text ~attrs:(Theme.attrs ?theme ?font Smear) "█"
           :: loop (x + 1) rest
       in
       View.hcat (loop 0 cells)
@@ -40,18 +40,18 @@ let draw_smear ?font (frame : Frame.t) =
          View.transparent_rectangle ~width:0 ~height:(Int.max 0 (y - previous_y - 1)) :: [ row_view row ]))
 ;;
 
-let draw_base ?font (frame : Frame.t) =
+let draw_base ?theme ?font (frame : Frame.t) =
   View.vcat
     (List.map frame.rows ~f:(fun spans ->
-       View.hcat (List.map spans ~f:(draw_span ?font))))
+       View.hcat (List.map spans ~f:(draw_span ?theme ?font))))
 ;;
 
-let draw_overlay ?font ~base frame =
-  View.zcat [ draw_smear ?font frame; base ]
+let draw_overlay ?theme ?font ~base frame =
+  View.zcat [ draw_smear ?theme ?font frame; base ]
 ;;
 
-let draw ?font frame =
-  draw_overlay ?font ~base:(draw_base ?font frame) frame
+let draw ?theme ?font frame =
+  draw_overlay ?theme ?font ~base:(draw_base ?theme ?font frame) frame
 ;;
 
 let cursor (frame : Frame.t) : Cursor.t option =
@@ -80,7 +80,7 @@ module Content_picker_host = struct
     }
 end
 
-let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let app ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
@@ -111,10 +111,11 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?vcs ?font
     | Some _, Some _ -> invalid_arg "Only one initial picker host is allowed"
     | Some host, None -> host.Content_picker_host.initial_ui
     | None, Some host -> host.File_picker_host.initial_ui
-    | None, None -> Ui_state.create ~smear_enabled ?buffer_presentation ?report
+    | None, None -> Ui_state.create ~smear_enabled ?bare ?theme ?buffer_presentation ?report
         ~source_attached:(Option.is_some source) ~views:[ vcs_entry ] controller in
   let current_ui = ref initial_ui in
   let render_cache = Frame.Cache.create () in
+  let last_drawn_theme = ref None in
   let synchronized_dimensions = ref None in
   let preview = Ches_file_preview.Provider.create ~buffer:(fun ~path ->
     Ches_file_preview.Buffer_snapshot.lookup (Ui_state.session !current_ui) ~path) () in
@@ -391,7 +392,12 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?vcs ?font
   let rendered =
     let%arr model
     and { Dimensions.width; height } = dimensions in
-    Frame.Cache.get render_cache model ~width ~height ~draw_base:(draw_base ?font)
+    let theme = Ui_state.theme model in
+    if not (Option.equal Ches_theme.Theme.equal !last_drawn_theme (Some theme))
+    then (
+      Frame.Cache.invalidate render_cache;
+      last_drawn_theme := Some theme);
+    Frame.Cache.get render_cache model ~width ~height ~draw_base:(draw_base ~theme ?font)
   in
   let frame = let%arr frame, _ = rendered in frame in
   let set_cursor = Effect.set_cursor graph in
@@ -400,8 +406,9 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?vcs ?font
      set_cursor (cursor frame))
     graph;
   let view =
-    let%arr frame, base = rendered in
-    draw_overlay ?font ~base frame
+    let%arr frame, base = rendered
+    and model in
+    draw_overlay ~theme:(Ui_state.theme model) ?font ~base frame
   in
   let handler =
     let%arr inject in
@@ -413,7 +420,7 @@ let app ?(smear_enabled = false) ?buffer_presentation ?report ?source ?vcs ?font
   ~view, ~handler
 ;;
 
-let run ?(smear_enabled = false) ?font ?buffer_presentation ?report ?source ?vcs controller =
+let run ?(smear_enabled = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
@@ -430,7 +437,7 @@ let run ?(smear_enabled = false) ?font ?buffer_presentation ?report ?source ?vcs
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-        (app ~smear_enabled ?buffer_presentation ?report ?source ?vcs ?font controller))
+        (app ~smear_enabled ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
     ~f:(fun result ->
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;

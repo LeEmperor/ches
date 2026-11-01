@@ -3,7 +3,7 @@
 # reaches the screen, the cursor, the files written, and the terminal state left for
 # the shell. See README.md, "Terminal smoke test".
 #
-# Usage: scripts/smoke.sh [--palette-only|--line-picker-only|--lsp-only] [PATH-TO-CHES]
+# Usage: scripts/smoke.sh [--bare-only|--palette-only|--line-picker-only|--lsp-only] [PATH-TO-CHES]
 #        (default: _build/default/bin/ches.exe)
 #
 # Needs tmux (tested with 3.4) and a UTF-8 locale. Run `dune build` first. It uses a
@@ -17,8 +17,14 @@ set -u
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 palette_only=false
+bare_only=false
 line_only=false
 lsp_only=false
+if [ "${1:-}" = --bare-only ]; then
+  palette_only=true
+  bare_only=true
+  shift
+fi
 if [ "${1:-}" = --lsp-only ]; then
   palette_only=true
   lsp_only=true
@@ -232,6 +238,253 @@ t new-session -d -s "$session" -x 80 -y 24 \
 t set -g window-size manual
 t set -g default-terminal tmux-256color
 shell "cd $work"
+
+if [ "$palette_only" = false ] || [ "$bare_only" = true ]; then
+# ---------------------------------------------------------------------------
+section "CLI bare startup, indentation bytes, undo and terminal restoration"
+resize 120 40
+printf 'alpha\nbeta\ngamma\ndelta\n' > "$work/bare.original"
+cp "$work/bare.original" "$work/bare.txt"
+# Unlike launch(), do not hide tiles or configure numbers: verify --bare itself.
+shell "clear; stty -g > $work/stty.before"
+type_text "$ches --bare --no-lsp bare.txt"
+keys Enter
+if poll alternate_is 1; then ok "launched ches --bare"; else fail "--bare did not start"; fi
+expect_cursor "0 0 1"
+
+row_is() { [ "$(row "$1")" = "$2" ]; }
+expect_row() {
+  if poll row_is "$1" "$2"; then ok "row $1 is '$2'";
+  else fail "row $1 differs from '$2'"; fi
+}
+expect_bare_chrome() {
+  expect_no_screen '╭'
+  expect_no_screen '╰'
+  expect_no_screen '│'
+  expect_no_screen 'NORMAL'
+  expect_no_screen 'bare.txt'
+  expect_no_screen 'Problems ('
+  expect_no_screen 'History:'
+  expect_row 39 ""
+}
+save_bare_bytes() {
+  keys Space w
+  if poll cmp -s "$work/bare.txt" "$1"; then
+    expect_file "$work/bare.txt" "$1"
+  else
+    fail "bare save did not produce $(basename "$1")"
+  fi
+}
+expect_row 0 alpha
+expect_row 1 beta
+expect_bare_chrome
+save_screen "bare-startup"
+
+# One step vs counted logical lines; each is an independent undo transaction.
+keys '>' '>'
+expect_row 0 '  alpha'
+printf '  alpha\nbeta\ngamma\ndelta\n' > "$work/bare.once"
+save_bare_bytes "$work/bare.once"
+keys 3 '>' '>'
+expect_row 0 '    alpha'
+expect_row 1 '  beta'
+expect_row 2 '  gamma'
+printf '    alpha\n  beta\n  gamma\ndelta\n' > "$work/bare.counted"
+save_bare_bytes "$work/bare.counted"
+keys u
+expect_row 0 '  alpha'
+save_bare_bytes "$work/bare.once"
+keys u
+expect_row 0 alpha
+save_bare_bytes "$work/bare.original"
+
+# Counts in Visual are indentation steps, in all three selection kinds.
+printf '    alpha\n    beta\ngamma\ndelta\n' > "$work/bare.visual-two"
+printf '  alpha\n  beta\ngamma\ndelta\n' > "$work/bare.visual-one"
+for kind in V v C-v; do
+  # Move inside beta: a characterwise selection ending exactly at its start does
+  # not include that line's contents under the editor's half-open range contract.
+  keys g g 0 "$kind" j l 2 '>'
+  expect_row 0 '    alpha'
+  expect_row 1 '    beta'
+  save_bare_bytes "$work/bare.visual-two"
+  keys g g 0 V j '<'
+  expect_row 0 '  alpha'
+  save_bare_bytes "$work/bare.visual-one"
+  keys u u
+  expect_row 0 alpha
+  expect_row 1 beta
+  save_bare_bytes "$work/bare.original"
+done
+
+# Ctrl-t/Ctrl-d modify indentation rather than inserting control bytes. The whole
+# Insert session, including shifts and text, remains a single undo/redo unit.
+keys g g 0 i C-t C-t C-d Z Escape
+expect_row 0 '  Zalpha'
+printf '  Zalpha\nbeta\ngamma\ndelta\n' > "$work/bare.insert"
+save_bare_bytes "$work/bare.insert"
+keys u
+expect_row 0 alpha
+save_bare_bytes "$work/bare.original"
+keys C-r
+expect_row 0 '  Zalpha'
+save_bare_bytes "$work/bare.insert"
+keys u
+expect_row 0 alpha
+save_bare_bytes "$work/bare.original"
+keys g g 0 l h
+expect_cursor "0 0 1"
+expect_bare_chrome
+
+section "bare palette float and retained workspace restoration"
+keys Space c c
+expect_screen '╭─ Commands ─'
+type_text 'bare'
+expect_screen '> Toggle bare mode'
+expect_screen 'Space v B'
+expect_cursor "28 14 1"
+save_screen "bare-palette"
+keys Escape
+expect_cursor "0 0 1"
+expect_row 0 alpha
+expect_bare_chrome
+# Execute the discoverable command to leave bare, then configure a visibly distinct
+# workspace. Reenter/leave using the key binding and compare the retained layout.
+keys Space c c
+type_text 'bare'
+keys Enter
+expect_screen '╭─ Status ─'
+expect_screen 'Problems (workspace): 0/0'
+expect_screen 'History:'
+keys Space v p h Space v n
+expect_screen 'Line numbers: absolute'
+keys g g 0 l h
+expect_cursor_row alpha
+workspace_top=$(row 0)
+workspace_cursor=$(cursor)
+save_screen "bare-workspace-before"
+keys Space v B
+expect_cursor "0 0 1"
+# Clear the toggle's transient feedback, leaving a quiet bottom row again.
+keys l h
+expect_bare_chrome
+save_screen "bare-toggled"
+keys Space v B
+expect_screen '╭─ Status ─'
+expect_screen 'Problems (workspace): 0/0'
+expect_screen 'History:'
+keys l h
+expect_row 0 "$workspace_top"
+expect_cursor "$workspace_cursor"
+save_screen "bare-workspace-restored"
+keys Space v B l h
+expect_cursor "0 0 1"
+expect_bare_chrome
+
+section "bare line-number styles, palette, resize and profile isolation"
+# The numbered workspace above must not seed the bare profile. Exercise both
+# independent bits away from line 1, where absolute and relative labels differ.
+expect_row 0 alpha
+keys 2 j l Space v n
+expect_screen 'Line numbers: absolute'
+expect_cursor "5 2 1"
+expect_row 0 '  1 alpha'
+expect_row 2 '  3 gamma'
+keys Space v N
+expect_screen 'Line numbers: hybrid'
+expect_cursor "5 2 1"
+expect_row 0 '  2 alpha'
+expect_row 2 '3   gamma'
+keys Space v n
+expect_screen 'Line numbers: relative'
+expect_cursor "5 2 1"
+expect_row 1 '  1 beta'
+expect_row 2 '  0 gamma'
+keys Space v N
+expect_screen 'Line numbers: off'
+expect_cursor "1 2 1"
+expect_row 0 alpha
+expect_row 2 gamma
+
+# Palette commands must change the active bare profile, without leaving Bare.
+keys Space c c
+type_text 'absolute line numbers'
+expect_screen '> Toggle absolute line numbers'
+keys Enter
+expect_screen 'Line numbers: absolute'
+expect_cursor "5 2 1"
+expect_row 2 '  3 gamma'
+keys Space v N l h
+expect_cursor "5 2 1"
+expect_row 2 '3   gamma'
+expect_bare_chrome
+save_screen "bare-numbers-hybrid"
+
+# Moving renumbers the neighbors without shifting the text or cursor column.
+keys k
+expect_cursor "5 1 1"
+expect_row 0 '  1 alpha'
+expect_row 1 '2   beta'
+expect_row 3 '  2 delta'
+resize 10 6
+expect_cursor "1 1 1"
+expect_row 0 alpha
+expect_row 1 beta
+expect_row 2 gamma
+save_screen "bare-numbers-small"
+resize 120 40
+expect_cursor "5 1 1"
+expect_row 0 '  1 alpha'
+expect_row 1 '2   beta'
+expect_row 3 '  2 delta'
+expect_bare_chrome
+
+# Bare's palette/key changes must leave the saved workspace style and layout
+# intact. Change workspace in turn, then check Bare retained its own hybrid.
+keys g g 0 Space v B l h
+expect_cursor "$workspace_cursor"
+expect_row 0 "$workspace_top"
+expect_cursor_row '│    1 alpha'
+expect_screen '╭─ Status ─'
+expect_screen 'Problems (workspace): 0/0'
+expect_screen 'History:'
+keys Space v n Space v N
+expect_screen 'Line numbers: relative'
+keys l h
+expect_cursor "$workspace_cursor"
+expect_cursor_row '│    0 alpha'
+workspace_relative_top=$(row 0)
+keys Space v B l h
+expect_cursor "4 0 1"
+expect_row 0 '1   alpha'
+expect_row 2 '  2 gamma'
+expect_bare_chrome
+
+# Reset is local to Bare: it clears the gutter and keeps the bare shell, while
+# the workspace's newly saved relative numbers and placement survive.
+keys Space v r l h
+expect_cursor "0 0 1"
+expect_row 0 alpha
+expect_row 1 beta
+expect_bare_chrome
+keys Space v B l h
+expect_cursor "$workspace_cursor"
+expect_row 0 "$workspace_relative_top"
+expect_cursor_row '│    0 alpha'
+expect_screen '╭─ Status ─'
+expect_screen 'Problems (workspace): 0/0'
+expect_screen 'History:'
+keys Space v B l h
+expect_cursor "0 0 1"
+expect_row 0 alpha
+expect_row 1 beta
+expect_bare_chrome
+save_screen "bare-numbers-reset"
+keys Space q
+expect_exit 0
+expect_file "$work/bare.txt" "$work/bare.original"
+resize 80 24
+fi
 
 if [ "$palette_only" = false ] || [ "$lsp_only" = true ]; then
 if [ "$lsp_only" = false ]; then
@@ -1825,7 +2078,7 @@ fi
 fi
 
 # ---------------------------------------------------------------------------
-if [ "$line_only" = false ] && [ "$lsp_only" = false ]; then section "floating command palette (Space c c)"; fi
+if [ "$line_only" = false ] && [ "$lsp_only" = false ] && [ "$bare_only" = false ]; then section "floating command palette (Space c c)"; fi
 # The shell's corner cells prove placement independently of document geometry.
 palette_is() {
   local x=$1 y=$2 width=$3 height=$4 top bottom
@@ -1847,7 +2100,7 @@ expect_restored() {
   if poll screen_matches "$1"; then ok "covered workspace restored exactly";
   else fail "workspace differs after closing the palette"; fi
 }
-if [ "$line_only" = false ] && [ "$lsp_only" = false ]; then
+if [ "$line_only" = false ] && [ "$lsp_only" = false ] && [ "$bare_only" = false ]; then
 resize 80 24
 printf 'one\ntwo\nthree\n' > "$work/palette.txt"
 cp "$work/palette.txt" "$work/palette.expected"
@@ -1945,13 +2198,13 @@ save_screen "palette-workspace-after"
 keys Space c c
 type_text 'tile'
 keys Tab Tab Tab Tab BTab
-expect_screen "4/19 ─"
+expect_screen "4/20 ─"
 expect_palette 20 13 80 14
 resize 50 12
 expect_palette 1 1 48 10
 expect_cursor "9 2 1"
 expect_screen "│ > tile"
-expect_screen "4/19 ─"
+expect_screen "4/20 ─"
 save_screen "palette-resize-clamped"
 resize 14 4
 expect_palette 0 0 14 4
@@ -1959,7 +2212,7 @@ expect_cursor "7 1 1"
 save_screen "palette-minimum"
 resize 120 40
 expect_palette 20 13 80 14
-expect_screen "4/19 ─"
+expect_screen "4/20 ─"
 expect_screen "│ > tile"
 save_screen "palette-resize-restored"
 resize 120 3

@@ -503,17 +503,52 @@ let log ?(cut = false) text =
     (Log.parse ~cut text)
 ;;
 
-let%expect_test "Log.command" =
-  print_s [%sexp (Exec.Spec.argv (Log.command ~cwd:"/w" ~limit:200) : string list)];
+let%expect_test "Log.command: each scope" =
+  let command (scope : Log_scope.t) =
+    print_s [%sexp (Exec.Spec.argv (Log.command ~cwd:"/w" scope) : string list)]
+  in
+  let default = Log_scope.default in
+  command default;
+  command { default with range = Branch "feature/x"; limit = 400 };
+  command { default with range = All };
+  command { default with merges = false; first_parent = true };
+  command { default with graph = false; first_parent = true };
+  command { default with path = Some "src/a*.ml" };
+  command { default with range = Branch "main"; path = Some "-f"; merges = false };
   print_s
     [%sexp
-      (Or_error.try_with (fun () -> Log.command ~cwd:"/w" ~limit:0) |> Result.is_error
+      (Or_error.try_with (fun () -> Log.command ~cwd:"/w" { default with limit = 0 })
+       |> Result.is_error
        : bool)];
-  [%expect
-    {|
-    (git --no-pager -c color.ui=false -c core.quotepath=false log -z --no-color
-     --no-show-signature --max-count=200
-     --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s HEAD --)
+  [%expect {|
+    (git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs
+     log -z --no-color --no-show-signature --decorate=short --max-count=200
+     --topo-order --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s
+     --end-of-options HEAD --)
+    (git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs
+     log -z --no-color --no-show-signature --decorate=short --max-count=400
+     --topo-order --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s
+     --end-of-options refs/heads/feature/x --)
+    (git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs
+     log -z --no-color --no-show-signature --decorate=short --max-count=200
+     --topo-order --branches --remotes
+     --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s --end-of-options HEAD --)
+    (git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs
+     log -z --no-color --no-show-signature --decorate=short --max-count=200
+     --no-merges --first-parent
+     --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s --end-of-options HEAD --)
+    (git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs
+     log -z --no-color --no-show-signature --decorate=short --max-count=200
+     --first-parent --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s
+     --end-of-options HEAD --)
+    (git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs
+     log -z --no-color --no-show-signature --decorate=short --max-count=200
+     --follow --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s --end-of-options
+     HEAD -- src/a*.ml)
+    (git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs
+     log -z --no-color --no-show-signature --decorate=short --max-count=200
+     --no-merges --follow --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s
+     --end-of-options refs/heads/main -- -f)
     true
     |}]
 ;;
@@ -521,45 +556,48 @@ let%expect_test "Log.command" =
 let two_commits =
   "a757577ac7f79aa5fd48614f00553a6319b37a4a\000f6f211b39c22b5c8f9d4e43f9c3f1e2fe1181c49 \
    90c5cb54338b3e966f85a53c2456c64507430730\000Ches \
-   Test\000ches-test@example.invalid\0001767225600\000Merge: \"x\" into \
-   y\000f6f211b39c22b5c8f9d4e43f9c3f1e2fe1181c49\000\000Zo\195\171\000zoe@example.invalid\0001767225500\000First\000"
+   Test\000ches-test@example.invalid\0001767225600\000HEAD -> main, origin/main, tag: \
+   v1\000Merge: \"x\" into \
+   y\000f6f211b39c22b5c8f9d4e43f9c3f1e2fe1181c49\000\000Zo\195\171\000zoe@example.invalid\0001767225500\000\000First, \
+   second\000"
 ;;
 
-let%expect_test "Log: a merge and a root commit, empty, cut, malformed" =
+let%expect_test "Log: refs, a merge and a root commit, empty, cut, malformed" =
   log two_commits;
   log "";
-  log ~cut:true (String.prefix two_commits 200);
+  log ~cut:true (String.prefix two_commits 250);
   log ~cut:true (String.prefix two_commits 20);
-  log (String.prefix two_commits 200);
-  log "a\000\000n\000e\000t\000s\000";
-  log "\000\000n\000e\0001\000s\000";
-  log "a\000\000n\000e\000s\000";
+  log (String.prefix two_commits 250);
+  log "a\000\000n\000e\000t\000\000s\000";
+  log "\000\000n\000e\0001\000\000s\000";
+  log "a\000\000n\000e\0001\000s\000";
   (match Log.parse ~cut:false two_commits with
    | Ok (commit :: _) -> print_endline (Log.Commit.short_hash commit)
    | _ -> ());
-  [%expect
-    {|
+  [%expect {|
     (((hash a757577ac7f79aa5fd48614f00553a6319b37a4a)
       (parents
        (f6f211b39c22b5c8f9d4e43f9c3f1e2fe1181c49
         90c5cb54338b3e966f85a53c2456c64507430730))
       (author_name "Ches Test") (author_email ches-test@example.invalid)
-      (author_time 1767225600) (subject "Merge: \"x\" into y"))
+      (author_time 1767225600) (refs ("HEAD -> main" origin/main "tag: v1"))
+      (subject "Merge: \"x\" into y"))
      ((hash f6f211b39c22b5c8f9d4e43f9c3f1e2fe1181c49) (parents ())
       (author_name "Zo\195\171") (author_email zoe@example.invalid)
-      (author_time 1767225500) (subject First)))
+      (author_time 1767225500) (refs ()) (subject "First, second")))
     ()
     (((hash a757577ac7f79aa5fd48614f00553a6319b37a4a)
       (parents
        (f6f211b39c22b5c8f9d4e43f9c3f1e2fe1181c49
         90c5cb54338b3e966f85a53c2456c64507430730))
       (author_name "Ches Test") (author_email ches-test@example.invalid)
-      (author_time 1767225600) (subject "Merge: \"x\" into y")))
+      (author_time 1767225600) (refs ("HEAD -> main" origin/main "tag: v1"))
+      (subject "Merge: \"x\" into y")))
     ()
-    (Error ("unterminated log record" (tail f6f211b39c22)))
-    (Error ("malformed log record" (fields (a "" n e t s))))
-    (Error ("malformed log record" (fields ("" "" n e 1 s))))
-    (Error ("malformed log record" (fields (a "" n e s))))
+    (Error ("unterminated log record" (tail f6f211b39c22b5c8f9d4e43f9c3)))
+    (Error ("malformed log record" (fields (a "" n e t "" s))))
+    (Error ("malformed log record" (fields ("" "" n e 1 "" s))))
+    (Error ("malformed log record" (fields (a "" n e 1 s))))
     a757577
     |}]
 ;;

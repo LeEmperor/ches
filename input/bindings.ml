@@ -10,6 +10,7 @@ module Target = struct
     | Scroll of View_command.Scroll.t
     | Delete_operator
     | Yank_operator
+    | Shift_lines of { right : bool }
     | Delete_chars_forward
     | Delete_chars_backward
     | Delete_to_line_end
@@ -117,7 +118,8 @@ let default =
   (* The VCS workspace. [Focus_view] opens the hidden view as a tab (it opens in
      [Tab]), activates it where it is, or toggles focus with the editor, so [g g] and
      [g f] are one command. [g c] / [g a] finish and abort a commit message: requests
-     the view answers from wherever they are typed (usually the message buffer). *)
+     the view answers from wherever they are typed (usually the message buffer). [g l]
+     asks it for the history of the file being edited, and shows and focuses it. *)
   let git c (command : View_command.t) =
     [ leader; Key.char 'g'; Key.char c ], Target.View command
   in
@@ -174,6 +176,8 @@ let default =
      ; editor [ 'O' ] Open_line_above
     ; [ Key.char 'd' ], Delete_operator
     ; [ Key.char 'y' ], Yank_operator
+    ; [ Key.char '>'; Key.char '>' ], Shift_lines { right = true }
+    ; [ Key.char '<'; Key.char '<' ], Shift_lines { right = false }
      ; [ Key.char 'x' ], Delete_chars_forward
      ; [ Key.char 'X' ], Delete_chars_backward
     ; [ Key.char 'D' ], Delete_to_line_end
@@ -236,7 +240,9 @@ let default =
     ; view 'K' Kill_source
     ; view 't' Toggle_status
     ; view '?' Toggle_hotkey_hints
-    ; view 'z' Toggle_zen
+     ; view 'z' Toggle_zen
+     ; view 'B' Toggle_bare
+     ; view 'T' Open_theme_picker
     ; status 'h' (Position_status Left)
     ; status 'l' (Position_status Right)
     ; status 'k' (Position_status Above)
@@ -262,6 +268,7 @@ let default =
     ; place_vcs 'h' Hidden
     ; git 'c' (Request_view { view = vcs; request = "commit-finish" })
     ; git 'a' (Request_view { view = vcs; request = "commit-abort" })
+    ; git 'l' (Request_view { view = vcs; request = "file-log" })
     ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
     ; [ leader; Key.char 'f'; Key.char 'l' ], View Open_line_picker
     ; [ leader; Key.char 'f'; Key.char 'f' ], View Open_file_picker

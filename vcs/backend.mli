@@ -30,11 +30,11 @@ module Refresh : sig
   (** What a refresh reads, beyond what every refresh reads. *)
   type t =
     { ignored : bool (** Also list ignored files. *)
-    ; log_limit : int (** Commits read for the Commits panel. *)
+    ; log : Log_scope.t (** The history the Commits panel lists (phase 8). *)
     }
   [@@deriving sexp, equal]
 
-  (** No ignored files, 200 commits. *)
+  (** No ignored files, {!Log_scope.default}. *)
   val default : t
 end
 

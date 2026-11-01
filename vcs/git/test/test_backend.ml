@@ -531,7 +531,9 @@ let%expect_test "commits: a commit's diff, a merge, the log limit, other rows" =
   Fixture.with_repo (fun t ->
     conflicting_branches t;
     git t [ "merge"; "-q"; "--no-ff"; "-s"; "ours"; "-m"; "Merge other"; "other" ];
-    let s = snapshot ~refresh:{ ignored = false; log_limit = 3 } t in
+    let s =
+      snapshot ~refresh:{ ignored = false; log = { Log_scope.default with limit = 3 } } t
+    in
     print_panels s;
     List.iter s.commits ~f:(fun commit ->
       show_diff
@@ -554,10 +556,10 @@ let%expect_test "commits: a commit's diff, a merge, the log limit, other rows" =
         "main" * cdd6501 "Merge other"
         "other"   4e98047 "other"
     [commits] Commits
-      Recent commits (recent)
+      Recent commits (first 3) (recent)
         "cdd6501016da4a4c930931c0a6ce4379639d0aab" cdd6501 parents=2 "Merge other"
-        "90c5cb54338b3e966f85a53c2456c64507430730" 90c5cb5 parents=1 "main"
         "4e98047b76b41ae3032a4e0b5efbacaa2ea6cc94" 4e98047 parents=1 "other"
+        "90c5cb54338b3e966f85a53c2456c64507430730" 90c5cb5 parents=1 "main"
     (Commit cdd6501016da4a4c930931c0a6ce4379639d0aab)
     preamble |commit cdd6501016da4a4c930931c0a6ce4379639d0aab
     preamble |Merge: 90c5cb5 4e98047
@@ -568,30 +570,6 @@ let%expect_test "commits: a commit's diff, a merge, the log limit, other rows" =
     preamble |
     preamble |    Merge other
     preamble |
-    (Commit 90c5cb54338b3e966f85a53c2456c64507430730)
-    preamble |commit 90c5cb54338b3e966f85a53c2456c64507430730
-    preamble |Author:     Ches Test <ches-test@example.invalid>
-    preamble |AuthorDate: 2026-01-01T00:00:00+00:00
-    preamble |Commit:     Ches Test <ches-test@example.invalid>
-    preamble |CommitDate: 2026-01-01T00:00:00+00:00
-    preamble |
-    preamble |    main
-    preamble |
-    file - -> "aa.txt" Added modes -..100644
-      @@ -0,0 +1 @@  [-0,0 +1,1] section=""
-        add   .   1 "+"  "ours"
-    file "dd.txt" -> "dd-main.txt" (Renamed(similarity(100))) modes -..- rename-only no-line-actions
-    file "du.txt" -> - Deleted modes 100644..-
-      @@ -1 +0,0 @@  [-1,1 +0,0] section=""
-        del   1   . "-"  "base"
-    file "ud.txt" -> "ud.txt" Modified modes 100644..100644
-      @@ -1 +1 @@  [-1,1 +1,1] section=""
-        del   1   . "-"  "base"
-        add   .   1 "+"  "ours"
-    file "uu.txt" -> "uu.txt" Modified modes 100644..100644
-      @@ -1 +1 @@  [-1,1 +1,1] section=""
-        del   1   . "-"  "base"
-        add   .   1 "+"  "ours"
     (Commit 4e98047b76b41ae3032a4e0b5efbacaa2ea6cc94)
     preamble |commit 4e98047b76b41ae3032a4e0b5efbacaa2ea6cc94
     preamble |Author:     Ches Test <ches-test@example.invalid>
@@ -616,6 +594,30 @@ let%expect_test "commits: a commit's diff, a merge, the log limit, other rows" =
       @@ -1 +1 @@  [-1,1 +1,1] section=""
         del   1   . "-"  "base"
         add   .   1 "+"  "theirs"
+    (Commit 90c5cb54338b3e966f85a53c2456c64507430730)
+    preamble |commit 90c5cb54338b3e966f85a53c2456c64507430730
+    preamble |Author:     Ches Test <ches-test@example.invalid>
+    preamble |AuthorDate: 2026-01-01T00:00:00+00:00
+    preamble |Commit:     Ches Test <ches-test@example.invalid>
+    preamble |CommitDate: 2026-01-01T00:00:00+00:00
+    preamble |
+    preamble |    main
+    preamble |
+    file - -> "aa.txt" Added modes -..100644
+      @@ -0,0 +1 @@  [-0,0 +1,1] section=""
+        add   .   1 "+"  "ours"
+    file "dd.txt" -> "dd-main.txt" (Renamed(similarity(100))) modes -..- rename-only no-line-actions
+    file "du.txt" -> - Deleted modes 100644..-
+      @@ -1 +0,0 @@  [-1,1 +0,0] section=""
+        del   1   . "-"  "base"
+    file "ud.txt" -> "ud.txt" Modified modes 100644..100644
+      @@ -1 +1 @@  [-1,1 +1,1] section=""
+        del   1   . "-"  "base"
+        add   .   1 "+"  "ours"
+    file "uu.txt" -> "uu.txt" Modified modes 100644..100644
+      @@ -1 +1 @@  [-1,1 +1,1] section=""
+        del   1   . "-"  "base"
+        add   .   1 "+"  "ours"
     no diff for (Header recent)
     no diff for (Item(section local)(key main))
     no diff for (Header staged)
@@ -683,7 +685,9 @@ let%expect_test "ignored files only on request" =
     Fixture.write t "top.o" "";
     Fixture.write t "kept.txt" "";
     print_panels (snapshot t);
-    let s = snapshot ~refresh:{ ignored = true; log_limit = 1 } t in
+    let s =
+      snapshot ~refresh:{ ignored = true; log = { Log_scope.default with limit = 1 } } t
+    in
     print_panels s;
     show_diff t s B.files_panel (header Ignored);
     show_diff t s B.files_panel (item Ignored "top.o"));
@@ -708,7 +712,7 @@ let%expect_test "ignored files only on request" =
       Local branches (local)
         "main" * dba157f "Ignore"
     [commits] Commits
-      Recent commits (recent)
+      Recent commits (first 1) (recent)
         "dba157f3cfa1d0326f78644bfe9f3e081718bd0a" dba157f parents=0 "Ignore"
     no diff for (Header ignored)
     no diff for (Item(section ignored)(key top.o))
@@ -885,7 +889,7 @@ let%expect_test "failed steps: status is fatal, the rest degrade the snapshot" =
     ok: 0 branches, 1 commits, 0 operations
     problem: git --no-pager -c color.ui=false -c core.quotepath=false for-each-ref '--format=%(refname:short)%00%(objectname)%00%(HEAD)%00%(upstream)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(committerdate:unix)%00%(contents:subject)%00%(upstream:remotename)%00%(upstream:remoteref)%00' refs/heads: exit 128: fatal: broken
     ok: 1 branches, 0 commits, 0 operations
-    problem: git --no-pager -c color.ui=false -c core.quotepath=false log -z --no-color --no-show-signature --max-count=200 --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%s HEAD --: exit 128: fatal: broken
+    problem: git --no-pager -c color.ui=false -c core.quotepath=false --literal-pathspecs log -z --no-color --no-show-signature --decorate=short --max-count=200 --topo-order --format=%H%x00%P%x00%an%x00%ae%x00%at%x00%D%x00%s --end-of-options HEAD --: exit 128: fatal: broken
     ok: 1 branches, 1 commits, 0 operations
     problem: $DIR/work/.git/rebase-apply/head-name: Permission denied
     $DIR/work/.git/rebase-merge/onto: skipped

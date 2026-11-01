@@ -7,8 +7,9 @@
     it with the enabled switches. Escape clears a pending [-], else declines; [q],
     Tab and Ctrl-c decline ({!Ui_state} routes the last two). [?] opens the help float
     over the popup, listing {!Ches_vcs.Popup.help}; closing help returns to the popup
-    as it was. An unbound key shows a hint in the footer. Switches start disabled at
-    every opening (nothing is remembered). *)
+    as it was. An unbound key shows a hint in the footer. Switches start as the question
+    asks ({!View_registry.Ask.t.Popup}'s [enabled]; the float itself remembers
+    nothing between openings). *)
 
 open! Core
 
@@ -19,8 +20,13 @@ val spec : Ches_tile.Spec.t
 
 type t [@@deriving sexp_of]
 
-(** No switch enabled, no dash pending. *)
-val create : origin:Ches_tile.View_id.t -> unit Ches_vcs.Popup.t -> t
+(** [enabled] (default none) as {!Ches_vcs.Popup.initial} keeps it, no dash
+    pending. *)
+val create
+  :  ?enabled:string list
+  -> origin:Ches_tile.View_id.t
+  -> unit Ches_vcs.Popup.t
+  -> t
 
 (** The view that asked, and that focus returns to. *)
 val origin : t -> Ches_tile.View_id.t

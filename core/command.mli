@@ -46,6 +46,14 @@ type t =
   (** Remove the spaces before the cursor back to the previous column that is a
       multiple of the width, stopping at anything other than a space. Without a space
       before the cursor, the same as [Delete_backward]. *)
+  | Insert_shift of { right : bool }
+  (** Shift the current Insert line once, joining the Insert transaction. *)
+  | Shift_lines of { right : bool; count : int }
+  (** Normal mode: shift [count] lines from the current line once. *)
+  | Visual_shift of { right : bool; count : int }
+  (** Shift every touched logical line [count] steps, then leave Visual mode.
+      Block selections shift whole lines. A characterwise selection ending at
+      another line's start excludes that line (in either selection direction). *)
   | Delete_char (** Remove the code point under the Normal-mode cursor. *)
   | Delete_chars_forward of int (** [x], deleting up to this many code points. *)
   | Delete_chars_backward of int (** [X], deleting up to this many code points. *)

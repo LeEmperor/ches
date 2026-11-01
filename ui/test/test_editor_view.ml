@@ -3,7 +3,7 @@ open Bonsai_test
 open Bonsai_term
 open Ches_core
 
-let handle ?(width = 40) ?(height = 6) ?(document_only = true) s =
+let handle ?theme ?bare ?(width = 40) ?(height = 6) ?(document_only = true) s =
   let text =
     Result.ok_or_failwith
       (Result.map_error
@@ -13,7 +13,7 @@ let handle ?(width = 40) ?(height = 6) ?(document_only = true) s =
   let controller = Ches_app.Controller.create (Editor.create ~path:"f.txt" ~cell_width:Ches_screen.Cell_map.width text) in
   let exit () = Bonsai_term.Effect.print_s [%sexp "EXIT"] in
   let handle =
-    Bonsai_term_test.create_handle (Ches_ui.Editor_view.app controller ~exit)
+    Bonsai_term_test.create_handle (Ches_ui.Editor_view.app ?theme ?bare controller ~exit)
   in
   Bonsai_term_test.set_dimensions handle { width; height };
   (* These geometry scenarios predate the default-visible workspace companions.
@@ -31,6 +31,37 @@ let send handle keys =
 ;;
 
 let chars s = List.map (String.to_list s) ~f:(fun c -> Event.Key.ASCII c, [])
+
+let%expect_test "theme preview recolors real views, cancels, accepts and stays instance-local" =
+  let find id = Option.value_exn (Ches_theme.Theme.find id) in
+  let create theme =
+    handle ~theme ~bare:true ~document_only:false ~width:120 ~height:40 "same text\n" in
+  let crimson = create (find "crimson") in
+  let glacier = create (find "glacier") in
+  let cell handle =
+    Bonsai_test.Handle.recompute_view handle;
+    let buffer = Buffer.create 64 in
+    Notty.Render.to_buffer buffer Notty.Cap.ansi (0, 0) (1, 1)
+      (View.Private.notty_image (Bonsai_term_test.last_view handle));
+    Buffer.contents buffer in
+  let original = cell crimson in
+  let light = cell glacier in
+  assert (not (String.equal original light));
+  send crimson (chars " vTglacier");
+  assert (String.equal (cell crimson) light);
+  send crimson [ Escape, [] ];
+  assert (String.equal (cell crimson) original);
+  send crimson (chars " ccChoose theme" @ [ Event.Key.Enter, [] ] @ chars "glacier");
+  assert (String.equal (cell crimson) light);
+  send crimson [ Enter, [] ];
+  assert (String.equal (cell crimson) light);
+  send crimson (chars " vTcrimson" @ [ Enter, [] ]);
+  assert (String.equal (cell crimson) original);
+  assert (String.equal (cell glacier) light);
+  ignore ([%expect.output] : string);
+  printf "same text: preview, cancel, accept, recovery and independent instances retain correct colors\n";
+  [%expect {| same text: preview, cancel, accept, recovery and independent instances retain correct colors |}]
+;;
 
 let%expect_test "frontend Tab and terminal Shift-Tab navigate palette, not focus; Enter runs selection" =
   let handle = handle ~width:60 ~height:10 "first\nsecond\nthird" in

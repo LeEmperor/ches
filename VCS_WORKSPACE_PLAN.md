@@ -15,9 +15,10 @@ Visual selection) complete and committed by the owner as 117f230 (2026-10-28).
 Phase 5 (popups and the commit flow) complete and committed by the owner as
 a6d6c31 (2026-10-28). Phase 6 (remotes and branches) complete and committed by
 the owner as 68af093 (2026-10-28). The owner chose conflict resolution as the first
-tier-2 item: phase 7 (merges and conflicts) complete and uncommitted (2026-10-28,
-resumed after a host reset), owner terminal acceptance pending. Next tier-2 item
-not chosen (log/history browsing was the other candidate).
+tier-2 item: phase 7 (merges and conflicts) complete and committed by the owner
+as 7227a31 and 19b5da8 (2026-10-29), owner terminal acceptance pending. Phase 8
+(log and history browsing; blame deferred to a phase 9) complete and uncommitted
+(2026-11-01), owner terminal acceptance pending.
 
 ## Goal
 
@@ -59,6 +60,9 @@ switching and pull.
 - **Registry first:** no new per-name wiring in `Ui_state`/`View_command`.
 - **Tier 2 (2026-10-28):** merge/conflict resolution first (phase 7); log/history
   browsing later.
+- **Phase 8 (2026-10-29):** log, commit file lists and file history; blame becomes
+  phase 9 (it needs an editor rendering seam). A chosen log replaces what the
+  Commits panel lists (lazygit's place), rather than opening a separate log view.
 
 ## Interaction model
 
@@ -373,6 +377,25 @@ appends a handoff below.
 - Tests: fixture merges and rebases with conflicts carried through to a commit,
   each resolution kind including deletions, and the editor commands on marker text.
 
+### Phase 8: Log and history browsing (tier 2, owner 2026-10-29)
+
+- Magit's log popup `l` from a list panel: `l l` HEAD, `l b` the branch selected in
+  Branches, `l a` all branches (local and remote-tracking), `l f` the history of a
+  file (following renames); switches `-g` graph (on by default, remembered with
+  the rest of the choice), `-m` omit merges, `-p` first parent. The Commits panel
+  lists the chosen log; its section title names it; `+` doubles how many commits
+  are read.
+- A one-row-per-commit graph drawn from parents (lazygit's style), and ref
+  decorations (`(HEAD -> main, origin/main)`) on commit rows.
+- A commit's diff opens with its file list (change letter, path, `+a -r`); Enter on
+  a listed file jumps to its diff; `}` / `{` move between files. In a file's history
+  a commit's diff starts at that file.
+- `Space g l` in a file buffer opens the VCS view (focused, showing it if hidden) on
+  that file's history.
+- Tests: the graph layout on fixed lists, each scope against fixture repositories
+  (renames, globs in paths, a deleted branch), the file list, and the view end to
+  end (popup, `+`, `Space g l` from a buffer with the view hidden).
+
 ## Agent execution and handoff protocol
 
 Phases run strictly sequentially. An orchestrating session splits each phase across
@@ -423,7 +446,8 @@ Next-phase integration notes:
 
 ## Deferred beyond this plan (tier 2 and later)
 
-- Log graph, commit file lists, file history, blame.
+- Blame (phase 9, owner 2026-10-29). (Log graph, commit file lists and file
+  history: phase 8.)
 - Interactive rebase as an editable todo buffer applied on save (the directory-buffer
   pattern), fixup/squash, cherry-pick, revert.
 - Stash, reflog, undo; branch delete/rename; tags; worktrees; submodules; bisect.
@@ -1323,6 +1347,173 @@ Ownership:
 - V7 (after G7): `screen/vcs_view.ml`, `screen/vcs_*.ml`, `screen/test/test_vcs_*.ml`,
   deleting `vcs/git/abort.ml(i)`, test moves off `Abort`, README/docs VCS parts.
 - Frozen: every other `.mli` (contract changes go to the orchestrator).
+
+## Phase 8 contracts (2026-10-29)
+
+Run as four agents: S8 (seams and the pieces everything compiles against) alone,
+then G8 (graph and git tests, `vcs/`), T8 (the diff panel's file list, docs) and V8
+(the view) in parallel. Stubs fail with or say `"TODO phase 8: agent <X>"` (grep
+`TODO phase 8`).
+
+Written by the orchestrator (the contracts; agents implement them and may only
+sharpen wording, telling the orchestrator):
+- `vcs/log_scope.mli` (new, `Ches_vcs.Log_scope`): `Range` (`Head | Branch name |
+  All`), `{ range; path; graph; merges; first_parent; limit }`, `default`,
+  `default_limit` 200, `max_limit` 12800, `more`, `graph_shown`, `title ~shown`.
+- `vcs/graph.mli` (new, `Ches_vcs.Graph`): `rows ?max_width commits`, the lane rules
+  and glyphs.
+- `vcs/backend.mli`: `Refresh.t.log : Log_scope.t` replaces `log_limit`.
+- `vcs/git/log.mli`: `Commit.refs` (`%D`), `command ~cwd scope`, and the log popup:
+  `Target`, `Choice`, `popup ~branch ~file`, `flags`, `enabled`, `scope`.
+- `vcs/git/backend.mli`: the Commits section title, `Log.command r.log`.
+- `screen/view_registry.mli`: `Ask.t.Popup.enabled` and `Ask.Question.t.Popup {
+  popup; enabled }` (a popup that opens with switches on); `Outcome.t.show` (show
+  and focus the view, from a `Request` signal only).
+- `screen/popup_tile.mli`: `create ?enabled`.
+- `screen/vcs_diff_text.mli`: `Kind.Listed` and the file list layout,
+  `file_starts`, `listed_file_at`.
+
+S8 (seams; runs first, alone):
+- Implement `vcs/log_scope.ml` in full; `vcs/graph.ml` as a stub giving `""` for
+  every row (G8's), with `TODO phase 8: agent G8`.
+- `vcs/git/log.ml` in full per its `.mli` (command, the seven-field format and
+  parser, popup, `flags`, `enabled`, `scope`); `vcs/git/backend.ml`: `Log.command
+  r.log`, the section title by `Log_scope.title`. Every `log_limit` use moves to
+  `log` (tests: `{ ignored; log = { Log_scope.default with limit = 3 } }`).
+- Registry: `Ask.Popup.enabled` through `View_registry`, `Ui_state` (the float
+  opens with `Popup_tile.create ~enabled`) and the answer path (`Choose`'s enabled
+  flags are already the float's); `Outcome.show` applied from a `Request` signal's
+  outcome after the rest, by the same path `Focus_view` takes (a hidden view gets
+  its install placement and `Shown`); ignored elsewhere. Every existing
+  `Popup { popup; cancel }` gains `enabled = []`.
+- `vcs_diff_text.ml`: `Listed` in `Kind.t` with a style (the `Meta` one, or
+  whatever reads as a list beside it), `file_starts` and `listed_file_at` stubs
+  (`[]`, `None`) with `TODO phase 8: agent T8`; nothing laid out yet.
+- `input/bindings.ml`: `Space g l` -> `Request_view { view = vcs; request =
+  "file-log" }`; `palette/catalog.ml`: `vcs.file-log` "VCS: history of this file".
+  Hotkey hints if `Space g` lists its keys. (The view answers "nothing to do"
+  until V8.)
+- Tests: `screen/test/test_view_popup.ml` (a popup asked with `enabled` opens with
+  them, `-g` toggles one off, the answer carries what is shown); `test_view_requests.ml`
+  (a test view answering a request with `show`: hidden -> placed, focused and
+  `Shown`; placed in the split, unfocused -> focused; `show` from a key or an
+  answer changes nothing); `vcs/git/test/test_parsers.ml` (`Log.command` argv for
+  each scope, `parse` with refs, empty `%D`, a subject with `", "`). Expectation
+  updates (catalog counts, keymaps, `Log.Commit` sexps, the Commits section title is
+  unchanged for the default scope).
+- Full build and runtest green at the end; report every expectation it promoted.
+
+G8 (after S8; `vcs/**` only):
+- `vcs/graph.ml` per its `.mli`; `vcs/test/test_graph.ml`: a straight line, a
+  merge of a side branch (the `.mli`'s three rows), two side branches open at once,
+  an octopus merge, a lane freed and reused on the next row (not the same row),
+  criss-cross merges, a parent beyond the list (its lane runs to the end),
+  `max_width` cutting, duplicate ids, the empty list. Print rows so expectations
+  read as pictures.
+- `vcs/test/test_log_scope.ml`: `title` (each range, path, qualifiers, the `first
+  <n>` boundary), `more` to and at the cap, `graph_shown`.
+- Fixture tests (`vcs/git/test/`, new `test_log.ml`), through `Backend.refresh` and
+  `snapshot`: HEAD, `Branch` of another branch, `All` with a remote-tracking branch
+  (a local bare remote) and a detached HEAD, `--no-merges` and `--first-parent` on a
+  merge, file history across a `git mv` rename (`--follow`), a path named `a*.txt`
+  beside `ab.txt` (only the literal file), an unborn branch (no commits, no
+  problem), a deleted branch (no commits, a problem entry), refs on commits (tags,
+  remote branches, `HEAD -> main`), the section title, `--topo-order` keeping
+  parents after children when commit dates are out of order (`GIT_COMMITTER_DATE`).
+  `Log.popup`/`enabled`/`scope` round trips and refusals.
+- Record git 2.43 deviations: whether `--follow` with `--first-parent` or
+  `--no-merges` behaves; whether `%D` needs `--decorate` with `log.decorate=no`
+  set (if so add `--decorate=short` and say so in `log.mli`).
+
+T8 (after S8; `screen/vcs_diff_text.ml`, `screen/test/test_vcs_diff_text.ml`,
+docs):
+- The file list per `vcs_diff_text.mli`: laid out only with a preamble and at least
+  one file; letters, paths, counts over shown hunk lines (a combined diff's
+  `Added`/`Removed` lines), `(truncated)`; `file_starts` (with the list present and
+  absent: offsets shift past it), `listed_file_at`; existing positions, spans,
+  `hunk_starts` and targets unchanged apart from the shift.
+- Tests: a two-file commit (one renamed), a binary file (no counts), a merge
+  commit's combined diff, a truncated file, an uncommitted diff (no list), offsets.
+- Docs from the contracts (then checked against V8's result by the orchestrator):
+  `docs/editor_reference.md` (the VCS view: `l` popup, `+`, the graph and refs, the
+  file list, `}` `{`, Enter on a listed file, `Space g l`; a short "Browsing
+  history" walk-through), README (feature line and key table), and
+  `docs/backlog/major_minor_tiles.md` (a phase 8 entry: the two seams).
+
+V8 (after S8; `screen/vcs_view.ml`, `screen/vcs_view.mli`'s phase 8 section,
+`screen/test/test_vcs_log.ml` (new) and expectation updates in
+`screen/test/test_vcs_*.ml`):
+- State: the log scope (`Log_scope.default` at creation; kept across hide and
+  reopen) and a pending file-log path (absolute). Every refresh is `{
+  Refresh.default with log = scope }`, and each refresh job keeps the `Refresh.t`
+  it was issued with: the snapshot is parsed with that one, never the current
+  scope (the scope can change while a refresh runs).
+- `l` in a list panel (any of the three), with a loaded snapshot: `Ask.Popup {
+  popup = Log.popup ~branch ~file; enabled = Log.enabled scope; cancel = None }`.
+  `branch`: the Branches cursor's selected branch, whatever has focus (as `m`'s).
+  `file`: in Files, the selected item's key (not a key ending in `/`); in Branches
+  and Commits, the path (`Target.path`) of the diff's line at its cursor; else
+  `None`. In the diff `l` stays the text motion. Not loaded: the notices other
+  popups give.
+- The popup's answer: `Log.scope` `Error text` -> `Show text`; `Ok scope` -> the
+  new scope, the Commits cursor reset (`Panel.Cursor.empty`), focus on Commits, a
+  refresh. No notice.
+- `+` in Commits: `Log_scope.more`; `None` -> `Show "Showing the most commits
+  already (12800)"`; else a refresh with the cursor kept.
+- Rows: `<graph row><short hash> <refs><subject>`, the graph row only when
+  `Log_scope.graph_shown` of the snapshot's own refresh (rows computed once per
+  snapshot, from full hashes and parents, first parents only with
+  `first_parent`); `<refs>` is `"(" ^ String.concat ~sep:", " refs ^ ") "` when
+  any.
+- File history: the first time a commit's diff is shown for a target (not on
+  refreshes of it), with the snapshot's scope having `path = Some p`, the cursor
+  starts at the first file whose path or original path is `p`, else at the top.
+- Diff panel: `}` / `{` with counts to the next/previous `file_starts` offset, as
+  `]`/`[` do for hunks (`Show "No next file"` / `"No previous file"`); Enter on a
+  `Listed` line jumps to that file's start instead of opening it (`e` still opens).
+- Request `"file-log"` (`Space g l`): `Context.active` `None` -> `Post "No file
+  buffer here: Space g l shows the history of the file you are in"`, no show.
+  Otherwise, with a known repository root: a path outside it -> `Post "<label> is
+  not in the repository at <root>"`, no show; inside -> scope `{ Log_scope.default
+  with path = Some <relative path> }`, the Commits cursor reset, focus on Commits,
+  `show = true`, and a refresh if the view is placed (a hidden one refreshes on
+  `Shown`). Root not known yet (hidden and never shown, or detecting): remember
+  the absolute path, `show = true`; when detection finds a repository, apply it as
+  above (outside -> the same `Post`, scope unchanged); any other detection result
+  drops it.
+- Local commands and help: `log` (`l`) "Log: HEAD, a branch, all branches or a
+  file's history (the log popup)", `more-commits` (`+`, Commits) "Show more
+  commits", `next-file` (`}`) and `previous-file` (`{`) in the diff. Footer hints
+  if the panel's hints list peers.
+- Tests (`test_vcs_log.ml`, through `Ui_state` and the fixture driver): the popup
+  opens with `-g` on; `l b` on a selected branch and the title; `l a`; `-m l`
+  hides a merge and drops the graph; `+`; the refresh-scope race (choose a scope
+  while a refresh is in flight); `l f` from Files and from a commit's diff; Enter in
+  a file history landing on the file; `}` `{` and Enter on a listed file;
+  `Space g l` from a file buffer with the view hidden and never shown (opens
+  focused on the history), with the view in the split, from a directory buffer,
+  and for a file outside the repository. Rows with the graph need G8's graph:
+  write them, then promote again once G8 reports (the orchestrator says when).
+
+Decisions (orchestrator; Magit's and lazygit's defaults):
+- One log at a time, in the Commits panel; `l l` returns to HEAD. The scope
+  survives hiding the view; the section title always names it.
+- The graph is ours, from parents, one row per commit; `--topo-order` only when it
+  is drawn. No graph for file history or with merges omitted.
+- `l` works from the list panels only (in the diff it is a motion).
+- A commit's diff is the whole commit even in a file's history (Magit), starting at
+  that file.
+- The log popup remembers its switches through the scope; the commit, push and pull
+  popups still remember nothing.
+- `Space g l` is the one way a signal may focus a view besides `dispose`
+  (`Outcome.show`, from `Request` only).
+
+Ownership: S8 anything needed to compile and its tests; then G8 `vcs/**`; T8
+`screen/vcs_diff_text.ml`, `screen/test/test_vcs_diff_text.ml`, `README.md`,
+`docs/`; V8 `screen/vcs_view.ml(i)`, `screen/test/test_vcs_*.ml` except
+`test_vcs_diff_text.ml`. T8 and V8 both build `@screen/runtest`; a compile error in
+the other's file means retry later, not edit it. Every other `.mli` is frozen
+(changes go to the orchestrator).
 
 ## Implementation handoffs
 
@@ -2331,6 +2522,164 @@ Next-phase integration notes:
   - Log/history: the Commits panel and the Commit diff target are the base.
   - Conflict highlighting in the editor would use Core.Conflict's regions.
   - A cherry-pick/revert continue would extend Operation.Kind and its popups.
+```
+
+```text
+Phase / date / status:
+  8 S8 (seams), 2026-10-31, complete. Uncommitted, on 19b5da8. Started by an
+  earlier S8 session (interrupted before checks and handoff), finished by a second.
+  G8, T8 and V8 not started; stubs: grep "TODO phase 8" (vcs/graph.ml for G8,
+  screen/vcs_diff_text.ml file_starts/listed_file_at for T8).
+
+Implemented behavior:
+  - Ches_vcs.Log_scope in full (default, more, graph_shown, title).
+    Ches_vcs.Graph: a stub ("" for every row).
+  - Git log: Log.command from a scope (seven fields with %D, --decorate=short,
+    --topo-order only when the graph is shown, --no-merges, --first-parent,
+    --follow with a path, --branches --remotes for All before --end-of-options,
+    --literal-pathspecs); Commit.refs; parse; the log popup (popup, flags,
+    enabled, scope). Backend.refresh runs Log.command r.log; the Commits section
+    title is Log_scope.title (unchanged, "Recent commits", for the default scope
+    with fewer than 200 commits).
+  - Registry: Ask.Popup.enabled (Ui_state opens the float with
+    Popup_tile.create ~enabled; every existing popup asks with enabled = []).
+    Outcome.show: applied only in Ui_state.request_view, after the rest of the
+    signal's outcome, through the same focus_view Focus_view now uses (a hidden
+    view goes where it opens and gets Shown after the input), and nothing when the
+    view is focused already (so it never toggles back to the document). Keys,
+    answers and other signals ignore it.
+  - Vcs_diff_text: Kind.Listed (styled as Meta); file_starts / listed_file_at stubs.
+  - Space g l -> Request_view { view = vcs; request = "file-log" }; palette
+    vcs.file-log "VCS: history of this file" (keywords git log history file
+    follow). No hotkey hint list names the Space g keys, so nothing else changed.
+    The VCS view still answers "VCS: nothing to do for file-log" until V8.
+
+Changed modules and new public contracts:
+  - New: vcs/log_scope.ml(i), vcs/graph.ml (stub; .mli is the orchestrator's).
+  - vcs/backend.ml(i) Refresh.t.log; vcs/git/log.ml(i), backend.ml(i);
+    screen/view_registry.ml(i), popup_tile.ml(i), ui_state.ml(i), vcs_view.ml
+    (enabled = [] only), vcs_diff_text.ml(i); input/bindings.ml;
+    palette/catalog.ml.
+  - Wording sharpened (no contract change): view_registry.mli (Ask: switches start
+    as enabled gives them; dispose: one of two ways a signal moves focus; ask is
+    applied before show; show: a hidden view is placed where it opens, its
+    opens_in, Shown after the input, nothing when already focused);
+    ui_state.mli's Request_view paragraph names Space g l and show.
+  - Tests: screen/test/test_view_popup.ml (a popup asked with enabled, out of
+    order, a foreign flag and two of one group: opens with them, -n toggles one
+    off, the answer carries what is shown, asked again it opens as asked again);
+    test_view_requests.ml (the desk view answers "show"/v/a-y/a job's Finished
+    with show; hidden -> Tab, focused, Shown once; again while focused -> no
+    change; in the split unfocused -> focused; from a key and an answer -> still
+    focused, not toggled; from a job report, hidden or split -> nothing moves);
+    test/test_keymap.ml (Space g l); vcs/git/test/test_parsers.ml (Log.command
+    for seven scopes and limit 0; parse with refs "HEAD -> main, origin/main,
+    tag: v1", an empty %D, a subject "First, second", malformed seven-field
+    records); test_backend.ml off log_limit.
+  - Test helpers: the "mutations only" command-log filters in
+    test_vcs_actions.ml, test_vcs_conflicts.ml and test_vcs_remote.ml now also
+    skip "--literal-pathspecs log " (the refresh's read gained
+    --literal-pathspecs, which those filters took for a mutation).
+
+Policy decisions settled:
+  - %D is filled with log.decorate=no but follows log.decorate=full, so the
+    command pins --decorate=short (checked on git 2.43; log.mli says so).
+
+Checks run and results (through the lock, -j 10):
+  - dune build -> 0; dune runtest -> 0 after promotion; git diff --check clean.
+  - Expectations promoted (each diff read first):
+    palette/test/test_catalog.ml (the vcs.file-log row);
+    palette/test/test_palette.ml (72 -> 73 and 75 -> 76 more: one more entry);
+    screen/test/test_palette_tile.ml (1/76 -> 1/77; "tile" query 4/19 -> 4/20,
+    vcs.file-log fuzzy-matches "this file");
+    screen/test/test_vcs_view.ml (the command log's git log row, new argv);
+    test/test_keymap.ml (Space g l in the Space g listing and its run);
+    screen/test/test_view_popup.ml, screen/test/test_view_requests.ml (new tests,
+    output checked by reading);
+    by the earlier session: vcs/git/test/test_parsers.ml (argv, refs in Commit
+    sexps), vcs/git/test/test_backend.ml ("Recent commits (first 3)" /
+    "(first 1)" for its limit-3 and limit-1 reads, per Log_scope.title;
+    --topo-order puts the merged branch's commit before main's at equal dates;
+    the broken-repo problem shows the new argv).
+
+Known gaps or blockers:
+  - Graph rows are "" and no file list is laid out (G8, T8).
+  - The VCS view does not use the scope, Ask enabled, or show yet (V8).
+
+Next-phase integration notes:
+  - G8: Log.command already has --decorate=short and --literal-pathspecs (a path
+    "a*.txt" is literal); with --follow git needs exactly one path. Record whether
+    --follow combines with --first-parent / --no-merges. Graph.rows takes ids
+    newest first in topo order.
+  - T8: Kind.Listed exists and is styled; nothing emits it yet. Keep
+    hunk_starts/targets unchanged apart from the shift.
+  - V8: answer Request "file-log" with ~show:true; Ui_state applies it after the
+    rest of the outcome (an ask on that outcome is dropped if the view was not
+    focused before the show, as for any signal). A hidden VCS view refreshes on
+    Shown. Ask with Log.enabled scope. The default scope's title is unchanged, so
+    existing test_vcs_* expectations only move where the refresh argv shows.
+
+Phase 8 G8/T8/V8 and orchestrator (2026-11-01):
+  - G8: vcs/graph.ml per its .mli (lane rules taken literally: a commit takes the
+    leftmost lane waiting for it, else the leftmost lane free before the row, else
+    a new one; further parents join a waiting lane or take a lane free before the
+    row; lanes ended on a row are reused from the next row; right-end free lanes
+    dropped). Glyphs ● │ ┼ ╯ ╮ ╭ ┤ ├ ─, two characters per lane, UTF-8. Tests:
+    vcs/test/test_graph.ml, test_log_scope.ml, vcs/git/test/test_log.ml (every
+    G8 case). log.mli wording records the git 2.43 findings.
+  - T8: the commit file list in vcs_diff_text.ml (preamble, one blank, Listed
+    lines "<letter> <path>[  +a -r][ (truncated)]", one blank, the files; no
+    counts for binary, mode-only, rename-only, submodule files); file_starts,
+    listed_file_at. Tests in test_vcs_diff_text.ml. Docs: editor_reference.md
+    ("Logs and history.", "### Browsing history", Space g l, keys), README
+    (feature line, key table, the stale phase 7 limitations bullet corrected),
+    docs/backlog/major_minor_tiles.md (the two seams).
+  - V8: vcs_view.ml(i) per the V8 bullets; new test screen/test/test_vcs_log.ml
+    (11 tests). Local commands log, more-commits, next-file, previous-file; footer
+    hints "l log", "+ more", "} { files".
+  - Orchestrator: approved V8's new query Vcs_view.scope (tests print it);
+    corrected the docs' "at its top" (the cursor reset lands on the section
+    title, as for every panel).
+
+Policy decisions settled:
+  - git 2.43: --follow combines with --first-parent and --no-merges. --follow
+    tracks one name for the whole walk, so edits under the old name on the other
+    side of a merge that renamed the file are missed in the default order (shown
+    with --first-parent); documented in log.mli and tested.
+  - Without --topo-order (graph off or merges omitted) git's date order may list
+    a parent before a child; no graph is drawn then, so nothing breaks.
+  - Space g l refreshes whenever the root is known: the view cannot see whether it
+    is placed, so a hidden view's refresh is superseded by the detection on Shown
+    (one stale refresh in the command log). vcs_view.mli says so.
+  - A pending file-log keeps the tab label too, for the "not in the repository"
+    notice after detection; not-a-repository/no-work-tree/failed states detect
+    again on Space g l. Paths are compared as text against git's root (symlinks
+    not resolved), as saved paths are.
+  - } / { notices only when the cursor cannot move at all; with a count it moves
+    as far as it can.
+
+Checks run and results (through the lock, -j 10):
+  - G8: @vcs/runtest, @vcs/git/runtest -> 0. T8, V8: @screen/runtest -> 0.
+  - Expectations promoted by V8 (each read): test_vcs_view.ml,
+    test_vcs_workspace.ml, test_vcs_commit.ml (commit rows gain graph and refs,
+    e.g. "● 10cf1ae (HEAD -> main) First"; test_vcs_view.ml also the commit diff's
+    file list, the help listing, the adapter hint "l log"); test_vcs_remote.ml,
+    test_vcs_conflicts.ml (log in the command lists).
+  - Orchestrator final (2026-11-01): dune build -j 10 -> 0; dune runtest -j 10 ->
+    0; git diff --check clean; no TODO phase 8 stubs; nothing committed.
+
+Known gaps or blockers:
+  - No owner terminal acceptance.
+  - An empty chosen log (an unborn or deleted branch, a path with no history)
+    has no Commits section, so no title names the log: the panel reads
+    "3 Commits (0)" / "(none)", and a deleted branch adds "1 problem reading the
+    repository (@: log)". This contradicts "the section title always names it";
+    owner decision pending (fix in vcs/git/backend.ml's single_section).
+  - The empty-log view and footer hint texts are not covered by tests.
+
+Next-phase integration notes:
+  - Blame (phase 9) needs an editor rendering seam; Commit.refs and the Commit
+    diff target with a file start are available.
 ```
 
 ### Post-phase-2 tweaks (owner feedback, committed in fe0f087)

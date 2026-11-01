@@ -26,6 +26,9 @@ type t =
   | Delete_forward
   | Insert_soft_tab of int
   | Delete_soft_tab_backward of int
+  | Insert_shift of { right : bool }
+  | Shift_lines of { right : bool; count : int }
+  | Visual_shift of { right : bool; count : int }
   | Delete_char
   | Delete_chars_forward of int
   | Delete_chars_backward of int

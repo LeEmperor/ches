@@ -26,7 +26,8 @@
       Normal  A / I                  Enter_insert (Line_end / First_nonblank)
       Normal  o / O                  Open_line_below / Open_line_above
         Normal  d{motion}, dd, D       Delete by motion / line / to line end
-        Normal  y{motion}, yy           Yank by motion / line
+         Normal  y{motion}, yy           Yank by motion / line
+       Normal  >> / <<                Shift right / left (count = lines)
         Normal  p / P                   Paste after / before; count repeats the register
        Normal  : e ! Enter             Force-reload the associated file
        Normal  x / X                  Delete character(s) under / before cursor
@@ -34,7 +35,8 @@
       Visual  v / V / Ctrl-v         Switch selection kind, keeping the anchor
       Visual  motions, counts        Move, extending the selection
       Visual  d / y / c              Visual_delete / Visual_yank / Visual_change
-      Visual  I / A                  Visual_insert (block insert); a count repeats
+       Visual  I / A                  Visual_insert (block insert); a count repeats
+       Visual  > / <                  Shift selection right / left (count = steps)
       Visual  Escape                 Exit_visual
       Normal  u                      Undo
       Normal  Ctrl-r                 Redo
@@ -58,7 +60,9 @@
       Normal  Space s - / + / =      View Adjust_split -10 / 10 / 10; count repeats
       Normal  Space s c              View Close_split
       Normal  Space d - / +          View Adjust_directory_size -4 / 4; count repeats
-      Normal  Space v z              View Toggle_zen
+       Normal  Space v z              View Toggle_zen
+       Normal  Space v B              View Toggle_bare
+       Normal  Space v T              View Open_theme_picker
       Normal  Space v r              View Reset
       Normal  Space c c              View Open_palette
       Normal  Space f l              View Open_line_picker
@@ -70,7 +74,8 @@
       Insert  Enter                  Insert_newline (autoindents)
       Insert  Tab                    Insert_soft_tab or Insert_text "\t" ({!Config.tab})
       Insert  Backspace, Ctrl-h      Delete_soft_tab_backward or Delete_backward
-      Insert  Delete                 Delete_forward
+       Insert  Delete                 Delete_forward
+       Insert  Ctrl-t / Ctrl-d        Shift current line right / left
       Insert  Escape                 Exit_insert
       Insert  j k                    Exit_insert ({!Config.insert_escape})
     v}
@@ -89,8 +94,16 @@
     [View (Adjust_width 30)] and [3 Space v l] produces [View (Shift 6)], like three
     presses; the frontend clamps the result.
     [d] and [y] keep their own count while waiting for a motion; operator and motion
-    counts multiply (so [2d3w] deletes and [2y3w] yanks six words). While a count is pending, {!pending}
-    shows it, followed by any keys of the sequence (["20"], ["20 g"], ["3 Space v"]).
+     counts multiply (so [2d3w] deletes and [2y3w] yanks six words). While a count is pending, {!pending}
+     shows it, followed by any keys of the sequence (["20"], ["20 g"], ["3 Space v"]).
+
+     [3>>] shifts three lines by one indentation step. [>>] and [<<] are complete
+     configurable [Bindings.Target.Shift_lines] bindings: motion forms such as [>j]
+     and counts between the two keys are not supported. Their prefixes appear in
+     {!pending} and cancel like other incomplete bindings. In all Visual selection
+     kinds, [3>] shifts the selection by three steps. Insert Ctrl-t/Ctrl-d shift
+     once and interrupt the configured Insert escape sequence. Indentation width
+     belongs to the editor and is independent of {!Config.tab}.
 
     A count is cancelled, with a {!notice} and without any command, when
     - it would exceed [Command.max_count];

@@ -109,6 +109,8 @@ let resolve t ~keys (target : Bindings.Target.t) =
     { (reset t) with operator_count = count; operator = Some operator; pending = [ Operator.key operator ] }, []
   | Delete_chars_forward, count ->
     reset t, [ Editor (Delete_chars_forward (Option.value count ~default:1)) ]
+  | Shift_lines { right }, count ->
+    reset t, [ Editor (Shift_lines { right; count = Option.value count ~default:1 }) ]
   | Delete_chars_backward, count ->
     reset t, [ Editor (Delete_chars_backward (Option.value count ~default:1)) ]
   | Delete_to_line_end, count ->
@@ -312,6 +314,8 @@ let feed_insert_key t (key : Key.t) =
          | Literal_tab -> [ Insert_text "\t" ]
          | Spaces width -> [ Insert_soft_tab width ])
       | Enter -> [ Insert_newline ]
+      | Ctrl 't' -> [ Insert_shift { right = true } ]
+      | Ctrl 'd' -> [ Insert_shift { right = false } ]
       | Char _ | Ctrl _ | Shift_tab ->
         (match Key.text key with
          | Some text -> [ Insert_text text ]
@@ -336,6 +340,10 @@ let feed_visual_key t key =
     | Key.Char c when Uchar.to_scalar c = Char.to_int 'c' -> reset t, [ Action.Editor Command.Visual_change ]
     | Key.Char c when Uchar.to_scalar c = Char.to_int 'I' -> visual_insert ~append:false
     | Key.Char c when Uchar.to_scalar c = Char.to_int 'A' -> visual_insert ~append:true
+    | Key.Char c when Uchar.to_scalar c = Char.to_int '>' ->
+      reset t, [ Action.Editor (Command.Visual_shift { right = true; count = Option.value t.count ~default:1 }) ]
+    | Key.Char c when Uchar.to_scalar c = Char.to_int '<' ->
+      reset t, [ Action.Editor (Command.Visual_shift { right = false; count = Option.value t.count ~default:1 }) ]
     | _ -> feed_normal_key t key)
 ;;
 

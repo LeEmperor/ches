@@ -19,12 +19,14 @@ let create ?(path = "a") () =
   in
   let bindings =
     Bindings.create
-      (Bindings.to_list Bindings.default
+      ((Bindings.to_list Bindings.default
+        |> List.filter ~f:(fun (keys, _) ->
+          not ([%equal: Key.t list] keys (leader_v 'T'))))
        @ [ leader_v 'x', Bindings.Target.View (Focus_view Counter.id)
          ; leader_v 'X', View (Toggle_view Counter.id)
          ; place 'T' Tab
          ; place 'S' Split
-         ; place 'B' Band
+         ; place 'J' Band
          ])
     |> Or_error.ok_exn
   in
@@ -294,7 +296,7 @@ let%expect_test "the palette closes a view tab with a notice; file tabs keep the
     |}];
   (* A file tab's close reports through the session alone: a capture notice left
      over from moving the counter is not posted in its place. *)
-  let t = run (create ()) " vBiX<Esc>" in
+  let t = run (create ()) " vJiX<Esc>" in
   let t = run t " bc" in
   printf "%s; notice %s\n" (String.prefix (message t) 15)
     (Option.value (Ui_state.capture_notice t) ~default:"(none)");
@@ -693,7 +695,7 @@ let%expect_test "[Space s c] takes no count; the palette closes the split from e
 let%expect_test "a placement typed inside the view it moves: the notice stays visible" =
   (* Kept where the view keeps focus: its footer shows the notice, and the feedback
      line is left alone (0A policy), here still saying the band view was focused. *)
-  let t = run (create ()) " vB vx" in
+  let t = run (create ()) " vJ vx" in
   show t;
   let t = run t " st" in
   show t;
@@ -730,7 +732,7 @@ let%expect_test "a placement typed inside the view it moves: the notice stays vi
     |}];
   (* Moved where it cannot be shown, so focus left it: a split too narrow, and the
      band in zen. *)
-  let t = run ~width:40 t " vB vx ss" in
+  let t = run ~width:40 t " vJ vx ss" in
   show ~width:40 t;
   let t = run t " vT vz sb" in
   show t;
@@ -759,7 +761,7 @@ let%expect_test "placement from help over the split view, and from the palette o
     |}];
   (* The palette already reports placements in the feedback line, as from the editor
      pane. *)
-  let t = run t " vB vx ccto tab<CR>" in
+  let t = run t " vJ vx ccto tab<CR>" in
   show t;
   let t = run t " ccclose focused view<CR>" in
   show t;

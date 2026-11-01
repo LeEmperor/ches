@@ -59,7 +59,7 @@ type t =
 
 let gutter_digits ~line_count = Int.max 3 (String.length (Int.to_string line_count))
 
-let compute_in (prefs : Prefs.t) ~(allocation : Rect.t) ~reserve_status_row ~line_count =
+let compute_in ?(decorated = true) (prefs : Prefs.t) ~(allocation : Rect.t) ~reserve_status_row ~line_count =
   let width = Int.max 0 allocation.width
   and height = Int.max 0 allocation.height in
   let status_height = if reserve_status_row then Int.min 1 height else 0 in
@@ -74,7 +74,7 @@ let compute_in (prefs : Prefs.t) ~(allocation : Rect.t) ~reserve_status_row ~lin
   (* The padding and gutter are dropped together, as one margin. *)
   let full_margin = full_padding + full_gutter_width in
   let border =
-    tile_height >= min_bordered_text_height + 2
+    decorated && tile_height >= min_bordered_text_height + 2
     && width >= 2 + full_margin + min_decorated_text_width
   in
   let border_width = if border then 1 else 0 in

@@ -146,7 +146,12 @@ end
 module Purpose = struct
   type t =
     | Detect
-    | Refresh of Git.Repository.t
+    | Refresh of
+        { repository : Git.Repository.t
+        ; refresh : Backend.Refresh.t
+        (** What it reads, as issued: its snapshot is parsed with this one, never the
+            view's current scope (which may change while it runs). *)
+        }
     | Diff of B.diff_target
     | Mutate (** A plan's steps; see [Mutation]. *)
     | Prepare of
@@ -228,6 +233,16 @@ module List_state = struct
   let empty = { cursor = Panel.Cursor.empty; top = 0 }
 end
 
+(* A [Space g l] whose repository root was not known yet (phase 8): applied when
+   detection finds a repository. *)
+module File_log = struct
+  type t =
+    { path : string (** Absolute, as the session keys it. *)
+    ; label : string (** As the tab strip shows it, for the notice. *)
+    }
+  [@@deriving sexp_of]
+end
+
 (* A log entry and the job step it is for ([-1]: a snapshot problem). *)
 module Record = struct
   type t =
@@ -269,6 +284,10 @@ type t =
   ; mutation : Mutation.t option
   ; anchor : Anchor.t option (** Applied to the next [Loaded] diff of its target. *)
   ; pending : Pending.t option (** See [live_pending]. *)
+  ; scope : Log_scope.t (** The log the next refresh reads (phase 8). *)
+  ; file_log : File_log.t option (** See [File_log]. *)
+  ; graph : string String.Map.t
+  (** The snapshot's graph rows by full hash; empty when its scope draws none. *)
   }
 [@@deriving sexp_of]
 
@@ -299,6 +318,9 @@ let create ?(plan = B.plan) ~cwd () =
   ; mutation = None
   ; anchor = None
   ; pending = None
+  ; scope = Log_scope.default
+  ; file_log = None
+  ; graph = String.Map.empty
   }
 ;;
 
@@ -313,6 +335,7 @@ let diff t = t.diff
 let log_visible t = t.log_visible
 let log t = List.rev_map t.log ~f:(fun record -> record.entry)
 let stamps t = t.stamps
+let scope t = t.scope
 let mutation t = Option.map t.mutation ~f:(fun mutation -> mutation.title)
 
 let loading t =
@@ -421,7 +444,9 @@ let ahead_behind ~ahead ~behind =
   | ahead, behind -> sprintf "ahead %d, behind %d" ahead behind
 ;;
 
-let item_text : B.item -> string = function
+(* A commit's row (phase 8): its graph row ([graph], by full hash), short hash, refs
+   and subject. *)
+let item_text ~graph : B.item -> string = function
   | File { section; entry } ->
     let submodule = function
       | None -> ""
@@ -451,7 +476,18 @@ let item_text : B.item -> string = function
          | Gone -> sprintf " [%s: gone]" name)
     in
     sprintf "%s %s%s  %s" (if current then "*" else " ") name upstream subject
-  | Commit commit -> sprintf "%s %s" (Git.Log.Commit.short_hash commit) commit.subject
+  | Commit commit ->
+    let refs =
+      match commit.refs with
+      | [] -> ""
+      | refs -> "(" ^ String.concat ~sep:", " refs ^ ") "
+    in
+    sprintf
+      "%s%s %s%s"
+      (Option.value (Map.find graph commit.hash) ~default:"")
+      (Git.Log.Commit.short_hash commit)
+      refs
+      commit.subject
 ;;
 
 (* What [y] copies: a path, a branch name, an abbreviated hash. *)
@@ -886,6 +922,7 @@ let clear_snapshot t =
   ; commits = List_state.empty
   ; refresh_error = None
   ; focus = (if Focus.equal t.focus Diff then t.list_focus else t.focus)
+  ; graph = String.Map.empty
   }
 ;;
 
@@ -895,11 +932,57 @@ let detect t =
   issue t Detect (B.detect ~cwd:t.cwd)
 ;;
 
+(* Every refresh reads the view's scope; its job keeps what it was issued with. *)
 let refresh t =
   match t.repository with
   | Found repository ->
-    issue t (Refresh repository) (B.refresh repository Backend.Refresh.default)
+    let refresh = { Backend.Refresh.default with log = t.scope } in
+    issue t (Refresh { repository; refresh }) (B.refresh repository refresh)
   | Unknown | Detecting | Not_a_repository _ | No_work_tree _ | Failed _ -> detect t
+;;
+
+(* [Space g l]'s scope for the file [path] (absolute) in the repository at [root]: its
+   history; [Error] is the notice for a file outside the repository. *)
+let file_scope ~root ({ path; label } : File_log.t) =
+  let prefix = if String.is_suffix root ~suffix:"/" then root else root ^ "/" in
+  match String.chop_prefix path ~prefix with
+  | Some relative when not (String.is_empty relative) ->
+    Ok { Log_scope.default with path = Some relative }
+  | Some _ | None -> Error (sprintf "%s is not in the repository at %s" label root)
+;;
+
+(* A new log scope (phase 8): the Commits cursor reset, focus on Commits (Visual
+   ended), the diff following it. The caller refreshes. *)
+let set_scope t scope =
+  request_diff
+    (end_visual
+       { t with scope; commits = List_state.empty; focus = Commits; list_focus = Commits })
+;;
+
+(* [set_scope] and its refresh. *)
+let change_scope t scope =
+  let t, jobs = set_scope t scope in
+  let t, more = refresh t in
+  t, jobs @ more
+;;
+
+(* The graph rows of a snapshot's commits, once per snapshot: from full hashes and
+   parents (first parents only with [first_parent]), when its own scope draws one. *)
+let graph_of (snapshot : B.snapshot) =
+  let scope = snapshot.refresh.log in
+  if not (Log_scope.graph_shown scope)
+  then String.Map.empty
+  else (
+    let commits = snapshot.commits in
+    let rows =
+      Graph.rows
+        (List.map commits ~f:(fun (commit : Git.Log.Commit.t) ->
+           ( commit.hash
+           , if scope.first_parent then List.take commit.parents 1 else commit.parents )))
+    in
+    match List.zip (List.map commits ~f:(fun commit -> commit.hash)) rows with
+    | Ok rows -> String.Map.of_alist_reduce rows ~f:(fun first _ -> first)
+    | Unequal_lengths -> String.Map.empty)
 ;;
 
 let apply_snapshot t (snapshot : B.snapshot) =
@@ -921,9 +1004,17 @@ let apply_snapshot t (snapshot : B.snapshot) =
   let t = List.fold Focus.lists ~init:t ~f:reconcile in
   request_diff
     ~force:true
-    { t with snapshot = Some snapshot; panels = current; refresh_error = None }
+    { t with
+      snapshot = Some snapshot
+    ; panels = current
+    ; refresh_error = None
+    ; graph = graph_of snapshot
+    }
 ;;
 
+(* A detection's result, with the notice to post (a pending [Space g l] on a file
+   outside the repository found). A pending [Space g l] is applied when a repository
+   is found and dropped otherwise. *)
 let detected t (report : Job.Report.t) =
   match B.detected ~cwd:t.cwd report.steps with
   | Found repository ->
@@ -933,12 +1024,28 @@ let detected t (report : Job.Report.t) =
         clear_snapshot t
       | Some _ | None -> t
     in
-    refresh { t with repository = Found repository }
+    let file_log = t.file_log in
+    let t = { t with repository = Found repository; file_log = None } in
+    (match
+       Option.map file_log ~f:(file_scope ~root:(Git.Repository.root repository))
+     with
+     | None ->
+       let t, jobs = refresh t in
+       t, jobs, None
+     | Some (Ok scope) ->
+       let t, jobs = change_scope t scope in
+       t, jobs, None
+     | Some (Error notice) ->
+       let t, jobs = refresh t in
+       t, jobs, Some notice)
   | Not_a_repository { cwd } ->
-    { (clear_snapshot t) with repository = Not_a_repository { cwd } }, []
+    { (clear_snapshot t) with repository = Not_a_repository { cwd }; file_log = None }, [], None
   | No_work_tree { cwd; message } ->
-    { (clear_snapshot t) with repository = No_work_tree { cwd; message } }, []
-  | Failed message -> { (end_visual t) with repository = Failed message }, []
+    ( { (clear_snapshot t) with repository = No_work_tree { cwd; message }; file_log = None }
+    , []
+    , None )
+  | Failed message ->
+    { (end_visual t) with repository = Failed message; file_log = None }, [], None
 ;;
 
 (* A settling mutation ends with the current refresh's report, whatever its fate,
@@ -970,9 +1077,25 @@ let anchor_offset text (diff : Diff.t) (anchor : Anchor.t) =
     |> Option.value ~default:0
 ;;
 
+(* Where a commit's diff shown for the first time starts in a file's history
+   (phase 8): the first file whose path or original path is the history's, else the
+   top. [None] outside a file's history or for other targets. *)
+let history_offset t text (diff : Diff.t) (target : B.diff_target) =
+  match target, t.snapshot with
+  | Commit _, Some { refresh = { log = { path = Some path; _ }; _ }; _ } ->
+    Some
+      (List.findi diff.files ~f:(fun _ (file : Diff.File.t) ->
+         String.equal (Diff.File.path file) path
+         || Option.exists file.old_path ~f:(String.equal path))
+       |> Option.bind ~f:(fun (file, _) -> Vcs_diff_text.start_of text ~file ~hunk:None)
+       |> Option.value ~default:0)
+  | _ -> None
+;;
+
+(* A finished report of a read job: the new state, jobs, and a notice to post. *)
 let finished t (report : Job.Report.t) =
   match Map.find t.in_flight report.id with
-  | None -> t, []
+  | None -> t, [], None
   | Some purpose ->
     let t = { t with in_flight = Map.remove t.in_flight report.id } in
     let current = Stamps.accepts t.stamps report in
@@ -985,28 +1108,38 @@ let finished t (report : Job.Report.t) =
          | Some { settling = true; anchor; _ } when current -> anchor
          | Some _ | None -> None
        in
-       let t, jobs =
+       let t, jobs, notice =
          match purpose, used with
          | _, false when current && report.cancelled ->
            (* The current detection or refresh will not answer: say so instead of
               loading forever. *)
            (match purpose with
             | Detect ->
-              { t with repository = Failed "repository detection was cancelled" }, []
+              ( { t with
+                  repository = Failed "repository detection was cancelled"
+                ; file_log = None
+                }
+              , []
+              , None )
             | Refresh _ | Diff _ | Mutate | Prepare _ ->
-              { t with refresh_error = Some "refresh cancelled" }, [])
-         | _, false -> t, []
+              { t with refresh_error = Some "refresh cancelled" }, [], None)
+         | _, false -> t, [], None
          | Detect, true -> detected t report
-         | Refresh repository, true ->
-           (match B.snapshot repository Backend.Refresh.default report.steps with
+         | Refresh { repository; refresh }, true ->
+           (match B.snapshot repository refresh report.steps with
             | Ok snapshot ->
-              apply_snapshot { (log_problems t report snapshot) with anchor } snapshot
+              let t, jobs =
+                apply_snapshot { (log_problems t report snapshot) with anchor } snapshot
+              in
+              t, jobs, None
             | Error error ->
-              { t with refresh_error = Some (one_line (Error.to_string_hum error)) }, [])
-         | (Diff _ | Mutate | Prepare _), true -> t, []
+              ( { t with refresh_error = Some (one_line (Error.to_string_hum error)) }
+              , []
+              , None ))
+         | (Diff _ | Mutate | Prepare _), true -> t, [], None
        in
-       end_settled_mutation t ~purpose ~current, jobs
-     | Mutate | Prepare _ -> t, []
+       end_settled_mutation t ~purpose ~current, jobs, notice
+     | Mutate | Prepare _ -> t, [], None
      | Diff target ->
        let parsed =
          if report.cancelled
@@ -1020,7 +1153,7 @@ let finished t (report : Job.Report.t) =
          | Some (Ok _) | None -> t
        in
        if not current
-       then t, []
+       then t, [], None
        else (
          let anchor = t.anchor in
          let t = { t with anchor = None } in
@@ -1030,35 +1163,43 @@ let finished t (report : Job.Report.t) =
                { t with diff = Failed (target, "cancelled") }
                ~shown:(Some target)
                (Vcs_diff_text.of_message "Diff cancelled; g r reads it again")
-           , [] )
+           , []
+           , None )
          | Some (Ok diff) ->
            let text = Vcs_diff_text.of_diff diff in
+           (* A target shown before (a refresh of it) keeps its cursor. *)
+           let first = not (Option.equal B.equal_diff_target t.diff_shown (Some target)) in
            let t =
              set_diff_text { t with diff = Loaded (target, diff) } ~shown:(Some target) text
            in
-           (match anchor with
-            | Some anchor when B.equal_diff_target anchor.target target ->
-              let offset = anchor_offset text diff anchor in
-              { t with diff_view = Text_view.jump t.diff_view offset }, []
-            | Some _ | None -> t, [])
+           let offset =
+             match anchor with
+             | Some anchor when B.equal_diff_target anchor.target target ->
+               Some (anchor_offset text diff anchor)
+             | Some _ | None -> if first then history_offset t text diff target else None
+           in
+           (match offset with
+            | Some offset -> { t with diff_view = Text_view.jump t.diff_view offset }, [], None
+            | None -> t, [], None)
          | Some (Error error) ->
            let message = one_line (Error.to_string_hum error) in
            ( set_diff_text
                { t with diff = Failed (target, message) }
                ~shown:(Some target)
                (Vcs_diff_text.of_message ("Diff failed: " ^ message))
-           , [] )))
+           , []
+           , None )))
 ;;
 
 let event t (event : Event.t) =
   match event with
   | Output { job; step; stream = _; line } ->
     (match Map.find t.in_flight job with
-     | Some Mutate -> log_output t ~job ~step line, []
-     | Some (Detect | Refresh _ | Diff _ | Prepare _) | None -> t, [])
+     | Some Mutate -> log_output t ~job ~step line, [], None
+     | Some (Detect | Refresh _ | Diff _ | Prepare _) | None -> t, [], None)
   | Started { job; step; spec } ->
     (match Map.find t.in_flight job with
-     | None | Some (Diff _) -> t, []
+     | None | Some (Diff _) -> t, [], None
      | Some purpose ->
        ( add_record
            t
@@ -1073,7 +1214,8 @@ let event t (event : Event.t) =
                    not (Stamps.is_current t.stamps ?lane:(Purpose.lane purpose) job)
                }
            }
-       , [] ))
+       , []
+       , None ))
   | Finished report -> finished t report
 ;;
 
@@ -1366,6 +1508,15 @@ type action =
   | Checkout_previous (** [-] in Branches. *)
   | New_branch (** [n] in Branches: the name prompt. *)
   | Create_branch of string (** The name prompt's answer. *)
+  | Log_popup (** [l] in a list panel (phase 8). *)
+  | Log_choice of Git.Log.Choice.t (** The log popup's answer. *)
+  | More_commits (** [+] in Commits. *)
+  | Next_file of
+      { forward : bool
+      ; count : int
+      } (** [\}] [\{] in the diff. *)
+  | Jump_to_file of int (** Enter on a [Listed] line: that file's start. *)
+  | File_log (** The ["file-log"] request ([Space g l]). *)
 [@@deriving sexp_of]
 
 (* The commit popup asked with [c]; its actions are the view's own. *)
@@ -1406,7 +1557,10 @@ let interpret t (keys : Key.t list) : action Content_key.t =
        a count before [s u x S U] is dropped, as the text drops it before other keys. *)
     let visual = Option.is_some (Text_view.visual t.diff_view) in
     (match keys, split_count keys with
-     | [ Enter ], _ -> Action Open_file
+     | [ Enter ], _ ->
+       (match Vcs_diff_text.listed_file_at t.diff_text (Text_view.cursor t.diff_view) with
+        | Some file -> Action (Jump_to_file file)
+        | None -> Action Open_file)
      | [ key ], _ when is 'e' key -> Action Open_file
      | _, (_, [ key ]) when Option.is_some (Verb.of_key key) ->
        let verb = Option.value_exn (Verb.of_key key) in
@@ -1415,6 +1569,8 @@ let interpret t (keys : Key.t list) : action Content_key.t =
        else Action (Act verb)
      | _, (count, [ key ]) when (is ']' key || is '[' key) && not visual ->
        Action (Next_hunk { forward = is ']' key; count = Option.value count ~default:1 })
+     | _, (count, [ key ]) when (is '}' key || is '{' key) && not visual ->
+       Action (Next_file { forward = is '}' key; count = Option.value count ~default:1 })
      | [ key ], _ when is 'c' key && not visual -> Action Commit_popup
      | [ key ], _ when Option.is_some (remote_key key) && not visual ->
        Action (Option.value_exn (remote_key key))
@@ -1425,6 +1581,8 @@ let interpret t (keys : Key.t list) : action Content_key.t =
   | [ key ] when is '0' key -> Action Focus_diff
   | [ key ] when is 'y' key -> Action Copy
   | [ key ] when is 'c' key -> Action Commit_popup
+  | [ key ] when is 'l' key -> Action Log_popup
+  | [ key ] when Focus.equal t.focus Commits && is '+' key -> Action More_commits
   | [ key ] when Option.is_some (remote_key key) ->
     Action (Option.value_exn (remote_key key))
   | [ key ] when Focus.equal t.focus Files && Option.is_some (Verb.of_key key) ->
@@ -1475,6 +1633,7 @@ let signal t : View_registry.Signal.t -> action option = function
   | Job event -> Some (Event event)
   | Request "commit-finish" -> Some Finish_commit
   | Request "commit-abort" -> Some Abort_commit
+  | Request "file-log" -> Some File_log
   | Request _ -> None
 ;;
 
@@ -1584,11 +1743,27 @@ let conflicted_at t =
   | _ -> None
 ;;
 
-(* The branch [m] merges: the Branches panel's selected item, whatever has focus. *)
+(* The branch [m] merges (and [l b] logs): the Branches panel's selected item, whatever
+   has focus. *)
 let merge_branch t =
   match selected_item t Branches with
   | Some { value = Branch branch; _ } -> Some branch.name
   | Some { value = File _ | Commit _; _ } | None -> None
+;;
+
+(* The file [l f] logs: in Files the selected item's key (not a directory's); in
+   Branches and Commits the file of the diff's line at its cursor. *)
+let log_file t =
+  match t.focus with
+  | Files ->
+    (match selected t Files with
+     | Some (Item { key; _ }) when not (String.is_suffix key ~suffix:"/") -> Some key
+     | Some (Item _ | Header _) | None -> None)
+  | Branches | Commits ->
+    (match Vcs_diff_text.line_at t.diff_text (Text_view.cursor t.diff_view) with
+     | Some { target = Some { path; _ }; _ } -> path
+     | Some { target = None; _ } | None -> None)
+  | Diff -> None
 ;;
 
 let in_progress t kind =
@@ -1755,9 +1930,9 @@ let live_pending t context =
   | Some _ | None -> t
 ;;
 
-(* The next or previous [@@] line, [count] times, stopping at the last or first. *)
-let next_hunk t ~forward ~count =
-  let starts = Vcs_diff_text.hunk_starts t.diff_text in
+(* The next or previous of [starts] (byte offsets of line starts: [@@] lines, files),
+   [count] times, stopping at the last or first; [None] when the cursor stays. *)
+let next_start t starts ~forward ~count =
   let cursor = Text_view.cursor t.diff_view in
   let text = Text_view.text t.diff_view in
   let line_start offset =
@@ -1782,7 +1957,13 @@ let next_hunk t ~forward ~count =
       | Some offset -> go offset (count - 1))
   in
   let target = go cursor count in
-  if target = cursor then t else { t with diff_view = Text_view.jump t.diff_view target }
+  if target = cursor then None else Some { t with diff_view = Text_view.jump t.diff_view target }
+;;
+
+let next_hunk t ~forward ~count =
+  Option.value
+    (next_start t (Vcs_diff_text.hunk_starts t.diff_text) ~forward ~count)
+    ~default:t
 ;;
 
 let perform t controller ~context ~rows ~width action =
@@ -1797,6 +1978,7 @@ let perform t controller ~context ~rows ~width action =
     ?save
     ?dispose
     ?ask
+    ?show
     t
     =
     ( fit t ~rows ~width
@@ -1810,6 +1992,7 @@ let perform t controller ~context ~rows ~width action =
         ?save
         ?dispose
         ?ask
+        ?show
         controller )
   in
   let with_jobs (t, jobs) = outcome t ~jobs in
@@ -1859,13 +2042,37 @@ let perform t controller ~context ~rows ~width action =
                       { title; message; yes = Submit submission; no = None }))))
   in
   (* A popup built for the loaded snapshot; its answer is one of the view's actions. *)
-  let ask_popup t popup_of =
+  let ask_popup ?(enabled = []) t popup_of =
     match t.snapshot with
     | None -> outcome t ~notice:(`Show "Nothing loaded yet")
     | Some snapshot ->
       outcome
         t
-        ~ask:(View_registry.Ask.Popup { popup = popup_of snapshot; cancel = None })
+        ~ask:(View_registry.Ask.Popup { popup = popup_of snapshot; enabled; cancel = None })
+  in
+  (* [Space g l]: the history of the file the user is in, shown and focused. *)
+  let file_log t =
+    match View_registry.Context.active context with
+    | None ->
+      outcome
+        t
+        ~notice:
+          (`Post "No file buffer here: Space g l shows the history of the file you are in")
+    | Some file ->
+      let file_log = { File_log.path = file.path; label = file.label } in
+      (match t.repository with
+       | Found repository ->
+         (match file_scope ~root:(Git.Repository.root repository) file_log with
+          | Error notice -> outcome t ~notice:(`Post notice)
+          | Ok scope ->
+            (* A hidden view also refreshes on [Shown], which supersedes this one. *)
+            let t, jobs = change_scope t scope in
+            outcome t ~jobs ~show:true)
+       | Unknown | Detecting -> outcome { t with file_log = Some file_log } ~show:true
+       | Not_a_repository _ | No_work_tree _ | Failed _ ->
+         (* Look again: a repository found then applies it. *)
+         let t, jobs = detect { t with file_log = Some file_log } in
+         outcome t ~jobs ~show:true)
   in
   (* The pending commit while the user is in its message buffer, else the refusal. *)
   let in_message t =
@@ -1886,7 +2093,9 @@ let perform t controller ~context ~rows ~width action =
      | t, `Nothing -> outcome t
      | t, `Error message -> outcome t ~notice:(`Post message)
      | t, `Open location -> outcome t ~open_file:location)
-  | Event e -> with_jobs (event t e)
+  | Event e ->
+    let t, jobs, notice = event t e in
+    outcome t ~jobs ?notice:(Option.map notice ~f:(fun notice -> `Post notice))
   | Act Discard when Option.is_some (conflicted_at t) ->
     let path, conflict = Option.value_exn (conflicted_at t) in
     (match busy t with
@@ -1902,7 +2111,9 @@ let perform t controller ~context ~rows ~width action =
     (match t.snapshot with
      | None -> outcome t ~notice:(`Show "Nothing loaded yet")
      | Some _ ->
-       outcome t ~ask:(View_registry.Ask.Popup { popup = commit_popup; cancel = None }))
+       outcome
+         t
+         ~ask:(View_registry.Ask.Popup { popup = commit_popup; enabled = []; cancel = None }))
   | Commit_choice choice ->
     let t = live_pending t context in
     (match t.snapshot with
@@ -2041,6 +2252,35 @@ let perform t controller ~context ~rows ~width action =
               }))
   | Create_branch name -> act t (fun _ -> Ok (B.Create_branch name, None))
   | Next_hunk { forward; count } -> outcome (next_hunk t ~forward ~count)
+  | Next_file { forward; count } ->
+    (match next_start t (Vcs_diff_text.file_starts t.diff_text) ~forward ~count with
+     | Some t -> outcome t
+     | None -> outcome t ~notice:(`Show (if forward then "No next file" else "No previous file")))
+  | Jump_to_file file ->
+    (match Vcs_diff_text.start_of t.diff_text ~file ~hunk:None with
+     | Some offset -> outcome { t with diff_view = Text_view.jump t.diff_view offset }
+     | None -> outcome t)
+  | Log_popup ->
+    ask_popup
+      t
+      ~enabled:(Git.Log.enabled t.scope)
+      (fun _ ->
+         Popup.map
+           (Git.Log.popup ~branch:(merge_branch t) ~file:(log_file t))
+           ~f:(fun choice -> Log_choice choice))
+  | Log_choice choice ->
+    (match Git.Log.scope choice with
+     | Error text -> outcome t ~notice:(`Show text)
+     | Ok scope -> with_jobs (change_scope t scope))
+  | More_commits ->
+    (match Log_scope.more t.scope with
+     | None ->
+       outcome
+         t
+         ~notice:
+           (`Show (sprintf "Showing the most commits already (%d)" Log_scope.max_limit))
+     | Some scope -> with_jobs (refresh { t with scope }))
+  | File_log -> file_log t
   | Focus_list focus ->
     let t = end_visual t in
     with_jobs (request_diff { t with focus; list_focus = focus })
@@ -2166,6 +2406,8 @@ let commands t =
         else
           [ c "next-hunk" [ k ']' ] "Next hunk"
           ; c "previous-hunk" [ k '[' ] "Previous hunk"
+          ; c "next-file" [ k '}' ] "Next file"
+          ; c "previous-file" [ k '{' ] "Previous file"
           ; commit
           ]
           @ remote
@@ -2210,7 +2452,12 @@ let commands t =
           [ c "new-branch" [ k 'n' ] "Create a branch at HEAD and check it out"
           ; c "previous-branch" [ k '-' ] "Check out the previous branch"
           ]
-        | Commits | Diff -> []
+        | Commits ->
+          [ c "more-commits" [ k '+' ] "Show more commits" ]
+        | Diff -> []
+      in
+      let log =
+        c "log" [ k 'l' ] "Log: HEAD, a branch, all branches or a file's history (the log popup)"
       in
       always
       @ panels
@@ -2219,7 +2466,7 @@ let commands t =
         ]
       @ enter
       @ actions
-      @ (commit :: remote)
+      @ (log :: commit :: remote)
       @ [ c "copy" [ k 'y' ] copy ]
       @ Navigation.commands)
 ;;
@@ -2348,7 +2595,8 @@ let panel_rows t focus ~width ~body =
       | Item _ ->
         (match Panel.find panel position with
          | None -> Tile_text.item ~selected Status "" ~width
-         | Some item -> Tile_text.item ~selected Status (item_text item.value) ~width)
+         | Some item ->
+           Tile_text.item ~selected Status (item_text ~graph:t.graph item.value) ~width)
     in
     let body_rows =
       if count = 0 && body > 0
@@ -2539,13 +2787,14 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
                "s u x lines, S U, y copy, Esc ends, g r, @, q"
              | Loaded (Conflicted _, _) ->
                sprintf
-                 "e edit, s x on the file header (resolved, take a side), ] [ hunks, c \
-                  commit, %s, f p P fetch/pull/push, 10j, v V y, Tab/Esc list, g r, @, q"
+                 "e edit, s x on the file header (resolved, take a side), ] [ hunks, } { \
+                  files, c commit, %s, f p P fetch/pull/push, 10j, v V y, Tab/Esc list, g \
+                  r, @, q"
                  operation
              | Empty | No_diff | Loading _ | Loaded _ | Failed _ ->
                sprintf
-                 "s u x hunk, ] [ hunks, c commit, %s, f p P fetch/pull/push, e open, \
-                  10j, v V y, Tab/Esc list, g r, @, q"
+                 "s u x hunk, ] [ hunks, } { files, c commit, %s, f p P \
+                  fetch/pull/push, e open, 10j, v V y, Tab/Esc list, g r, @, q"
                  operation)
       | (Files | Branches | Commits) as focus ->
         let count = List.length (rows_of t focus) in
@@ -2561,23 +2810,23 @@ let render t ~hotkey_hints ~focused:_ ~notice ~pending ~width ~rows : Tile_shell
             (match focus with
              | Files ->
                sprintf
-                 "%s, c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab diff, \
-                  Enter, y copy, g r, @, q"
+                 "%s, l log, c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab \
+                  diff, Enter, y copy, g r, @, q"
                  (if Option.is_some (conflicted_at t)
                   then "s resolved, x take a side"
                   else "s u x S U")
                  operation
              | Branches ->
                sprintf
-                 "Enter checkout, n new, - previous, %s, c commit, f p P \
+                 "Enter checkout, n new, - previous, %s, l log, c commit, f p P \
                   fetch/pull/push, 1 2 3 panels, Tab diff, y copy, g r, @, q"
                  (if in_progress t Rebase || in_progress t Merge
                   then operation
                   else "m merge this")
              | Commits | Diff ->
                sprintf
-                 "c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab diff, Enter, y \
-                  copy, g r, @, q"
+                 "l log, + more, c commit, %s, f p P fetch/pull/push, 1 2 3 panels, Tab \
+                  diff, Enter, y copy, g r, @, q"
                  operation))
   in
   { title = title t
@@ -2619,8 +2868,8 @@ let adapter : (t, action) View_registry.Adapter.t =
   ; interpret
   ; escape
   ; hint =
-      "VCS: s/u/x stage/unstage/discard, c commit, m merge, f/p/P fetch/pull/push, 1/2/3 \
-       panels, Tab diff, g r refresh, @ log, q leaves, ? help"
+      "VCS: s/u/x stage/unstage/discard, c commit, m merge, l log, f/p/P fetch/pull/push, \
+       1/2/3 panels, Tab diff, g r refresh, @ log, q leaves, ? help"
   ; perform
   ; commands
   ; signal

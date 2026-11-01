@@ -141,6 +141,29 @@
     the cursor counts for the cells it occupies. They must be at least 1; otherwise
     the command raises [Invalid_argument].
 
+    {2 Explicit indentation}
+
+    [Shift_lines] in Normal shifts [count] logical lines starting at the cursor,
+    clamped at EOF, by one policy width. [Visual_shift] shifts intersected full
+    logical lines by [count] widths and exits to Normal; this includes every line
+    touched by a block. For characterwise selections, an endpoint at the start of
+    a later line excludes that line, in either direction; an endpoint on the LF
+    includes its own line only. Both commands skip all-whitespace lines when
+    shifting right. Their cursor goes to the first selected line's first nonblank.
+    Each is one undo transaction. Counts use [Command.max_count] bounds.
+
+    [Insert_shift] shifts the current line once, including empty lines, stays in
+    Insert and joins its transaction. Text-relative cursor offsets after the
+    prefix are retained; within indentation the display column shifts and clamps
+    at zero (inside a resulting TAB, it lands before that TAB). During block insert
+    it ends replication, keeping existing edits in the same transaction.
+
+    Widths are display columns with TAB stops of {!Cell_layout.tab_stop}. Right
+    shifts add a width rather than rounding; left shifts clamp at zero. Only the
+    leading spaces and TABs are rewritten, according to {!Indentation.Policy};
+    other text and final LF are preserved. Zero-width changes do not normalize
+    whitespace or change revision/history. Shifts never replace the register.
+
     {2 Undo}
 
     Consecutive Insert-mode edits form one transaction, closed by [Exit_insert], [Move],
@@ -194,11 +217,14 @@ end
     [Text_buffer.empty] for a file that does not exist yet. [cell_width] must be the
     width function the frontend draws with, so that display columns agree with the
     screen. [history_limits] defaults to {!History.Limits.default} and is preserved
-    when reload or directory rebase resets history. *)
+    when reload or directory rebase resets history. [indentation] defaults to
+    {!Indentation.Policy.default}, is retained across reload/rebase, and must have
+    a positive shift width, otherwise [Invalid_argument] is raised. *)
 val create
   :  ?path:string
    -> ?search_case:Search_case.t
    -> ?history_limits:History.Limits.t
+   -> ?indentation:Indentation.Policy.t
   -> cell_width:Cell_layout.Width.t
   -> Text_buffer.t
   -> t

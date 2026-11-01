@@ -8,6 +8,7 @@ let action_of_target : Bindings.Target.t -> Keymap.Action.t option = function
   | Scroll _
   | Delete_operator
   | Yank_operator
+  | Shift_lines _
   | Delete_chars_forward
   | Delete_chars_backward
   | Delete_to_line_end

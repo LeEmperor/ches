@@ -8,7 +8,8 @@
       side changed (both for a partially staged file); [Unmerged] in Conflicted;
       [Untracked] and [Ignored] in theirs. Entries keep git's order.
     - Branches (["branches"]): one section ["local"], keyed by branch name.
-    - Commits (["commits"]): one section ["recent"], keyed by full hash.
+    - Commits (["commits"]): one section ["recent"], keyed by full hash, titled
+      {!Ches_vcs.Log_scope.title} of the refresh's [log] and the commits read.
 
     Actions arrive with the phases that need them: stage/unstage/discard in 3
     ({!action}), line staging in 4 ({!Target.t.Lines}), commit in 5 ({!Commit}),
@@ -153,7 +154,7 @@ type action =
     - [name] is ["git"]; [Repository] is {!Ches_vcs_git.Repository}.
     - [detect]/[detected]: {!Repository.detect}/{!Repository.detected}.
     - [refresh repo r]: [Run (Status.command ~ignored:r.ignored)],
-      [Run Branch_list.command], [Run (Log.command ~limit:r.log_limit)], then
+      [Run Branch_list.command], [Run (Log.command r.log)], then
       [Read_file] of every {!In_progress.reads} of [repo.git_dir]; all in
       [repo.root].
     - [snapshot]: Error if the status step did not succeed (or its output does not

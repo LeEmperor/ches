@@ -65,6 +65,7 @@ type t =
   ; cursor : int
   ; preferred_column : int
   ; cell_width : Cell_layout.Width.t
+  ; indentation_policy : Indentation.Policy.t
   ; history : History.t
   ; unnamed_register : Register.t option
   ; message : Message.t option
@@ -76,7 +77,9 @@ type t =
   ; block_insert : Block_insert.t option (* Only in Insert mode. *)
   }
 
-let create ?path ?(search_case = Search_case.Smart) ?(history_limits = History.Limits.default) ~cell_width text =
+let create ?path ?(search_case = Search_case.Smart) ?(history_limits = History.Limits.default)
+    ?(indentation = Indentation.Policy.default) ~cell_width text =
+  Indentation.Policy.validate indentation;
   { text
   ; path
   ; mode = Normal
@@ -90,6 +93,7 @@ let create ?path ?(search_case = Search_case.Smart) ?(history_limits = History.L
         ~pos:0
         ~tab_end:true
   ; cell_width
+  ; indentation_policy = indentation
   ; history = History.create ~limits:history_limits ()
   ; unnamed_register = None
   ; message = None
@@ -106,7 +110,7 @@ let text t = t.text
 let path t = t.path
 let with_path t path = { t with path = Some path }
 let rebase_text t ~saved ~text =
-  let fresh = create ?path:t.path ~search_case:t.search_case ~history_limits:(History.limits t.history) ~cell_width:t.cell_width text in
+  let fresh = create ?path:t.path ~search_case:t.search_case ~history_limits:(History.limits t.history) ~indentation:t.indentation_policy ~cell_width:t.cell_width text in
   { fresh with saved; revision = t.revision + 1; saved_revision = t.revision + 1
     ; unnamed_register = t.unnamed_register }
 ;;
@@ -314,6 +318,76 @@ let enter_visual t kind =
 
 let leave_visual t ~cursor =
   set_cursor { t with mode = Normal; selection = None } cursor
+;;
+
+(* Apply bottom-up so original line offsets stay valid. Build the complete result
+   before editing: the whole operator is one revision and one transaction. *)
+let shift t ~first ~last ~right ~count ~inserting =
+  let original_cursor = t.cursor in
+  let text, insert_cursor =
+    List.range first last ~stop:`inclusive
+    |> List.rev
+    |> List.fold ~init:(t.text, original_cursor) ~f:(fun (text, cursor) line ->
+      let row = B.line_text t.text line in
+      let bytes, columns = Indentation.prefix row in
+      match Indentation.shifted_prefix t.indentation_policy ~right ~count
+              ~skip_blank:(right && not inserting) row with
+      | None -> text, cursor
+      | Some replacement ->
+        let start = B.line_start t.text line in
+        let cursor =
+          if not inserting then cursor
+          else if original_cursor >= start + bytes
+          then original_cursor + String.length replacement - bytes
+          else (
+            let _, old_column = Indentation.prefix (String.prefix row (original_cursor - start)) in
+            let _, new_columns = Indentation.prefix replacement in
+            let column = Int.max 0 (old_column + new_columns - columns) in
+            start + Indentation.position_at_column replacement column)
+        in
+        replace text ~pos:start ~len:bytes replacement, cursor)
+  in
+  let cursor =
+    if inserting then insert_cursor
+    else B.line_start text first + fst (Indentation.prefix (B.line_text text first))
+  in
+  let changed = not (B.equal text t.text) in
+  (* Shifting the current line ends block replication, retaining its edits and
+     joining the same Insert transaction. *)
+  let t = if inserting then { t with block_insert = None }
+    else { t with mode = Normal; selection = None } in
+  if not changed then set_cursor t cursor
+  else if inserting then edit t ~text ~cursor
+  else commit (edit (commit t) ~text ~cursor)
+;;
+
+let shift_lines t ~right ~count =
+  check_count count;
+  let first = cursor_line t in
+  let last = first + Int.min (count - 1) (B.line_count t.text - first - 1) in
+  shift t ~first ~last ~right ~count:1 ~inserting:false
+;;
+
+let visual_shift t ~right ~count =
+  check_count count;
+  match t.selection with
+  | None -> t
+  | Some selection ->
+    let start = Int.min selection.anchor selection.active in
+    let stop = Int.max selection.anchor selection.active in
+    let first = B.line_of_offset t.text start in
+    let last = B.line_of_offset t.text stop in
+    let last =
+      if Poly.equal selection.kind `Characterwise && stop > start
+         && stop = B.line_start t.text last
+      then last - 1 else last
+    in
+    shift t ~first ~last ~right ~count ~inserting:false
+;;
+
+let insert_shift t ~right =
+  let first = cursor_line t in
+  shift t ~first ~last:first ~right ~count:1 ~inserting:true
 ;;
 
 let range_register t (range : Range.t) text =
@@ -1137,6 +1211,9 @@ let dispatch_command t (command : Command.t) =
   | Delete_forward -> delete_forward t, []
   | Insert_soft_tab width -> insert_soft_tab t width, []
   | Delete_soft_tab_backward width -> delete_soft_tab_backward t width, []
+  | Insert_shift { right } -> insert_shift t ~right, []
+  | Shift_lines { right; count } -> shift_lines t ~right ~count, []
+  | Visual_shift { right; count } -> visual_shift t ~right ~count, []
   | Delete_char -> delete_char t, []
   | Delete_chars_forward count -> delete_chars_forward t count, []
   | Delete_chars_backward count -> delete_chars_backward t count, []
@@ -1194,6 +1271,10 @@ let dispatch_command t (command : Command.t) =
 let dispatch t (command : Command.t) =
   let applies =
     match command, t.mode with
+    | Shift_lines _, (Insert | Visual _)
+    | Insert_shift _, (Normal | Visual _)
+    | Visual_shift _, (Normal | Insert) -> false
+    | Visual_shift _, Visual _ -> true
     | (Enter_insert _ | Open_line_below | Open_line_above | Enter_visual _ | Exit_visual), Insert
     | ( ( Exit_insert
         | Insert_text _

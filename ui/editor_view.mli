@@ -41,6 +41,8 @@ end
     File scope is resolved once from startup and retained across tab activation. *)
 val app
   :  ?smear_enabled:bool
+   -> ?bare:bool
+   -> ?theme:Ches_theme.Theme.t
   -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t
   -> ?report:Ches_screen.Report_tile.Item.t list
        (** Installs a static report view (see {!Ches_screen.Ui_state.create}). *)
@@ -66,11 +68,11 @@ val app
 
 (** Draws a frame. Each span is forced to its computed width, so a grapheme cluster
     that the terminal library measures differently cannot shift the layout. *)
-val draw : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
+val draw : ?theme:Ches_theme.Theme.t -> ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
 
 (** Static rows and animation overlay split, used with [Frame.Cache]. *)
-val draw_base : ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
-val draw_overlay : ?font:(Ches_screen.Style.t -> Theme.Font.t list)
+val draw_base : ?theme:Ches_theme.Theme.t -> ?font:(Ches_screen.Style.t -> Theme.Font.t list) -> Ches_screen.Frame.t -> View.t
+val draw_overlay : ?theme:Ches_theme.Theme.t -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> base:View.t -> Ches_screen.Frame.t -> View.t
 
 (** Runs the editor in the terminal until it exits, then stops [source] and waits for
@@ -79,6 +81,8 @@ val draw_overlay : ?font:(Ches_screen.Style.t -> Theme.Font.t list)
     terminal (and after the same bounded wait for [vcs]). *)
 val run
   :  ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
+   -> ?bare:bool (** Start in borderless document presentation. *)
+   -> ?theme:Ches_theme.Theme.t (** Initial theme; Space v T previews and chooses themes. *)
   -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)
   -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t
   -> ?report:Ches_screen.Report_tile.Item.t list

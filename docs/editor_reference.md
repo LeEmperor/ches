@@ -24,6 +24,7 @@ checks for [Ches](../README.md).
 | Normal | `i` / `a` | Insert before / after the character under the cursor |
 | Normal | `I` / `A` | Insert at the first non-blank / end of the line |
 | Normal | `o` / `O` | Open a new line below / above, indented like this one |
+| Normal | `>>` / `<<` | Shift current line right / left; a count selects lines (`3>>`) |
 | Normal | `d{motion}`, `dd`, `D` | Delete by motion, whole line(s), or through line end |
 | Normal | `diw` | Delete the small word under the cursor |
 | Normal | `x` / `X` | Delete character(s) under / before the cursor |
@@ -39,6 +40,7 @@ checks for [Ches](../README.md).
 | Normal | `Space g g` / `Space g f` | Open the VCS view as a tab, or focus it where it is; from the focused view, back to the editor (see [VCS view](#vcs-view)) |
 | Normal | `Space g t` / `Space g s` / `Space g h` | Move the VCS view to a tab / the split, or close it |
 | Normal | `Space g c` / `Space g a` | In a commit message opened from the VCS view (`c`): commit it / abort it |
+| Normal | `Space g l` | Show the current file's history in the VCS view, opening and focusing it (see [Browsing history](#browsing-history)) |
 | Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp, slang-server, or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
@@ -71,7 +73,9 @@ checks for [Ches](../README.md).
 | Normal | `Space v p h/l/k/j` | Place status left/right/above/below and show it |
 | Normal | `Space v p -/+` | Shrink/grow requested status size by 2 cells (`=` aliases `+`); a count repeats |
 | Normal | `Space v z` | Toggle zen: hide status temporarily, retaining compact feedback |
-| Normal | `Space v r` | Reset the layout: centered, width 100, offset 0, no line numbers |
+| Normal | `Space v B` | Toggle bare mode: borderless full-width document and quiet feedback |
+| Normal | `Space v T` | Open the live theme chooser (also **Choose theme** in the palette) |
+| Normal | `Space v r` | Reset workspace document placement; in bare, reset only its line numbers to off |
 | Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
 | Normal | `Space f l` | Fuzzy search current-document lines (including unsaved edits) |
 | Normal | `Space f f` | Find project files; open/activate retained buffers |
@@ -81,10 +85,12 @@ checks for [Ches](../README.md).
 | Visual | `v` / `V` / `Ctrl-v` | Switch the selection's kind, preserving its anchor |
 | Visual | `d` / `c` / `y` | Delete / change / yank the selected range |
 | Visual | `I` / `A` | On a block: insert before / append after it on every line; `2I` repeats the text |
+| Visual | `>` / `<` | Shift selected lines right / left; a count selects indentation steps (`3>`) |
 | Visual | `Escape` | Cancel selection without moving the cursor |
 | Insert | text, `Backspace`, `Delete` | Edit |
 | Insert | `Enter` | New line, indented like the current one |
 | Insert | `Tab` | Insert spaces to the next multiple of 2 columns |
+| Insert | `Ctrl-t` / `Ctrl-d` | Increase / decrease current-line indentation by one step |
 | Insert | `Escape`, or `j` then `k` | Back to Normal mode |
 | Both | `Ctrl-c` | Nothing, except a hint to use `Space q` |
 
@@ -137,6 +143,52 @@ the corresponding failure for that file. Routine feedback, including refused qui
 clears on the next completed editor command or is replaced by newer routine feedback.
 Pending prefixes, ignored keys, resize, and animation do not clear it.
 
+### Bare presentation
+
+Start with `ches --bare PATH`, press `Space v B`, or choose **Toggle bare mode**
+in the palette. Bare puts text at the terminal's top-left, using the full width
+without a document border, title, padding, tab strip, workspace panes, or animated
+cursor. Line numbers start off and can be enabled independently. Syntax highlighting, search and selection overlays,
+modal editing, buffer switching, registers, and undo remain available.
+
+`Space v n` toggles absolute numbering and `Space v N` toggles relative numbering,
+using the same commands and gutter renderer as the workspace. Enabling both gives
+hybrid numbering: the current line's absolute number and relative distances on the
+other lines. The palette's number commands work identically. The gutter disappears
+when the terminal is too narrow and returns with the chosen style when it grows.
+
+Bare retains its own line-number preference for the session, across file switches
+and leaving/reentering bare. It neither inherits nor changes the workspace/zen
+number style. `Space v r` in bare resets only this profile to numbers off, leaving
+workspace placement and numbering untouched. For code-level startup configuration,
+`Presentation.Bare_prefs.t` holds these settings; for example,
+`Ui_state.create ~bare:true ~bare_prefs:{ line_numbers = Absolute } controller`
+starts bare with absolute numbers using the existing renderer. Preferences are
+session-local and are not saved across launches.
+
+The bottom row stays allocated so feedback never shifts the document. It is blank
+when idle, showing only pending keys, search/command prompts, and operation
+feedback rather than permanent mode, filename, dirty, or position fields. The
+cursor shape still distinguishes Normal and Insert mode. Diagnostic findings stay
+retained without an unresolved-problem count in this row; save/reload errors and
+other operation feedback remain visible until cleared or acknowledged normally.
+
+Entering bare returns input from a supporting view or side directory to the
+active file and releases floating capture and incomplete key sequences. A
+directory-only session keeps its listing usable until a file is opened. The same
+session owns the buffers in every presentation: switching does not reload files,
+discard unsaved text, or reset undo. `Space v B` restores the previous workspace
+or zen presentation and its requested layout; it returns to the file rather than
+reactivating the previously focused supporting view. Other placement controls used
+in bare update the saved workspace preferences while bare's effective geometry
+stays stripped down; number toggles and reset target bare's own profile.
+
+The palette and all three pickers can open over bare and return to it. Explicitly
+opening or focusing a workspace view or directory browser leaves bare so the
+requested surface can be displayed. `Space v z` explicitly selects zen instead.
+Bare is a presentation choice; language-server startup still follows the usual
+rules (`--no-lsp` disables it).
+
 ### Command palette
 
 `Space c c` opens a centered floating palette, listing every command that can run
@@ -145,8 +197,12 @@ command's name, or a related word: `rel num`, `rln`, and `gutter relative` all f
 *Toggle relative line numbers*. Matching is fuzzy and in-process (no `fzf` needed):
 each space-separated word must match, in order, in the title, the command's ID, or
 one of its keywords, and matched title letters are highlighted.
-The current default catalog contains **55 commands**, including all three pickers
-and **Toggle tile hotkey hints**.
+The current default catalog contains **79 commands**, including all three pickers,
+VCS actions, **Toggle tile hotkey hints**, **Toggle bare mode**, and **Choose theme**.
+Bare and workspace use the same global catalog: bare does not hide commands.
+Commands local to a supporting view are added only when the palette is opened
+from that view or its help. Some placement commands in bare update saved workspace
+preferences; explicitly opening a supporting view leaves bare to display it.
 
 | Palette keys | Action |
 | --- | --- |
@@ -160,7 +216,7 @@ and **Toggle tile hotkey hints**.
 
 A command run from the palette behaves exactly as its key binding: an ordinary quit
 is still refused with unsaved changes, and save failures are reported the same way.
-The palette opens only from Normal mode, including in zen. It is an opaque framed
+The palette opens only from Normal mode, including in zen and bare. It is an opaque framed
 window above the workspace, not a bottom-band tile: opening, filtering, and closing
 do not reallocate the document, status, problems, report, or history tiles, or change
 the document scroll. Its preferred outer size is 80 columns by 14 rows, centered in
@@ -439,13 +495,15 @@ behave as in problems.
 `Space g g` opens a git view of the repository around the startup file (or the
 directory opened), in the spirit of lazygit and Magit. It stages, unstages and
 discards files, hunks and selected lines, commits, amends and extends HEAD,
-fetches, pulls and pushes, checks out, creates and merges branches, and carries a
+fetches, pulls and pushes, checks out, creates and merges branches, carries a
 merge or rebase that stopped on conflicts through to its end (see
-[Resolving conflicts](#resolving-conflicts)). The view is a tab the
+[Resolving conflicts](#resolving-conflicts)), and browses the history of HEAD, a
+branch, all branches or a file (see [Browsing history](#browsing-history)). The view is a tab the
 first time (labelled `VCS:
 <branch>`, or `VCS: <revision>` on a detached HEAD); `Space g s` moves it into the
 split beside the editor, `Space g t` back into the tab strip, and `Space g h`
-closes it (its state is simply re-read when it opens again). It occupies one place at a time. `Space g g` and `Space g f` are the
+closes it (its state is simply re-read when it opens again; the chosen log is
+kept). It occupies one place at a time. `Space g g` and `Space g f` are the
 same command: they open the view, activate its tab, or move focus between it and
 the editor. The palette lists them as `VCS: open or focus` (`vcs.open`),
 `VCS: move to a tab`, `VCS: move to the split` and `VCS: close` (`vcs.to-tab`,
@@ -453,9 +511,10 @@ the editor. The palette lists them as `VCS: open or focus` (`vcs.open`),
 
 The left column holds a head summary (branch, upstream and ahead/behind, and any
 merge or rebase in progress) above three list panels: **Files** (Conflicted,
-Untracked, Unstaged and Staged sections), **Branches** and **Commits** (the latest
-200). The diff panel beside them follows the selection: a file's unstaged or staged
-diff, a section's combined diff, or a commit's `git show`. In a narrow placement,
+Untracked, Unstaged and Staged sections), **Branches** and **Commits** (the log
+chosen with `l`, at first HEAD's latest 200 commits, with a graph). The diff panel
+beside them follows the selection: a file's unstaged or staged diff, a section's
+combined diff, or a commit's `git show`, which starts with the commit's file list. In a narrow placement,
 such as the split, the lists stack above the diff; when even that does not fit,
 only the focused part shows. `@` shows the command log at the bottom: each git
 command with its exit status and, on failure, its output (a fetch, pull or push also
@@ -474,8 +533,11 @@ keeps its last lines of output, and shows its progress while it runs).
 | `s` / `u` / `x` (diff, Visual) | Stage / unstage / discard the lines the selection touches (one file, any of its hunks) |
 | `S` / `U` (Files, diff) | Stage all changes (not conflicts) / unstage all changes; also in Visual |
 | `]` / `[` (diff) | Next / previous hunk; with a count, `3]` moves three, stopping at the last |
+| `}` / `{` (diff) | Next / previous file; counts as for `]` `[` |
 | Read-only text keys (diff) | Move, select and copy, as in [Read-only text](#read-only-text-in-supporting-views), with counts: `10j`, `5k`, `12G` |
-| `e`, `Enter` (diff) | Open the file at the cursor's line |
+| `e`, `Enter` (diff) | Open the file at the cursor's line; `Enter` on a line of a commit's file list jumps to that file's diff instead |
+| `l` (list) | Log popup: HEAD, a branch, all branches or a file's history, with switches |
+| `+` (Commits) | Read twice as many commits (up to 12800) |
 | `c` | Commit popup: commit, amend or extend HEAD, with switches |
 | `f` | Fetch from the default remote (`git fetch --prune`) |
 | `p` / `P` | Pull popup / push popup |
@@ -502,7 +564,10 @@ A popup (such as `c`'s) floats over the view, listing its switches and actions:
 | `Escape` | Clear a pending `-`; otherwise close, running nothing |
 | `q`, `Tab`, `Ctrl-c` | Close, running nothing |
 | `?` | List the popup's keys; closing the list returns to the popup |
-| `Space` ... | Workspace keys still work; switches start off at every opening |
+| `Space` ... | Workspace keys still work |
+
+Switches start off at every opening, except in the log popup (`l`), which opens with
+the current log's.
 
 **Staging and discarding.** Each action runs as one git command (two for a hunk:
 `git apply --check`, then the apply, with the patch on stdin), shown in the command
@@ -686,6 +751,52 @@ whose popup goes on: "Merging 1a2b3c4 (press m)", "Rebasing main onto 1a2b3c4
   changes in a.txt; save or undo them first; nothing ran"), and followed by
   comparing open buffers with disk.
 
+**Logs and history.** `l` in a list panel opens the `Log` popup (in the diff `l`
+stays a motion). Its actions choose what Commits lists: `l` HEAD; `b` the branch
+under the Branches cursor, whichever panel has focus; `a` HEAD and every local and
+remote-tracking branch; `f` a file's history, following renames: in Files the
+selected file, in Branches and Commits the file of the diff line at the cursor.
+Switches: `-g` draws the graph (on at first), `-m` (`--no-merges`) omits merge
+commits, `-p` (`--first-parent`) follows only the first parent of merges. The
+choice, switches included, holds until the next one, also while the view is hidden,
+and the popup opens with its switches; `l l` returns to HEAD. Choosing focuses
+Commits with its cursor on the section title (`j` reaches the first commit).
+Without a branch or file to log: "Select a branch in Branches
+first", "Select a file first: a Files item, or a file in the diff".
+
+- The Commits section's title names the log: `Recent commits`, `Commits on
+  feature`, `All branches`, `History of src/a.ml`, with any qualifiers after it, as
+  in `Commits on main (no merges, first parent, first 200)`. `first <n>` means the
+  log filled its limit, so there may be more: `+` in Commits doubles the limit,
+  keeping the cursor, up to 12800 ("Showing the most commits already (12800)").
+- Each row is the graph, the short hash, git's ref decorations, then the subject:
+  `● a1b2c3d (HEAD -> main, origin/main, tag: v1) Subject`. The graph is drawn from
+  the commits' parents, one row per commit as in lazygit, over commits in
+  topological order: `●` is the commit, `│` a lane waiting for an older commit, a
+  merge reads `●─╮` (a lane opens for its second parent) and a fork point `●─╯` (a
+  lane joins). It is cut at 24 columns (`…`). There is no graph for a file's
+  history or with `-m`; with `-p` it follows first parents only.
+- A commit's diff starts with its file list, between the message and the first
+  file, one line per file: the change letter (`A` added, `D` deleted, `M` modified,
+  `R` renamed, `C` copied, `T` type changed, `U` unmerged), the path (the new one
+  for a rename), `+added -removed` over the lines the diff shows (none for binary,
+  mode-only and rename-only files), and ` (truncated)` when the file's diff was cut
+  short:
+
+  ```text
+  M src/view.ml  +12 -3
+  R docs/new_name.md  +1 -1
+  A logo.png
+  ```
+
+  `Enter` on a listed file jumps to its diff (`e` opens the file). `}` / `{` move
+  between the files' first header lines, with counts (`3}`); at the ends they say
+  "No next file" / "No previous file".
+- In a file's history a commit's diff is still the whole commit, but the cursor
+  starts at that file (under the name it had in that commit).
+- `Space g l` in the editor shows the history of the file being edited (see
+  [Browsing history](#browsing-history)).
+
 `e` in the diff opens the work-tree file at the line the cursor is on (for a removed
 line, the next line that survives; for a hunk header, its first line). From a tab, the
 file's tab replaces the view's; beside the split, the file shows in the editor pane,
@@ -740,6 +851,29 @@ the rebase. A rebase may stop again on a later commit's conflicts (resolve them 
 same way, or `r s` to leave that commit out); `m a` / `r a` abandon the whole
 operation. Unsaved buffers in the repository refuse continuing, committing, taking
 a side and aborting: save the resolutions first (or undo them).
+
+### Browsing history
+
+Commits lists HEAD's latest 200 commits, with the graph and each commit's branches
+and tags. `3` focuses it; `j` / `k` move, and the diff follows, starting with the
+commit's file list. `Enter` (or `Tab`) focuses the diff: `}` jumps to the next file,
+or move to a listed file and press `Enter`; `e` opens the file at the cursor's line.
+`Tab` returns to Commits.
+
+`l` changes the log. With a branch selected in Branches (`2`), `l b` lists it;
+`l a` lists every branch together, the graph showing where they fork and merge;
+`l - m l` reads HEAD without merges (and without the graph). The popup opens with
+the switches last chosen, so `l - m l` again brings merges back.
+When the title ends in `first 200`, `+` reads 400, then 800.
+
+For one file's history, press `Space g l` (palette `VCS: history of this file`) in
+its buffer: the view opens where it opens, or is shown, focused on Commits listing
+the commits that changed the file, across renames. Each commit's diff starts at
+that file. In the view, `l f` does the same for the selected Files item or the file
+of the diff line at the cursor. From a directory buffer or a view, `Space g l` says
+"No file buffer here: Space g l shows the history of the file you are in"; for a
+file outside the view's repository, "<file> is not in the repository at <root>". If
+the view has not found its repository yet, it shows the history once it has.
 
 ### Read-only text in supporting views
 
@@ -971,7 +1105,7 @@ its left edge. Unlike Vim, which copies the text to the other lines when you lea
 Insert mode, typing appears on every line as you type. Every insertion point is
 drawn as a colored cell: the cursor itself, on the top line, in blue, and its copies
 on the other lines in light grey (the terminal's own cursor is hidden meanwhile;
-change the colors with `Block_cursor` and `Block_copy` in `ui/theme.ml`).
+change the palette's `Block_cursor` and `Block_copy` roles in `theme/theme.ml`).
 As in Vim, `I` and `c` skip lines too short to reach the left edge, `A` pads short
 lines with spaces, a TAB under the insertion column is split into spaces, and a
 wide character there moves right. Backspace (and soft-tab Backspace) removes only
@@ -1041,6 +1175,41 @@ left). Text after the cursor moves to the new line unchanged, leading blanks
 included. Unlike Vim, the copied indentation stays when you leave Insert mode
 without typing anything. A paste is inserted literally, without indentation.
 
+### Shifting indentation
+
+`>>` and `<<` shift the current line right or left by one indentation step. A
+Normal-mode count chooses how many lines to shift, clamped at the end of the
+buffer: `3>>` shifts three lines once. In every Visual selection kind, `>` and `<`
+shift the full touched lines and return to Normal mode; here a count chooses the
+number of steps, so `3>` shifts the selection by six columns with the defaults.
+A characterwise selection whose later endpoint is exactly at the next line's
+start excludes that final line. Linewise and blockwise selections include both
+endpoint lines. Shifting a block affects whole lines, not just its rectangle.
+
+The default step is two display columns, added or subtracted without rounding to
+a multiple; left shifts clamp at zero. TABs in existing indentation use eight-column
+display stops. Rewritten indentation uses spaces by default, preserving all text
+after the leading whitespace and the file's final-newline state. Normal/Visual
+right shifts skip empty and whitespace-only lines; left shifts can remove their
+indentation. Each Normal/Visual operation is one undo step, leaves the unnamed
+register alone, and places the cursor at the first shifted line's first nonblank.
+A shift that changes no bytes creates no undo entry or text revision.
+
+Insert `Ctrl-t` / `Ctrl-d` shift the current line while keeping Insert mode and
+tracking the insertion point relative to its text. They can build indentation on
+an empty line and join the current Insert undo transaction. During a block insert,
+they finish multi-line replication and shift only the current line; prior replicated
+typing stays in the same transaction. A cursor inside rewritten indentation tracks
+its display column, clamped to the new prefix; a column inside a TAB lands before it.
+
+The core accepts `Editor.create ~indentation` with an `Indentation.Policy.t`
+(`shift_width`, positive, and `use_tabs`). A tabs policy emits whole TABs followed
+by remainder spaces. This policy is separate from `Keymap.Config.tab`, which
+controls Insert Tab/Backspace soft tabs. Defaults are chosen in code; there is no
+runtime settings prompt. Motion-based shifts such as `>j`, counts between the
+two keys such as `2>3>`, `=` reindent, and language-aware indentation are not yet
+implemented.
+
 `Space` starts a sequence only in Normal mode. While a sequence is pending, the
 status line shows its keys. An unbound continuation such as `Space z` does
 nothing except report `Space z is not bound`. Sequences have no timeout.
@@ -1104,16 +1273,15 @@ up to 16,001 capture calls can still delay input before fallback is latched. Who
 editing remains size-dependent. Native memory release relies on binding GC finalizers,
 with limited external-memory accounting. See the [latency handoff](syntax_highlighting_latency_plan.md).
 
-Colors live in `ui/theme.ml`: violet keywords, green strings, orange numbers,
-gray comments, cyan types/properties, blue functions, teal modules, and amber
-constructors/constants/escapes. Variables/operators/punctuation use ordinary text
+Syntax colors come from the active semantic palette in `theme/theme.ml`, mapped
+to terminal attributes by `ui/theme.ml`. Variables/operators/punctuation use ordinary text
 color. Special-display escapes/clip markers take precedence over syntax; interaction
 overlays on complete glyphs take precedence over both. Clipped wide/escape fragments
 keep their special treatment, and combining marks retain their base text style.
 Block-insert points override selection, which
 overrides search; syntax returns when the overlay clears. Current-line background
-is independent, and blank padding is not syntax-colored. No theme/config engine
-or extra font styles are required.
+is independent, and blank padding is not syntax-colored. Theme changes recolor the
+existing semantic spans without reparsing the document or adding font styles.
 
 The pinned **`tree-sitter.0.1.0`** opam package supplies the compiled-in runtime and
 the OCaml grammars (`tree-sitter` and `tree-sitter.ocaml` Dune libraries). The
@@ -1255,8 +1423,50 @@ starts with the default layout.
 
 ### Colors and safe display
 
-The colors are one dark theme, near-black neutral grays with a few colored
-accents, defined in `ui/theme.ml`.
+Ches includes **44 themes: 29 dark and 15 light**. Crimson remains the default;
+Midnight, Ember, and Glacier retain their original colors. Other palettes are
+curated designs or adaptations rather than exact ports of upstream themes. Examples
+include Abyss, Moss, Orchid, Cobalt Room, Paper, Porcelain, Terminal Amber,
+Terminal Green, and neutral monochrome Graphite, Newsprint, Silver Night, and
+Ivory Ink.
+
+For nostalgic Vim colors, **Vim Classic** (`vim-classic`) uses a pure-black
+document, backdrop, and current line with yellow keywords, pink strings/numbers,
+electric-blue comments, green types, and cyan functions. It is a Vim-inspired
+approximation rather than an exact reproduction of a particular Vim version.
+**Solarized Light** (`solarized-light`) adapts Solarized's cream ground and
+slate text, green keywords, cyan strings, blue functions, and magenta literals.
+**Linen Solar** (`linen-solar`) has lighter warm paper with stronger teal/blue/green
+syntax; **Sandstone Solar** (`sandstone-solar`) has golden paper and deeper ink
+and accents. The original Linen and Sandstone palettes remain available unchanged.
+
+`Space v T` or **Choose theme** in the command palette opens a framed floating
+chooser in workspace, zen, or bare. It starts on the current theme; `*` marks the
+original selection. Type a fuzzy title query to filter; Tab/Shift-Tab or Ctrl-n/p
+select the next/previous result. Filtering and selection preview the entire
+interface immediately, including the chooser, document, gutters, and other views.
+Enter applies the selected theme and closes; Escape restores the theme active
+before opening. With no matches, the last preview stays visible and Enter applies
+nothing. Closing due to an undersized terminal, focus loss, or replacement by
+another float also cancels the preview. Paste belongs to the query, not the file.
+
+Use `ches --theme glacier PATH` (or `ches --bare --theme paper PATH`) to select at
+startup. `ches --list-themes` prints stable IDs, titles, and dark/light kinds
+without a terminal or PATH. IDs are case-insensitive; surrounding whitespace is
+ignored and spaces/underscores normalize to hyphens. Unknown themes report an
+error pointing to the list. The active theme is shared by all presentations and
+lasts for this session; there is no automatic on-disk preference persistence.
+
+The pure `Ches_theme.Theme` library owns immutable RGB palettes. Screen state
+owns the effective choice, while `Theme.attrs ~theme` in `ui/theme.ml` maps
+semantic styles to terminal attributes. Selection, search, and diff colors have
+dedicated roles. Render caches include the effective theme so accepting,
+previewing, and cancelling redraw correctly without editing or reparsing text.
+`Theme.of_base16` adapts 16 RGB palette slots into a complete role palette; built-in
+additions are data in `theme/theme.ml`. External theme-file discovery/loading is
+not implemented. The renderer requests truecolor; actual display depends on the
+terminal's color capabilities.
+
 Font styles (bold, italic, underline) are set per part of the screen by
 `Theme.Font.default` and can be replaced in code with `Editor_view.run ~font`;
 the terminal still chooses the typeface, and a terminal without italics may
@@ -1313,6 +1523,7 @@ input/         ches_input: terminal-independent keys and modal keymap
 tile/          shared tile host, focus, and input routing
 source/        asynchronous diagnostic sources and language-server client
 palette/       command catalog and fuzzy matching
+theme/         ches_theme: pure semantic RGB palettes, registry, and Base16 adapter
 app/           ches_app: file loading/saving, input controller and highlight cache
 highlight/     ches_highlight: provider-independent byte ranges, categories,
                snapshot keys, normalization/lookup and incremental edit descriptions
@@ -1390,6 +1601,7 @@ It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
 ```sh
 dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe
 scripts/smoke.sh path/to/ches                # or another binary
+scripts/smoke.sh --bare-only                # bare startup/toggle, indentation, palette, terminal restoration
 scripts/smoke.sh --palette-only             # only floating-palette scenarios
 scripts/smoke.sh --line-picker-only          # live line binding/jump/zen/paste/resize
 scripts/smoke.sh --palette-only path/to/ches

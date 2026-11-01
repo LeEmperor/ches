@@ -131,7 +131,7 @@ let%expect_test "Space g g opens a tab with the repository; s, f and h move, foc
       │                                       │                                                          │|
       │ 3 Commits (1)                         │                                                          │|
       │ > - Recent commits (1)                │                                                          │|
-      │   07a4bd0 first                       │                                                          │|
+      │   ● 07a4bd0 (HEAD -> main) first      │                                                          │|
       │                                       │                                                          │|
       ╰─ Files 1/2 ──────────────────────────────────────────────────────────────────────────────────────╯|
        NORMAL  VCS: main VCS focused                                                                      |

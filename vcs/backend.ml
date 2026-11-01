@@ -15,11 +15,11 @@ end
 module Refresh = struct
   type t =
     { ignored : bool
-    ; log_limit : int
+    ; log : Log_scope.t
     }
   [@@deriving sexp, equal]
 
-  let default = { ignored = false; log_limit = 200 }
+  let default = { ignored = false; log = Log_scope.default }
 end
 
 module Summary = struct

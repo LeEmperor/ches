@@ -95,9 +95,12 @@ val compute : Prefs.t -> width:int -> height:int -> line_count:int -> t
     origins are preserved. Every rectangle lies within the normalized allocation
     (empty rectangles may sit on its edge). Placement and effective [offset] are
     relative to this allocation, not to the terminal. No status area is produced
-    when [reserve_status_row] is false. Preferences are never modified. *)
+    when [reserve_status_row] is false. [decorated = false] suppresses the border
+    regardless of available space, while retaining the explicitly requested margins.
+    Preferences are never modified. *)
 val compute_in
-  :  Prefs.t
+  :  ?decorated:bool (** Default [true]; [false] explicitly disables the border. *)
+  -> Prefs.t
   -> allocation:Rect.t
   -> reserve_status_row:bool
   -> line_count:int

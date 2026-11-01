@@ -42,6 +42,14 @@ let floating_layer ?allocation ?floating ui ~width ~height =
     match floating with
     | Some _ -> floating
     | None when Option.is_some allocation -> None
+    | None when Option.is_some (Ui_state.theme_picker ui) ->
+      Option.bind (Ui_state.theme_picker_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.theme_picker ui) ~f:(fun picker ->
+          let content = layout.content in
+          { Floating_layer.id = Theme_picker_tile.id; layout
+          ; content = Theme_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+              picker ~width:content.width ~rows:content.height
+          ; cursor = Some (Theme_picker_tile.cursor picker ~width:content.width) }))
     | None when Option.is_some (Ui_state.content_picker ui) ->
       Option.bind (Ui_state.content_picker_layout ui ~width ~height) ~f:(fun layout ->
         Option.map (Ui_state.content_picker ui) ~f:(fun picker ->
@@ -142,7 +150,8 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
     match floating with
     | Some layer -> Some (layer.id, Some layer.layout)
      | None when Option.is_some allocation ->
-         Some ((if Option.is_some (Ui_state.content_picker ui) then Content_picker_tile.id
+          Some ((if Option.is_some (Ui_state.theme_picker ui) then Theme_picker_tile.id
+            else if Option.is_some (Ui_state.content_picker ui) then Content_picker_tile.id
            else if Option.is_some (Ui_state.line_picker ui) then Line_picker_tile.id
           else if Option.is_some (Ui_state.file_picker ui) then File_picker_tile.id
           else if Option.is_some (Ui_state.help ui) then Help_tile.id
@@ -393,7 +402,8 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
                      (match e.kind with File -> "f" | Directory -> "d" | Symlink -> "@" | Unsupported -> "!")) in
                   String.prefix (String.make (Int.max 0 (gutter.width - String.length label - 1)) ' ' ^ label ^ " ") gutter.width
                 | None -> Line_numbers.label
-                  (Ui_state.prefs ui).line_numbers
+                  (if Ui_state.bare ui then (Ui_state.bare_prefs ui).line_numbers
+                   else (Ui_state.prefs ui).line_numbers)
                   ~digits:gutter_digits
                   ~line
                   ~cursor_line)
@@ -487,7 +497,12 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
         | Some (rect, spans) when y = rect.y -> [ rect, spans ]
         | _ -> match tab_row, area_on_row Status_row y with
         | Some (rect, spans), _ when y = rect.y -> [ rect, spans ]
-        | _, Some area -> [ area.rect, Status.render area fields ]
+        | _, Some area ->
+          let spans = Status.render area fields in
+          let spans = if Ui_state.bare ui then List.map spans ~f:(fun span ->
+            if Style.equal span.Span.style Status
+            then { span with style = Style.document () } else span) else spans in
+          [ area.rect, spans ]
         | _, None when Option.exists tab_view ~f:(fun ((rect : Geometry.Rect.t), _) ->
             y >= rect.y && y < rect.y + rect.height) -> []
         | _, None when y >= tile.y && y < tile.y + tile.height -> [ tile, tile_row y ]
@@ -567,13 +582,13 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
   in
   fun animation ->
     let smear =
-      (if not document_cursor then [] else Animation.cells animation ~width ~height)
+      (if Ui_state.bare ui || not document_cursor then [] else Animation.cells animation ~width ~height)
       |> List.filter ~f:(fun (x, y) ->
         not (covered_by_float (x, y))
         && (not pane_relative
             || (x >= viewport.x && x < viewport.x + viewport.width
                 && y >= viewport.y && y < viewport.y + viewport.height))) in
-    let cursor = if document_cursor && Animation.active animation then None else cursor in
+    let cursor = if not (Ui_state.bare ui) && document_cursor && Animation.active animation then None else cursor in
     { width; height; rows; cursor; smear }
 ;;
 
@@ -637,6 +652,7 @@ module Cache = struct
     ; overlay : Animation.t -> frame
     ; base : 'a
     ; file_stamp : (int * int * int) option
+    ; theme : Ches_theme.Theme.t
     }
 
   type 'a t = { mutable entry : 'a entry option }
@@ -647,22 +663,26 @@ module Cache = struct
   let apply_inputs ?after_step t ui ~width ~height inputs =
     let eligible = not (List.is_empty inputs)
       && List.for_all inputs ~f:(function Ui_state.Input.File_picker_work _ | Animation_tick _ -> true | _ -> false)
-      && Option.exists t.entry ~f:(fun entry -> entry.width = width && entry.height = height) in
+       && Option.exists t.entry ~f:(fun entry -> entry.width = width && entry.height = height
+         && Ches_theme.Theme.equal entry.theme (Ui_state.theme ui)) in
     let before = Ui_state.file_picker_visible_stamp ui in
     let next, status = Ui_state.apply_all ?after_step ui ~width ~height inputs in
-    if not eligible || not (Option.equal [%equal: int * int * int] before (Ui_state.file_picker_visible_stamp next)) then
+    if not eligible || not (Ches_theme.Theme.equal (Ui_state.theme ui) (Ui_state.theme next))
+       || not (Option.equal [%equal: int * int * int] before (Ui_state.file_picker_visible_stamp next)) then
       invalidate t;
     next, status
   ;;
 
   let get t ui ~width ~height ~draw_base =
     let entry = match t.entry with
-      | Some entry when entry.width = width && entry.height = height
+       | Some entry when entry.width = width && entry.height = height
+           && Ches_theme.Theme.equal entry.theme (Ui_state.theme ui)
           && Option.equal [%equal: int * int * int] entry.file_stamp (Ui_state.file_picker_visible_stamp ui) -> entry
       | _ ->
         let overlay = prepare ui ~width ~height in
         let base = draw_base (overlay (Animation.create ~enabled:false)) in
-        let entry = { width; height; overlay; base; file_stamp = Ui_state.file_picker_visible_stamp ui } in
+         let entry = { width; height; overlay; base; file_stamp = Ui_state.file_picker_visible_stamp ui
+           ; theme = Ui_state.theme ui } in
         t.entry <- Some entry;
         entry in
     entry.overlay (Ui_state.animation ui), entry.base
