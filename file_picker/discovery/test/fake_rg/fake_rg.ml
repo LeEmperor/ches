@@ -2,8 +2,14 @@ open! Core
 
 let emit path = Out_channel.output_string stdout (path ^ "\000"); Out_channel.flush stdout
 
+(* Tests poll for [pid] while children run, so it must never be observable half-written. *)
+let write_atomic dst ~data =
+  let tmp = sprintf ".%s.%d.tmp" dst (Pid.to_int (Core_unix.getpid ())) in
+  Out_channel.write_all tmp ~data; Core_unix.rename ~src:tmp ~dst
+;;
+
 let () =
-  Out_channel.write_all "pid" ~data:(Pid.to_string (Core_unix.getpid ()));
+  write_atomic "pid" ~data:(Pid.to_string (Core_unix.getpid ()));
   match In_channel.read_all "mode" with
   | "ordered" ->
     List.iter [ "z"; "a\n\255"; "z"; "b/main.ml"; "a/main.ml"; ".hidden"; ".git/config" ] ~f:emit

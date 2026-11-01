@@ -8,9 +8,15 @@ let record ?(path = "./odd\n\255") ?(text = "界\tneedle needle\255\n") ?(line =
   |> Yojson.Basic.to_string
 ;;
 let emit s = Out_channel.output_string stdout (s ^ "\n"); Out_channel.flush stdout
+(* Tests poll for these files while children are spawned and replaced, so they must never be
+   observable half-written: write a per-process temp file and rename it into place. *)
+let write_atomic dst ~data =
+  let tmp = sprintf ".%s.%d.tmp" dst (Pid.to_int (Core_unix.getpid ())) in
+  Out_channel.write_all tmp ~data; Core_unix.rename ~src:tmp ~dst
+;;
 let () =
-  Out_channel.write_all "pid" ~data:(Pid.to_string (Core_unix.getpid ()));
-  Out_channel.write_all "args" ~data:(String.concat ~sep:"\n" (Array.to_list (Sys.get_argv ())));
+  write_atomic "pid" ~data:(Pid.to_string (Core_unix.getpid ()));
+  write_atomic "args" ~data:(String.concat ~sep:"\n" (Array.to_list (Sys.get_argv ())));
   match In_channel.read_all "mode" with
   | "normal" -> emit (record ())
   | "invalid-path" -> emit (record ~path:"../outside" ())
