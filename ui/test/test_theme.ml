@@ -4,6 +4,67 @@ open Ches_ui
 
 let same_attrs a b = Attr.equal (Attr.many a) (Attr.many b)
 
+let%test_unit "terminal colors preserve all indexed entries and exact RGB" =
+  let module M = Ches_terminal.Model in
+  let samples =
+    List.init 256 ~f:(fun n -> M.Indexed n, Attr.Color.xterm_256 n)
+    @ [ M.Rgb (0, 127, 255), Attr.Color.rgb ~r:0 ~g:127 ~b:255
+      ; M.Rgb (231, 19, 88), Attr.Color.rgb ~r:231 ~g:19 ~b:88 ] in
+  List.iter samples ~f:(fun (color, expected) ->
+    let style : M.style =
+      { fg = color; bg = color; bold = false; italic = false
+      ; underline = false; reverse = false } in
+    assert (same_attrs (Theme.attrs (Ches_screen.Style.Terminal style))
+      [ Attr.fg expected; Attr.bg expected ]))
+;;
+
+let%test_unit "terminal defaults follow theme; reverse and SGR survive custom editor fonts" =
+  let module M = Ches_terminal.Model in
+  List.iter Ches_theme.Theme.all ~f:(fun theme ->
+    let color role =
+      let r, g, b = Ches_theme.Theme.color theme role in Attr.Color.rgb ~r ~g ~b in
+    List.iter [ false; true ] ~f:(fun bold ->
+      List.iter [ false; true ] ~f:(fun italic ->
+        List.iter [ false; true ] ~f:(fun underline ->
+          List.iter [ false; true ] ~f:(fun reverse ->
+            let style : M.style =
+              { fg = Default; bg = Default; bold; italic; underline; reverse } in
+            let expected =
+              [ Attr.fg (color Foreground); Attr.bg (color Background) ]
+              @ (if reverse then [ Attr.invert ] else [])
+              @ (if bold then [ Attr.bold ] else [])
+              @ (if italic then [ Attr.italic ] else [])
+              @ (if underline then [ Attr.underline ] else []) in
+            List.iter [ Theme.Font.default; (fun _ -> []); (fun _ -> [ Bold; Italic; Underline ]) ]
+              ~f:(fun font ->
+                assert (same_attrs
+                  (Theme.attrs ~theme ~font (Ches_screen.Style.Terminal style)) expected)))))))
+;;
+
+let%test_unit "terminal foreground and background remain independent under reverse" =
+  let module M = Ches_terminal.Model in
+  List.iter Ches_theme.Theme.all ~f:(fun theme ->
+    let role role =
+      let r, g, b = Ches_theme.Theme.color theme role in Attr.Color.rgb ~r ~g ~b in
+    let fg_cases =
+      [ M.Default, role Foreground
+      ; Indexed 17, Attr.Color.xterm_256 17
+      ; Rgb (12, 34, 56), Attr.Color.rgb ~r:12 ~g:34 ~b:56 ] in
+    let bg_cases =
+      [ M.Default, role Background
+      ; Indexed 231, Attr.Color.xterm_256 231
+      ; Rgb (210, 98, 76), Attr.Color.rgb ~r:210 ~g:98 ~b:76 ] in
+    List.iter fg_cases ~f:(fun (fg, foreground) ->
+      List.iter bg_cases ~f:(fun (bg, background) ->
+        List.iter [ false; true ] ~f:(fun reverse ->
+          let style : M.style =
+            { fg; bg; bold = false; italic = false; underline = false; reverse } in
+          let font _ = failwith "terminal style reached editor-only font callback" in
+          assert (same_attrs (Theme.attrs ~theme ~font (Ches_screen.Style.Terminal style))
+            ([ Attr.fg foreground; Attr.bg background ]
+             @ if reverse then [ Attr.invert ] else []))))))
+;;
+
 let%test_unit "explicit palettes map syntax, overlays and diffs through semantic roles" =
   let module Palette = Ches_theme.Theme in
   List.iter Palette.all ~f:(fun theme ->

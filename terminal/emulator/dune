@@ -1,0 +1,11 @@
+(copy_files ../libvterm-0.3.3/src/*.c)
+
+(library
+ (name ches_terminal_emulator)
+ (libraries core ches_terminal)
+ (preprocess (pps ppx_jane))
+ (foreign_stubs
+  (language c)
+  (names emulator_stubs encoding keyboard mouse parser pen screen state unicode vterm)
+  (include_dirs ../libvterm-0.3.3/include ../libvterm-0.3.3/src)
+  (flags (:standard -std=c99))))

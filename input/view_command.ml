@@ -40,6 +40,7 @@ module Placement = struct
 end
 
 type t =
+  | Toggle_terminal
   | Toggle_directory
   | Directory_major
   | Directory_side
@@ -114,6 +115,7 @@ let scale t ~count =
   | Adjust_status_size cells -> Some (Adjust_status_size (cells * count))
   | Adjust_directory_size cells -> Some (Adjust_directory_size (cells * count))
   | Toggle_directory
+  | Toggle_terminal
   | Directory_major
   | Directory_side
   | Hide_directory

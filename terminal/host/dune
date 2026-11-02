@@ -1,0 +1,6 @@
+(library
+ (name ches_terminal_host)
+ (libraries core async ches_terminal ches_terminal_emulator)
+ (preprocess (pps ppx_jane))
+ (foreign_stubs (language c) (names pty_stubs) (flags (:standard -std=gnu99)))
+ (c_library_flags -lutil))

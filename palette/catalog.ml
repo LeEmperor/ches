@@ -391,6 +391,7 @@ let default =
       ; view ~id:"directory.focus" ~title:"Focus directory browser or editor" Focus_directory
       ; view ~id:"directory.grow" ~title:"Grow directory sidebar" (Adjust_directory_size 4)
       ; view ~id:"directory.shrink" ~title:"Shrink directory sidebar" (Adjust_directory_size (-4))
+    ; view ~id:"terminal.toggle" ~title:"Toggle terminal" ~keywords:[ "shell"; "toggleterm"; "float" ] Toggle_terminal
     ]
   |> Or_error.ok_exn
 ;;

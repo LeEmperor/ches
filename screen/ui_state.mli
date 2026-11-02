@@ -33,6 +33,9 @@ end
 module Input : sig
   type t =
     | Key of Key.t
+    | Terminal of Ches_terminal.Model.event
+    | Terminal_update of { generation : int; event : Ches_terminal.Model.event }
+    | Terminal_key of Ches_terminal.Model.key
     | Paste_start
     | Paste_end
     | Animation_tick of Time_ns.t
@@ -62,6 +65,24 @@ module Input : sig
 end
 
 type t
+
+(** One persistent shell, independent of its transient float. [Space t t] opens
+    or hides it; first open starts in the input document's parent or browser's
+    directory (unnamed buffers use the startup directory). Too-small allocations
+    hide without stopping it. Reopen retains even an exited snapshot;
+    [Ctrl-\\ Ctrl-r] explicitly starts a new shell only after exit/failure.
+    [Ctrl-\\ Ctrl-n] hides and restores prior available focus. Other keys,
+    including Escape, Ctrl-c, Tab and arrows, reach the child unchanged.
+    Bracketed paste ignores shortcuts, strips controls except tabs/line breaks,
+    is capped at 1 MiB including child bracket markers, and is dropped on
+    overflow or loss of ownership; input is swallowed through its end marker. *)
+val terminal_capturing : t -> bool
+val take_terminal_requests : t -> t * Ches_terminal.Model.request list
+val terminal_visible : t -> bool
+val terminal_snapshot : t -> Ches_terminal.Model.snapshot option
+val terminal_generation : t -> int
+val terminal_failure : t -> string option
+val terminal_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 (** The global effective appearance: live preview while the theme picker is open,
     otherwise the committed choice. Independent of presentation and file buffers. *)
 val theme : t -> Ches_theme.Theme.t

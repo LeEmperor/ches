@@ -61,6 +61,10 @@ module Font = struct
     | Diff_removed
     | Diff_hunk -> []
     | Diff_meta -> [ Bold ]
+    | Terminal style ->
+      (if style.bold then [ Bold ] else [])
+      @ (if style.italic then [ Italic ] else [])
+      @ (if style.underline then [ Underline ] else [])
   ;;
 end
 
@@ -83,6 +87,15 @@ let colors theme (style : Ches_screen.Style.t) =
   in
   let colors fg bg = [ Attr.fg (color fg); Attr.bg (color bg) ] in
   match style with
+  | Terminal style ->
+    let terminal_color default = function
+      | Ches_terminal.Model.Default -> color default
+      | Indexed index -> Attr.Color.xterm_256 index
+      | Rgb (r, g, b) -> Attr.Color.rgb ~r ~g ~b
+    in
+    [ Attr.fg (terminal_color Foreground style.fg)
+    ; Attr.bg (terminal_color Background style.bg)
+    ] @ (if style.reverse then [ Attr.invert ] else [])
   | Backdrop -> colors Foreground Backdrop
   | Document { syntax; current_line; special; overlay } ->
     (match overlay with
@@ -127,4 +140,8 @@ let colors theme (style : Ches_screen.Style.t) =
 ;;
 
 let attrs ?(theme = Ches_theme.Theme.default) ?(font = Font.default) style =
-  colors theme style @ List.map (font style) ~f:Font.attr
+  (* A custom editor font policy must not erase the child application's SGR. *)
+  let fonts = match style with
+    | Ches_screen.Style.Terminal _ -> Font.default style
+    | _ -> font style in
+  colors theme style @ List.map fonts ~f:Font.attr

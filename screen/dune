@@ -8,6 +8,6 @@
 
 (library
  (name ches_screen)
- (libraries ches_theme ches_error ches_app ches_core ches_input ches_highlight ches_palette ches_file_picker ches_file_preview_model ches_line_picker ches_content_picker ches_tile ches_vcs ches_vcs_git core notty-community)
+ (libraries ches_terminal ches_theme ches_error ches_app ches_core ches_input ches_highlight ches_palette ches_file_picker ches_file_preview_model ches_line_picker ches_content_picker ches_tile ches_vcs ches_vcs_git core notty-community)
  (preprocess
   (pps ppx_jane)))

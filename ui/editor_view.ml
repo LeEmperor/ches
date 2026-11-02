@@ -80,7 +80,7 @@ module Content_picker_host = struct
     }
 end
 
-let app ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
@@ -241,6 +241,10 @@ let app ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?sour
           active_line_session := Option.map (Ui_state.line_picker model) ~f:Line_picker_tile.session;
           active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
           let model, clipboard = Ui_state.take_clipboard model in
+          let model, terminal_requests = Ui_state.take_terminal_requests model in
+          if not (List.is_empty terminal_requests) then
+            Bonsai.Apply_action_context.schedule_event context
+              (Effect.of_thunk (fun () -> Terminal_host.submit terminal terminal_requests));
           Option.iter clipboard ~f:(fun text ->
             Bonsai.Apply_action_context.schedule_event
               context
@@ -298,6 +302,8 @@ let app ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?sour
                Bonsai.Apply_action_context.inject context events));
           (match status with
            | Exit when was_running ->
+              Terminal_host.stop terminal;
+              Async.don't_wait_for (Terminal_host.shutdown terminal);
               Option.iter source ~f:Ches_source.Source.stop;
               (* Children get SIGTERM now; [run] waits for them after the terminal
                  closes ([Vcs_host.shutdown]), never here. *)
@@ -368,6 +374,21 @@ let app ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?sour
          in
          pump ())
       graph);
+  Bonsai.Edge.lifecycle
+    ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () ->
+      Async.don't_wait_for (Terminal_host.shutdown terminal))))
+    ~on_activate:(let%arr inject in
+      let rec pump () =
+        let%bind.Effect event = Effect.of_deferred_thunk (fun () ->
+          Terminal_host.next_update terminal) in
+        match event with
+        | None -> Effect.Ignore
+        | Some (generation, event) ->
+          let%bind.Effect () = inject [ Ui_state.Input.Terminal_update { generation; event } ] in
+          pump ()
+      in
+      pump ())
+    graph;
   let get_current_time = Bonsai.Clock.get_current_time graph in
   Bonsai.Edge.on_change
     dimensions
@@ -411,21 +432,37 @@ let app ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?sour
     draw_overlay ~theme:(Ui_state.theme model) ?font ~base frame
   in
   let handler =
-    let%arr inject in
+    let%arr inject and model in
     fun event ->
-      match Terminal_input.inputs event with
+      match Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event with
       | [] -> Effect.Ignore
       | inputs -> inject inputs
   in
   ~view, ~handler
 ;;
 
+let app ?smear_enabled ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
+  ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph) =
+  let terminal = Terminal_host.create () in
+  app_with_terminal ~terminal ?smear_enabled ?bare ?theme ?buffer_presentation
+    ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions graph
+;;
+
 let run ?(smear_enabled = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
+  let terminal = Terminal_host.create () in
+  (* Shutdown hooks outlive [run]; release their runtime reference after cleanup. *)
+  let terminal_at_shutdown = ref (Some terminal) in
+  Async.Shutdown.at_shutdown (fun () ->
+    match !terminal_at_shutdown with
+    | None -> Async.return ()
+    | Some terminal ->
+      let%map.Async.Deferred () = Terminal_host.shutdown terminal in
+      terminal_at_shutdown := None);
   (* Terminating signals shut down through Async, whose shutdown handlers restore the
      terminal; the default action would leave it in raw mode on the alternate screen.
      Unsaved changes are discarded. *)
   Async.Signal.handle
-    [ Async.Signal.term; Async.Signal.hup ]
+    [ Async.Signal.term; Async.Signal.hup; Async.Signal.int; Async.Signal.quit ]
     ~f:(fun (_ : Signal.t) -> Async.shutdown 1);
   (* However the process ends, git children get their termination grace, so none is
      left holding [index.lock]. Idempotent with the wait below. *)
@@ -437,10 +474,12 @@ let run ?(smear_enabled = false) ?bare ?theme ?font ?buffer_presentation ?report
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-        (app ~smear_enabled ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
+        (app_with_terminal ~terminal ~smear_enabled ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
     ~f:(fun result ->
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;
+      let%bind.Async.Deferred () = Terminal_host.shutdown terminal in
+      terminal_at_shutdown := None;
       let%map.Async.Deferred (_ : [ `Finished | `Timed_out ]) =
         match vcs with
         | None -> Async.return `Finished

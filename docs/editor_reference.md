@@ -3,6 +3,58 @@
 Detailed keybindings, editing semantics, workspace behavior, and development
 checks for [Ches](../README.md).
 
+## Floating terminal
+
+In Normal mode, press **`Space t t`**, or choose **Toggle terminal** in the command
+palette. Ches lazily starts one interactive `$SHELL` (falling back to `/bin/sh`)
+inside a real pseudo-terminal. Its initial directory is the current file's parent,
+or the focused directory browser's directory. Changing files afterwards does not
+change the running shell's directory; use `cd` in the shell.
+
+The terminal floats over the existing workspace, including bare and zen modes.
+It prefers a 100×30 outer frame and shrinks to fit. Its shell receives the actual
+content dimensions. If fewer than 20 columns or 6 rows are available, Ches refuses
+to open it, or hides an already-open terminal. The shell keeps running while hidden
+and continues consuming output; reopen with `Space t t` after making room.
+
+While the terminal is focused, ordinary editor bindings are suspended:
+
+- **`Ctrl-\`, then `Ctrl-n`** hides the window and restores the previous available
+  editor/view focus. These are two successive control-key presses.
+- **Escape, Tab, Shift-Tab, arrows, navigation/function keys, Ctrl-C, Ctrl-D, and
+  Ctrl-Z** go to the child application. Escape does not hide the window, and `jk`
+  is ordinary shell text. `Ctrl-C` interrupts the foreground job normally.
+- The **`Ctrl-\` prefix** is reserved for Ches. If the next key is not a terminal
+  shortcut, both keys are forwarded to the child. To send a literal Ctrl-\,
+  press it twice; both presses are forwarded.
+- Clipboard paste supports Unicode, tabs, and line breaks and uses bracketed
+  paste when the application requests it. Other control characters are filtered.
+  Pastes exceeding roughly 1 MiB are dropped as a whole; interrupted pastes are
+  drained without inserting their remainder into the editor.
+
+Hiding and reopening preserves the shell PID, environment, jobs, and screen. When
+the shell exits, Ches retains its final screen and displays its exit status. Press
+**`Ctrl-\`, then `Ctrl-r`** to start a fresh shell after exit or startup failure.
+Reopening an exited terminal alone does not restart it. Quitting Ches shuts down
+the terminal session and reaps its shell, escalating if children do not exit.
+
+The initial implementation is **Linux-only, with one terminal per editor session**.
+It supports UTF-8, wide/combining characters, ANSI/256/RGB colours, common text
+attributes, and alternate screens through vendored libvterm 0.3.3, advertising
+`TERM=xterm-256color`. There is no terminal scrollback browser, mouse forwarding,
+multiple-terminal selector, docking, or shell-session restoration across editor
+restarts. Use a program's own scrolling or a shell multiplexer when needed.
+
+For a real-frontend check after building, run:
+
+```sh
+dune build -j 12 @scripts/smoke-embedded-terminal
+```
+
+This uses a private tmux server to check key delivery, persistent shell state,
+paste, resize, interrupt, exit/restart, child cleanup, and outer-terminal recovery.
+Backend details and focused checks are in [`terminal/README.md`](../terminal/README.md).
+
 ## Keys
 
 | Mode | Keys | Action |
@@ -77,6 +129,9 @@ checks for [Ches](../README.md).
 | Normal | `Space v T` | Open the live theme chooser (also **Choose theme** in the palette) |
 | Normal | `Space v r` | Reset workspace document placement; in bare, reset only its line numbers to off |
 | Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
+| Normal | `Space t t` | Open the persistent floating terminal (see [Floating terminal](#floating-terminal)) |
+| Terminal | `Ctrl-\`, then `Ctrl-n` | Hide terminal, keeping its shell alive |
+| Terminal | `Ctrl-\`, then `Ctrl-r` | Restart an exited or failed shell |
 | Normal | `Space f l` | Fuzzy search current-document lines (including unsaved edits) |
 | Normal | `Space f f` | Find project files; open/activate retained buffers |
 | Normal | `Space f g` | Search project contents on disk; validate and jump |

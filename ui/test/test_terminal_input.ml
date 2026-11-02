@@ -12,6 +12,45 @@ let show (event : Event.t) =
 
 let key ?(mods = []) key : Event.t = Key_press { key; mods }
 
+let%test_unit "terminal capture preserves every key and modifier combination" =
+  let module M = Ches_terminal.Model in
+  let keys : (Event.Key.t * M.key_code) list =
+    ([ Escape, Escape; Enter, Enter; Tab, Tab; Backspace, Backspace
+    ; Insert, Insert; Delete, Delete; Home, Home; End, End
+    ; Arrow `Up, Up; Arrow `Down, Down; Arrow `Left, Left; Arrow `Right, Right
+    ; Page `Up, Page_up; Page `Down, Page_down
+    ; Uchar (Uchar.of_scalar_exn 0x1f642), Char (Uchar.of_scalar_exn 0x1f642)
+    ] : (Event.Key.t * M.key_code) list)
+    @ List.init 128 ~f:(fun n ->
+      let c = Char.of_int_exn n in Event.Key.ASCII c, M.Char (Uchar.of_char c))
+    @ List.init 35 ~f:(fun n -> Event.Key.Function (n + 1), M.Function (n + 1))
+  in
+  List.iter [ false; true ] ~f:(fun shift ->
+    List.iter [ false; true ] ~f:(fun alt ->
+      List.iter [ false; true ] ~f:(fun ctrl ->
+        let mods = (if shift then [ Event.Modifier.Shift ] else [])
+          @ (if alt then [ Event.Modifier.Meta ] else [])
+          @ (if ctrl then [ Event.Modifier.Ctrl ] else []) in
+        List.iter keys ~f:(fun (input, code) ->
+          let expected : M.key = { code; modifiers = { shift; alt; ctrl } } in
+          List.iter [ mods; List.rev mods ] ~f:(fun mods ->
+            match Terminal_input.inputs ~terminal:true (key ~mods input) with
+            | [ Terminal_key actual ] ->
+              if not (M.equal_key actual expected) then
+                raise_s [%message "terminal key mismatch" (actual : M.key) (expected : M.key)]
+            | actual -> raise_s [%message "terminal key lost" (actual : Ches_screen.Ui_state.Input.t list)])))))
+;;
+
+let%test_unit "terminal capture retains paste boundaries and ignores mouse" =
+  List.iter
+    [ Event.Paste `Start; Event.Paste `End
+    ; Event.Mouse { kind = Left; position = { x = 4; y = 2 }; mods = [ Ctrl ] } ]
+    ~f:(fun event ->
+      assert (String.equal
+        (Sexp.to_string [%sexp (Terminal_input.inputs event : Ches_screen.Ui_state.Input.t list)])
+        (Sexp.to_string [%sexp (Terminal_input.inputs ~terminal:true event : Ches_screen.Ui_state.Input.t list)])))
+;;
+
 let%expect_test "terminal events become normalized keys" =
   List.iter
     [ key (ASCII 'a')

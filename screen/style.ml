@@ -27,6 +27,7 @@ module Document = struct
 end
 
 type t =
+  | Terminal of Ches_terminal.Model.style
   | Backdrop
   | Document of Document.t
   | Gutter

@@ -38,7 +38,9 @@ end
 (** [font] gives the font styles of each part of the screen; the default is
     {!Theme.Font.default}. Current-document line work is always scheduled through
     yielded bounded turns; [file_picker] is an optional file-consumer override.
-    File scope is resolved once from startup and retained across tab activation. *)
+    File scope is resolved once from startup and retained across tab activation.
+    Each instance owns one terminal runtime: requests are submitted after transitions,
+    snapshots enter asynchronously, and deactivation shuts down the child. *)
 val app
   :  ?smear_enabled:bool
    -> ?bare:bool
@@ -76,9 +78,11 @@ val draw_overlay : ?theme:Ches_theme.Theme.t -> ?font:(Ches_screen.Style.t -> Th
   -> base:View.t -> Ches_screen.Frame.t -> View.t
 
 (** Runs the editor in the terminal until it exits, then stops [source] and waits for
-    [vcs]'s children ({!Vcs_host.shutdown}, at most its default cap). SIGTERM and
-    SIGHUP end the process with status 1, discarding unsaved changes, after restoring the
-    terminal (and after the same bounded wait for [vcs]). *)
+    [vcs]'s children ({!Vcs_host.shutdown}, at most its default cap). SIGTERM,
+    SIGHUP, SIGINT and SIGQUIT end the process with status 1, discarding unsaved
+    changes, after restoring the terminal (and after the same bounded wait for [vcs]).
+    The embedded terminal is stopped and its shutdown awaited on both editor exit
+    and process shutdown. *)
 val run
   :  ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
    -> ?bare:bool (** Start in borderless document presentation. *)

@@ -12,6 +12,8 @@
   ches_core
   ches_input
   ches_screen
+  ches_terminal
+  async
   ches_ui
   core)
  ; See core/dune for why this flag is needed.

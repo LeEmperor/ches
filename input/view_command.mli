@@ -49,6 +49,7 @@ module Placement : sig
 end
 
 type t =
+  | Toggle_terminal
   | Toggle_directory
   | Directory_major
   | Directory_side

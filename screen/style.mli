@@ -36,6 +36,7 @@ module Document : sig
 end
 
 type t =
+  | Terminal of Ches_terminal.Model.style
   | Backdrop (** The screen outside the tile and status line. *)
   | Document of Document.t
   (** Independent foreground, current-line background, special-display treatment,

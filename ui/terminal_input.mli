@@ -16,4 +16,7 @@
 open! Core
 open Bonsai_term
 
-val inputs : Event.t -> Ches_screen.Ui_state.Input.t list
+(** With [terminal=true], every key and modifier is preserved as [Terminal_key],
+    including control punctuation, navigation, function keys and Meta (Alt).
+    Paste boundaries are unchanged in either mode. *)
+val inputs : ?terminal:bool -> Event.t -> Ches_screen.Ui_state.Input.t list

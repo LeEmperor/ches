@@ -27,11 +27,30 @@ let key (key : Event.Key.t) (mods : Event.Modifier.t list) : Key.t option =
   | _ -> None
 ;;
 
-let inputs (event : Event.t) : Ches_screen.Ui_state.Input.t list =
+let terminal_key (key : Event.Key.t) (mods : Event.Modifier.t list)
+  : Ches_terminal.Model.key =
+  let open Ches_terminal.Model in
+  let code : key_code = match key with
+    | ASCII c -> Char (Uchar.of_char c)
+    | Uchar u -> Char u
+    | Enter -> Enter | Tab -> Tab | Backspace -> Backspace | Escape -> Escape
+    | Insert -> Insert | Delete -> Delete | Home -> Home | End -> End
+    | Arrow `Up -> Up | Arrow `Down -> Down
+    | Arrow `Left -> Left | Arrow `Right -> Right
+    | Page `Up -> Page_up | Page `Down -> Page_down
+    | Function n -> Function n
+  in
+  let has modifier = List.mem mods modifier ~equal:Event.Modifier.equal in
+  { code; modifiers = { shift = has Shift; alt = has Meta; ctrl = has Ctrl } }
+;;
+
+let inputs ?(terminal = false) (event : Event.t) : Ches_screen.Ui_state.Input.t list =
   match event with
   | Paste `Start -> [ Paste_start ]
   | Paste `End -> [ Paste_end ]
   | Mouse _ -> []
+  | Key_press { key; mods } when terminal ->
+    [ Terminal_key (terminal_key key mods) ]
   | Key_press { key = k; mods } ->
     let meta, mods =
       List.partition_tf mods ~f:(function

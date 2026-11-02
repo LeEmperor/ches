@@ -4,7 +4,8 @@
 ;
 ;   dune build @smoke -j 4             ; every suite
 ;   dune build @scripts/smoke-vcs      ; one suite: smoke-terminal, smoke-theme,
-;                                      ;   smoke-vcs, smoke-picker, smoke-directory
+;                                      ;   smoke-embedded-terminal, smoke-vcs,
+;                                      ;   smoke-picker, smoke-directory
 ;
 ; (universe) reruns them on every request: their results depend on the machine,
 ; not just on declared inputs. The shared lock runs one suite at a time whatever
@@ -14,6 +15,7 @@
  (name smoke)
  (deps
   (alias smoke-terminal)
+  (alias smoke-embedded-terminal)
   (alias smoke-theme)
   (alias smoke-vcs)
   (alias smoke-picker)
@@ -28,6 +30,13 @@
    CHES_FAKE_LSP
    %{dep:../source/test/fake_lsp/fake_lsp.exe}
    (run bash %{dep:smoke.sh} %{dep:../bin/ches.exe}))))
+
+(rule
+ (alias smoke-embedded-terminal)
+ (deps (universe))
+ (locks /smoke)
+ (action
+  (run python3 %{dep:terminal_smoke.py} %{dep:../bin/ches.exe})))
 
 (rule
  (alias smoke-theme)

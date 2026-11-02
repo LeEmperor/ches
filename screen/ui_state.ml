@@ -22,6 +22,9 @@ end
 module Input = struct
   type t =
     | Key of Key.t
+    | Terminal of Ches_terminal.Model.event
+    | Terminal_update of { generation : int; event : Ches_terminal.Model.event }
+    | Terminal_key of Ches_terminal.Model.key
     | Paste_start
     | Paste_end
     | Animation_tick of Time_ns.t
@@ -61,6 +64,16 @@ type t =
   ; tabs : Tab_strip.t (** View tabs' order among the file tabs, and the active one. *)
   ; split : Workspace.Major_split.t (** Requested side and share of the split view. *)
   ; palette : Palette_tile.t option (** Open, and then focused, or closed. *)
+  ; terminal_visible : bool
+  ; terminal_started : bool
+  ; terminal_generation : int
+  ; terminal_snapshot : Ches_terminal.Model.snapshot option
+  ; terminal_failure : string option
+  ; terminal_size : (int * int) option
+  ; terminal_requests : Ches_terminal.Model.request list (** Newest first. *)
+  ; terminal_return : View_id.t
+  ; terminal_prefix : bool
+  ; terminal_paste : (string list * int * bool) option (** Chunks, bytes, valid. *)
   ; theme : Ches_theme.Theme.t
   ; theme_picker : Theme_picker_tile.t option
   ; theme_picker_return : View_id.t
@@ -183,6 +196,7 @@ let create
          ]
          @ View_registry.specs views
          @ [ Palette_tile.spec
+            ; Terminal_tile.spec
             ; Theme_picker_tile.spec
            ; File_picker_tile.spec
            ; Line_picker_tile.spec
@@ -197,6 +211,16 @@ let create
   ; tabs = Tab_strip.empty
   ; split = Workspace.Major_split.default
   ; palette = None
+  ; terminal_visible = false
+  ; terminal_started = false
+  ; terminal_generation = 0
+  ; terminal_snapshot = None
+  ; terminal_failure = None
+  ; terminal_size = None
+  ; terminal_requests = []
+  ; terminal_return = document_id
+  ; terminal_prefix = false
+  ; terminal_paste = None
   ; theme
   ; theme_picker = None
   ; theme_picker_return = document_id
@@ -237,6 +261,18 @@ let create
 ;;
 
 let controller t = t.controller
+let terminal_snapshot t = t.terminal_snapshot
+let terminal_generation t = t.terminal_generation
+let terminal_failure t = t.terminal_failure
+let terminal_visible t = t.terminal_visible
+let terminal_capturing t =
+  Option.is_some t.terminal_paste
+  || (t.terminal_visible && View_id.equal
+        (Host.focused t.host ~available:(fun _ -> true)) Terminal_tile.id)
+;;
+let take_terminal_requests t =
+  { t with terminal_requests = [] }, List.rev t.terminal_requests
+;;
 let theme t = Option.value_map t.theme_picker ~f:Theme_picker_tile.preview ~default:t.theme
 let theme_picker t = t.theme_picker
 let session t = Session.replace_active t.session t.controller
@@ -383,7 +419,7 @@ let message t =
        Some { Message.kind; text })
 ;;
 
-let pasting t = Host.pasting t.host
+let pasting t = Host.pasting t.host || Option.is_some t.terminal_paste
 
 let take_clipboard t =
   let session, text = Session.take_clipboard (session t) in
@@ -519,6 +555,10 @@ let palette_layout t ~width ~height =
   Option.bind t.palette ~f:(fun _ -> palette_placement ~width ~height)
 ;;
 
+let terminal_layout t ~width ~height =
+  if t.terminal_visible then Terminal_tile.placement ~width ~height else None
+;;
+
 let theme_picker_layout t ~width ~height =
   Option.bind t.theme_picker ~f:(fun _ -> palette_placement ~width ~height)
 ;;
@@ -601,6 +641,8 @@ let prompt_layout t ~width ~height =
 let effective_floating floating t ~width ~height =
   match floating with
   | Some _ -> floating
+  | None when t.terminal_visible ->
+    Some (Terminal_tile.id, terminal_layout t ~width ~height)
   | None when Option.is_some t.theme_picker ->
     Some (Theme_picker_tile.id, theme_picker_layout t ~width ~height)
   | None ->
@@ -838,7 +880,10 @@ let close_ask t =
 (* Close a view's capture-local state (details) when it stops being focused. *)
 let leave t id =
   let t = { t with host = Host.invalidate_paste t.host id } in
-  if View_registry.installed t.views id
+  if View_id.equal id Terminal_tile.id
+  then { t with terminal_visible = false; terminal_prefix = false
+    ; terminal_paste = Option.map t.terminal_paste ~f:(fun (_, _, _) -> [], 0, false) }
+  else if View_registry.installed t.views id
   then { t with views = View_registry.leave t.views id }
   else if View_id.equal id Theme_picker_tile.id
   then { t with theme_picker = None }
@@ -873,8 +918,110 @@ let leave t id =
 (* Every view with state to leave: the registered views, then the floats. *)
 let leave_ids t =
   View_registry.ids t.views
+  @ [ Terminal_tile.id ]
   @ [ Theme_picker_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
     ; Confirm_tile.id; Prompt_tile.id; Popup_tile.id ]
+;;
+
+let hide_terminal t ~width ~height =
+  let previous = t.terminal_return in
+  let t = leave t Terminal_tile.id in
+  let host = Host.return t.host in
+  let host = if available t ~width ~height previous then Host.focus host previous else host in
+  { t with host; controller = Controller.cancel_pending t.controller }
+;;
+
+let terminal_running t =
+  t.terminal_started
+  && (match t.terminal_snapshot with
+      | Some snapshot -> Option.is_none snapshot.exited
+      | None -> Option.is_none t.terminal_failure)
+;;
+
+let terminal_cwd t =
+  match Session.input_directory (session t) with
+  | Some directory -> directory.path
+  | None ->
+    Option.value_map (Editor.path (Controller.editor t.controller))
+      ~default:(Session.startup_directory (session t))
+      ~f:(fun path -> Filename.dirname (Session.normalize (session t) path))
+;;
+
+let start_terminal t (layout : Tile_shell.Layout.t) =
+  let rows = layout.content.height and cols = layout.content.width in
+  { t with terminal_started = true; terminal_snapshot = None; terminal_failure = None
+    ; terminal_generation = t.terminal_generation + 1
+    ; terminal_prefix = false; terminal_size = Some (rows, cols)
+    ; terminal_requests = Start { cwd = terminal_cwd t; rows; cols } :: t.terminal_requests }
+;;
+
+let toggle_terminal t ~width ~height =
+  if t.terminal_visible then hide_terminal t ~width ~height
+  else if Host.pasting t.host || Option.is_some t.terminal_paste then t
+  else match Terminal_tile.placement ~width ~height with
+    | None -> { t with host = Host.with_notice t.host "Terminal cannot fit; needs at least 20 columns and 6 rows" }
+    | Some layout ->
+      let previous = focused_view t ~width ~height in
+      let t = List.fold (leave_ids t) ~init:t ~f:leave in
+      let t = { t with terminal_visible = true; terminal_return = previous
+        ; host = Host.focus t.host Terminal_tile.id
+        ; controller = Controller.cancel_pending t.controller } in
+      if t.terminal_started then t else start_terminal t layout
+;;
+
+(* Collection is bounded by payload bytes and therefore chunk count: at most one
+   chunk per nonempty UTF-8 character, and 1 MiB including the child's optional
+   bracket markers. Overflow drops the whole paste. Invalidated pastes keep
+   swallowing input until their closing marker. *)
+let terminal_paste_limit = (1024 * 1024) - 12
+
+let collect_terminal_paste t text =
+  match t.terminal_paste with
+  | Some (chunks, bytes, true) when bytes + String.length text <= terminal_paste_limit ->
+    if String.is_empty text then t else
+      { t with terminal_paste = Some (text :: chunks, bytes + String.length text, true) }
+  | Some _ -> { t with terminal_paste = Some ([], 0, false) }
+  | None -> t
+;;
+
+let terminal_key t ~width ~height (key : Ches_terminal.Model.key) =
+  let module M = Ches_terminal.Model in
+  let ctrl c (k : M.key) =
+    k.modifiers.ctrl && not k.modifiers.alt && not k.modifiers.shift
+    && match k.code with
+       | Char u -> Option.exists (Uchar.to_char u) ~f:(fun actual -> Char.equal (Char.lowercase actual) c)
+       | _ -> false in
+  match t.terminal_paste with
+  | Some _ ->
+    (* Never embed terminal control sequences or bracket delimiters in Paste.
+       Ordinary Unicode, tabs and line breaks survive; controls are dropped just
+       as in editor paste. Modifiers never become key requests in a paste. *)
+    let text = if key.modifiers.ctrl then
+        (match key.code with
+         | Char u -> (match Uchar.to_scalar u with
+             | 77 | 109 -> "\r" | 74 | 106 -> "\n" | 73 | 105 -> "\t" | _ -> "")
+         | _ -> "")
+      else match key.code with
+      | Char u ->
+        let c = Uchar.to_scalar u in
+        if c = 9 || c = 10 || c = 13 || (c >= 32 && not (c >= 127 && c <= 159))
+        then Uchar.Utf8.to_string u else ""
+      | Enter -> "\n" | Tab -> "\t" | _ -> "" in
+    collect_terminal_paste t text
+  | None when not (terminal_capturing t) -> t
+  | None ->
+    if t.terminal_prefix && ctrl 'n' key then hide_terminal t ~width ~height
+    else if t.terminal_prefix && ctrl 'r' key && not (terminal_running t) then
+      (match terminal_layout t ~width ~height with None -> t | Some layout -> start_terminal t layout)
+    else if not t.terminal_prefix && ctrl '\\' key then { t with terminal_prefix = true }
+    else (
+      let requests = if terminal_running t then
+        let previous = if t.terminal_prefix then
+          M.Key { code = Char (Uchar.of_char '\\'); modifiers = { M.no_modifiers with ctrl = true } }
+          :: t.terminal_requests else t.terminal_requests in
+        M.Key key :: previous
+        else t.terminal_requests in
+      { t with terminal_prefix = false; terminal_requests = requests })
 ;;
 
 let close_content_picker t ~width ~height =
@@ -974,6 +1121,19 @@ let withdraw_ask t ~width ~height =
 (* Fit each minor view's state to its viewport and source. When the source changes
    the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
+  let t =
+    if not t.terminal_visible then t else
+    if not (View_id.equal (Host.focused t.host ~available:(fun _ -> true)) Terminal_tile.id)
+    then leave t Terminal_tile.id
+    else match terminal_layout t ~width ~height with
+      | None -> hide_terminal t ~width ~height
+      | Some layout ->
+        let rows = layout.content.height and cols = layout.content.width in
+        if Option.equal [%equal: int * int] t.terminal_size (Some (rows, cols)) then t
+        else { t with terminal_size = Some (rows, cols)
+          ; terminal_requests = if terminal_running t then
+              Resize { rows; cols } :: t.terminal_requests else t.terminal_requests }
+  in
   let t = if Option.is_some t.theme_picker then
     if Option.is_none (theme_picker_layout t ~width ~height)
     then return_to_document t
@@ -1287,6 +1447,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
+  | Toggle_terminal
    | Next_tab | Previous_tab | Present_buffers _ | Close_tab | Force_close_tab | Recreate_missing_file
   | Toggle_entry_mark | Mark_selection | Unmark_selection | Clear_directory_marks | Open_marked_files
   | Toggle_directory | Open_directory_entry | Directory_parent | Refresh_directory
@@ -1399,6 +1560,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
        through the session. *)
     if Option.is_some (active_tab_view before) then Host.notice t.host else None
   | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Recreate_missing_file -> None
+  | Toggle_terminal -> Host.notice t.host
      | Open_theme_picker | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> Host.notice t.host
   | Toggle_problems_filter ->
     Some (if problems_current_document t then "Problems: current document" else "Problems: workspace")
@@ -2333,6 +2495,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     | Directory_major | Directory_side | Focus_directory | Toggle_directory -> leave_bare t
     | _ -> t in
   match view with
+  | Toggle_terminal -> toggle_terminal t ~width ~height
   | Toggle_bare ->
     if bare t then { t with presentation = t.bare_return; rows = None }
     else (
@@ -3016,7 +3179,7 @@ let rec apply t ~width ~height (input : Input.t) =
     match apply_running t ~width ~height input, input with
     | (t, Controller.Status.Exit), _ -> t, Controller.Status.Exit
     | ( (t, Running)
-      , ( Animation_tick _ | Line_picker_work _ | File_picker_work _ | File_preview _
+      , ( Terminal _ | Terminal_update _ | Animation_tick _ | Line_picker_work _ | File_picker_work _ | File_preview _
         | File_picker_snapshot _ | File_picker_update _ | Content_picker_snapshot _ ) ) ->
       (* Bounded background turns neither save nor place views. *)
       t, Running
@@ -3024,6 +3187,47 @@ let rec apply t ~width ~height (input : Input.t) =
 
 and apply_running t ~width ~height (input : Input.t) =
   match input with
+  | Terminal_update { generation; event } ->
+    if generation <> t.terminal_generation then t, Running
+    else apply_running t ~width ~height (Terminal event)
+  | Terminal (Snapshot snapshot) ->
+    { t with terminal_snapshot = Some snapshot
+      ; terminal_failure = None
+      ; terminal_paste = if Option.is_some snapshot.exited then
+          Option.map t.terminal_paste ~f:(fun _ -> [], 0, false)
+        else t.terminal_paste }, Running
+  | Terminal (Failed error) ->
+    { t with terminal_failure = Some error }, Running
+  | Terminal_key key ->
+    let t = synchronize t ~width ~height in
+    terminal_key t ~width ~height key, Running
+  | Paste_start when terminal_capturing t ->
+    let t = synchronize t ~width ~height in
+    if Option.is_some t.terminal_paste then t, Running else
+      { t with terminal_prefix = false
+        ; terminal_paste = Some ([], 0, t.terminal_visible && terminal_running t) }, Running
+  | Paste_end when Option.is_some t.terminal_paste ->
+    let t = synchronize t ~width ~height in
+    let chunks, _, valid = Option.value_exn t.terminal_paste in
+    let t = { t with terminal_paste = None } in
+    if valid && terminal_running t then
+      { t with terminal_requests = Paste (String.concat (List.rev chunks)) :: t.terminal_requests }, Running
+    else { t with host = Host.with_notice t.host "Terminal paste dropped (closed, exited, or exceeded 1 MiB)" }, Running
+  | Key key when terminal_capturing t ->
+    (* Compatibility for headless callers; the frontend uses Terminal_key so no
+       modifiers, navigation keys or Unicode information are lost. *)
+    let module M = Ches_terminal.Model in
+    let code, modifiers = match key with
+      | Char u -> M.Char u, M.no_modifiers
+      | Ctrl c -> M.Char (Uchar.of_char c), { M.no_modifiers with ctrl = true }
+      | Enter -> M.Enter, M.no_modifiers
+      | Tab -> M.Tab, M.no_modifiers
+      | Shift_tab -> M.Tab, { M.no_modifiers with shift = true }
+      | Escape -> M.Escape, M.no_modifiers
+      | Backspace -> M.Backspace, M.no_modifiers
+      | Delete -> M.Delete, M.no_modifiers in
+    let t = synchronize t ~width ~height in
+    terminal_key t ~width ~height { code; modifiers }, Running
   | Content_picker_accept request ->
     let position = ref None in
     let validate controller =
@@ -3119,6 +3323,7 @@ and apply_regular t ~width ~height (input : Input.t) =
     | _ -> refit t ~width ~height in
   match input with
   | Resize -> t, Running
+  | Terminal _ | Terminal_update _ | Terminal_key _ -> assert false
   | Source event -> receive_all t ~width ~height [ event ], Running
   | Vcs event -> receive_jobs t ~width ~height [ event ], Running
      | File_preview _ | File_picker_snapshot _ | File_picker_update _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
@@ -3155,6 +3360,7 @@ and apply_regular t ~width ~height (input : Input.t) =
         | Key key when not (has_document t) ->
           feed t ~width ~height (Key key)
         | Key key -> route ~width ~height t key
+       | Terminal _ | Terminal_update _ | Terminal_key _ -> assert false
        | Animation_tick _ | Resize | Source _ | Vcs _ | File_preview _ | File_picker_snapshot _ | File_picker_update _ | File_picker_work _ | File_picker_accept _ | Content_picker_accept _ | Line_picker_work _ | Content_picker_snapshot _ -> assert false
     in
     let t = release_held t ~width ~height in

@@ -31,6 +31,10 @@ for general distribution.
 - **Command palette:** centered floating fuzzy search over Normal-mode commands,
   with shortcuts derived from the active bindings; works in zen without resizing
   the document or docked tiles.
+- **Floating terminal:** `Space t t` opens a persistent interactive shell over the
+  workspace. `Ctrl-\` then `Ctrl-n` hides it; reopening keeps the shell, running
+  commands, and screen. Supports colours, shell control keys, paste, resize, and
+  alternate-screen programs. See [terminal controls and limits](docs/editor_reference.md#floating-terminal).
 - **Live themes:** 44 built-in dark/light palettes, including monochrome and
   retro-terminal styles. `Space v T` opens a fuzzy live-preview chooser; Enter
   applies, Escape restores. `--theme NAME` selects at startup; `--list-themes`
@@ -132,6 +136,9 @@ when editing; `--list-themes` needs neither a terminal nor a PATH argument.
 | `Space q` | Quit if all buffers are clean and no files are marked missing |
 | `Space Q` | Quit and discard unsaved changes |
 | `Space c c` | Open the command palette |
+| `Space t t` | Open the persistent floating terminal |
+| Terminal: `Ctrl-\`, then `Ctrl-n` | Hide terminal and return to the editor |
+| Terminal: `Ctrl-\`, then `Ctrl-r` | Restart an exited or failed shell |
 | `Space f l` | Fuzzy search current-document lines; Enter jumps to the selected match |
 | `Space f f` | Find project files; Enter opens or activates a retained buffer |
 | `Space f g` | Search project contents on disk literally; Enter validates and jumps |
@@ -189,6 +196,7 @@ those frames.
 | `line_picker/` | Bounded fuzzy search over current in-memory document lines |
 | `content_picker/` | On-disk literal search provider and Async floating-picker runtime |
 | `vcs/` | VCS model, git command builders and parsers, and the Async job runner |
+| `terminal/` | PTY shell host, vendored libvterm emulator, and UI-independent terminal protocol |
 | `screen/` | Screen geometry, workspace state, and frame rendering |
 | `ui/` | Bonsai_term frontend, event adapter, theme, and the VCS runner's host |
 | `bin/` | Command-line entry point |

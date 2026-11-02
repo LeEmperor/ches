@@ -1,0 +1,10 @@
+(test
+ (name emulator_test)
+ (modules emulator_test)
+ (libraries core ches_terminal ches_terminal_emulator))
+
+(test
+ (name runtime_test)
+ (modules runtime_test)
+ (libraries core core_unix async ches_terminal ches_terminal_host)
+ (preprocess (pps ppx_jane)))
