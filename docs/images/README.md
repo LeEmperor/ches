@@ -23,7 +23,7 @@ These PNGs show the real Ches terminal UI, captured on 2026-11-02 from
    `--no-lsp demo.ml`. Leave theme and presentation at their defaults. Move to
    line 16 with `16G`, then capture the editor.
 4. Open Tile Term with `Space /`. Press `Ctrl-Space` for terminal Normal mode,
-   type `7-` to shrink the float from its default 120 × 36 to 50 × 22 cells,
+    type `7-` to shrink the float from its then-default 120 × 36 to 50 × 22 cells,
    then `i` to resume Insert. Run `ocaml demo.ml`, wait for the prompt to return,
    and capture again. The displayed output is from the actual OCaml interpreter.
 5. Capture each frame with `tmux capture-pane -e -p` and render its ANSI SGR
@@ -38,6 +38,9 @@ The images preserve the application's text, layout, and colors. Font rasterizati
 is provided by Pillow rather than a graphical terminal emulator. They contain no
 added window chrome or overlays. Language servers and synthetic diagnostics are
 disabled. The PNGs were opened and visually inspected after rendering.
+
+The default Tile Term size has since increased to 132 × 40; the captured float
+was manually resized and does not illustrate the default size.
 
 ## Suggested README embeds
 

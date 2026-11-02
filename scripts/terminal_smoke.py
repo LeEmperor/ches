@@ -550,7 +550,7 @@ def main():
         print("ok: inspection freezes while PTY drains; v/V/Ctrl-v movement+y and yy copy exact character/line/block text to editor register and OSC 52 clipboard; i/a resume Insert")
 
         initial = size("INITIAL")
-        assert initial == (34, 116), ("default content size", initial)
+        assert initial == (38, 128), ("default content size", initial)
 
         def delta(value, count):
             return value[0] + 2 * count, value[1] + 10 * count
@@ -580,11 +580,11 @@ def main():
             return size(label)
 
         narrow = viewport(76, 60, "WIDTH_CLAMP")
-        assert narrow[0] == delta(initial, 2)[0] and narrow[1] < initial[1], narrow
+        assert narrow == (42, 70), ("width-clamped content size", narrow)
         short = viewport(180, 24, "HEIGHT_CLAMP")
-        assert short[0] < initial[0] and short[1] == delta(initial, 2)[1], short
+        assert short == (20, 148), ("height-clamped content size", short)
         smaller = viewport(76, 24, "BOTH_CLAMP")
-        assert smaller[0] < initial[0] and smaller[1] < initial[1], smaller
+        assert smaller == (20, 70), ("both-clamped content size", smaller)
         restored = viewport(180, 60, "RESTORED")
         assert restored == delta(initial, 2), (initial, restored)
 
@@ -631,7 +631,7 @@ def main():
                  f"fresh shell {number}")
             numbered_pids[number] = int(path.read_text())
             persistent(number, numbered_pids[number], f"token-{number}")
-            # 120x36 is the preferred float size; stty reports its content area.
+            # 132x40 is the preferred float size; stty reports its content area.
             assert size(f"INITIAL_{number}") == initial, "new terminal preferred size"
         assert len({shell_pid, *numbered_pids.values()}) == 3, "sessions shared a shell PID"
 
@@ -660,7 +660,7 @@ def main():
         assert "CHES_ONLY_FOUR" not in screen(), "terminal 4 output leaked into terminal 3"
         assert size("THREE_REOPEN") == delta(initial, 2)
         persistent(3, numbered_pids[3], "token-3")
-        print("ok: numbered 3/4 have independent PID/env/cwd/output and default 120x36 sizes; direct switches, same-ID hide, latest-ID toggle, per-session sizing and background PTY draining")
+        print("ok: numbered 3/4 have independent PID/env/cwd/output and default 132x40 sizes; direct switches, same-ID hide, latest-ID toggle, per-session sizing and background PTY draining")
 
         # Compare actual child bytes, not screen echo. Deferred prefixes belong
         # to the originating owner across mode changes and direct switches.

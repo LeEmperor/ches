@@ -120,7 +120,7 @@ let inspection_left t ~width =
 
 let id = Ches_tile.View_id.of_string "terminal"
 let spec = Ches_tile.Spec.result_picker id ~title:"Tile Terms"
-let default_size : Floating.Size.t = { width = 120; height = 36 }
+let default_size : Floating.Size.t = { width = 132; height = 40 }
 
 let placement_with_preferred ~preferred ~width ~height =
   Floating.layout ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }

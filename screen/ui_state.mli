@@ -84,7 +84,7 @@ type t
     directory (unnamed buffers use the startup directory). Too-small allocations
     hide without stopping it. Reopen retains even an exited snapshot;
     Normal [r] explicitly starts a new shell only after exit/failure, in that
-    session's captured initial directory. Size preferences default to 120x36 per
+    session's captured initial directory. Size preferences default to 132x40 per
     session; hidden editor sizing commands affect the selected session.
     Hiding restores prior available focus. In terminal Insert, keys including
     Escape, Ctrl-backslash, Ctrl-c, Tab and arrows reach the child unchanged;
