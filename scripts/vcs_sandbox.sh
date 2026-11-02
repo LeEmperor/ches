@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a throwaway git sandbox for hand-testing the VCS view (VCS_MANUAL_TEST.md).
+# Build a throwaway git sandbox for hand-testing the VCS view (docs/testing/vcs_manual.md).
 #
 #   scripts/vcs_sandbox.sh [DIR]      (default /tmp/ches-vcs-sandbox; DIR is wiped)
 #

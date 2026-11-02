@@ -352,7 +352,7 @@ returned 404 and were corrected to the actual `0.44.1` tag.
 
 Created files: this report and
 `scripts/picker_comparison_probe/{dune,probe.ml,host_probe.ml,fzf_filter.py}`.
-Updated only the feature handoff in `PERFORMANCE_TEST_PLAN.md` in addition to these
+Updated only the feature handoff in `docs/plans/performance_tests.md` in addition to these
 new files. No production file-picker or matcher edits in this slice.
 
 No user decision blocks **6b**. Useful input before acceptance: representative
@@ -535,7 +535,7 @@ Tests/probes/docs:
 `ui/picker_test/test_frontend.ml`,
 `file_picker/bench/{interaction_latency.ml,README.md}`, `file_picker/README.md`,
 `scripts/picker_comparison_probe/{probe,host_probe}.ml`, `docs/pickers.md`, this
-recommendation report, and `PERFORMANCE_TEST_PLAN.md`. No new source files created
+recommendation report, and `docs/plans/performance_tests.md`. No new source files created
 in 6b; ordinary Dune build/test artifacts are under `_build` (existing tests use
 their usual small temporary fixtures and clean them).
 
@@ -730,7 +730,7 @@ Modified: `palette/fuzzy.{ml,mli}`, `file_picker/{search,model,interaction}.{ml,
 `file_picker/test/{test_search,test_interaction}.ml`,
 `scripts/picker_comparison_probe/probe.ml`, `file_picker/README.md`,
 `file_picker/bench/README.md`, `docs/pickers.md`, this recommendation report and
-`PERFORMANCE_TEST_PLAN.md`. Earlier edits preserved. Ordinary build/test artifacts
+`docs/plans/performance_tests.md`. Earlier edits preserved. Ordinary build/test artifacts
 remain under `_build`; synthetic paths were never created on disk.
 
 ### Remaining limits / next invocation
@@ -956,7 +956,7 @@ Modified `palette/fuzzy.{ml,mli}` (Fast query helpers only),
 `palette/test/test_fast_fuzzy.ml`, `file_picker/{interaction,model,search}.{ml,mli}`,
 `file_picker/test/test_model.ml`, `scripts/picker_comparison_probe/probe.ml`,
 `file_picker/README.md`, `file_picker/bench/README.md`, `docs/pickers.md`, this report
-and `PERFORMANCE_TEST_PLAN.md`. No synthetic files on disk; ordinary test/build
+and `docs/plans/performance_tests.md`. No synthetic files on disk; ordinary test/build
 artifacts are under `_build` and existing tests use their usual small temp fixtures.
 
 ### Next extension points and limits
@@ -1133,7 +1133,7 @@ Modified `file_picker/{model,interaction}.{ml,mli}`,
 `file_picker/preview/pure/model.{ml,mli}` (immutable equality),
 `screen/{file_picker_tile,ui_state,frame}.{ml,mli}`, `ui/editor_view.ml`,
 `scripts/picker_comparison_probe/{probe,host_probe}.ml`, `file_picker/README.md`,
-`docs/pickers.md`, this report and `PERFORMANCE_TEST_PLAN.md`. Prior edits preserved;
+`docs/pickers.md`, this report and `docs/plans/performance_tests.md`. Prior edits preserved;
 ordinary build/test artifacts under `_build`, no new on-disk large fixtures.
 
 ### Next slice / limits
@@ -1287,7 +1287,7 @@ Implementation files: `file_picker/{interaction,model}.{ml,mli}`,
 `file_picker/discovery/provider.{ml,mli}`, `file_picker/host/{runtime.ml,runtime.mli,dune}`,
 new `file_picker/host/test/test_reopen.ml`, `screen/file_picker_tile.ml`, and
 `scripts/picker_comparison_probe/{probe,host_probe}.ml`. Documentation: this report,
-`file_picker/README.md`, `docs/pickers.md`, `PERFORMANCE_TEST_PLAN.md`. Extensive
+`file_picker/README.md`, `docs/pickers.md`, `docs/plans/performance_tests.md`. Extensive
 pre-existing edits/untracked files were preserved. No installs, subagents, commits
 or mutative git operations. At this historical handoff, the blockwise smoke issue
 was explicitly outstanding; its diagnosis and closure are recorded below. Long-path/query DP, GC, cold first
@@ -1361,7 +1361,7 @@ cleanup. Screens: `/tmp/opencode/ches-smoke-screens.yaj6JY`; full output:
 `python3 scripts/picker_smoke.py` also **passed**; fixtures/captures:
 `/tmp/opencode/picker-terminal-9lji89tq`. Final build/full Dune suite and three
 directory PTY scenarios passed sequentially; exact commands and review scope are
-in `../PERFORMANCE_TEST_PLAN.md`, final integration handoff. Review fixed bounded
+in `docs/plans/performance_tests.md`, final integration handoff. Review fixed bounded
 cleanup of an LSP process surviving stdout EOF, with a real-child regression.
 This supersedes the outstanding full-terminal verification status above while
 preserving all failed-run evidence. Human visual/ranking acceptance, comparative

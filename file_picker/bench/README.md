@@ -3,7 +3,7 @@
 Run sequentially using the documented toolchain:
 
 ```sh
-rg --files --null --glob '!FILE_PICKER_PLAN.md' --glob '!file_picker/**' > /tmp/file-picker-paths.nul
+rg --files --null --glob '!docs/plans/file_picker.md' --glob '!file_picker/**' > /tmp/file-picker-paths.nul
 opam exec --switch=5.2.0+ox -- dune exec file_picker/bench/query_latency.exe -- /tmp/file-picker-paths.nul > /tmp/file-picker-query.log
 ```
 

@@ -1952,7 +1952,7 @@ separately reconstructed equal saved state, rather than depending on revision eq
 Comparisons of distinct equal large strings can still be O(document bytes), as can
 transaction no-net-change checks. Whole-string copies, line-array updates and first
 layout access remain architectural costs. See the slice 7b entry in
-[`PERFORMANCE_TEST_PLAN.md`](../PERFORMANCE_TEST_PLAN.md) for bounded probe results.
+[the performance test plan](plans/performance_tests.md) for bounded probe results.
 
 ## Saving: current limitations
 

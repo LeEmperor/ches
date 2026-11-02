@@ -83,7 +83,7 @@ python3 scripts/vcs_smoke.py
 The VCS smoke suite uses a sandbox repository created by
 [`scripts/vcs_sandbox.sh`](../scripts/vcs_sandbox.sh). Its scenarios exercise
 staging, commits, a conflict-stopped rebase pull, pushing, and history, and check
-the resulting Git state. See [VCS manual tests](../VCS_MANUAL_TEST.md) for remaining
+the resulting Git state. See [VCS manual tests](testing/vcs_manual.md) for remaining
 human checks.
 
 Visual checks and the `ppx_expect` source-path workaround are documented in the

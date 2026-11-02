@@ -710,7 +710,7 @@ let branches t =
 ;;
 
 (* Records the behaviour while the owner decides whether the title should name the
-   log when it is empty (VCS_WORKSPACE_PLAN.md, phase 8's known gaps). *)
+   log when it is empty (docs/plans/vcs_workspace.md, phase 8's known gaps). *)
 let%expect_test "an empty chosen log: the logged branch deleted outside the view, and an \
                  unborn branch"
   =

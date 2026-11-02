@@ -1,7 +1,7 @@
 # Phase 8 independent handoff — historical PARTIAL (2026-10-07)
 
 This historical handoff predates production integration. The current production
-handoff is in `../FILE_PICKER_PLAN.md` (phase 8 software complete): `Space f g`,
+handoff is in `../docs/plans/file_picker.md` (phase 8 software complete): `Space f g`,
 palette activation, retained-session validation before tab activation, and actual
 display-cell navigation are implemented. See README for dirty/failure policy.
 Checks are in RESULTS. Phase-9 production software/terminal checks now pass; the
@@ -25,7 +25,7 @@ Changed/added files:
 - `screen/content_picker_tile.ml`, `.mli`, `screen/test/test_content_picker_tile.ml`,
   `screen/dune`, `screen/test/dune` (added library dependency, preserved phase 7).
 - `dune-project`, generated `ches.opam` (Yojson/Base64 direct dependencies).
-- `FILE_PICKER_PLAN.md` (phase 8 PARTIAL, precise independent done/blocked pending).
+- `docs/plans/file_picker.md` (phase 8 PARTIAL, precise independent done/blocked pending).
 
 Checks/outcomes: `RESULTS.md`. Existing work preserved; no Git mutations, GitHub
 publication/mutations or attribution.
@@ -53,7 +53,7 @@ publication/mutations or attribution.
    Current bounds are resource/record limits, not hard per-turn time guarantees.
 
 Phase 7 partial and phases 1–4 remain intact. Phase 9 independent review/checks
-were subsequently completed; see `../FILE_PICKER_PLAN.md`'s phase-9 handoff and
+were subsequently completed; see `../docs/plans/file_picker.md`'s phase-9 handoff and
 `../docs/pickers.md`. End-to-end release checks remain blocked by the dependencies
 above. Leave branch reconciliation/publication to the human.
 
@@ -69,7 +69,7 @@ above. Leave branch reconciliation/publication to the human.
 - Typed intent is queued after closing/releasing capture/provider and consumed
   after UI installation. Raw path/expected line/literal and byte ranges unchanged.
   Future opening validation contract above remains required, not implemented.
-- Changed files/exact checks: current phase-8 handoff in `../FILE_PICKER_PLAN.md`.
+- Changed files/exact checks: current phase-8 handoff in `../docs/plans/file_picker.md`.
   Build/broader forced suites pass; full suite only known frontend snapshot failures,
   no promotion. Shared line/palette terminal smokes pass; no content visual sign-off.
 - Next: human lands actual multi-buffer existing-file activation/open-at-location.

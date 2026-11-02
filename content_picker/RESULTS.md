@@ -1,7 +1,7 @@
 # Phase 8 independent checks (2026-10-07)
 
 Historical records below predate production acceptance. The current phase-8
-production check record is in `../FILE_PICKER_PLAN.md`; production frontend tests
+production check record is in `../docs/plans/file_picker.md`; production frontend tests
 now exercise real cross-file navigation and dirty/stale/missing validation.
 
 ## Production phase-9 review (2026-10-07)

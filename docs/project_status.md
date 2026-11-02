@@ -116,12 +116,12 @@ Build, headless-test, and real-terminal commands are listed in the
 [development guide](development.md#terminal-smoke-tests).
 
 The historical
-[phase-9 production handoff](../FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete)
+[phase-9 production handoff](plans/file_picker.md#phase-9-production-verification-handoff-2026-10-07--software-complete)
 records passing build/full tests and real file/content, directory, and existing
 terminal checks. Its catalog counts and phase notes describe that checkpoint,
 not the current command catalog. Human visual review, owner ranking examples, and
 agreed live performance acceptance were recorded separately and unperformed at
 that handoff; see the [picker guide](pickers.md) for integration details.
 
-VCS manual acceptance is tracked in [VCS_MANUAL_TEST.md](../VCS_MANUAL_TEST.md).
+VCS manual acceptance is tracked in [the VCS checklist](testing/vcs_manual.md).
 README screenshot capture and rendering details are in [images/README.md](images/README.md).

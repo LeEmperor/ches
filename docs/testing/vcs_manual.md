@@ -1,5 +1,9 @@
 # VCS view: hand-validation checklist
 
+[Testing and acceptance](README.md) · [VCS implementation plan](../plans/vcs_workspace.md)
+
+Run commands from the repository root; inline source paths are relative to it.
+
 **The behaviour checks are automated now.** `python3 scripts/vcs_smoke.py` runs the
 built binary in tmux over a fresh `scripts/vcs_sandbox.sh` sandbox and walks one pass
 per phase (2–8), checking the screen and the resulting git state; `dune runtest`
@@ -87,11 +91,12 @@ pins them.
 - Cursor shape and the smear cursor in the view (tmux does not report them).
 
 The previous step-by-step checklist (phases 2–8, every feature by hand) is in git
-history: `git show HEAD:VCS_MANUAL_TEST.md`. Use it if you want to walk a phase
-yourself; the smoke and tests above replace it for behaviour.
+history. Use `git log --follow -- docs/testing/vcs_manual.md` to find older
+revisions across the move if you want to walk a phase yourself; the smoke and
+tests above replace it for behaviour.
 
 ## Afterwards
 
 Write findings under the sections above (or just tell Claude). When you are happy
 with the look and feel, the handoffs' "No owner terminal acceptance" gaps can be
-closed in `VCS_WORKSPACE_PLAN.md`.
+closed in `docs/plans/vcs_workspace.md`.

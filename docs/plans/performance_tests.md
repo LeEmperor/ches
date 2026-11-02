@@ -1,5 +1,9 @@
 # Editor performance test suite
 
+[Implementation plans](README.md) · [Development guide](../development.md)
+
+Commands and inline source paths below are relative to the repository root.
+
 Status: planned; implementation has not started.
 Created: 2026-10-06.
 

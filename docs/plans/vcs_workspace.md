@@ -1,5 +1,9 @@
 # VCS Workspace: a lazygit/Magit hybrid inside Ches
 
+[Implementation plans](README.md) · [Manual acceptance](../testing/vcs_manual.md)
+
+Commands and inline source paths below are relative to the repository root.
+
 Status: re-scoped on 2026-10-14 after a feature brainstorm. Phases 0A, 0B and 0C
 are implemented and committed (237e9dd). Owner terminal acceptance (2026-10-25): the
 `?` help float, view tabs (`Space s t`) and the split (`Space s s`) confirmed; the

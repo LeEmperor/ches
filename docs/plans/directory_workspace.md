@@ -1,5 +1,9 @@
 # Directory Workspace: buffers, tabs, and editable directories
 
+[Implementation plans](README.md) · [User guide](../directory_workspace.md)
+
+Commands and inline source paths below are relative to the repository root.
+
 Status: phases 0–9 implemented; final integration checks recorded below. Scoped on 2026-10-06.
 
 ## Goal
@@ -80,7 +84,7 @@ These are recommendations, not additional user-approved keybindings or policies.
 - `bin/`, `ui/`: startup path handling and terminal integration.
 
 Implementers must recheck the current checkout, especially ongoing floating-tile
-work described in `FLOATING_TILES_PLAN.md`, before changing shared screen modules.
+work described in `docs/plans/floating_tiles.md`, before changing shared screen modules.
 
 ### Target ownership
 
@@ -578,7 +582,7 @@ Next-phase integration notes:
   the major document allocation for directory presentation without losing tab state.
   Real side placement waits for phase 5. `Ui_state.view_layout`/`view_available` have
   explicit floating-layer parameters from floating phase 1; preserve that seam.
-  `FLOATING_TILES_PLAN.md` currently has only phase 1 implemented; no shared screen
+  `docs/plans/floating_tiles.md` currently has only phase 1 implemented; no shared screen
   modules were changed here. `bin/ches.ml` has one required PATH and calls
   `Controller.open_file`; `File_io.read` rejects directories. Typed file/directory
   startup belongs to phase 3, not this spike. No additional CLI syntax chosen.
@@ -828,7 +832,7 @@ Next-phase integration notes:
   presentation policy and preserve the shared lifecycle facade for file opens.
 - Directory/file presentation changes must still invalidate paste/input context even
   if the underlying active file ID is unchanged. Preserve the explicit floating-layout
-  seam in `view_layout`/`view_available` from `FLOATING_TILES_PLAN.md`; no floating work
+  seam in `view_layout`/`view_available` from `docs/plans/floating_tiles.md`; no floating work
    or workspace allocation changes were made in phase 2.
 
 ### Phase 3 / 2026-10-07 / implemented

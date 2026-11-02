@@ -2,7 +2,7 @@
 
 Presentation follow-up (2026-10-06): the live palette is now floating. The docked
 placement, zen restriction, and bottom-band sizing below describe the original
-milestone, not current behavior. See [Floating tiles plan](../FLOATING_TILES_PLAN.md)
+milestone, not current behavior. See [Floating tiles plan](plans/floating_tiles.md)
 for implementation/validation status and the
 [command palette reference](editor_reference.md#command-palette) for current usage.
 
@@ -17,7 +17,7 @@ is documented in [editor reference](editor_reference.md#command-palette) and
 and single-document observations below describe their implementation milestones.
 Follow-up navigation now uses Tab/Shift-Tab (or Ctrl-n/p) to select results;
 Escape cancels and Enter runs the selected command. Historical Tab-closes claims
-below describe earlier milestones, superseded by phases 10–13 of `FILE_PICKER_PLAN.md`.
+below describe earlier milestones, superseded by phases 10–13 of `docs/plans/file_picker.md`.
 
 Original milestone status: stages 1–5 software-complete (docked presentation).
 Human feedback on the terminal UI is pending. Stage 3, the host extensions,

@@ -1,5 +1,9 @@
 # Fuzzy file picker
 
+[Implementation plans](README.md) · [User guide](../pickers.md)
+
+Commands and inline source paths below are relative to the repository root.
+
 Status: phases 1–8 software-implemented (production file and content navigation);
 phase 9 software verification COMPLETE (build/full tests and real terminal smokes).
 Human visual/ranking/performance release acceptance remains separate/unperformed.
@@ -401,7 +405,7 @@ other feature work may have progressed.
   and cursor placement.
 - `tile/host.ml`: focus, input capture, paste ownership, and cursor ownership.
 - `screen/floating.ml`: floating geometry. At inspection, overlay composition
-  and command-palette migration were pending; see `FLOATING_TILES_PLAN.md`.
+  and command-palette migration were pending; see `docs/plans/floating_tiles.md`.
 - `source/workspace_root.ml`: existing root discovery recognizes `dune-project`.
 - `app/controller.mli`: startup `open_file` and current-document `jump`; it does
   not yet expose the multi-buffer opening/activation operation this picker needs.
@@ -505,7 +509,7 @@ explicit.
   `dune build`, and `dune runtest file_picker/test palette/test screen/test source/test`
   pass. Full `dune runtest` fails only on snapshots in
   `ui/test/test_editor_view.ml`, matching the pre-existing default-visible-tile
-  mismatch recorded in `FLOATING_TILES_PLAN.md`; no expectations were promoted.
+  mismatch recorded in `docs/plans/floating_tiles.md`; no expectations were promoted.
   That baseline was not re-archived/rebuilt during this phase. An initial parallel
   build attempt hit Dune's concurrent-instance lock; the sequential retry passed.
   No live UI changes were made, so terminal smoke/human visual checks were not run.

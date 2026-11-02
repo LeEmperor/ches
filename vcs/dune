@@ -4,7 +4,7 @@
 ; signature. It is pure: no Async, no Unix, no ches_app or ches_screen, and it never
 ; mentions an index or staging (backends declare their own sections and actions).
 ; ches_vcs_git (vcs/git) implements the signature for git; ches_vcs_host (vcs/host)
-; runs the specs under Async. See VCS_WORKSPACE_PLAN.md, "Phase 1 contracts".
+; runs the specs under Async. See docs/plans/vcs_workspace.md, "Phase 1 contracts".
 
 (library
  (name ches_vcs)

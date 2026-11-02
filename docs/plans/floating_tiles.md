@@ -1,5 +1,9 @@
 # Floating tiles: command palette first
 
+[Implementation plans](README.md) · [Editor reference](../editor_reference.md)
+
+Commands and inline source paths below are relative to the repository root.
+
 Status: phases 1–4 software-complete (automated validation and documentation done).
 Human terminal visual acceptance remains pending. Scoped on 2026-10-06.
 

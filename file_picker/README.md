@@ -12,7 +12,7 @@ Production activation is installed between inputs, including batched input, so
 following query keys cannot reach the document. `scripts/picker_smoke.py` checks
 real file/content opening with isolated terminal fixtures; build/full suites and
 terminal checks pass, including native Tab/Shift-Tab and bounded selected previews.
-See the current phase-13 handoff in `FILE_PICKER_PLAN.md`.
+See the current phase-13 handoff in [the file picker plan](../docs/plans/file_picker.md).
 Human visual/ranking/performance acceptance remains separate and unperformed.
 
 ## Host contract

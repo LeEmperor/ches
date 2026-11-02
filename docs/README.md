@@ -21,7 +21,8 @@
 - [Screenshot assets](images/README.md): README images and capture notes.
 - [Tile Terms backend](../terminal/README.md): terminal protocol, PTY lifecycle,
   libvterm, and focused backend checks.
-- [VCS manual checks](../VCS_MANUAL_TEST.md): Git view acceptance coverage.
+- [Testing and acceptance](testing/README.md): automated suites and manual checks.
+- [VCS manual checks](testing/vcs_manual.md): Git view acceptance coverage.
 
 ## Design and implementation notes
 
@@ -36,12 +37,13 @@ user-facing behavior, start with the guides above.
 - [Long-line rendering](long_line_rendering.md)
 - [Picker performance and backend comparison](picker_performance_recommendation.md)
 - [AI integration design](ai_integration_design.md)
+- [Implementation plans](plans/README.md)
 - [Deferred workspace work](backlog/README.md)
 - [Archived implementation plans](archive/)
 
-Detailed plans also remain at the repository root:
-[directory workspace](../DIRECTORY_WORKSPACE_PLAN.md),
-[file picker](../FILE_PICKER_PLAN.md),
-[floating tiles](../FLOATING_TILES_PLAN.md),
-[VCS workspace](../VCS_WORKSPACE_PLAN.md), and
-[performance tests](../PERFORMANCE_TEST_PLAN.md).
+Detailed plans and handoffs are grouped under [`plans/`](plans/README.md):
+[directory workspace](plans/directory_workspace.md),
+[file picker](plans/file_picker.md),
+[floating tiles](plans/floating_tiles.md),
+[VCS workspace](plans/vcs_workspace.md), and
+[performance tests](plans/performance_tests.md).

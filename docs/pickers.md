@@ -61,7 +61,7 @@ clear work and screen data, and stale deliveries cannot install. Content/line
 pickers and the command palette retain their existing layouts.
 Phase-13 build/full tests and isolated terminal smokes pass, including native
 Tab/Shift-Tab selected acceptance and dirty/missing/large previews. This is not
-human visual or performance acceptance; exact evidence is in `FILE_PICKER_PLAN.md`.
+human visual or performance acceptance; exact evidence is in `docs/plans/file_picker.md`.
 
 ## Scope, dependencies and setup
 
@@ -168,7 +168,7 @@ inside key callbacks nor limit ranking to one turn per frame.
 
 Phases 1–8 and phase-9 software verification are complete. Historical floating,
 buffer and content-opening blockers are superseded by the production handoffs in
-[`FILE_PICKER_PLAN.md`](../FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete).
+[the file picker plan](plans/file_picker.md#phase-9-production-verification-handoff-2026-10-07--software-complete).
 The build and forced full suite pass; no unrelated snapshots were promoted here.
 Production frontend tests use real rg and session opening, not just fake consumers.
 The catalog currently has **55 commands**, including all three picker entries and
