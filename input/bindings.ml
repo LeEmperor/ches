@@ -236,6 +236,7 @@ let default =
     ; view 'D' (Focus_view demo_report)
     ; view 'm' (Toggle_view history)
     ; view 'M' (Focus_view history)
+    ; [ leader; Key.char 'l'; Key.char 'i' ], View Show_language_servers
     ; view 'R' Restart_source
     ; view 'K' Kill_source
     ; view 't' Toggle_status

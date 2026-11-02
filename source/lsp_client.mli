@@ -52,12 +52,19 @@ module Config : sig
       [.git]), and a 1 s grace. *)
   val ocamllsp : t
 
-  (** [slang-server] with no arguments, for [.sv], [.svh], [.v], and [.vh] files.
+  (** Built-in [slang-server] with no arguments, for [.sv], [.svh], [.v], and [.vh] files.
       SystemVerilog files use [systemverilog], Verilog files use [verilog]. The root
-      markers are [.slang] and [.git], with a 1 s shutdown grace. *)
+      markers are [.slang] and [.git], with a 1 s shutdown grace.
+      At selection/start, this exact built-in value resolves its program from
+      [SLANG_SERVER] (if set, even empty/invalid), then an executable on [PATH],
+      then executable [$HOME/slang-server/build/bin/slang-server], else the bare
+      [slang-server] name. Invalid explicit overrides report unavailable without
+      fallback. Record copies/custom configs retain their supplied program.
+      Resolution preserves the built-in function closures for pool sharing. *)
   val slang_server : t
 
-  (** Selects a built-in server for [path], or [None] for unsupported files. *)
+  (** Selects a built-in server for [path], resolving Slang's program at call time,
+      or [None] for unsupported files. *)
   val for_path : string -> t option
 
   (** Nearest directory containing any [root_markers], else [path]'s directory. *)
@@ -73,7 +80,12 @@ val start
   -> unit
   -> Source.t
 
-(** Owns one process per root and effective configuration, and routes document
+(** Emits authoritative [Servers] snapshots on attach, detach, restart and lifecycle
+    transitions, and in response to [Inspect]. Status is [Starting] until initialization
+    succeeds, [Unavailable] when launch fails, and [Stopped] on session termination.
+    Inventory resources retain the original editor paths and exclude diagnostics-only
+    files. Empty pools disappear, including failed pools after their last close.
+    Owns one process per root and effective configuration, and routes document
     diagnostics as [Owned] events. Closing the last resource stops its process.
     Source names have stable pool IDs, so lifecycle state is isolated across pools;
     [Owned] carries the separate document generation.

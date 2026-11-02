@@ -2,7 +2,10 @@
     (source, resource) are kept, so a burst costs the UI one snapshot per collection.
     [Started] and [Stopped] are never dropped, and a snapshot never moves across its
     source's [Started]/[Stopped]: one sent after a stop is not merged into one sent
-    before it. Pure data. *)
+    before it. [Servers] coalesces independently, keeping its first pending position
+    but replacing its contents with the latest authoritative inventory. Repeated
+    inventory updates cannot postpone its delivery or discard lifecycle events.
+    Pure data. *)
 open! Core
 
 type t [@@deriving sexp_of]

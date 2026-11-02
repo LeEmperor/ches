@@ -512,7 +512,11 @@ let navigation t (view : View_command.t) =
     | View_command.Toggle_directory, None ->
       let path = Option.bind (active_controller t) ~f:(fun c -> Editor.path (Controller.editor c)) in
       let parent = Option.value_map path ~default:t.startup_directory ~f:Filename.dirname in
-      show_directory ?select:(Option.map path ~f:Filename.basename) { t with return_file = t.active } parent
+      (* A file's parent is a main-area toggle, regardless of the browser's
+         last placement. Commit the move only after the parent opens. *)
+      Or_error.map
+        (show_directory ?select:(Option.map path ~f:Filename.basename) { t with return_file = t.active } parent)
+        ~f:(fun t -> { t with placement = Major })
     | Toggle_directory, Some _ ->
       (match Option.first_some (Option.filter t.return_file ~f:(fun id -> Option.is_some (find t id))) t.active with
        | Some id -> activate t id

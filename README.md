@@ -23,7 +23,7 @@ Git into one keyboard-driven workspace. Written in OCaml, with a
   staging, commits, branches, history, and merge or rebase conflicts.
 - **Language-aware feedback.** Tree-sitter highlighting for OCaml, Verilog,
   SystemVerilog, and GAS assembly, with language-server diagnostics for OCaml and
-  Verilog/SystemVerilog.
+  Verilog/SystemVerilog. Inspect attached servers with `Space l i`.
 - **Make it yours.** A command palette, live theme previews, dark and light
   palettes, adjustable layouts, and optional key hints.
 
@@ -74,9 +74,10 @@ ches --list-themes           # Browse available palettes
 | `Space w` / `Space q` | Save / quit |
 | `Space c c` | Open the command palette |
 | `Space f f` / `Space f g` / `Space f l` | Find files / search contents / find lines |
-| `Space o` | Open the file's parent directory / return to file |
+| `Space o` | Show the file's parent in the main area / return to file |
 | `Space b n` / `Space b p` | Next / previous file tab |
 | `Space g g` | Open the Git view |
+| `Space l i` | Inspect attached language servers and their status |
 | `Space /` / `N Space /` | Toggle Tile Term / select numbered session; also works in Insert |
 | `Space v z` / `Space v B` | Toggle Zen / Bare |
 | `Space v T` | Choose a theme |

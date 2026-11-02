@@ -221,6 +221,7 @@ type t =
 [@@deriving sexp_of]
 
 type update =
+  | Noop
   | Notify of Notification.t
   | Failed of Identity.t * Severity.t * string
   | Report of Identity.t * Severity.t * string * Problem.Location.t option
@@ -277,6 +278,7 @@ let rec apply t update =
     | update -> update
   in
   match update with
+  | Noop -> t
   | Inspect_identity identity ->
     if List.exists t.problems ~f:(fun p -> Identity.equal p.identity identity)
     then { t with details = Some identity } else t

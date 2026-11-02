@@ -12,8 +12,11 @@ undo.** Directory text is a proposed filesystem plan, not a file to serialize.
 `ches .` starts a major directory buffer with zero file tabs. `Enter` on a file
 opens/activates its persistent tab; on a directory (including a directory symlink)
 it navigates. `-` goes to the lexical parent and selects the child just left.
-`Space o` from a file opens its parent with that file selected; from a directory it
-returns to the remembered live file, else the active file tab. With neither it
+`Space o` from the main file editor opens its parent **in the main editor area**,
+with that file selected. This explicitly moves the directory to the main area
+even if its previous placement was a visible, hidden, or Zen-suppressed sidebar.
+From a focused directory (main or side), `Space o` returns to the remembered live
+file, else the active file tab. With neither it
 stays put. Directories never become file tabs. Dotfiles are included; entries sort
 by raw byte name without directory grouping. Cached revisits do not reread disk:
 `Space r` refreshes a clean listing, refusing dirty edits. Directory `:e!` refuses;
@@ -62,6 +65,8 @@ through a symlink follows its target; directory-entry mutations act on the link.
 
 | Keys (Normal/Visual) | Action |
 | --- | --- |
+| `Space o` from the main file editor | Open the file's parent in the main area, selecting the file |
+| `Space o` from a directory | Return focus to the remembered/active file |
 | `Space d m` | Present directory in major editor area, keeping file tabs underneath |
 | `Space d s` | Show/request left side browser |
 | `Space d h` | Hide browser without discarding edits or marks |
@@ -69,6 +74,9 @@ through a symlink follows its target; directory-entry mutations act on the link.
 | `Space d +` / `Space d -` | Grow/shrink preferred side width by four columns |
 
 Side Normal/Visual `Tab` returns to the editor; Insert `Tab` inserts soft-tab spaces.
+Use `Space d f` to switch focus to an existing browser rather than replacing the
+main editor with a directory. Use `Space d s` to explicitly request a sidebar;
+`Space o` from the main file editor intentionally chooses the main-area view.
 Side file opening keeps the browser
 present and focuses the opened file. Preferred outer width starts at 32 and stays
 within 16–500. Side layout needs at least 33 columns and four rows, leaving at least

@@ -19,3 +19,12 @@
   core_unix.filename_unix async)
  (preprocess
   (pps ppx_jane)))
+
+; Manual managed-workspace smoke against the installed OCaml and Slang servers.
+(executable
+ (name mixed_lsp_probe)
+ (modules mixed_lsp_probe)
+ (libraries ches_source ches_error ches_screen core core_unix core_unix.command_unix
+   core_unix.filename_unix async)
+ (preprocess
+  (pps ppx_jane)))

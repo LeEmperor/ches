@@ -42,7 +42,8 @@ session-local rather than saved across editor restarts.
 - **Highlighting:** incremental Tree-sitter parsing for OCaml, Verilog,
   SystemVerilog, and AT&T/GAS assembly (`.s` / `.S`).
 - **Diagnostics:** `ocamllsp` for OCaml and `slang-server` for Verilog/SystemVerilog,
-  with freshness tracking, a problems view, and restart controls. Language-server
+  with freshness tracking, a problems view, restart controls, and a live
+  **Language servers** report (`Space l i`) showing attachment and process state. Language-server
   integration consumes diagnostics only.
 - **Git:** stage/unstage/discard files, hunks, and selected diff lines; commit,
   amend, and extend HEAD; fetch, pull, push; branch checkout/creation/merge;

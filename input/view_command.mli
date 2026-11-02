@@ -130,6 +130,7 @@ type t =
       finishes the VCS view's commit message). The view decides what it means; one
       that is not installed gives its notice, one that ignores it says ["<Title>:
       nothing to do for <request>"]. *)
+  | Show_language_servers (** Open the live, read-only managed language server inventory. *)
   | Restart_source (** Restart the diagnostic source ([--synthetic-checker]). *)
   | Kill_source (** Crash the synthetic diagnostic source, to test the stopped state. *)
   | Toggle_zen (** Hide status temporarily, or restore saved workspace intent. *)

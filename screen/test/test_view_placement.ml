@@ -78,6 +78,25 @@ let tabs t =
 
 let screen ?(width = width) t = Frame.to_string (Frame.render t ~width ~height)
 
+let%test_unit "directory toggle from a registered view tab uses the main file context" =
+  let root = Helpers.scratch_dir "ches-view-directory-toggle-" in
+  let path = Filename.concat root "a.txt" in
+  Out_channel.write_all path ~data:"first\nsecond";
+  Exn.protect ~finally:(fun () -> Core_unix.unlink path; Core_unix.rmdir root) ~f:(fun () ->
+    let t = create ~path () |> fun t -> run t " ds df vT" in
+    assert (Option.is_some (Ui_state.active_tab_view t));
+    let t = run t " o" in
+    assert (Option.is_none (Ui_state.active_tab_view t));
+    let s = Ui_state.session t in
+    let p = Ches_app.Session.directory_presentation s |> Option.value_exn in
+    assert (Poly.equal p.placement Ches_app.Session.Major);
+    assert (Option.is_some (Ches_app.Session.input_directory s));
+    assert (Option.is_none (Ui_state.side_layout t ~width ~height));
+    let t = run t " o" in
+    assert (Option.is_none (Ches_app.Session.directory_presentation (Ui_state.session t)));
+    Ches_app.Session.dispose (Ui_state.session t))
+;;
+
 let rows ?(width = width) t lines =
   let all = String.split_lines (screen ~width t) in
   List.iter lines ~f:(fun i -> print_endline (List.nth_exn all i))

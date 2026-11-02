@@ -19,6 +19,7 @@ type t =
       { resource : string
       ; revision : int (** The revision written; its text was sent as changed first. *)
       }
+  | Inspect (** Emit the authoritative current [Source_event.Servers] inventory now. *)
   | Restart (** Stop the source if it is running and start it again. *)
   | Kill
   (** Make the source crash, for testing the stopped state by hand. Only the synthetic

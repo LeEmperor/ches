@@ -1873,7 +1873,7 @@ if [ "$lsp_only" = false ]; then
 section "language server for SystemVerilog: findings, edits, --no-lsp, missing server"
 mkdir -p "$work/svproj/.slang" "$work/svproj/rtl"
 printf 'module top;\n  ERROR\nendmodule\n' > "$work/svproj/rtl/top.sv"
-launch_env="env PATH=$work/fakebin:$PATH"
+launch_env="env SLANG_SERVER=$work/fakebin/slang-server PATH=$work/fakebin:$PATH"
 launch svproj/rtl/top.sv
 launch_env=""
 keys Space v b
@@ -1884,14 +1884,16 @@ keys u
 expect_screen "error [slang-server#1] $work/svproj/rtl/top.sv:2:3: fake error"
 keys Space q
 expect_exit 0
-launch_env="env PATH=$work/fakebin:$PATH"
+launch_env="env SLANG_SERVER=$work/fakebin/slang-server PATH=$work/fakebin:$PATH"
 launch svproj/rtl/top.sv --no-lsp
 launch_env=""
 sleep 1
 expect_no_screen "problem"
 keys Space q
 expect_exit 0
-launch_env="env PATH=$work/emptybin"
+# Isolate all built-in discovery routes, including an inherited SLANG_SERVER and
+# the developer's HOME fallback, so an installed server cannot invalidate this case.
+launch_env="env -u SLANG_SERVER HOME=$work PATH=$work/emptybin"
 launch svproj/rtl/top.sv
 launch_env=""
 sleep 1

@@ -159,6 +159,7 @@ let begin_session state =
 
 let handle state (request : Ches_error.Source_request.t) =
   match request with
+  | Inspect -> state.emit (Servers [])
   | Document_opened _ -> ()
   | Document_closed { resource } ->
     if Option.exists state.latest ~f:(fun document -> String.equal document.resource resource)

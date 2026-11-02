@@ -229,13 +229,14 @@ Backend details and focused checks are in [`terminal/README.md`](../terminal/REA
 | Normal | `Space g c` / `Space g a` | In a commit message opened from the VCS view (`c`): commit it / abort it |
 | Normal | `Space g l` | Show the current file's history in the VCS view, opening and focusing it (see [Browsing history](#browsing-history)) |
 | Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp, slang-server, or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
+| Normal | `Space l i` | Open live Language servers status; also search `lsp` in the palette |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
 | Normal | `zz` / `zt` / `zb` | Put the cursor line at the middle / top / bottom of the view |
 | Normal | `u` / `Ctrl-r` | Undo / redo |
 | Normal | `Space w` | Save focused file / apply focused directory edits |
-| Normal | `Space o` | Show file's parent / return to file |
+| Normal | `Space o` | Show file's parent in the main area (regardless of prior sidebar placement) / return to file |
 | Normal | `Enter` / `-` / `Space r` (directory) | Open cursor entry / parent / refresh clean listing |
 | Normal | `Space b n` / `Space b p` | Next / previous file tab (wraps) |
 | Normal | `Space b c` / `Space b C` | Close tab / force-close and discard retained text |
@@ -550,9 +551,34 @@ survives lines inserted above it. Lists that arrive during Insert wait until it 
 ### Language servers (ocamllsp and slang-server)
 
 ```sh
-dune exec ches -- PATH.ml          # or .mli, .mll, .mly; --no-lsp turns it off
-dune exec ches -- PATH.sv          # or .svh, .v, .vh; requires slang-server on PATH
+dune exec -j 12 ches -- PATH.ml    # or .mli, .mll, .mly; --no-lsp turns it off
+dune exec -j 12 ches -- PATH.sv    # or .svh, .v, .vh; see Slang discovery below
 ```
+
+#### Inspecting attached servers
+
+Press **`Space l i`**, or open the palette and search **`lsp`** / **Language servers**.
+The live read-only tab shows:
+
+- Which managed servers are attached to the current file, or why none are listed.
+- Every managed server's ID, workspace root, launch command, and attached files.
+- **Starting**, **Running**, **Stopped**, or **Unavailable**, with the failure reason.
+
+For example, opening both `.ml` and `.sv` files can show `ocamllsp#1` and
+`slang-server#2` simultaneously. Several files can share a server when their root
+and configuration match; distinct roots can have separate instances of the same
+server. State comes from the managed processes, not from whether they reported
+diagnostics. A server with zero findings can still be Running.
+
+The report refreshes as files attach/close and servers start/stop. Reopening it
+also requests a fresh inventory. Its current-file section uses the underlying
+active file tab, so opening the report doesn't replace that context. Use the
+usual read-only motions, `v` / `V`, and yank to copy information. `Space b n` /
+`Space b p` switch tabs, and `Space b c` closes the report. With `--no-lsp`, it
+reports that the diagnostic source is disabled; the synthetic checker is not
+listed as a language server.
+
+#### OCaml and pooled lifecycle
 
 Like the owner's Neovim setup, ches starts `ocamllsp` from PATH for OCaml files. Its
 root is the nearest ancestor containing any of `dune-project`, `dune-workspace`,
@@ -566,7 +592,8 @@ errors from other files appear only while you run `dune build --watch` yourself.
 ocamllsp 1.19 sends its lists unversioned, so open-file findings dim from your first
 edit after a list arrives until the next one.
 
-As in Neovim: no server on PATH is only a history entry (`Space v m`); a server that
+An unavailable server is recorded in history (`Space v m`) and the Language servers
+report; a server that
 exits or crashes is a one-off warning (`ocamllsp stopped: … (Space v R to restart)`),
 kept in history, its findings kept dimmed and marked `stopped`; nothing restarts on
 its own. On quit ches asks the server to shut down and waits up to 1 s.
@@ -609,10 +636,36 @@ old sessions and buffer generations remain isolated. The synthetic checker retai
 runtimes and per-file `#generation` source names. Directories do not start diagnostic drivers.
 
 For SystemVerilog (`.sv`, `.svh`) and Verilog (`.v`, `.vh`), ches starts
-`slang-server` from PATH with no arguments, using the same diagnostic and lifecycle
+`slang-server` with no arguments, using the same diagnostic and lifecycle
 handling. Its root is the nearest ancestor containing `.slang` or `.git`; else the
 file's directory. `--no-lsp` disables either server, and
 `--synthetic-checker` takes precedence over either.
+
+#### Slang executable discovery
+
+Ches looks for the built-in Slang server in this order:
+
+1. **`SLANG_SERVER`**, if set, as an explicit executable path or command name.
+2. **`slang-server` on PATH**.
+3. **`$HOME/slang-server/build/bin/slang-server`**, if it is an executable file.
+
+An invalid explicit override reports Unavailable rather than silently selecting
+another server. The Language servers report shows the selected executable, root,
+and any failure reason. This fallback supports a local Slang build without
+changing your shell configuration; the separate `slang` compiler is not the LSP.
+
+For an explicit launch:
+
+```sh
+SLANG_SERVER="$HOME/slang-server/build/bin/slang-server" ches path/to/design.sv
+```
+
+If no server is installed, follow the
+[upstream installation guide](https://hudson-trading.github.io/slang-server/start/installing/).
+After making a missing executable available to the running Ches environment,
+`Space v R` retries the managed servers. Environment changes made in another shell
+require relaunching Ches to inherit them; executable selection is retained for
+each existing server pool.
 
 Set include paths, defines, and file lists in the project's `.slang/server.json`,
 which the server reads itself. For example:

@@ -7,6 +7,25 @@ module Finding = Feedback.Diagnostics.Finding
 module Cell_layout = Ches_core.Cell_layout
 module Types = Lsp.Types
 
+let find_program prog =
+  let executable file =
+    try
+      match Core_unix.access file [ `Exec ] with
+      | Ok () -> Sys_unix.is_file_exn file
+      | Error _ -> false
+    with _ -> false
+  in
+  if String.mem prog '/'
+  then Option.some_if (executable prog) prog
+  else
+    Option.value (Sys.getenv "PATH") ~default:""
+    |> String.split ~on:':'
+    |> List.filter ~f:(Fn.non String.is_empty)
+    |> List.find_map ~f:(fun dir ->
+      let file = Filename.concat dir prog in
+      Option.some_if (executable file) file)
+;;
+
 module Config = struct
   type t =
     { source : string
@@ -68,7 +87,25 @@ module Config = struct
     }
   ;;
 
-  let for_path path = List.find [ ocamllsp; slang_server ] ~f:(fun t -> t.applies_to path)
+  let resolve_builtin t =
+    if not (phys_equal t slang_server) then t
+    else
+      let prog = match Sys.getenv "SLANG_SERVER" with
+        | Some prog -> prog
+        | None ->
+          (match find_program "slang-server" with
+           | Some prog -> prog
+           | None ->
+             Option.bind (Sys.getenv "HOME") ~f:(fun home ->
+               find_program (Filename.concat home "slang-server/build/bin/slang-server"))
+             |> Option.value ~default:"slang-server")
+      in
+      { t with prog }
+  ;;
+
+  let for_path path =
+    List.find [ ocamllsp; slang_server ] ~f:(fun t -> t.applies_to path)
+    |> Option.map ~f:resolve_builtin
 
   let root t path = Workspace_root.find_nearest ~markers:t.root_markers path
 end
@@ -197,6 +234,7 @@ type t =
   ; root : string
   ; cell_width : Cell_layout.Width.t
   ; emit : Source_event.t -> unit
+  ; set_status : Source_event.Server.status -> unit
   ; mutable session : session option
   (** The current session. Whatever an earlier one says, or how it ends, is not
       reported. *)
@@ -223,23 +261,6 @@ let display_path file =
   Option.value
     (String.chop_prefix file ~prefix:(Core_unix.getcwd () ^ "/"))
     ~default:file
-;;
-
-let find_program prog =
-  let executable file =
-    match Core_unix.access file [ `Exec ] with
-    | Ok () -> Sys_unix.is_file_exn file
-    | Error _ -> false
-  in
-  if String.mem prog '/'
-  then Option.some_if (executable prog) prog
-  else
-    Option.value (Sys.getenv "PATH") ~default:""
-    |> String.split ~on:':'
-    |> List.filter ~f:(Fn.non String.is_empty)
-    |> List.find_map ~f:(fun dir ->
-      let file = Filename.concat dir prog in
-      Option.some_if (executable file) file)
 ;;
 
 let current t session = Option.exists t.session ~f:(phys_equal session)
@@ -284,6 +305,7 @@ let report_stop t session ~reason =
       | Some line -> sprintf "%s: %s" reason line
       | None -> reason
     in
+    t.set_status (Stopped reason);
     t.emit (Stopped { source = t.config.source; root = t.root; reason }))
 ;;
 
@@ -610,6 +632,7 @@ let initialize t session =
                 Option.value options.includeText ~default:false
               | _ -> false);
             session.initialized <- true;
+            t.set_status Running;
             Hashtbl.iter t.documents ~f:(fun document -> Queue.clear document.recent);
            notify session Initialized;
            t.emit (Started { source = t.config.source; root = t.root });
@@ -674,13 +697,20 @@ let run t session =
 ;;
 
 let start_session t =
+  t.set_status Starting;
   match find_program t.config.prog with
   | None ->
+    let reason =
+      if String.is_empty t.config.prog then "server program is empty"
+      else if String.mem t.config.prog '/' then sprintf "%s is not an executable file" t.config.prog
+      else sprintf "%s not found on PATH" t.config.prog
+    in
+    t.set_status (Unavailable reason);
     t.emit
       (Unavailable
          { source = t.config.source
          ; root = t.root
-         ; reason = sprintf "%s not found on PATH" t.config.prog
+         ; reason
          })
   | Some prog ->
     t.generation <- t.generation + 1;
@@ -692,13 +722,15 @@ let start_session t =
        with
        | Error error ->
          if not (superseded ())
-         then
+         then (
+           let reason = sprintf "could not start: %s" (Error.to_string_hum error) in
+           t.set_status (Unavailable reason);
            t.emit
-             (Stopped
+             (Unavailable
                 { source = t.config.source
                 ; root = t.root
-                ; reason = sprintf "could not start: %s" (Error.to_string_hum error)
-                });
+                ; reason
+                }));
          return ()
        | Ok process ->
          let session =
@@ -759,6 +791,7 @@ let end_session t =
 
 let rec handle_request t (request : Source_request.t) =
   match request with
+  | Inspect -> ()
   | Document_opened { resource; generation } ->
     handle_request t (Document_closed { resource });
     Hashtbl.set t.owners ~key:resource ~data:generation
@@ -824,12 +857,13 @@ let rec handle_request t (request : Source_request.t) =
   | Kill -> ()
 ;;
 
-let driver ~config ~cell_width ~root ~emit =
+let driver ?(set_status = ignore) ~config ~cell_width ~root ~emit () =
   let t =
     { config
     ; root
     ; cell_width
     ; emit
+    ; set_status
     ; session = None
     ; generation = 0
     ; documents = String.Table.create ()
@@ -850,7 +884,8 @@ let driver ~config ~cell_width ~root ~emit =
 ;;
 
 let start ?(config = Config.ocamllsp) ~cell_width ~root () =
-  Source.create (driver ~config ~cell_width ~root)
+  let config = Config.resolve_builtin config in
+  Source.create (fun ~emit -> driver ~config ~cell_width ~root ~emit ())
 ;;
 
 (* Functions in Config are part of the effective configuration. Physical equality
@@ -868,25 +903,42 @@ let start_workspace ?(config_for_path = Config.for_path) ~cell_width () =
     let pools = ref [] in
     let next_pool_id = ref 0 in
     let resources = String.Table.create () in
+    let inventory () =
+      List.map !pools ~f:(fun (root, config, driver, source, status) ->
+        { Source_event.Server.source
+        ; program = config.Config.prog
+        ; args = config.args
+        ; root
+        ; resources = Hashtbl.to_alist resources
+            |> List.filter_map ~f:(fun (resource, (_, other)) ->
+              Option.some_if (phys_equal driver other) resource)
+            |> List.sort ~compare:String.compare
+        ; status = !status
+        })
+      |> List.sort ~compare:(fun a b -> String.compare a.Source_event.Server.source b.source)
+    in
+    let publish () = emit (Source_event.Servers (inventory ())) in
     let close resource =
       Option.iter (Hashtbl.find_and_remove resources resource) ~f:(fun (_, driver) ->
         driver.Source.Driver.handle (Document_closed { resource });
         if not (Hashtbl.exists resources ~f:(fun (_, other) -> phys_equal other driver))
         then (
           driver.stop ();
-          pools := List.filter !pools ~f:(fun (_, _, other) -> not (phys_equal other driver))))
+          pools := List.filter !pools ~f:(fun (_, _, other, _, _) -> not (phys_equal other driver))));
+      publish ()
     in
     let open_document resource generation =
       close resource;
       Option.iter (config_for_path resource) ~f:(fun config ->
+        let config = Config.resolve_builtin config in
         let root = canonical (Config.root config resource) in
         let file = canonical resource in
         if Hashtbl.exists resources ~f:(fun (other_file, _) -> String.equal file other_file)
         then emit (Owned { resource; generation; event = Unavailable
           { source = config.source; root; reason = "another open resource has the same lexical LSP URI" } })
         else (
-          let driver = match List.find !pools ~f:(fun (r, c, _) -> String.equal root r && same_config config c) with
-            | Some (_, _, driver) -> driver
+          let driver = match List.find !pools ~f:(fun (r, c, _, _, _) -> String.equal root r && same_config config c) with
+            | Some (_, _, driver, _, _) -> driver
             | None ->
               incr next_pool_id;
               (* Feedback's running/stopped state is keyed by source, not root.
@@ -895,19 +947,23 @@ let start_workspace ?(config_for_path = Config.for_path) ~cell_width () =
               let server_config =
                 { config with source = sprintf "%s#%d" config.source !next_pool_id }
               in
-              let driver = driver ~config:server_config ~cell_width ~root ~emit in
-              pools := (root, config, driver) :: !pools;
+              let status = ref Source_event.Server.Starting in
+              let set_status next = status := next; publish () in
+              let driver = driver ~set_status ~config:server_config ~cell_width ~root ~emit () in
+              pools := (root, config, driver, server_config.source, status) :: !pools;
               driver in
           Hashtbl.set resources ~key:resource ~data:(file, driver);
-          driver.handle (Document_opened { resource; generation })))
+          driver.handle (Document_opened { resource; generation });
+          publish ()))
     in
     { Source.Driver.handle = (fun request -> match request with
         | Document_opened { resource; generation } -> open_document resource generation
         | Document_closed { resource } -> close resource
+        | Inspect -> publish ()
         | Document_changed { resource; _ } | Document_saved { resource; _ } ->
           Option.iter (Hashtbl.find resources resource) ~f:(fun (_, driver) -> driver.handle request)
-        | Restart | Kill -> List.iter !pools ~f:(fun (_, _, driver) -> driver.handle request))
-    ; stop = (fun () -> List.iter !pools ~f:(fun (_, _, driver) -> driver.stop ());
+        | Restart | Kill -> List.iter !pools ~f:(fun (_, _, driver, _, _) -> driver.handle request))
+    ; stop = (fun () -> List.iter !pools ~f:(fun (_, _, driver, _, _) -> driver.stop ());
         pools := []; Hashtbl.clear resources)
     })
 ;;

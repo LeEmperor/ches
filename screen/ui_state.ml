@@ -205,7 +205,9 @@ let create
           | None ->
             View_registry.Entry.unavailable Report_tile.id ~title:Report_tile.spec.title
               ~notice:demo_report_unavailable)
-       ; View_registry.Entry.install ~placement History_tile.adapter History_tile.empty
+        ; View_registry.Entry.install ~placement History_tile.adapter History_tile.empty
+        ; View_registry.Entry.install ~opens_in:Tab Language_servers_tile.adapter
+            (Language_servers_tile.create ~source_attached)
        ]
        @ views)
   in
@@ -1353,6 +1355,13 @@ let withdraw_ask t ~width ~height =
 (* Fit each minor view's state to its viewport and source. When the source changes
    the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
+  (* A major view tab retains the session's file context; focus on the report is
+     deliberately not used to decide which file's attachment to inspect. *)
+  let file = Option.bind (Session.context_id t.session) ~f:(fun id ->
+    List.Assoc.find (context_files t) id ~equal:Buffer_id.equal
+    |> Option.map ~f:(fun file -> file.View_registry.Context.File.path)) in
+  let t = { t with views = View_registry.map t.views Language_servers_tile.key
+    ~f:(fun state -> Language_servers_tile.context state file) } in
   let t =
     if not t.terminal_visible then t else
     if not (View_id.equal (Host.focused t.host ~available:(fun _ -> true)) Terminal_tile.id)
@@ -1682,6 +1691,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
+  | Show_language_servers
   | Toggle_terminal
   | Select_terminal _
   | Adjust_terminal_size _ | Reset_terminal_size
@@ -1796,7 +1806,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
     (* Closing a view tab closes the view, with its notice; a file tab's close reports
        through the session. *)
     if Option.is_some (active_tab_view before) then Host.notice t.host else None
-  | Inspect_problems | Scroll _ | Next_tab | Previous_tab | Recreate_missing_file -> None
+  | Inspect_problems | Show_language_servers | Scroll _ | Next_tab | Previous_tab | Recreate_missing_file -> None
   | Toggle_terminal | Select_terminal _ -> Host.notice t.host
   | Adjust_terminal_size _ | Reset_terminal_size ->
     Some (sprintf "Tile Term size %dx%d (requested)" t.terminal_preferred.width t.terminal_preferred.height)
@@ -2809,6 +2819,13 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Kill_source when t.source_attached ->
     { t with source_commands = Kill :: t.source_commands }
   | Restart_source | Kill_source -> t
+  | Show_language_servers ->
+    let t = if t.source_attached then
+      { t with source_commands = Inspect :: t.source_commands } else t in
+    let t = leave_bare t in
+    let t = place_view t ~width ~height Language_servers_tile.id Tab in
+    { t with tabs = Tab_strip.activate t.tabs (Some Language_servers_tile.id)
+           ; host = Host.focus t.host Language_servers_tile.id; rows = None }
   | Toggle_problems_filter ->
     { t with views = View_registry.map t.views Problems_tile.key ~f:Problems_tile.toggle_filter }
   | Inspect_problems ->
@@ -3377,6 +3394,10 @@ let apply_source t update ~text =
 
 let rec receive t (event : Ches_error.Source_event.t) =
   match event with
+  | Servers servers ->
+    { t with views = View_registry.map t.views Language_servers_tile.key
+        ~f:(fun state -> Language_servers_tile.inventory state servers) }
+  | Owned { event = Servers _ as event; _ } -> receive t event
   | Owned { resource; generation; event } ->
     (match Session.find_resource (session t) resource with
      | Some (id, _) when Option.equal Int.equal (Session.source_generation t.session id) (Some generation) -> receive t event
@@ -3400,7 +3421,7 @@ let rec receive t (event : Ches_error.Source_event.t) =
         @ [ key, update, text ]
     }
   | Diagnostics _ | Started _ | Stopped _ | Unavailable _ -> apply_source t update ~text
-  | Owned _ -> assert false
+  | Owned _ | Servers _ -> assert false
 ;;
 
 let receive_all t ~width ~height events =

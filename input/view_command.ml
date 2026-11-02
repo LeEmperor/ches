@@ -94,6 +94,7 @@ type t =
       { view : View_id.t
       ; request : string
       }
+  | Show_language_servers
   | Restart_source
   | Kill_source
   | Toggle_zen
@@ -158,6 +159,7 @@ let scale t ~count =
   | Run_view_command _
   | Request_view _
   | Restart_source
+  | Show_language_servers
   | Kill_source
   | Toggle_zen
   | Toggle_bare

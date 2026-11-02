@@ -26,7 +26,7 @@ def main():
     (root / "child").mkdir()
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
-    proc = subprocess.Popen([str(executable), "--no-lsp", "."], cwd=root,
+    proc = subprocess.Popen([str(executable), "--no-lsp", "--workspace", "."], cwd=root,
                             env=dict(os.environ, TERM="xterm-256color"),
                             stdin=slave, stdout=slave, stderr=slave)
     os.close(slave)

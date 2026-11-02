@@ -37,10 +37,10 @@ let%expect_test "opening lists available commands and selects the first" =
     {|
     query: ""
     > file.save
+      language-servers.inspect
       tabs.next
       tabs.previous
-      tabs.close
-      ... 79 more
+      ... 80 more
     |}]
 ;;
 
@@ -146,7 +146,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 82 more
+      ... 83 more
     |}]
 ;;
 

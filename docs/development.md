@@ -65,6 +65,7 @@ dune build -j 4 @scripts/smoke-embedded-terminal
 dune build -j 4 @scripts/smoke-directory
 dune build -j 4 @scripts/smoke-picker
 dune build -j 4 @scripts/smoke-vcs
+dune build -j 4 @scripts/smoke-lsp
 ```
 
 After building, scripts can also be run directly:
@@ -78,7 +79,13 @@ python3 scripts/picker_smoke.py
 python3 scripts/theme_smoke.py
 python3 scripts/terminal_smoke.py
 python3 scripts/vcs_smoke.py
+python3 scripts/lsp_smoke.py
 ```
+
+The LSP smoke uses deterministic fake servers by default. To exercise installed
+`ocamllsp` and `slang-server` together through the real frontend, run
+`python3 scripts/lsp_smoke.py --real`. To check only the managed backend inventory,
+run `dune exec -j 6 source/bench/mixed_lsp_probe.exe`.
 
 The VCS smoke suite uses a sandbox repository created by
 [`scripts/vcs_sandbox.sh`](../scripts/vcs_sandbox.sh). Its scenarios exercise

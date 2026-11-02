@@ -55,8 +55,10 @@ let command =
          esy.json, package.json, .git, else PATH's directory); its diagnostics go to the\n\
          problems view. It never runs dune: errors needing a build need your own\n\
          `dune build --watch`. For .sv, .svh, .v, or .vh, ches runs slang-server\n\
-         from PATH, rooted at .slang, then .git, else PATH's directory. Configure it\n\
-          in .slang/server.json. Space v R restarts all managed servers; --no-lsp disables them.")
+          from SLANG_SERVER, PATH, or ~/slang-server/build/bin/slang-server, rooted\n\
+          at .slang, then .git, else PATH's directory. Configure it in .slang/server.json.\n\
+          Space l i shows attached language servers, commands, roots and status (palette: Language servers).\n\
+          Space v R restarts all managed servers; --no-lsp disables them.")
     (let%map_open.Command path = anon (maybe ("PATH" %: Filename_unix.arg_type))
       and list_themes = flag "--list-themes" no_arg
         ~doc:" List theme IDs, titles and dark/light kinds without opening the editor"

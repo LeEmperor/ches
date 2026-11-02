@@ -108,11 +108,78 @@ let%test_unit "side opens keep browser and target group; tabs and editor input s
     let ui = run ui " bpiY<Esc>" in
     assert (String.is_prefix (Text_buffer.to_string (Editor.text (editor ui))) ~prefix:"YX");
     let ui = run ui " o" in
-    assert (Ches_tile.View_id.equal (focused ui) Ui_state.directory_id);
+    assert (Poly.equal (presentation ui).placement Major);
+    assert (Option.is_none (Ui_state.side_layout ui ~width ~height));
     assert (String.equal (Directory_buffer.selected (dir ui) |> Option.value_exn).name "a.txt");
-    let ui = run ui "<Tab>" in
+    let ui = run ui " o" in
     assert (Ches_tile.View_id.equal (focused ui) Ui_state.document_id);
     assert_frame ui ~width ~height;
+    Session.dispose (Ui_state.session ui))
+;;
+
+let%test_unit "main file toggle promotes visible, hidden and Zen-suppressed side to main" =
+  fixture (fun root ->
+    List.iter [ ""; " dh"; " vz" ] ~f:(fun setup ->
+      let ui = create root |> fun ui -> run ui (" ds<CR>iX<Esc>" ^ setup) in
+      let file = Session.active_id (Ui_state.session ui) in
+      let file_text = Text_buffer.to_string (Editor.text (editor ui)) in
+      let file_scroll = Ui_state.scroll ui in
+      let ui = run ui " o" in
+      assert (Poly.equal (presentation ui).placement Major);
+      assert (Option.is_some (Session.input_directory (Ui_state.session ui)));
+      assert (Option.is_none (Ui_state.side_layout ui ~width ~height));
+      assert (Option.equal Buffer_id.equal (presentation ui).return_target file);
+      assert (String.equal (Directory_buffer.selected (dir ui) |> Option.value_exn).name "a.txt");
+      let rendered = Frame.to_string (Frame.render ui ~width ~height) in
+      assert (String.is_substring rendered ~substring:"z39.txt" ||
+        String.is_substring rendered ~substring:"z00.txt");
+      let ui = run ui " o o o" in
+      assert (Option.is_none (Session.directory_presentation (Ui_state.session ui)));
+      assert (Option.equal Buffer_id.equal file (Session.context_id (Ui_state.session ui)));
+      assert (String.equal file_text (Text_buffer.to_string (Editor.text (editor ui))));
+      assert (Scroll.equal file_scroll (Ui_state.scroll ui));
+      assert_frame ui ~width ~height;
+      Session.dispose (Ui_state.session ui)))
+;;
+
+let%test_unit "promotion retains dirty directory text, marks and per-buffer viewports" =
+  fixture (fun root ->
+    let ui = create root |> fun ui -> run ui " ds<CR> dfG mmAX<Esc>" in
+    let d = dir ui in
+    let before = Text_buffer.to_string (Editor.text (editor ui)) in
+    let scroll = Ui_state.scroll ui in
+    assert (scroll.top > 0 && Directory_buffer.is_dirty d);
+    let ui = run ui " df o" in
+    assert (Poly.equal (presentation ui).placement Major);
+    assert (Buffer_id.equal d.id (dir ui).id);
+    assert (Set.equal d.marks (dir ui).marks);
+    assert (String.equal before (Text_buffer.to_string (Editor.text (editor ui))));
+    (* Parent opening selects the current file; the retained viewport for the
+       directory remains available when navigating back to its edited last row. *)
+    assert (String.equal (Directory_buffer.selected (dir ui) |> Option.value_exn).name "a.txt");
+    let ui = run ui "G ds" in
+    assert (Scroll.equal scroll (Ui_state.scroll ui));
+    let ui = run ui " o ds" in
+    assert (Poly.equal (presentation ui).placement Side);
+    let ui = run ui " o" in
+    assert (Poly.equal (presentation ui).placement Side);
+    assert (Option.is_none (Session.input_directory (Ui_state.session ui)));
+    Session.dispose (Ui_state.session ui))
+;;
+
+let%test_unit "failed main toggle leaves the existing side presentation and file focused" =
+  fixture (fun root ->
+    let ui = create root |> fun ui -> run ui " ds<CR>" in
+    let ui, file = Ui_state.open_file ui ~width ~height
+      (Filename.concat root "missing/file.txt") |> Or_error.ok_exn in
+    let before = presentation ui in
+    let ui = run ui " o" in
+    assert (Poly.equal before (presentation ui));
+    assert (Option.is_some (Ui_state.side_layout ui ~width ~height));
+    assert (Option.is_none (Session.input_directory (Ui_state.session ui)));
+    assert (Option.equal Buffer_id.equal (Some file) (Session.context_id (Ui_state.session ui)));
+    assert (Ches_tile.View_id.equal (focused ui) Ui_state.document_id);
+    assert (Option.is_some (Ui_state.message ui));
     Session.dispose (Ui_state.session ui))
 ;;
 

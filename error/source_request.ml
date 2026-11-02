@@ -12,6 +12,7 @@ type t =
       { resource : string
       ; revision : int
       }
+  | Inspect
   | Restart
   | Kill
 [@@deriving sexp_of, equal]

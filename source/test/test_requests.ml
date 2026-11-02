@@ -13,6 +13,7 @@ let show t requests =
   List.iter (List.rev !requests) ~f:(fun (request : Ches_error.Source_request.t) ->
     print_s
       (match request with
+       | Inspect -> [%message "inspect"]
        | Document_opened { resource; generation } -> [%message "opened" ~_:(H.relative t resource : string) (generation : int)]
        | Document_closed { resource } -> [%message "closed" ~_:(H.relative t resource : string)]
        | Document_changed { resource; text; revision } ->

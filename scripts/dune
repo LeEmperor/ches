@@ -18,8 +18,17 @@
   (alias smoke-embedded-terminal)
   (alias smoke-theme)
   (alias smoke-vcs)
-  (alias smoke-picker)
-  (alias smoke-directory)))
+   (alias smoke-picker)
+   (alias smoke-lsp)
+   (alias smoke-directory)))
+
+(rule
+ (alias smoke-lsp)
+ (deps (universe))
+ (locks /smoke)
+ (action
+  (run python3 %{dep:lsp_smoke.py} %{dep:../bin/ches.exe}
+   --fake-lsp %{dep:../source/test/fake_lsp/fake_lsp.exe})))
 
 (rule
  (alias smoke-terminal)
@@ -63,6 +72,7 @@
  (alias smoke-directory)
  (deps
   (universe)
+  directory_toggle_smoke.py
   directory_side_smoke.py
   directory_editing_smoke.py
   directory_apply_smoke.py

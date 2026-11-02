@@ -11,6 +11,7 @@ let show queue =
   List.iter events ~f:(fun event ->
     print_s
       (match event with
+       | Servers _ -> [%message "servers"]
        | Owned _ -> [%message "owned"]
        | Diagnostics { source; resource; revision; _ } ->
          [%message "diagnostics" source resource (revision : int option)]
@@ -21,6 +22,35 @@ let show queue =
 ;;
 
 let push_all events = List.fold events ~init:Event_queue.empty ~f:Event_queue.push
+
+let%expect_test "inventory feedback conversion is a true no-op" =
+  let module Feedback = Ches_error.Error in
+  let before = Feedback.apply Feedback.empty (Notify
+    { source = "save"; scope = None; severity = Info; text = "saved"; history = true }) in
+  let after = Feedback.apply before (Source_event.to_update (Servers []) ~current_revision:0) in
+  assert (phys_equal before after);
+  [%expect {| |}]
+;;
+
+let%expect_test "inventory coalesces independently without postponing delivery" =
+  let server : Source_event.Server.t =
+    { source = "lsp#1"; program = "lsp"; args = []; root = "/"
+    ; resources = [ "a.ml" ]; status = Running } in
+  let queue = push_all
+    [ diagnostics 1; Servers [ server ]
+    ; Stopped { source = "a"; root = "/"; reason = "crash" }
+    ; diagnostics 2; Servers []; diagnostics 3; Servers [ server ]; Servers [] ] in
+  let queue, first = Event_queue.take queue ~max:1 in
+  assert (List.exists first ~f:(function Diagnostics { revision = Some 1; _ } -> true | _ -> false));
+  let queue, second = Event_queue.take queue ~max:1 in
+  assert (List.exists second ~f:(function Servers [] -> true | _ -> false));
+  show queue;
+  [%expect {|
+    (stopped a)
+    (diagnostics a f.ml (revision (3)))
+    (("Event_queue.dropped queue" 4) ("Event_queue.length queue" 0))
+    |}]
+;;
 
 let%expect_test "only the newest snapshot per (source, resource) waits" =
   show

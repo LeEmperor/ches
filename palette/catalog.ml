@@ -82,6 +82,9 @@ let default =
   and vcs = View_id.of_string "vcs" in
   create
      [ editor ~id:"file.save" ~title:"Save buffer" ~keywords:[ "write"; "w"; "file"; "directory"; "apply"; "permanent delete" ] Save
+    ; view ~id:"language-servers.inspect" ~title:"Language servers"
+        ~description:"Live managed servers and attachments for the current file"
+        ~keywords:[ "lsp"; "attached"; "clients"; "status"; "server" ] Show_language_servers
     ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab
     ; view ~id:"tabs.previous" ~title:"Previous file tab" ~keywords:[ "buffer"; "switch" ] Previous_tab
     ; view ~id:"tabs.close" ~title:"Close file tab" ~keywords:[ "buffer" ] Close_tab

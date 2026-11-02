@@ -19,7 +19,7 @@ let%expect_test "server selection and document language ids" =
       match Lsp_client.Config.for_path path with
       | None -> printf "%s: none\n" path
       | Some config ->
-        printf "%s: %s (%s)\n" path config.prog (config.language_id path));
+        printf "%s: %s (%s)\n" path config.source (config.language_id path));
   [%expect
     {|
     a.ml: ocamllsp (ocaml)
@@ -80,6 +80,16 @@ let%expect_test "conversions: severities, one-line messages, columns per encodin
 
 let fake = lazy (Filename.concat (Core_unix.getcwd ()) "fake_lsp/fake_lsp.exe")
 
+let with_server_env f =
+  let keys = [ "HOME"; "PATH"; "SLANG_SERVER" ] in
+  let saved = List.map keys ~f:(fun key -> key, Sys.getenv key) in
+  Monitor.protect f ~finally:(fun () ->
+    List.iter saved ~f:(fun (key, value) -> match value with
+      | Some data -> Core_unix.putenv ~key ~data
+      | None -> Core_unix.unsetenv key);
+    return ())
+;;
+
 let config ?(args = []) ?prog () =
   { Lsp_client.Config.ocamllsp with
     source = "fake"
@@ -102,6 +112,7 @@ let changed root revision text : Source_request.t =
 let show ~root (event : Source_event.t) =
   let hide = String.substr_replace_all ~pattern:root ~with_:"<root>" in
   match event with
+  | Servers _ -> ()
   | Owned _ -> failwith "unexpected owned event from standalone driver"
   | Started { source; _ } -> printf "started %s\n" source
   | Stopped { source; reason; _ } -> printf "stopped %s: %s\n" source (hide reason)
@@ -302,7 +313,7 @@ let%expect_test "a server that cannot run: missing, exits at once, or refuses to
     [%expect
       {|
       unavailable fake: ches-no-such-server not found on PATH
-      unavailable fake: /nonexistent/ches-server not found on PATH
+      unavailable fake: /nonexistent/ches-server is not an executable file
       stopped fake: exited with code 2: fake: cannot start
       stopped fake: initialize failed: fake: refuses to initialize
       |}];
@@ -382,6 +393,79 @@ let owned_diagnostic resource generation revision = function
     String.equal resource r && g = generation && String.equal d.resource resource
     && [%equal: int option] d.revision (Some revision)
   | _ -> false
+;;
+
+let%expect_test "built-in Slang discovery precedence, validation and pooled identity" =
+  with_root (fun root -> with_server_env (fun () ->
+    let home = Filename.concat root "home" and bin = Filename.concat root "bin" in
+    List.iter [ home; bin; Filename.concat home "slang-server"
+      ; Filename.concat home "slang-server/build"; Filename.concat home "slang-server/build/bin" ]
+      ~f:Core_unix.mkdir;
+    let fallback = Filename.concat home "slang-server/build/bin/slang-server" in
+    let on_path = Filename.concat bin "slang-server" in
+    let override = Filename.concat root "override" in
+    Core_unix.putenv ~key:"HOME" ~data:home;
+    Core_unix.putenv ~key:"PATH" ~data:bin;
+    Core_unix.unsetenv "SLANG_SERVER";
+    let selected path = Option.value_exn (Lsp_client.Config.for_path path) in
+    let program () = (selected "a.sv").prog in
+    assert (String.equal (program ()) "slang-server");
+    (* Existing but non-executable files and executable directories are not servers. *)
+    let%bind () = Writer.save fallback ~contents:"not executable" in
+    Core_unix.chmod fallback ~perm:0o644;
+    assert (String.equal (program ()) "slang-server");
+    Core_unix.unlink fallback;
+    Core_unix.mkdir fallback;
+    assert (String.equal (program ()) "slang-server");
+    Core_unix.rmdir fallback;
+    Core_unix.symlink ~target:(force fake) ~link_name:fallback;
+    assert (String.equal (program ()) fallback);
+    let sv = selected "a.sv" and v = selected "a.v" in
+    assert (phys_equal sv.applies_to v.applies_to && phys_equal sv.language_id v.language_id);
+    Core_unix.symlink ~target:(force fake) ~link_name:on_path;
+    assert (String.equal (program ()) on_path);
+    Core_unix.symlink ~target:(force fake) ~link_name:override;
+    Core_unix.putenv ~key:"SLANG_SERVER" ~data:override;
+    assert (String.equal (program ()) override);
+    let a = Filename.concat root "a.sv" and b = Filename.concat root "b.v" in
+    let source = Lsp_client.start_workspace ~cell_width () in
+    List.iteri [ a; b ] ~f:(fun generation resource ->
+      Source.send source (Document_opened { resource; generation }));
+    let%bind events = collect source (List.exists ~f:(function
+      | Source_event.Servers [ { status = Running; _ } ] -> true | _ -> false)) in
+    let inventory = List.filter_map events ~f:(function Source_event.Servers s -> Some s | _ -> None) |> List.last_exn in
+    (match inventory with
+     | [ server ] -> assert (String.equal server.program override);
+       assert ([%equal: string list] server.resources [ a; b ])
+     | _ -> assert false);
+    Source.stop source;
+    (* The exact built-in is resolved for standalone starts as well. *)
+    let standalone = Lsp_client.start ~config:Lsp_client.Config.slang_server ~cell_width ~root () in
+    let%bind _ = collect standalone (List.exists ~f:(function Source_event.Started _ -> true | _ -> false)) in
+    Source.stop standalone;
+    let missing = Filename.concat root "invalid-override" in
+    Core_unix.putenv ~key:"SLANG_SERVER" ~data:missing;
+    assert (String.equal (program ()) missing);
+    let unavailable = Lsp_client.start_workspace ~cell_width () in
+    Source.send unavailable (Document_opened { resource = a; generation = 10 });
+    assert (List.exists (Source.poll unavailable) ~f:(function
+      | Servers [ { program; status = Unavailable reason; _ } ] ->
+        String.equal program missing && String.equal reason (missing ^ " is not an executable file")
+      | _ -> false));
+    Source.stop unavailable;
+    Core_unix.putenv ~key:"SLANG_SERVER" ~data:"";
+    assert (String.is_empty (program ()));
+    (* A record copy is an explicit custom configuration, even with the same name. *)
+    let custom = { Lsp_client.Config.slang_server with prog = force fake } in
+    let custom_source = Lsp_client.start_workspace ~config_for_path:(fun _ -> Some custom) ~cell_width () in
+    Source.send custom_source (Document_opened { resource = a; generation = 11 });
+    let%bind _ = collect custom_source (List.exists ~f:(function
+      | Source_event.Servers [ { program; status = Running; _ } ] -> String.equal program (force fake)
+      | _ -> false)) in
+    Source.stop custom_source;
+    print_endline "override > PATH > HOME > missing; executable validation; one sv/v pool; standalone built-in; custom config untouched";
+    [%expect {| override > PATH > HOME > missing; executable validation; one sv/v pool; standalone built-in; custom config untouched |}];
+    return ()))
 ;;
 
 let wait_dead log =
@@ -535,6 +619,72 @@ let%expect_test "pooled LSP isolates roots and effective configurations and reje
     return ())
 ;;
 
+let%expect_test "authoritative mixed-language inventory follows attachments and real lifecycle" =
+  with_root (fun root ->
+    List.iter [ "one"; "two" ] ~f:(fun dir -> Core_unix.mkdir (Filename.concat root dir));
+    let ml = { (config ~args:[ "-delay-init" ] ()) with root_markers = [] } in
+    let sv = { ml with source = "slang-server"; prog = "ches-definitely-missing-lsp" } in
+    let source = Lsp_client.start_workspace ~cell_width ~config_for_path:(fun path ->
+      if String.is_suffix path ~suffix:".ml" then Some ml
+      else if String.is_suffix path ~suffix:".sv" then Some sv else None) () in
+    let send = Source.send source in
+    let inspect () =
+      send Inspect;
+      Source.poll source |> List.filter_map ~f:(function Source_event.Servers servers -> Some servers | _ -> None)
+      |> List.last_exn in
+    assert (List.is_empty (inspect ()));
+    let a = Filename.concat root "one/a.ml" in
+    let b = Filename.concat root "one/b.ml" in
+    let c = Filename.concat root "two/c.ml" in
+    let s = Filename.concat root "one/a.sv" in
+    let t = Filename.concat root "two/b.sv" in
+    let open_doc generation resource = send (Document_opened { resource; generation }) in
+    List.iteri [ a; b; c; s; t; Filename.concat root "notes.txt" ] ~f:open_doc;
+    let initial = inspect () in
+    assert (List.length initial = 4);
+    let attached servers resource = List.find_exn servers ~f:(fun (s : Source_event.Server.t) -> List.mem s.resources resource ~equal:String.equal) in
+    let first = attached initial a in
+    assert ([%equal: string list] first.resources [ a; b ]);
+    assert (Source_event.Server.equal_status first.status Starting);
+    assert (String.equal first.program ml.prog && [%equal: string list] first.args ml.args);
+    assert (String.equal first.root (Filename.concat root "one"));
+    List.iter [ s; t ] ~f:(fun r -> match (attached initial r).status with
+      | Unavailable reason -> assert (String.is_substring reason ~substring:"not found on PATH")
+      | _ -> assert false);
+    let running events = List.exists events ~f:(function Source_event.Servers servers ->
+      List.length servers = 4 && List.for_all [ a; c ] ~f:(fun r ->
+        Source_event.Server.equal_status (attached servers r).status Running) | _ -> false) in
+    let%bind _ = collect source running in
+    (* Initialization alone establishes Running: no document text/findings were sent. *)
+    send (Document_closed { resource = a });
+    let after_close = inspect () in
+    assert ([%equal: string list] (attached after_close b).resources [ b ]);
+    assert (String.equal (attached after_close b).source first.source);
+    send Restart;
+    assert (Source_event.Server.equal_status (attached (inspect ()) b).status Starting);
+    let%bind _ = collect source (fun events -> List.exists events ~f:(function
+      | Source_event.Servers servers -> Source_event.Server.equal_status (attached servers b).status Running
+      | _ -> false)) in
+    send (Document_changed { resource = b; revision = 0; text = "CRASH" });
+    let%bind _ = collect source (fun events -> List.exists events ~f:(function
+      | Source_event.Servers servers -> (match (attached servers b).status with Stopped reason -> not (String.is_empty reason) | _ -> false)
+      | _ -> false)) in
+    assert (Source_event.Server.equal_status (attached (inspect ()) c).status Running);
+    List.iter [ b; c; s; t ] ~f:(fun resource -> send (Document_closed { resource }));
+    assert (List.is_empty (inspect ()));
+    open_doc 100 a;
+    assert (not (String.equal (attached (inspect ()) a).source first.source));
+    (* Restart/close while a launch is pending must not resurrect a removed pool. *)
+    send Restart;
+    send (Document_closed { resource = a });
+    let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 250) in
+    assert (List.is_empty (inspect ()));
+    Source.stop source;
+    print_endline "four pools; shared attachments; starting/running/unavailable/stopped; close/restart isolation; empty inventory";
+    [%expect {| four pools; shared attachments; starting/running/unavailable/stopped; close/restart isolation; empty inventory |}];
+    return ())
+;;
+
 let%expect_test "pooled workspace diagnostics are one collection with disk-based columns" =
   with_root (fun root ->
     let other = Filename.concat root "other.ml" in
@@ -558,6 +708,11 @@ let%expect_test "pooled workspace diagnostics are one collection with disk-based
     let collections = Feedback.Diagnostics.collections (Feedback.diagnostics feedback) in
     let others = List.filter collections ~f:(fun c -> String.equal c.resource other) in
     assert (List.length others = 1 && List.length (List.hd_exn others).findings = 1);
+    Source.send source Inspect;
+    let inventory = Source.poll source |> List.find_map_exn ~f:(function
+      | Source_event.Servers servers -> Some servers | _ -> None) in
+    assert (List.length inventory = 1);
+    assert ([%equal: string list] (List.hd_exn inventory).resources [ a; b ]);
     Source.stop source;
     print_endline "unopened URI stays unowned/unversioned; disk columns; no per-document duplicate collections";
     [%expect {| unopened URI stays unowned/unversioned; disk columns; no per-document duplicate collections |}];

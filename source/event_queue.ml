@@ -11,6 +11,7 @@ let empty = { newest_first = []; dropped = 0 }
 
 let rec classify (event : Source_event.t) =
   match event with
+  | Servers _ -> `Servers, "", ""
   | Owned { resource; generation; event } ->
     let kind, source, target = classify event in
     kind, sprintf "%s:%d:%s" resource generation source, target
@@ -34,6 +35,16 @@ let rec remove_replaceable events ~source ~resource =
 
 let push t (event : Source_event.t) =
   match classify event with
+  | `Servers, _, _ ->
+    let replaced = ref false in
+    let events = List.map t.newest_first ~f:(fun pending ->
+      match classify pending with
+      | `Servers, _, _ -> replaced := true; event
+      | _ -> pending)
+    in
+    if !replaced
+    then { newest_first = events; dropped = t.dropped + 1 }
+    else { t with newest_first = event :: events }
   | `Lifecycle, _, _ -> { t with newest_first = event :: t.newest_first }
   | `Diagnostics, source, resource ->
     (match remove_replaceable t.newest_first ~source ~resource with

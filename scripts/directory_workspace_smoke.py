@@ -15,7 +15,7 @@ def main():
                   scripts.parent / "_build/default/bin/ches.exe").resolve()
     if not binary.is_file():
         raise SystemExit("Build first: opam exec --switch=5.2.0+ox -- dune build")
-    for name in ("directory_side_smoke.py", "directory_editing_smoke.py",
+    for name in ("directory_toggle_smoke.py", "directory_side_smoke.py", "directory_editing_smoke.py",
                  "directory_apply_smoke.py", "directory_operations_smoke.py"):
         print(f"Running {name}", flush=True)
         subprocess.run([sys.executable, str(scripts / name), str(binary)],

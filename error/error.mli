@@ -169,6 +169,7 @@ end
 type t [@@deriving sexp_of]
 
 type update =
+  | Noop
   | Notify of Notification.t
   | Failed of Identity.t * Severity.t * string
   | Report of Identity.t * Severity.t * string * Problem.Location.t option
