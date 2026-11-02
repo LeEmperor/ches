@@ -11,6 +11,7 @@ let empty = { newest_first = []; dropped = 0 }
 
 let rec classify (event : Source_event.t) =
   match event with
+  | Completion _ -> `Completion, "", ""
   | Servers _ -> `Servers, "", ""
   | Owned { resource; generation; event } ->
     let kind, source, target = classify event in
@@ -45,7 +46,7 @@ let push t (event : Source_event.t) =
     if !replaced
     then { newest_first = events; dropped = t.dropped + 1 }
     else { t with newest_first = event :: events }
-  | `Lifecycle, _, _ -> { t with newest_first = event :: t.newest_first }
+  | (`Lifecycle | `Completion), _, _ -> { t with newest_first = event :: t.newest_first }
   | `Diagnostics, source, resource ->
     (match remove_replaceable t.newest_first ~source ~resource with
      | None -> { t with newest_first = event :: t.newest_first }

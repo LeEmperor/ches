@@ -1,5 +1,5 @@
 ; Pure shared feedback state; independent of producers and terminal views.
 (library
  (name ches_error)
- (libraries core)
+ (libraries core ches_completion)
  (preprocess (pps ppx_jane)))

@@ -67,6 +67,12 @@ val open_file
 val create : ?keymap_config:Keymap.Config.t -> ?kind:Kind.t -> Editor.t -> t
 
 val editor : t -> Editor.t
+val apply_insert_edits
+  : t
+  -> expected_revision:int
+  -> edits:Text_edit.t list list
+  -> cursor:int
+  -> t Or_error.t
 val reassociate : t -> string -> t
 val rebase_text : t -> saved:Text_buffer.t -> text:Text_buffer.t -> t
 (** Original user-facing spelling; normalized IO identity is [Editor.path]. *)

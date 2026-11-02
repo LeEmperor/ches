@@ -193,7 +193,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     ││ >                                                                          ││|
     ││ > Save buffer                                                      Space w ││|
     ││   Language servers                                               Space l i ││|
-    ╰╰─ 1/84 ─────────────────────────────────────────────────────────────────────╯╯|
+    ╰╰─ 1/86 ─────────────────────────────────────────────────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;
@@ -429,7 +429,7 @@ let%expect_test "resizing keeps the query and selected command" =
     ││ > tile                                       ││|
     ││   Move document tile left by 2 columns       ││|
     ││   Move document tile right by 2 columns      ││|
-    ╰╰─ 4/24 ───────────────────────────────────────╯╯|
+    ╰╰─ 4/25 ───────────────────────────────────────╯╯|
     cursor: 9,2 Bar
     |}]
 ;;

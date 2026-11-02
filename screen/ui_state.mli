@@ -76,6 +76,14 @@ end
 
 type t
 
+(** Automatic suggestions are enabled initially; ghost preview is independent and
+    initially disabled. Candidate edits are installed only by acceptance keys. *)
+val completion_enabled : t -> bool
+val completion_ghost_enabled : t -> bool
+val completion_candidates : t -> Ches_completion.Model.Candidate.t list
+val completion_selected : t -> Ches_completion.Model.Candidate.t option
+val completion_ghost : t -> Ches_completion.Model.ghost option
+
 (** Numbered persistent shells share one transient float. The selected ID defaults
     to 1; [Space /] toggles it. [N Space /] selects N, opening it when hidden or
     switching directly from a different visible session, and hides it when already

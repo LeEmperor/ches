@@ -397,7 +397,12 @@ let default =
     ; view ~id:"terminal.toggle" ~title:"Toggle Tile Term" ~description:"Show or hide the selected Tile Term." ~keywords:[ "shell"; "toggleterm"; "float" ] Toggle_terminal
     ; view ~id:"terminal.grow" ~title:"Grow Tile Term" ~description:"Increase the selected Tile Term's preferred size." ~keywords:[ "shell"; "size" ] (Adjust_terminal_size 1)
     ; view ~id:"terminal.shrink" ~title:"Shrink Tile Term" ~description:"Decrease the selected Tile Term's preferred size." ~keywords:[ "shell"; "size" ] (Adjust_terminal_size (-1))
-    ; view ~id:"terminal.reset-size" ~title:"Reset Tile Term size" ~description:"Restore the selected Tile Term's default size." ~keywords:[ "shell"; "default" ] Reset_terminal_size
+     ; view ~id:"terminal.reset-size" ~title:"Reset Tile Term size" ~description:"Restore the selected Tile Term's default size." ~keywords:[ "shell"; "default" ] Reset_terminal_size
+    ; view ~id:"completion.toggle" ~title:"Toggle automatic completion"
+        ~description:"Buffer words and language-server suggestions (enabled by default)"
+        ~keywords:[ "suggestions"; "autocomplete" ] Toggle_completion
+    ; view ~id:"completion.ghost" ~title:"Toggle completion ghost preview"
+        ~keywords:[ "suggestions"; "inline"; "suffix" ] Toggle_completion_ghost
     ]
   |> Or_error.ok_exn
 ;;

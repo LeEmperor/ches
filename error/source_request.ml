@@ -1,6 +1,8 @@
 open! Core
 
 type t =
+  | Complete of Ches_completion.Model.Request.t
+  | Cancel_completion of Ches_completion.Model.Token.t
   | Document_opened of { resource : string; generation : int }
   | Document_closed of { resource : string }
   | Document_changed of

@@ -1,0 +1,5 @@
+(library
+ (name ches_completion_test)
+ (libraries core ches_core ches_completion)
+ (inline_tests)
+ (preprocess (pps ppx_jane)))

@@ -126,6 +126,16 @@ let jump t ~line ~column =
     })
 ;;
 
+let apply_insert_edits t ~expected_revision ~edits ~cursor =
+  if not (Kind.equal t.kind File)
+  then Or_error.error_string "Completion edits require a file buffer"
+  else
+    Result.map (Editor.apply_insert_edits t.editor ~expected_revision ~edits ~cursor)
+      ~f:(fun editor ->
+        { t with editor; dispatched = true
+        ; highlighting = Highlighting.update t.highlighting editor ~reset:false })
+;;
+
 let notify_editor feedback editor =
   match Editor.message editor with
   | None -> feedback

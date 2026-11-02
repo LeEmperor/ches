@@ -4,6 +4,15 @@ open Ches_input
 open Ches_app
 module Host = Ches_tile.Host
 module View_id = Ches_tile.View_id
+module Completion = Ches_completion.Model
+
+type completion_session =
+  { model : Completion.t
+  ; token : Completion.Token.t
+  ; owner : Buffer_id.t option
+  ; document : Controller.Document_id.t
+  ; installed : bool
+  }
 
 module Message = struct
   type kind =
@@ -84,6 +93,10 @@ type toggle_pending =
 
 type t =
   { controller : Controller.t
+  ; completion : completion_session option
+  ; completion_serial : int
+  ; completion_enabled : bool
+  ; completion_ghost_enabled : bool
   ; session : Session.t
   ; scrolls : Scroll.t Buffer_id.Map.t
   ; paste_buffer : Buffer_id.t option
@@ -220,6 +233,10 @@ let create
     then Session.focus_directory session false else session in
   let controller = Option.value_exn (Session.active_controller session) in
   { controller
+  ; completion = None
+  ; completion_serial = 0
+  ; completion_enabled = true
+  ; completion_ghost_enabled = false
   ; session
   ; scrolls = Buffer_id.Map.empty
   ; paste_buffer = None
@@ -364,6 +381,117 @@ let theme t = Option.value_map t.theme_picker ~f:Theme_picker_tile.preview ~defa
 let theme_picker t = t.theme_picker
 let session t = Session.replace_active t.session t.controller
 let has_document t = Option.is_some (Session.context_id t.session)
+
+let completion_enabled t = t.completion_enabled
+let completion_ghost_enabled t = t.completion_ghost_enabled
+
+let completion_current t (c : completion_session) =
+  let editor = Controller.editor t.controller in
+  Option.equal Buffer_id.equal c.owner (Session.context_id t.session)
+  && Controller.Document_id.equal c.document (Controller.document_id t.controller)
+  && Mode.equal (Editor.mode editor) Insert
+  && Completion.matches c.model ~revision:(Editor.revision editor) ~cursor:(Editor.cursor editor)
+;;
+
+let completion_candidates t =
+  Option.value_map t.completion ~default:[] ~f:(fun c ->
+    if completion_current t c then Completion.candidates c.model else [])
+;;
+
+let completion_selected t =
+  Option.bind t.completion ~f:(fun c ->
+    if completion_current t c then Completion.selected c.model else None)
+;;
+
+let completion_ghost t =
+  if not t.completion_ghost_enabled then None else
+    Option.bind t.completion ~f:(fun c ->
+      if completion_current t c then Completion.ghost c.model else None)
+;;
+
+let dismiss_completion t =
+  match t.completion with
+  | None -> t
+  | Some c ->
+    let queued = List.exists t.source_commands ~f:(function
+      | Complete request -> Completion.Token.equal request.token c.token
+      | _ -> false) in
+    let source_commands = List.filter t.source_commands ~f:(function
+      | Complete request -> not (Completion.Token.equal request.token c.token)
+      | _ -> true) in
+    { t with completion = None
+    ; source_commands = if t.source_attached && not queued then Cancel_completion c.token :: source_commands
+        else source_commands }
+;;
+
+let install_completion t c plan =
+  if not (completion_current t c) then dismiss_completion t else
+  let editor = Controller.editor t.controller in
+  match Controller.apply_insert_edits t.controller
+      ~expected_revision:(Editor.revision editor) ~edits:(Completion.edits plan)
+      ~cursor:(Completion.cursor plan) with
+  | Error _ -> dismiss_completion t
+  | Ok controller ->
+    let controller = Controller.cancel_pending controller in
+    let model = Completion.applied c.model plan
+        ~revision:(Editor.revision (Controller.editor controller)) in
+    { t with controller; completion = Some { c with model; installed = true } }
+;;
+
+let finalize_completion t =
+  let t = match t.completion with
+    | Some c when completion_current t c ->
+      Option.value_map (Completion.finalize c.model) ~default:t
+        ~f:(install_completion t c)
+    | _ -> t in
+  dismiss_completion t
+;;
+
+let cycle_completion t direction =
+  match t.completion with
+  | Some c when completion_current t c ->
+    Option.value_map (Completion.plan c.model direction) ~default:t
+      ~f:(install_completion t c)
+  | _ -> dismiss_completion t
+;;
+
+(* Sessions are captured after a real editor change, never from preview text.
+   Word scanning and the merged list are bounded by the pure model. *)
+let start_completion t =
+  let t = dismiss_completion t in
+  let editor = Controller.editor t.controller in
+  if not t.completion_enabled || not (has_document t)
+     || not (Controller.Kind.equal (Controller.kind t.controller) File)
+     || not (Mode.equal (Editor.mode editor) Insert)
+     || not (List.is_empty (Editor.block_insert_points editor))
+     || Host.pasting t.host
+  then t else
+  let serial = t.completion_serial + 1 in
+  let owner = Session.context_id t.session in
+  let generation = Option.bind owner ~f:(Session.source_generation (session t))
+    |> Option.value ~default:0 in
+  let token = { Completion.Token.resource = Option.value (Editor.path editor) ~default:""
+    ; generation; revision = Editor.revision editor; request = serial } in
+  let text = Editor.text editor in
+  match Completion.start ~token ~text ~cursor:(Editor.cursor editor)
+      ~words:(Completion.Buffer_words.create text) ~limit:100 with
+  | None -> t
+  | Some (model, request) ->
+    let two_characters = Option.exists (Text_buffer.prev_boundary text request.cursor)
+      ~f:(fun previous -> Option.exists (Text_buffer.prev_boundary text previous)
+        ~f:(fun before -> before >= request.fallback_start)) in
+    let preceding = Option.value_map (Text_buffer.prev_boundary text request.cursor)
+      ~default:"" ~f:(fun at -> Text_buffer.slice text ~pos:at ~len:(request.cursor - at)) in
+    let punctuation = List.mem [ "."; ":"; ">"; "/" ] preceding ~equal:String.equal in
+    if not two_characters && not punctuation then t else
+    let request = if punctuation then
+        { request with trigger = Character preceding }
+      else request in
+    { t with completion_serial = serial
+    ; completion = Some { model; token; owner; document = Controller.document_id t.controller; installed = false }
+    ; source_commands = if t.source_attached && not (String.is_empty token.resource)
+        then Complete request :: t.source_commands else t.source_commands }
+;;
 let prefs t = t.prefs
 let bare_prefs t = t.bare_prefs
 let workspace_prefs t = t.workspace_prefs
@@ -1077,6 +1205,7 @@ let start_terminal t (layout : Tile_shell.Layout.t) =
 ;;
 
 let toggle_terminal t ~width ~height =
+  let t = finalize_completion t in
   if t.terminal_visible then hide_terminal t ~width ~height
   else if Host.pasting t.host || Option.is_some t.terminal_paste then t
   else match Terminal_tile.placement_with_preferred ~preferred:t.terminal_preferred ~width ~height with
@@ -1094,6 +1223,7 @@ let toggle_terminal t ~width ~height =
 ;;
 
 let select_terminal t number ~width ~height =
+  let t = finalize_completion t in
   if number <= 0 then
     { t with host = Host.with_notice t.host "Tile Term ID must be positive" }
   else if Host.pasting t.host || Option.is_some t.terminal_paste then t
@@ -1713,6 +1843,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Kill_source
   | Scroll _
   | Toggle_smear
+  | Toggle_completion | Toggle_completion_ghost
   | Toggle_status
   | Toggle_hotkey_hints
   | Position_status _
@@ -1751,6 +1882,8 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
+  | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
+  | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
   | Present_buffers presentation -> Some
       (match presentation with
        | Top -> "Open buffers in top strip"
@@ -2425,6 +2558,7 @@ let local_entries t origin =
    command, or closing, returns to the document as before. From another view it
    leaves that view. Refusal does not disturb the current focus. *)
 let open_theme_picker t ~width ~height =
+  let t = finalize_completion t in
   if not (Mode.equal (Editor.mode (Controller.editor t.controller)) Normal)
      || Host.pasting t.host || Option.is_none (palette_placement ~width ~height)
   then { t with host = Host.with_notice t.host
@@ -2442,6 +2576,7 @@ let open_theme_picker t ~width ~height =
 ;;
 
 let open_palette t ~width ~height =
+  let t = finalize_completion t in
   let notice text = { t with host = Host.with_notice t.host text } in
   let editor = Controller.editor t.controller in
   if not (has_document t)
@@ -2506,6 +2641,7 @@ let can_open_file_picker t ~width ~height =
 ;;
 
 let open_file_picker t ~width ~height ~discovery ~release =
+  let t = finalize_completion t in
   if not (can_open_file_picker t ~width ~height)
   then (
     release ();
@@ -2525,6 +2661,7 @@ let open_file_picker t ~width ~height ~discovery ~release =
 ;;
 
 let open_line_picker t ~width ~height =
+  let t = finalize_completion t in
   if not (can_open_file_picker t ~width ~height)
   then { t with host = Host.with_notice t.host
     "Document lines unavailable: finish paste, leave Insert/Visual, and allow at least 14 columns and 5 rows" }
@@ -2542,6 +2679,7 @@ let open_line_picker t ~width ~height =
 ;;
 
 let open_content_picker t ~width ~height ~snapshot ~release =
+  let t = finalize_completion t in
   if not (can_open_file_picker t ~width ~height) then (release (); t)
   else (
     let previous = match t.content_picker with
@@ -2739,11 +2877,14 @@ let close_split t ~width ~height =
 ;;
 
 let apply_view_command t ~width ~height (view : View_command.t) =
+  let t = finalize_completion t in
   let t = if Option.is_some t.theme_picker then return_to_document t else t in
   let t = match view with
     | Directory_major | Directory_side | Focus_directory | Toggle_directory -> leave_bare t
     | _ -> t in
   match view with
+  | Toggle_completion -> { t with completion_enabled = not t.completion_enabled }
+  | Toggle_completion_ghost -> { t with completion_ghost_enabled = not t.completion_ghost_enabled }
   | Toggle_terminal -> toggle_terminal t ~width ~height
   | Select_terminal number -> select_terminal t number ~width ~height
   | Adjust_terminal_size steps -> adjust_terminal_size t steps
@@ -2938,17 +3079,32 @@ let finish_step t ~width ~height ~controller ~views ~keymap_notice =
 ;;
 
 let feed t ~width ~height (input : Keymap.Input.t) =
+  let accepting = not (List.is_empty (completion_candidates t)) in
+  match input with
+  | Key (Tab | Shift_tab as key) when accepting ->
+    cycle_completion t (if Key.equal key Tab then Next else Previous), Controller.Status.Running
+  | Key Enter when accepting ->
+    let t = if Option.exists t.completion ~f:(fun c -> c.installed) then t
+      else cycle_completion t Next in
+    finalize_completion t, Controller.Status.Running
+  | _ ->
+  let t = finalize_completion t in
+  let revision = Editor.revision (Controller.editor t.controller) in
   let session, views, status = Session.handle_input (session t) input in
   let t = adopt_session_state t session ~width ~height in
   let controller = Option.value (Session.active_controller session) ~default:(Controller.with_feedback t.controller (Session.feedback session)) in
-  ( finish_step
+  let t = finish_step
       { t with session }
       ~width
       ~height
       ~controller
       ~views
-      ~keymap_notice:(Keymap.notice (Controller.keymap controller))
-  , status )
+      ~keymap_notice:(Keymap.notice (Controller.keymap controller)) in
+  let t = match input with
+    | Key (Char _ | Backspace | Delete | Ctrl 'h') when
+        Editor.revision (Controller.editor t.controller) <> revision -> start_completion t
+    | _ -> t in
+  t, status
 ;;
 
 (* Open [help] over what it describes, which is not left. *)
@@ -3394,6 +3550,11 @@ let apply_source t update ~text =
 
 let rec receive t (event : Ches_error.Source_event.t) =
   match event with
+  | Completion reply ->
+    (match t.completion with
+     | Some c when completion_current t c ->
+       { t with completion = Some { c with model = Completion.receive c.model reply } }
+     | _ -> t)
   | Servers servers ->
     { t with views = View_registry.map t.views Language_servers_tile.key
         ~f:(fun state -> Language_servers_tile.inventory state servers) }
@@ -3421,7 +3582,7 @@ let rec receive t (event : Ches_error.Source_event.t) =
         @ [ key, update, text ]
     }
   | Diagnostics _ | Started _ | Stopped _ | Unavailable _ -> apply_source t update ~text
-  | Owned _ | Servers _ -> assert false
+  | Owned _ | Servers _ | Completion _ -> assert false
 ;;
 
 let receive_all t ~width ~height events =
@@ -3700,7 +3861,7 @@ and timed_toggle t ~width ~height ~at ~c ~key
       let t = match owner with Terminal_owner _ -> flush_terminal_j t | Editor_owner _ -> t in
       { t with toggle_pending = Some { owner; text; keys; at } }, Running
     | `Match number ->
-      let t = flush_terminal_j { t with toggle_pending = None } in
+      let t = finalize_completion (flush_terminal_j { t with toggle_pending = None }) in
       let t = match number with
         | None -> toggle_terminal t ~width ~height
         | Some n -> select_terminal t n ~width ~height in
@@ -3711,6 +3872,7 @@ and timed_toggle t ~width ~height ~at ~c ~key
         timed_toggle t ~width ~height ~at ~c ~key ~literal
 
 and apply_regular t ~width ~height (input : Input.t) =
+  let t = match input with Paste_start -> finalize_completion t | _ -> t in
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = match input with
     | Animation_tick _ when Option.equal [%equal: int * int]
@@ -3858,17 +4020,21 @@ let with_notice ?(source = "file picker") t text =
 ;;
 
 let open_file t ~width ~height path =
+  let t = finalize_completion t in
   Or_error.map (Session.open_or_activate (session t) path) ~f:(fun (session, id) ->
     adopt_session (show_file_tab t) session ~width ~height, id)
 ;;
 let activate_buffer t ~width ~height id =
+  let t = finalize_completion t in
   Or_error.map (Session.activate (session t) id) ~f:(fun session ->
     adopt_session (show_file_tab t) session ~width ~height)
 ;;
 let show_directory ?select t ~width ~height path =
+  let t = finalize_completion t in
   Or_error.map (Session.show_directory ?select (session t) path) ~f:(fun session -> adopt_session (leave_bare t) session ~width ~height)
 ;;
 let close_buffer t ~width ~height id ~force =
+  let t = finalize_completion t in
   let t, closed = close_buffer_state t ~width ~height id ~force in
   release_held t ~width ~height, closed
 ;;
@@ -3878,10 +4044,12 @@ let close_current t ~width ~height ~force =
   | Some id -> close_buffer t ~width ~height id ~force
 ;;
 let save_all t ~width ~height =
+  let t = finalize_completion t in
   let session, results = Session.save_all (session t) in
   adopt_session t session ~width ~height, results
 ;;
 let quit_session t ~width ~height ~force =
+  let t = finalize_completion t in
   let session, status = Session.quit (session t) ~force in
   adopt_session t session ~width ~height, status
 ;;

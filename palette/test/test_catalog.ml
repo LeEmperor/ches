@@ -157,6 +157,8 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     terminal.grow                  Grow Tile Term                         Space t +
     terminal.shrink                Shrink Tile Term                       Space t -
     terminal.reset-size            Reset Tile Term size                   Space t r
+    completion.toggle              Toggle automatic completion
+    completion.ghost               Toggle completion ghost preview
     |}]
 ;;
 

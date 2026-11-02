@@ -19,6 +19,8 @@ module Server : sig
 end
 
 type t =
+  | Completion of Ches_completion.Model.Reply.t
+  (** Plain-text completion results; route immediately, independently of diagnostics. *)
   | Servers of Server.t list
   (** Authoritative current managed LSP inventory, independent of diagnostics.
       Never document-owned. Entries disappear when their last resource closes.
@@ -40,5 +42,5 @@ type t =
 [@@deriving sexp_of]
 
 (** The feedback update, stamping [current_revision] onto diagnostics.
-    [Servers] yields [Noop]; consumers store inventory separately. *)
+    [Servers] and [Completion] yield [Noop]; consumers route them separately. *)
 val to_update : t -> current_revision:int -> Feedback.update

@@ -295,6 +295,17 @@ val search_state : t -> (string * bool * bool * int option) option
     [Set_clipboard] of the register's text (see {!Register.to_string}). *)
 val dispatch : t -> Command.t -> t * Effect.t list
 
+(** Atomic external edits in ordinary Insert mode only. Batches use sequential
+    snapshots; [cursor] is absolute in the final text. Validates revision, every
+    edit and cursor before adoption. Joins the Insert undo transaction, increments
+    revision once iff text changes, preserves register/saved state. *)
+val apply_insert_edits
+  : t
+  -> expected_revision:int
+  -> edits:Text_edit.t list list
+  -> cursor:int
+  -> t Or_error.t
+
 (** Record the outcome of an effect. A successful write marks the {i written} text as
     saved, which may be older than the current text. An outcome older than the newest
     successful write is not allowed to roll the saved state back. *)

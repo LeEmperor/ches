@@ -223,6 +223,21 @@ let edit t ~text ~cursor =
   set_cursor { t with text; revision = t.revision + 1; history } cursor
 ;;
 
+let apply_insert_edits t ~expected_revision ~edits ~cursor =
+  let open Or_error.Let_syntax in
+  if not (Mode.equal t.mode Insert) || Option.is_some t.block_insert
+  then Or_error.error_string "Text edits require ordinary Insert mode"
+  else if t.revision <> expected_revision
+  then Or_error.error_string "Text edit revision is stale"
+  else
+    let%bind text = Text_edit.apply t.text edits in
+    if not (B.is_boundary text cursor)
+    then Or_error.error_string "Text edit cursor is not a valid boundary"
+    else
+      let t = if B.equal text t.text then set_cursor t cursor else edit t ~text ~cursor in
+      Ok { t with message = None }
+;;
+
 let check_count count =
   if count < 1 || count > Command.max_count
   then invalid_argf "count %d is not between 1 and %d" count Command.max_count ()

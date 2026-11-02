@@ -675,8 +675,44 @@ which the server reads itself. For example:
 ```
 
 See the [slang-server configuration documentation](https://hudson-trading.github.io/slang-server/start/config/).
-Ches currently consumes LSP diagnostics only; completion, hover, go-to-definition,
+Ches consumes LSP diagnostics and plain-text completion. Hover, go-to-definition,
 and slang's HDL hierarchy and waveform features are not wired into the editor.
+
+### Code completion
+
+Automatic completion is enabled by default in ordinary Insert mode. After two
+identifier characters, a small menu offers matching words from the current buffer
+and candidates from an attached language server. Punctuation `.`, `:`, `>`, and
+`/` also requests server suggestions. Buffer suggestions work without an LSP.
+
+| Key | While candidates are available |
+| --- | --- |
+| `Tab` | Insert the selected candidate; subsequent presses cycle forward |
+| `Shift-Tab` | Insert the selected candidate; subsequent presses cycle backward |
+| `Enter` | Accept the selected candidate and close the menu, without a newline |
+| `Escape` | Keep inserted text, close the menu, and return to Normal mode |
+
+The menu stays open while cycling, and each choice replaces the original
+completion slot. Cycling wraps and freezes the available choices after the first
+insertion. Continuing to type accepts inserted text and updates suggestions.
+Additional edits, such as imports, apply only when finalizing the selected choice.
+Completion joins the current Insert undo transaction. Without candidates, Tab
+retains its normal behavior. Bracketed paste and block insert do not start completion.
+
+Open the command palette (`Space c c`) and search for:
+
+- **Toggle automatic completion** — turn suggestions off or back on.
+- **Toggle completion ghost preview** — optionally show the selected candidate's
+  untyped suffix; off by default. Only straightforward prefix matches get a ghost
+  preview, and it never changes buffer text.
+
+These toggles last for the current editor session. Buffer matches are case-sensitive
+and lexically ordered; LSP candidates use server sorting and precede buffer-only
+matches. Buffer-word indexing currently covers the first 64 KiB of the document,
+and the combined list is limited to 100 candidates. LSP requests synchronize the
+document first and discard obsolete replies. Snippets, completion commands,
+resolve, insert/replace edits, and completion-list item defaults are not supported
+in this first version; unsupported items are skipped.
 
 ### Synthetic checker (live diagnostic source)
 

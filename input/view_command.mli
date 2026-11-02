@@ -49,6 +49,8 @@ module Placement : sig
 end
 
 type t =
+  | Toggle_completion
+  | Toggle_completion_ghost
   | Toggle_terminal
   | Select_terminal of int (** Select a positive session ID, toggling if already visible. *)
   | Adjust_terminal_size of int (** Steps of 10 columns and 2 rows, outer size. *)

@@ -17,6 +17,7 @@ module Server = struct
 end
 
 type t =
+  | Completion of Ches_completion.Model.Reply.t
   | Servers of Server.t list
   | Owned of { resource : string; generation : int; event : t }
   | Diagnostics of
@@ -32,7 +33,7 @@ type t =
 
 let rec to_update t ~current_revision : Feedback.update =
   match t with
-  | Servers _ -> Noop
+  | Servers _ | Completion _ -> Noop
   | Owned { event; _ } -> to_update event ~current_revision
   | Diagnostics { source; resource; revision; findings } ->
     Diagnostics_received { source; resource; revision; current_revision; findings }

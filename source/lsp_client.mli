@@ -18,8 +18,17 @@
        only sent versions enter the bounded revision/text history. [Document_saved]
        flushes first, then sends [didSave] (including text if requested); saves before
        initialization are sent after the newest open. Close/restart/stop cancel timers.
-    - [Restart] ends the session and starts a new one, which reopens the newest text.
-      [Kill] is ignored. Nothing restarts automatically.
+     - [Restart] ends the session and starts a new one, which reopens the newest text.
+       [Kill] is ignored. Nothing restarts automatically.
+     - [Complete] uses the initialized session's completion capability and negotiated
+       encoding. It flushes pending changes first, captures the exact snapshot, and
+       emits [Completion] directly (not diagnostic feedback). Requests require the
+       current document generation and revision. Close, change, restart, supersession
+       and [Cancel_completion] cancel pending work. At most one request per document
+       and 32 per server survive, each for at most 10 seconds. Late replies are ignored.
+       Results contain at most 512 plain-text items, with at most 128 additional edits
+       each; invalid/overlapping edits, snippets and commands are rejected. Completion
+       lists retain [isIncomplete]. No resolve or command execution is advertised.
     - Each [publishDiagnostics] becomes a [Diagnostics] snapshot for {!Config.source}:
       an open document under Ches's own resource name and mapped revision; any
       other file unversioned, by its path relative to the working directory (absolute

@@ -17,7 +17,8 @@ frames. Bonsai_term adapts terminal events and displays those frames.
 | `highlight/` | Provider-independent highlight ranges and snapshots |
 | `highlight_tree_sitter/` | Tree-sitter providers, grammars, and queries |
 | `error/` | Notifications, active problems, and bounded history |
-| `source/` | Asynchronous diagnostic sources and language-server client |
+| `source/` | Asynchronous diagnostic sources and language-server diagnostics/completion client |
+| `completion/` | Pure completion sessions, buffer-word candidates, cycling, and edit plans |
 | `tile/` | Shared tile host, focus, and input routing |
 | `palette/` | Command catalog and fuzzy matching |
 | `theme/` | Immutable semantic RGB palettes, built-in registry, and Base16 adapter |

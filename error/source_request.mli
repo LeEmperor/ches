@@ -5,6 +5,11 @@
 open! Core
 
 type t =
+  | Complete of Ches_completion.Model.Request.t
+  (** Query the attached pooled server against this token's exact document snapshot.
+      Requests before initialization or for stale tokens are ignored. *)
+  | Cancel_completion of Ches_completion.Model.Token.t
+  (** Cancel only the matching in-flight token; obsolete cancellation is harmless. *)
   | Document_opened of { resource : string; generation : int }
   (** Allocate a document-owned runtime; generation is the session buffer ID. *)
   | Document_closed of { resource : string }

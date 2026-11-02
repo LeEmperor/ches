@@ -62,6 +62,9 @@ let sync = ref "full"
 let payload_log = ref ""
 let gap_on_save = ref false
 let close_stdout = ref false
+let hold_completion = ref false
+let no_completion = ref false
+let completion_replies = Queue.create ()
 
 let log method_ =
   if not (String.is_empty !log_file) then
@@ -70,6 +73,12 @@ let log method_ =
 ;;
 
 let send packet = Io.write Out_channel.stdout packet
+
+let release_completions () =
+  Queue.iter completion_replies ~f:(fun (id, result) ->
+    send (Response (Jsonrpc.Response.ok id result)));
+  Queue.clear completion_replies
+;;
 
 (* [byte] counted in the encoding's units. *)
 let units line byte =
@@ -194,7 +203,12 @@ let handle (packet : Jsonrpc.Packet.t) =
    | Notification n -> log n.method_
    | _ -> ());
   match packet with
-   | Request { id; method_ = "initialize"; _ } ->
+   | Request { id; method_ = "initialize"; params; _ } ->
+     let field json key = match json with `Assoc fields ->
+       List.Assoc.find_exn fields key ~equal:String.equal | _ -> failwith "initialize object" in
+     let capabilities = field (Option.value_exn params) "capabilities" in
+     let item = field (field (field capabilities "textDocument") "completion") "completionItem" in
+     assert (Poly.equal (field item "snippetSupport") (`Bool false));
      if !delay_init then ignore (Core_unix.nanosleep 0.1 : float);
     if !fail_init
     then
@@ -222,13 +236,39 @@ let handle (packet : Jsonrpc.Packet.t) =
            ~save:(`SaveOptions (Types.SaveOptions.create ~includeText:true ())) ())
          else `TextDocumentSyncKind kind in
        let textDocumentSync = Option.some_if (not (String.equal !sync "absent")) textDocumentSync in
-       let capabilities = Types.ServerCapabilities.create ?positionEncoding ?textDocumentSync () in
+        let completionProvider = Option.some_if (not !no_completion)
+          (Types.CompletionOptions.create ~triggerCharacters:["."] ()) in
+        let capabilities = Types.ServerCapabilities.create ?positionEncoding ?textDocumentSync ?completionProvider () in
       send
         (Response
            (Jsonrpc.Response.ok
               id
               (Types.InitializeResult.yojson_of_t
                  (Types.InitializeResult.create ~capabilities ())))))
+   | Request { id; method_ = "textDocument/completion"; params = Some params } ->
+     let field json name = match json with
+       | `Assoc fields -> List.Assoc.find_exn fields name ~equal:String.equal
+       | _ -> failwith "completion object expected" in
+     let uri = field (field params "textDocument") "uri" |> Lsp.Uri.t_of_yojson in
+     let _, _, text = Hashtbl.find_exn documents (Lsp.Uri.to_path uri) in
+     let p = field params "position" |> Types.Position.t_of_yojson in
+     (* Validate the client's position against the latest synchronized text. *)
+     ignore (offset text p : int);
+     let position line character = `Assoc ["line", `Int line; "character", `Int character] in
+     let edit start stop newText = `Assoc ["range", `Assoc ["start", start; "end", stop]; "newText", `String newText] in
+     let primary = edit (position p.line 0) (Types.Position.yojson_of_t p) "format" in
+     let result = `Assoc ["isIncomplete", `Bool true; "items", `List
+       [ `Assoc ["label", `String text; "textEdit", primary;
+           "detail", `String (Yojson.Safe.to_string (field (field params "context") "triggerKind"));
+           "additionalTextEdits", `List [edit (position 0 0) (position 0 (units "😀" 4)) "import\n"]]
+       ; `Assoc ["label", `String "fallback"; "insertText", `String "fallback_text"]
+       ; `Assoc ["label", `String "snippet"; "insertTextFormat", `Int 2; "insertText", `String "${1:bad}"]
+       ; `Assoc ["label", `String "command"; "command", `Assoc ["command", `String "must.execute"]]
+       ; `Assoc ["label", `String "bad-range"; "textEdit", edit (position 999 0) (position 999 1) "bad"]
+       ; `Assoc ["label", `String "overlap"; "textEdit", primary; "additionalTextEdits", `List [primary]]
+       ]] in
+     if !hold_completion then Queue.enqueue completion_replies (id, result)
+     else send (Response (Jsonrpc.Response.ok id result))
    | Request { method_ = "shutdown"; _ } when !ignore_shutdown -> ()
    | Request { id; method_ = "shutdown"; _ } -> send (Response (Jsonrpc.Response.ok id `Null))
   | Request { id; method_; _ } ->
@@ -241,7 +281,8 @@ let handle (packet : Jsonrpc.Packet.t) =
      decr awaiting;
      Hashtbl.iter documents ~f:(fun document -> latest := Some document; check ())
   | Response { result = Error _; _ } -> eprintf "fake: client refused a request\n%!"
-  | Notification notification ->
+   | Notification notification ->
+     (match notification.method_ with "textDocument/didSave" -> release_completions () | _ -> ());
     (match Lsp.Client_notification.of_jsonrpc notification with
      | Ok Initialized when !request_first ->
        server_request
@@ -299,7 +340,9 @@ let () =
      ; "-sync", Set_string sync, ""
      ; "-payload-log", Set_string payload_log, ""
      ; "-gap-on-save", Set gap_on_save, ""
-     ; "-close-stdout", Set close_stdout, ""
+      ; "-close-stdout", Set close_stdout, ""
+      ; "-hold-completion", Set hold_completion, ""
+      ; "-no-completion", Set no_completion, ""
     ]
     ignore
      "fake_lsp";
