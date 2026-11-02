@@ -1,331 +1,97 @@
 # Ches
 
-Ches is a personal modal text editor written in OCaml, with a
-UI-independent editing core and a
-[Bonsai_term](https://github.com/janestreet/bonsai_term) terminal frontend.
-It combines Vim-style editing with a tile-based workspace for the document,
-status, diagnostics, and notification history.
+**A modal terminal editor with a tile-based workspace.**
 
-The project is developed for a local workflow. Its toolchain, keybindings, and
-runtime defaults are maintained in the repository; it is not currently packaged
-for general distribution.
+Ches brings Vim-style editing, floating shells, file navigation, diagnostics, and
+Git into one keyboard-driven workspace. Written in OCaml, with a
+[Bonsai_term](https://github.com/janestreet/bonsai_term) frontend.
 
-## Capabilities
+[Getting started](#getting-started) · [Keybindings](docs/editor_reference.md#keys) ·
+[Documentation](docs/README.md) · [Development](docs/development.md)
 
-- **Modal editing:** Normal, Insert, and characterwise, linewise, and blockwise
-  Visual modes; counted motions, delete and yank operators, paste, and undo/redo.
-- **Indentation:** literal autoindent, soft tabs, `>>` / `<<`, Visual `>` / `<`,
-  and Insert `Ctrl-t` / `Ctrl-d`; shifts default to two spaces.
-- **Navigation and search:** word and delimiter motions, literal forward and
-  backward search, character finds, and independent viewport scrolling.
-- **Conflict markers:** `]n` / `[n` jump between merge conflict regions, and
-  `Space x u` / `l` / `a` / `b` keep the upper (ours), lower (theirs), both, or base
-  side of the one at the cursor as a single undo step, smerge-style.
-- **Workspace:** adjustable document placement and width, configurable status
-  placement, line-number styles, zen mode, and supporting views with read-only
-  selection and copying.
-- **Bare mode:** `ches --bare PATH` (alias `--superzen`) or `Space v B` for a borderless, top-left
-  document with quiet bottom-row feedback. Toggle back to restore the workspace
-  or zen presentation, retaining buffers, edits, and undo history. `Space v n` / `N`
-  toggle line numbers using bare's own session-local preferences.
-- **Command palette:** centered floating fuzzy search over Normal-mode commands,
-  with shortcuts derived from the active bindings; works in zen without resizing
-  the document or docked tiles.
-- **Tile Terms:** `Space /` opens a persistent interactive shell over the
-  workspace; `3 Space /` selects an independent cached terminal 3. Uncounted
-  `Space /` toggles the last selected terminal. Both work directly in editor and
-  terminal Insert, with a 200 ms matching window. Rapid `jk` (or `Ctrl-Space`) enters terminal Normal mode for navigation and Visual
-  selection/yanking; `i` resumes typing, and Normal `Space /` hides the window.
-  Normal `+` / `-` resize it, retaining the preferred size across hide/reopen.
-  Key hints are hidden by default; `Space v ?` in the editor toggles them.
-  Supports colours, shell control keys, paste, resize, and alternate-screen
-  programs. See [terminal controls and limits](docs/editor_reference.md#floating-terminal).
-- **Live themes:** 44 built-in dark/light palettes, including monochrome and
-  retro-terminal styles. `Space v T` opens a fuzzy live-preview chooser; Enter
-  applies, Escape restores. `--theme NAME` selects at startup; `--list-themes`
-  lists the collection without opening the editor.
-  `vim-classic` pairs true black with neon syntax; `solarized-light`, `linen-solar`,
-  and `sandstone-solar` offer warm paper with Solarized-inspired accents.
-- **Persistent file tabs:** independent text, undo, cursor and scroll, with a shared
-  unnamed register and resource-addressed diagnostics.
-- **Directory workspace:** editable listings in the main editor or a left side tile;
-  visual/marked batch opening, explicit-save creation, rename, copy, cross-directory
-  move and permanent deletion of files or empty directories.
-- **Syntax highlighting:** local Tree-sitter highlighting for OCaml, Verilog,
-  SystemVerilog, and AT&T/GAS assembly (`.s`/`.S`), including incremental parsing.
-- **Diagnostics:** `ocamllsp` for OCaml and `slang-server` for Verilog and
-  SystemVerilog, with a problems view, freshness tracking, and explicit restart
-  controls.
-- **VCS view:** a lazygit/Magit-style git view (`Space g g`) in a tab or the split:
-  files by section, branches, a commit log with a lazygit-style graph and ref
-  decorations, a diff panel that follows the selection (a commit's diff starts with
-  its file list: `Enter` jumps to a file, `}` `{` move between files), and a command
-  log. `l` opens a Magit-style log popup (`l` HEAD, `b` the selected branch, `a` all
-  branches, `f` a file's history across renames; `-g` graph, `-m` no merges, `-p`
-  first parent) and `+` reads more commits; `Space g l` shows the history of the
-  file you are editing. `s` `u` `x` stage, unstage and discard the selected
-  file or section, the hunk at the diff's cursor, or the lines of a Visual selection
-  in the diff (`S` `U`: everything; `]` `[` move between hunks). Discards ask first (only `y` confirms) and are refused while
-  a file in the repository has unsaved changes; open buffers reload afterwards. `c`
-  opens a Magit-style commit popup (`-n` no hooks, `-s` signoff, `-e` allow empty;
-  `c` commit, `a` amend, `e` extend HEAD): commit and amend open the message as a
-  file tab, `Space g c` commits it and `Space g a` aborts, and on success the tab
-  closes and you are back in the view; a rejecting hook or an empty message keeps it
-  open with git's reason. `f` fetches, `p` pulls (fast-forward only, or `-r` rebase)
-  and `P` pushes (`p` to the upstream, `u` to `origin` setting it, `-f` force with
-  lease, confirmed), streaming git's progress into the summary and the log and
-  explaining common failures (no ssh key loaded, diverged branches); in Branches,
-  `Enter` checks out, `n` creates a branch (the name checked as you type) and `-`
-  returns to the previous one. `m m` merges the selected branch (`-n` no
-  fast-forward, `-f` fast-forward only); when a merge or rebase stops on conflicts,
-  `x` on a conflicted file takes ours or theirs (or restores its markers), the
-  editor's `Space x` resolves hunk by hunk, `s` marks a file resolved, and `m m`
-  commits the merge, `r r` continues the rebase (`r s` skips a commit, `r a` / `m a`
-  abort). `e` in the diff opens the file at that line. Git runs in the background,
-  never prompting on the terminal or starting an editor; saving a file in the
-  repository refreshes it.
+![Ches editing syntax-highlighted OCaml in its default Vim Classic Zen view.](docs/images/editor.png)
 
-Ches retains multiple files and visited directories per session. Files accept UTF-8 text with LF line endings
-and preserves the file's contents, including whether it ends with a newline.
+## A workspace that stays out of your way
 
-`Space f l` opens fuzzy current-document lines, including unsaved edits, in the
-shared float. The file picker opens files through `Space f f` / Find project
-files, retaining dirty session buffers. Wide file floats show a read-only selected
-file prefix (up to 64 KiB/100 lines), using unsaved retained text when available;
-narrow terminals hide the preview, and only Enter opens a file.
-`Space f g` / Search project contents searches on-disk literals and validates the
-current target text before opening and jumping. See
-[picker status and setup](docs/pickers.md) for behavior, limits and integration status.
+- **Modal editing.** Normal, Insert, and characterwise, linewise, and blockwise
+  Visual modes, with counted motions, operators, search, indentation, and undo.
+- **Tiles when you need them.** Start in Zen, open supporting views around your
+  document, or switch to borderless Bare mode. Keep independent files in tabs.
+- **Find your place.** Fuzzy file and current-document pickers, project content
+  search, and editable directory listings for working across a project.
+- **Git without leaving the editor.** A lazygit/Magit-inspired view for diffs,
+  staging, commits, branches, history, and merge or rebase conflicts.
+- **Language-aware feedback.** Tree-sitter highlighting for OCaml, Verilog,
+  SystemVerilog, and GAS assembly, with language-server diagnostics for OCaml and
+  Verilog/SystemVerilog.
+- **Make it yours.** A command palette, live theme previews, dark and light
+  palettes, adjustable layouts, and optional key hints.
 
-## Usage
+## Tile Terms
 
-The local shell command points to the built executable at
-`_build/default/bin/ches.exe`:
+An interactive shell, one toggle away. **`Space /`** opens or hides a Tile Term;
+**`3 Space /`** selects terminal 3. Each numbered session keeps its shell, jobs,
+screen, and preferred size while hidden.
+
+![Tile Term 1 floating over the editor, showing the output of running the OCaml file.](docs/images/tile-terms.png)
+
+Toggle directly from Normal or Insert mode. Use rapid **`jk`** to enter terminal
+Normal mode, then navigate, select, and yank text into the editor. **`i`** returns
+to the shell; **`+` / `-`** resize the float.
+
+See the [Tile Terms guide](docs/editor_reference.md#floating-terminal) for modes,
+numbered sessions, and Insert-mode shortcut timing.
+
+## Getting started
+
+With the [development toolchain](docs/development.md#toolchain) available:
 
 ```sh
-# Default: Vim Classic theme in Zen (framed document, supporting tiles hidden):
-ches PATH
-# Start with the full workspace instead:
-ches --workspace PATH
-# Start directly in the stripped-down presentation:
-ches --bare PATH
-# Choose a palette, or browse the available IDs:
-ches --bare --theme glacier PATH
-ches --list-themes
+dune build -j 12 bin/ches.exe
+_build/default/bin/ches.exe .
 ```
 
-`Space v z` switches between Zen and Workspace. Zen retains the document frame;
-Bare (`--bare`, alias `--superzen`) is the separate borderless presentation.
-An explicit `--theme NAME` overrides the default `vim-classic` palette.
+Open a directory to browse a project, or pass a file path to edit it. If you have
+`ches` on your `PATH`:
 
-An existing file is opened for editing; a nonexistent path starts an empty
-document that is created on save. A directory (including `ches .`) opens a listing
-with no file tabs initially. Special files, invalid UTF-8 file contents,
-CR line endings, and NUL bytes are rejected. Standard input must be a terminal
-when editing; `--list-themes` needs neither a terminal nor a PATH argument.
+```sh
+ches src/main.ml             # Vim Classic theme, Zen layout
+ches --workspace .           # Full tile workspace
+ches --bare src/main.ml      # Borderless editing (also --superzen)
+ches --theme glacier .       # Choose a different theme
+ches --list-themes           # Browse available palettes
+```
+
+### A few keys to start
+
+`Space` below means the spacebar. Unless noted, editor commands use Normal mode.
 
 | Keys | Action |
 | --- | --- |
-| `h` / `j` / `k` / `l` | Move the cursor; prefix with a count to repeat |
-| `i` / `a` | Enter Insert mode before / after the cursor |
-| `Escape`, or `j` then `k` in Insert mode | Return to Normal mode |
-| `v` / `V` / `Ctrl-v` | Start characterwise / linewise / blockwise selection |
+| `h` / `j` / `k` / `l` | Move |
+| `i` / `Escape` | Enter Insert / return to Normal |
 | `u` / `Ctrl-r` | Undo / redo |
-| `>>` / `<<` | Shift line indentation right / left; `3>>` shifts three lines |
-| Visual `>` / `<` | Shift selected lines; `3>` shifts by three indentation steps |
-| Insert `Ctrl-t` / `Ctrl-d` | Increase / decrease current-line indentation |
-| `Space v B` | Toggle bare mode (also available in the command palette) |
-| `Space v T` | Choose theme; filter/navigate to preview, Enter applies, Escape restores |
-| `/` / `?`, then text and `Enter` | Search forward / backward |
-| `Space w` | Save focused file / apply focused directory edits |
-| `Space o` | File's parent directory / return to file |
-| `Enter` / `-` (directory) | Open entry / parent directory |
-| Visual `Enter` (directory) | Open intersected file rows |
-| `Space m m` / `Space m o` | Toggle entry mark / open marked files |
-| `Space d m/s/h/f` | Major / side / hide / focus directory browser |
-| `Space b n/p/c/C` | Next / previous / close / discard tab (a view tab's close closes the view) |
-| `Space b r` | Exclusively recreate a missing file from retained text |
-| `Space q` | Quit if all buffers are clean and no files are marked missing |
-| `Space Q` | Quit and discard unsaved changes |
+| `Space w` / `Space q` | Save / quit |
 | `Space c c` | Open the command palette |
-| `Space /` in Normal/Insert or terminal modes | Toggle floating terminal; Insert uses a 200 ms matching window |
-| `N Space /` in Normal/Insert or terminal modes | Open/select cached terminal N; each has its own shell, output, and size |
-| Terminal Insert: rapid `jk` or `Ctrl-Space` | Enter terminal Normal mode for navigation and copying |
-| Terminal Normal: `i` / `a`, `v` / `V` / `Ctrl-v`, `y` / `yy` | Type, select, or yank terminal text |
-| Terminal: `Space /` | Hide terminal and return to the editor's prior mode |
-| Terminal Normal: `r` | Restart an exited or failed shell |
-| Terminal Normal: `+` / `-`; editor: `Space t +` / `Space t -` | Grow/shrink terminal size, retained within the session |
-| `Space t r` in editor/terminal Normal | Reset terminal size to 120×36 |
-| `Space f l` | Fuzzy search current-document lines; Enter jumps to the selected match |
-| `Space f f` | Find project files; Enter opens or activates a retained buffer |
-| `Space f g` | Search project contents on disk literally; Enter validates and jumps |
-| `Space v o` | Focus the problems view or return to the document |
-| `Space v M` | Show and focus notification history |
-| `Space s t/s/b/h` | Move the focused view to a tab / the split / the bottom band, or close it |
-| `Space s f/x/c/+/-` | Split: focus the other pane / swap sides / close the split view / grow / shrink the view's share (a count repeats `+`/`-`) |
-| `Space g g` / `Space g f` | Open the VCS view as a tab, or focus it where it is / toggle focus with the editor |
-| `Space g t/s/h` | Move the VCS view to a tab / the split, or close it |
-| `Space g c` / `Space g a` | In a commit message opened from the VCS view (`c`): commit / abort |
-| `Space g l` | Show the current file's history in the VCS view |
+| `Space f f` / `Space f g` / `Space f l` | Find files / search contents / find lines |
+| `Space o` | Open the file's parent directory / return to file |
+| `Space b n` / `Space b p` | Next / previous file tab |
+| `Space g g` | Open the Git view |
+| `Space /` / `N Space /` | Toggle Tile Term / select numbered session; also works in Insert |
+| `Space v z` / `Space v B` | Toggle Zen / Bare |
+| `Space v T` | Choose a theme |
 
-See the [editor reference](docs/editor_reference.md) for the complete keybindings,
-editing semantics, workspace controls, and diagnostic-source behavior.
-`ches -help` also provides a command-line summary.
+The [editor reference](docs/editor_reference.md) covers the full keymap, directory
+operations, and terminal controls. `ches --help` lists command-line options.
 
-The command palette prefers an 80×14 framed window, clamped to the terminal with
-a one-cell margin where possible. Filtering keeps its size fixed and scrolls results
-inside it. `Tab` / `Shift-Tab` (or `Ctrl-n` / `Ctrl-p`) select next / previous;
-`Escape` cancels; `Enter` runs the selection once. It requires at
-least 14 columns and 4 rows: opening below that size reports why, and shrinking an
-open palette below it closes without execution. Closing discards the query and
-restores the covered workspace; an interrupted palette paste is dropped, never
-redirected to the document.
+## Documentation
 
-**Directory saves are destructive:** removing an existing `@ches[ID]` row and
-pressing `Space w` permanently deletes its backing file/link or empty directory.
-There is no trash or confirmation dialog. Keep the token and TAB intact when
-renaming; add bare names for new files (`name/` for new directories). Copy syntax
-is `@copy[ID]<TAB>destination`, not a duplicated `@ches` token. Read the
-[directory workspace reference](docs/directory_workspace.md) before applying edits.
-Text undo does not undo filesystem changes.
+- [Editor reference](docs/editor_reference.md) — keys, modes, workspace, Git, and Tile Terms.
+- [Directory workspace](docs/directory_workspace.md) — browsing and filesystem operations.
+- [Pickers](docs/pickers.md) — file navigation and project search.
+- [Development](docs/development.md) — toolchain, builds, and tests.
+- [Architecture](docs/architecture.md) — source layout and module boundaries.
+- [Project status](docs/project_status.md) — support, limitations, and validation notes.
 
-## Architecture
-
-Editing state and commands are independent of the terminal frontend. The core
-returns a new state and effects; the application controller performs file I/O
-and updates highlighting. A separate screen model handles geometry, focus,
-scrolling, and rendered frames. Bonsai_term adapts terminal events and displays
-those frames.
-
-| Directory | Responsibility |
-| --- | --- |
-| `core/` | Text storage, motions, selections, registers, and undo history |
-| `input/` | Terminal-independent keys, bindings, and modal keymap |
-| `app/` | Session/buffer ownership, filesystem apply, file I/O, and highlight cache |
-| `highlight/` | Provider-independent highlight ranges and snapshots |
-| `highlight_tree_sitter/` | Tree-sitter providers, grammars, and queries |
-| `error/` | Notifications, active problems, and bounded history |
-| `source/` | Asynchronous diagnostic sources and language-server client |
-| `tile/` | Shared tile host, focus, and input routing |
-| `palette/` | Command catalog and fuzzy matching |
-| `theme/` | Immutable semantic RGB palettes, built-in registry, and Base16 adapter |
-| `file_picker/` | Project file discovery/matching and Async floating-picker runtime |
-| `line_picker/` | Bounded fuzzy search over current in-memory document lines |
-| `content_picker/` | On-disk literal search provider and Async floating-picker runtime |
-| `vcs/` | VCS model, git command builders and parsers, and the Async job runner |
-| `terminal/` | PTY shell host, vendored libvterm emulator, and UI-independent terminal protocol |
-| `screen/` | Screen geometry, workspace state, and frame rendering |
-| `ui/` | Bonsai_term frontend, event adapter, theme, and the VCS runner's host |
-| `bin/` | Command-line entry point |
-
-The editing core, input layer, and application controller have no Bonsai or
-terminal-library dependencies. The screen model is also independent of Bonsai;
-it uses Notty's character-width table to keep editing and rendering aligned.
-These boundaries allow most behavior to be tested headlessly.
-
-## Development
-
-Development uses the OxCaml opam switch `5.2.0+ox` and Jane Street
-`v0.18~preview` packages. The project declares Dune language version 3.17 and
-pins `tree-sitter` to 0.1.0. The bundled SystemVerilog and GAS parsers require a C
-compiler and `gzip` at build time.
-The GAS grammar is GPLv3 (with local patches); see
-[`highlight_tree_sitter/gas_grammar/ASSETS.md`](highlight_tree_sitter/gas_grammar/ASSETS.md)
-for provenance, notices, regeneration, and distribution implications.
-Picker libraries additionally use Async, Yojson and Base64 (declared in
-`dune-project`). File/content provider tests and probes require `rg` on `PATH`;
-neither `fzf` nor ripgrep is needed for ordinary editing or the command palette.
-
-With the local switch active:
-
-```sh
-dune build
-dune runtest
-dune exec ches -- PATH
-scripts/smoke.sh
-# Just bare presentation, indentation, and terminal restoration:
-scripts/smoke.sh --bare-only
-# Just the floating palette's terminal scenarios:
-scripts/smoke.sh --palette-only
-python3 scripts/directory_workspace_smoke.py
-python3 scripts/picker_smoke.py
-python3 scripts/theme_smoke.py
-# The VCS view over a sandbox repository (scripts/vcs_sandbox.sh), phases 2-8:
-python3 scripts/vcs_smoke.py
-# Every terminal smoke suite above, one at a time (not part of dune runtest):
-dune build @smoke -j 4
-# Everything: dune runtest plus @smoke:
-dune build @test-all -j 4
-```
-
-`ches.opam` is generated from `dune-project`; package metadata changes belong in
-`dune-project`.
-
-The test suite covers editing, input, file I/O, highlighting, screen geometry,
-and frontend behavior. The separate terminal smoke test uses tmux, bash, and a
-UTF-8 locale to check the built editor's screen output, saved bytes, and terminal
-restoration. `scripts/vcs_smoke.py` drives the VCS view through staging,
-committing, a rebase pull stopped on a conflict, a push and the log, checking the
-resulting git state (see [`VCS_MANUAL_TEST.md`](VCS_MANUAL_TEST.md) for what is left
-to check by hand). Visual checks and the `ppx_expect` source-path workaround are
-documented in the [editor reference](docs/editor_reference.md#terminal-smoke-test).
-The [current phase-9 check record](FILE_PICKER_PLAN.md#phase-9-production-verification-handoff-2026-10-07--software-complete)
-records passing build/full tests and real file/content, directory and existing
-terminal checks. All three pickers ship binding/catalog activation (54 catalog
-commands). Human visual review, owner ranking examples and agreed live performance
-acceptance remain separate and unperformed.
-
-## Current limitations
-
-- **Saving:** writes are synchronous and in place, without atomic replacement
-  or `fsync`. A failed write can leave a truncated file. External file changes
-  are not detected; `:e!` explicitly discards changes and reloads the file.
-- **Scale:** edits still copy the whole immutable document string (one exact-size
-  destination with blits). Line starts update from the edited range and inserted
-  text, without rescanning unchanged document bytes; equal-length/no-newline edits
-  reuse the array. Highlighted files still query the full syntax tree after each
-  change; files above 64 KiB, 2,000 lines, or 16,000 captures fall back to plain text
-  to limit synchronous work. See the [editor reference](docs/editor_reference.md)
-  for fallback and recovery rules.
-  Bounded undo is complete: undo retains whole-text snapshots,
-  bounded per buffer to 1,000 complete transactions / a conservative 64 MiB soft
-  charge budget; the newest complete transaction always survives even if oversized.
-  Limits are configured in code (`History.Limits`, `Editor.create ~history_limits`).
-  This bounds history retention estimates, not total RSS; active/saved text and
-  bounded per-snapshot layout caches are additional. Large-file edits remain costly.
-- **Unicode and display:** movement and deletion use code points rather than
-  grapheme clusters. CRLF is unsupported, and long lines scroll horizontally
-  rather than wrap.
-- **Directory operations:** Linux `renameat2(RENAME_NOREPLACE)` is required; no
-  cross-device moves, nonempty directory deletion, filesystem undo, rollback,
-  watchers or crash-persistent intent. Partial apply can leave staging names;
-  retries retain unresolved intent only within the running session. Copies preserve
-  rwx bits, not ownership/timestamps/ACLs/xattrs or hard-link relationships.
-- **Session scale:** visited directories are retained without eviction. Language
-  servers are shared by workspace root and configuration; document changes are
-  coalesced and use incremental synchronization when supported. The synthetic
-  checker retains per-file runtimes. No session persistence or multiple editor groups.
-- **Version control:** the VCS view stages, unstages and discards files, hunks and
-  the lines of a Visual selection, commits, amends and extends HEAD, fetches, pulls
-  and pushes, checks out, creates and merges branches, resolves a stopped merge or
-  rebase, and browses logs and file history (no blame, stash, cherry-pick or
-  interactive rebase; only the log popup remembers its switches; authentication
-  only through ssh-agent or a credential helper); it refreshes on open, `g r`,
-  saves and its own commands, never by watching files.
-- **Editing and tooling:** literal search, an unnamed
-  register, and a limited `:` prompt. Language-server integration currently
-  consumes diagnostics only.
-- **Configuration:** keybindings and editing defaults are defined in code.
-  Layout preferences and history are session-local.
-
-## Design notes
-
-- [Project direction](docs/ches_editor_prototype_brief.md)
-- [Workspace and tile design](docs/workspace_tiles_design.md)
-- [Rendering design](docs/rendering_design.md)
-- [Syntax-highlighting latency](docs/syntax_highlighting_latency_plan.md)
-- [Long-line rendering](docs/long_line_rendering.md)
-- [Picker performance and backend comparison](docs/picker_performance_recommendation.md)
-- [AI integration design](docs/ai_integration_design.md)
-- [Deferred workspace work](docs/backlog/README.md)
-- [Archived implementation plans](docs/archive/)
+For design notes, backlogs, and implementation history, see the
+[documentation index](docs/README.md).
