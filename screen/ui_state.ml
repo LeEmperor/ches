@@ -63,7 +63,7 @@ type terminal_session =
 
 let empty_terminal_session =
   { started = false; generation = 0; snapshot = None; failure = None
-  ; size = None; preferred = { width = 100; height = 30 }
+  ; size = None; preferred = Terminal_tile.default_size
   ; pending_j = None; inspection = None; cwd = None }
 ;;
 
@@ -267,7 +267,7 @@ let create
   ; terminal_snapshot = None
   ; terminal_failure = None
   ; terminal_size = None
-  ; terminal_preferred = { width = 100; height = 30 }
+  ; terminal_preferred = Terminal_tile.default_size
   ; terminal_pending_j = None
   ; toggle_pending = None
   ; terminal_requests = []
@@ -984,7 +984,7 @@ let adjust_terminal_size t steps =
 ;;
 
 let reset_terminal_size t =
-  { t with terminal_preferred = { width = 100; height = 30 } }
+  { t with terminal_preferred = Terminal_tile.default_size }
 ;;
 
 (* Close a view's capture-local state (details) when it stops being focused. *)

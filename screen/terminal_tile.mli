@@ -1,6 +1,7 @@
 open! Core
 val id : Ches_tile.View_id.t
 val spec : Ches_tile.Spec.t
+val default_size : Floating.Size.t
 val placement : width:int -> height:int -> Tile_shell.Layout.t option
 val placement_with_preferred : preferred:Floating.Size.t -> width:int -> height:int -> Tile_shell.Layout.t option
 type inspection

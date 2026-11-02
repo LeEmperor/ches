@@ -550,6 +550,7 @@ def main():
         print("ok: inspection freezes while PTY drains; v/V/Ctrl-v movement+y and yy copy exact character/line/block text to editor register and OSC 52 clipboard; i/a resume Insert")
 
         initial = size("INITIAL")
+        assert initial == (34, 116), ("default content size", initial)
 
         def delta(value, count):
             return value[0] + 2 * count, value[1] + 10 * count
@@ -630,7 +631,7 @@ def main():
                  f"fresh shell {number}")
             numbered_pids[number] = int(path.read_text())
             persistent(number, numbered_pids[number], f"token-{number}")
-            # 100x30 is the preferred float size; stty reports its content area.
+            # 120x36 is the preferred float size; stty reports its content area.
             assert size(f"INITIAL_{number}") == initial, "new terminal preferred size"
         assert len({shell_pid, *numbered_pids.values()}) == 3, "sessions shared a shell PID"
 
@@ -659,7 +660,7 @@ def main():
         assert "CHES_ONLY_FOUR" not in screen(), "terminal 4 output leaked into terminal 3"
         assert size("THREE_REOPEN") == delta(initial, 2)
         persistent(3, numbered_pids[3], "token-3")
-        print("ok: numbered 3/4 have independent PID/env/cwd/output and default 100x30 sizes; direct switches, same-ID hide, latest-ID toggle, per-session sizing and background PTY draining")
+        print("ok: numbered 3/4 have independent PID/env/cwd/output and default 120x36 sizes; direct switches, same-ID hide, latest-ID toggle, per-session sizing and background PTY draining")
 
         # Compare actual child bytes, not screen echo. Deferred prefixes belong
         # to the originating owner across mode changes and direct switches.

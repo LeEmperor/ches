@@ -50,7 +50,7 @@ for the current Ches session and cleaned up when Ches exits; they are not restor
 across editor restarts.
 
 The terminal floats over the existing workspace, including bare and zen modes.
-It initially prefers a 100×30 outer frame and shrinks to fit. Its shell receives the actual
+It initially prefers a 120×36 outer frame and shrinks to fit. Its shell receives the actual
 content dimensions. If fewer than 20 columns or 6 rows are available, Ches refuses
 to open it, or hides an already-open terminal. The shell keeps running while hidden
 and continues consuming output; reopen with `Space /` after making room.
@@ -90,13 +90,13 @@ from the size that fits on screen. This is ordinary UI state, not a separate dae
 or an on-disk preference. It survives hide/reopen, shell restart, file changes, and
 temporary screen-size clamps, but resets when Ches itself exits.
 Size commands affect the currently selected terminal, including while it is hidden.
-New terminal numbers start with their own default 100×30 preference.
+New terminal numbers start with their own default 120×36 preference.
 
 | Context | Keys | Action |
 | --- | --- | --- |
 | Terminal Normal/Visual | `+` or `=` | Grow by 10 columns and 2 rows |
 | Terminal Normal/Visual | `-` | Shrink by 10 columns and 2 rows |
-| Terminal Normal/Visual | `Space t r` | Reset requested size to 100×30 |
+| Terminal Normal/Visual | `Space t r` | Reset requested size to 120×36 |
 | Editor Normal | `Space t +` / `Space t -` | Grow/shrink terminal preference, even while hidden |
 | Editor Normal | `Space t r` | Reset terminal size |
 
@@ -149,7 +149,7 @@ without inserting their remainder into the editor.
 | `i` / `a` | Resume Insert and display the latest live screen |
 | `Space /` | Hide the terminal and restore the previous available editor/view focus |
 | `+` / `=` / `-` | Grow/shrink terminal size; counts supported |
-| `Space t r` | Reset terminal size to 100×30 |
+| `Space t r` | Reset terminal size to 120×36 |
 | `r` after shell exit/failure | Start a fresh shell |
 
 Selection is read-only and cannot change shell output or the edited document.

@@ -155,7 +155,7 @@ when editing; `--list-themes` needs neither a terminal nor a PATH argument.
 | Terminal: `Space /` | Hide terminal and return to the editor's prior mode |
 | Terminal Normal: `r` | Restart an exited or failed shell |
 | Terminal Normal: `+` / `-`; editor: `Space t +` / `Space t -` | Grow/shrink terminal size, retained within the session |
-| `Space t r` in editor/terminal Normal | Reset terminal size to 100×30 |
+| `Space t r` in editor/terminal Normal | Reset terminal size to 120×36 |
 | `Space f l` | Fuzzy search current-document lines; Enter jumps to the selected match |
 | `Space f f` | Find project files; Enter opens or activates a retained buffer |
 | `Space f g` | Search project contents on disk literally; Enter validates and jumps |
