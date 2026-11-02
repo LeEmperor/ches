@@ -24,7 +24,7 @@ for general distribution.
 - **Workspace:** adjustable document placement and width, configurable status
   placement, line-number styles, zen mode, and supporting views with read-only
   selection and copying.
-- **Bare mode:** `ches --bare PATH` or `Space v B` for a borderless, top-left
+- **Bare mode:** `ches --bare PATH` (alias `--superzen`) or `Space v B` for a borderless, top-left
   document with quiet bottom-row feedback. Toggle back to restore the workspace
   or zen presentation, retaining buffers, edits, and undo history. `Space v n` / `N`
   toggle line numbers using bare's own session-local preferences.
@@ -227,6 +227,10 @@ python3 scripts/picker_smoke.py
 python3 scripts/theme_smoke.py
 # The VCS view over a sandbox repository (scripts/vcs_sandbox.sh), phases 2-8:
 python3 scripts/vcs_smoke.py
+# Every terminal smoke suite above, one at a time (not part of dune runtest):
+dune build @smoke -j 4
+# Everything: dune runtest plus @smoke:
+dune build @test-all -j 4
 ```
 
 `ches.opam` is generated from `dune-project`; package metadata changes belong in

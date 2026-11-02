@@ -8,13 +8,15 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
 
 
 def main():
-    binary = Path(__file__).resolve().parents[1] / "_build/default/bin/ches.exe"
+    binary = Path(sys.argv[1] if len(sys.argv) > 1 else
+                    Path(__file__).resolve().parents[1] / "_build/default/bin/ches.exe").resolve()
     root = Path(tempfile.mkdtemp(prefix="picker-terminal-"))
     artifacts = root / ".captures"
     artifacts.mkdir()  # Hidden: screenshots must never become search candidates.

@@ -145,7 +145,7 @@ Pending prefixes, ignored keys, resize, and animation do not clear it.
 
 ### Bare presentation
 
-Start with `ches --bare PATH`, press `Space v B`, or choose **Toggle bare mode**
+Start with `ches --bare PATH` (or its alias `ches --superzen PATH`), press `Space v B`, or choose **Toggle bare mode**
 in the palette. Bare puts text at the terminal's top-left, using the full width
 without a document border, title, padding, tab strip, workspace panes, or animated
 cursor. Line numbers start off and can be enabled independently. Syntax highlighting, search and selection overlays,
@@ -1608,13 +1608,31 @@ It needs tmux (tested with 3.4), bash, and a UTF-8 locale. It is not run by
 ```sh
 dune build && scripts/smoke.sh               # tests _build/default/bin/ches.exe
 scripts/smoke.sh path/to/ches                # or another binary
-scripts/smoke.sh --bare-only                # bare startup/toggle, indentation, palette, terminal restoration
+scripts/smoke.sh --bare-only                # bare startup/toggle, --superzen alias, indentation, palette, terminal restoration
 scripts/smoke.sh --palette-only             # only floating-palette scenarios
 scripts/smoke.sh --line-picker-only          # live line binding/jump/zen/paste/resize
 scripts/smoke.sh --palette-only path/to/ches
 python3 scripts/directory_workspace_smoke.py # directory/tab integration PTY scenarios
 python3 scripts/picker_smoke.py              # real file/content opening and stale/dirty navigation
 ```
+
+`scripts/dune` also runs every suite (`smoke.sh`, theme, VCS, picker and
+directory) through one dune alias, building `ches.exe` and the fake language server
+first. Each Python suite also takes an optional binary path as its first argument.
+
+```sh
+dune build @smoke -j 4            # every suite, one at a time, every time it is asked
+dune build @scripts/smoke-vcs     # one suite: smoke-terminal, smoke-theme, smoke-vcs,
+                                  #   smoke-picker or smoke-directory
+dune build @test-all -j 4         # everything: the OCaml tests (@runtest) plus @smoke
+```
+
+The rules declare `(universe)`, so dune reruns them on every request instead of
+caching a pass, and share a lock, so suites never run concurrently whatever `-j`
+is. `dune runtest` still does not run them. Dune points `TMPDIR` at a private
+directory it deletes afterwards, so captures a suite keeps under `TMPDIR` (theme,
+picker and `smoke.sh` review screens) are gone after a dune run; run the script
+directly to keep them.
 
 It prints `ok` or `FAIL` for each check, with a screen dump after each failure,
 and exits nonzero if any check failed. It never touches your own tmux sessions,

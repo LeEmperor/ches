@@ -1,0 +1,63 @@
+; Terminal smoke tests, outside `dune runtest`. They drive the built ches in tmux or
+; a PTY, so they need tmux, python3, git, rg and a UTF-8 locale, and write fixtures
+; under /tmp.
+;
+;   dune build @smoke -j 4             ; every suite
+;   dune build @scripts/smoke-vcs      ; one suite: smoke-terminal, smoke-theme,
+;                                      ;   smoke-vcs, smoke-picker, smoke-directory
+;
+; (universe) reruns them on every request: their results depend on the machine,
+; not just on declared inputs. The shared lock runs one suite at a time whatever
+; -j is, because their screen polls time out under load.
+
+(alias
+ (name smoke)
+ (deps
+  (alias smoke-terminal)
+  (alias smoke-theme)
+  (alias smoke-vcs)
+  (alias smoke-picker)
+  (alias smoke-directory)))
+
+(rule
+ (alias smoke-terminal)
+ (deps (universe))
+ (locks /smoke)
+ (action
+  (setenv
+   CHES_FAKE_LSP
+   %{dep:../source/test/fake_lsp/fake_lsp.exe}
+   (run bash %{dep:smoke.sh} %{dep:../bin/ches.exe}))))
+
+(rule
+ (alias smoke-theme)
+ (deps (universe))
+ (locks /smoke)
+ (action
+  (run python3 %{dep:theme_smoke.py} %{dep:../bin/ches.exe})))
+
+(rule
+ (alias smoke-vcs)
+ (deps (universe) vcs_sandbox.sh)
+ (locks /smoke)
+ (action
+  (run python3 %{dep:vcs_smoke.py} %{dep:../bin/ches.exe})))
+
+(rule
+ (alias smoke-picker)
+ (deps (universe))
+ (locks /smoke)
+ (action
+  (run python3 %{dep:picker_smoke.py} %{dep:../bin/ches.exe})))
+
+(rule
+ (alias smoke-directory)
+ (deps
+  (universe)
+  directory_side_smoke.py
+  directory_editing_smoke.py
+  directory_apply_smoke.py
+  directory_operations_smoke.py)
+ (locks /smoke)
+ (action
+  (run python3 %{dep:directory_workspace_smoke.py} %{dep:../bin/ches.exe})))

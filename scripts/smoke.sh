@@ -485,6 +485,21 @@ save_screen "bare-numbers-reset"
 keys Space q
 expect_exit 0
 expect_file "$work/bare.txt" "$work/bare.original"
+
+# ---------------------------------------------------------------------------
+section "CLI --superzen alias starts bare"
+shell "clear; stty -g > $work/stty.before"
+type_text "$ches --superzen --no-lsp bare.txt"
+keys Enter
+if poll alternate_is 1; then ok "launched ches --superzen"; else fail "--superzen did not start"; fi
+expect_cursor "0 0 1"
+expect_row 0 alpha
+expect_row 1 beta
+expect_bare_chrome
+save_screen "superzen-startup"
+keys Space q
+expect_exit 0
+expect_file "$work/bare.txt" "$work/bare.original"
 resize 80 24
 fi
 
@@ -1797,7 +1812,9 @@ expect_exit 0
 fi
 # A scripted server stands in for ocamllsp on PATH (see
 # source/test/fake_lsp/fake_lsp.ml): ERROR/WARN lines are findings, CRASH exits 3.
-fake_lsp=$root/_build/default/source/test/fake_lsp/fake_lsp.exe
+# CHES_FAKE_LSP overrides its path (scripts/dune sets it when dune runs this copy).
+# Canonical, because fake_lsp_running compares it with /proc/PID/exe.
+fake_lsp=$(realpath -m "${CHES_FAKE_LSP:-$root/_build/default/source/test/fake_lsp/fake_lsp.exe}")
 mkdir -p "$work/fakebin" "$work/emptybin"
 ln -s "$fake_lsp" "$work/fakebin/ocamllsp"
 ln -s "$fake_lsp" "$work/fakebin/slang-server"

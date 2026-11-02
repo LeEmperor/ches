@@ -1,0 +1,10 @@
+; Every test: the OCaml suites (@runtest) and the terminal smoke suites (@smoke,
+; see scripts/dune), across the whole project.
+;
+;   dune build @test-all -j 4
+
+(alias
+ (name test-all)
+ (deps
+  (alias_rec runtest)
+  (alias_rec smoke)))

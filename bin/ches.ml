@@ -76,7 +76,7 @@ let command =
         ~doc:" Do not run a language server (ocamllsp or slang-server)"
      and smear_enabled = flag "--smear" no_arg
        ~doc:" Enable the animated smear cursor (default off; Space v s toggles)"
-     and bare = flag "--bare" no_arg
+     and bare = flag "--bare" ~aliases:[ "--superzen" ] no_arg
        ~doc:" Start borderless with transient feedback only (Space v B toggles)"
      and demo_report = flag "--demo-report" no_arg
        ~doc:" Install a static, error-free report view for manual tile testing"

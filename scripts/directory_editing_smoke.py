@@ -6,6 +6,7 @@ import pty
 import select
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import time
@@ -13,7 +14,8 @@ from pathlib import Path
 
 
 def main():
-    executable = Path(__file__).resolve().parents[1] / "_build/default/bin/ches.exe"
+    executable = Path(sys.argv[1] if len(sys.argv) > 1 else
+                        Path(__file__).resolve().parents[1] / "_build/default/bin/ches.exe").resolve()
     # Under /tmp whatever TMPDIR is: checks match messages that show this path on
     # a fixed-width screen, so it must stay short.
     root = Path(tempfile.mkdtemp(prefix="directory-phase6-pty-", dir="/tmp"))
