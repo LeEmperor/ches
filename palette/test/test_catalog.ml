@@ -30,7 +30,10 @@ let bindings =
    ; editor " Q" Force_quit
    ; keys " bn", View Next_tab
    ; keys " bp", View Previous_tab
-   ; keys " tt", View Toggle_terminal
+    ; keys " /", View Toggle_terminal
+    ; keys " t+", View (Adjust_terminal_size 1)
+    ; keys " t-", View (Adjust_terminal_size (-1))
+    ; keys " tr", View Reset_terminal_size
    ; keys " bc", View Close_tab
    ; keys " bC", View Force_close_tab
    ; keys " br", View Recreate_missing_file
@@ -149,7 +152,10 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     directory.focus                Focus directory browser or editor
     directory.grow                 Grow directory sidebar
     directory.shrink               Shrink directory sidebar
-    terminal.toggle                Toggle terminal                        Space t t
+    terminal.toggle                Toggle Tile Term                       Space /
+    terminal.grow                  Grow Tile Term                         Space t +
+    terminal.shrink                Shrink Tile Term                       Space t -
+    terminal.reset-size            Reset Tile Term size                   Space t r
     |}]
 ;;
 

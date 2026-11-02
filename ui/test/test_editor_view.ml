@@ -3,7 +3,7 @@ open Bonsai_test
 open Bonsai_term
 open Ches_core
 
-let handle ?theme ?bare ?(width = 40) ?(height = 6) ?(document_only = true) s =
+let handle ?theme ?zen ?bare ?(width = 40) ?(height = 6) ?(document_only = true) s =
   let text =
     Result.ok_or_failwith
       (Result.map_error
@@ -13,7 +13,7 @@ let handle ?theme ?bare ?(width = 40) ?(height = 6) ?(document_only = true) s =
   let controller = Ches_app.Controller.create (Editor.create ~path:"f.txt" ~cell_width:Ches_screen.Cell_map.width text) in
   let exit () = Bonsai_term.Effect.print_s [%sexp "EXIT"] in
   let handle =
-    Bonsai_term_test.create_handle (Ches_ui.Editor_view.app ?theme ?bare controller ~exit)
+    Bonsai_term_test.create_handle (Ches_ui.Editor_view.app ?theme ?zen ?bare controller ~exit)
   in
   Bonsai_term_test.set_dimensions handle { width; height };
   (* These geometry scenarios predate the default-visible workspace companions.
@@ -31,6 +31,35 @@ let send handle keys =
 ;;
 
 let chars s = List.map (String.to_list s) ~f:(fun c -> Event.Key.ASCII c, [])
+
+let%expect_test "frontend Zen opt-in, Workspace default, and Bare startup precedence" =
+  let create ?zen ?bare () =
+    handle ?zen ?bare ~document_only:false ~width:100 ~height:30 "hello\nworld\n" in
+  let frame handle =
+    Handle.recompute_view handle;
+    Bonsai_term_test.print_view (Bonsai_term_test.last_view handle);
+    [%expect.output] in
+  let workspace = create () in
+  let explicit_workspace = create ~zen:false () in
+  let zen = create ~zen:true () in
+  let bare = create ~zen:true ~bare:true () in
+  let bare_workspace = create ~zen:false ~bare:true () in
+  let workspace_frame = frame workspace in
+  assert (String.equal workspace_frame (frame explicit_workspace));
+  assert (String.is_substring workspace_frame ~substring:"Problems");
+  let zen_frame = frame zen in
+  assert (not (String.is_substring zen_frame ~substring:"Problems"));
+  assert (String.is_substring zen_frame ~substring:"╭─ f.txt");
+  let bare_frame = frame bare in
+  assert (not (String.is_substring bare_frame ~substring:"╭─ f.txt"));
+  assert (String.equal bare_frame (frame bare_workspace));
+  send zen (chars " vz");
+  assert (String.is_substring (frame zen) ~substring:"Problems");
+  send bare (chars " vB");
+  assert (String.is_substring (frame bare) ~substring:"Problems");
+  printf "Workspace default; Zen keeps its border and toggles back; Bare wins and returns to Workspace\n";
+  [%expect {| Workspace default; Zen keeps its border and toggles back; Bare wins and returns to Workspace |}]
+;;
 
 let%expect_test "theme preview recolors real views, cancels, accepts and stays instance-local" =
   let find id = Option.value_exn (Ches_theme.Theme.find id) in

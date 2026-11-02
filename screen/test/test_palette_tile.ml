@@ -27,7 +27,8 @@ let%test_unit "palette Tab/Shift-Tab clamp and reveal; query refinement and acce
   let first = selected t in
   let t = run t "<S-Tab>" in
   assert ([%equal: Ches_palette.Catalog.Id.t option] first (selected t));
-  let t = run t (String.concat (List.init 80 ~f:(fun _ -> "<Tab>"))) in
+  let total = List.length (Palette.results (Option.value_exn (palette t))) in
+  let t = run t (String.concat (List.init total ~f:(fun _ -> "<Tab>"))) in
   let tile = Option.value_exn (Ui_state.palette t) in
   let view = Palette_tile.view tile in
   let layout = Option.value_exn (Ui_state.palette_layout t ~width ~height) in
@@ -192,7 +193,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     ││ >                                                                          ││|
     ││ > Save buffer                                                      Space w ││|
     ││   Next file tab                                                  Space b n ││|
-    ╰╰─ 1/80 ─────────────────────────────────────────────────────────────────────╯╯|
+    ╰╰─ 1/83 ─────────────────────────────────────────────────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;
@@ -428,7 +429,7 @@ let%expect_test "resizing keeps the query and selected command" =
     ││ > tile                                       ││|
     ││   Move document tile left by 2 columns       ││|
     ││   Move document tile right by 2 columns      ││|
-    ╰╰─ 4/21 ───────────────────────────────────────╯╯|
+    ╰╰─ 4/24 ───────────────────────────────────────╯╯|
     cursor: 9,2 Bar
     |}]
 ;;

@@ -4,6 +4,10 @@ open Ches_ui
 
 let same_attrs a b = Attr.equal (Attr.many a) (Attr.many b)
 
+let default_color role =
+  let r, g, b = Ches_theme.Theme.color Ches_theme.Theme.default role in
+  Attr.Color.rgb ~r ~g ~b
+
 let%test_unit "terminal colors preserve all indexed entries and exact RGB" =
   let module M = Ches_terminal.Model in
   let samples =
@@ -115,8 +119,8 @@ let%test_unit "syntax foreground yields to specials and every interaction overla
           (match overlay, special with
            | None, false ->
              assert (same_attrs attrs
-               [ Attr.fg (Theme.Role.color (Theme.syntax_role syntax))
-               ; Attr.bg (Theme.Role.color (if current_line then Current_line else Background))
+               [ Attr.fg (default_color (Theme.syntax_role syntax))
+               ; Attr.bg (default_color (if current_line then Current_line else Background))
                ])
            | _ ->
              assert (same_attrs attrs
@@ -160,7 +164,8 @@ let%test_unit "every preset gives each syntax family its own color, apart from t
                 (b : Theme.Role.t)])))
 ;;
 
-let%test_unit "every composed plain document style retains the previous terminal attributes" =
+let%test_unit "Crimson composed plain document styles retain the previous terminal attributes" =
+  let theme = Option.value_exn (Ches_theme.Theme.find "crimson") in
   let open Ches_screen in
   List.iter [ false; true ] ~f:(fun current_line ->
     List.iter [ false; true ] ~f:(fun special ->
@@ -179,7 +184,7 @@ let%test_unit "every composed plain document style retains the previous terminal
         let style = Style.document ~current_line ~special ?overlay () in
         assert
           (same_attrs
-             (Theme.attrs style)
+             (Theme.attrs ~theme style)
              [ Attr.fg (Theme.Role.color fg); Attr.bg (Theme.Role.color bg) ]);
         assert (List.is_empty (Theme.Font.default style)))))
 ;;
@@ -242,10 +247,11 @@ let%expect_test "a font function replaces the default fonts and keeps the colors
     |}]
 ;;
 
-let%expect_test "frame cells sit on the backdrop; tile interiors keep their ground" =
+let%expect_test "Crimson frame cells sit on the backdrop; tile interiors keep their ground" =
+  let theme = Option.value_exn (Ches_theme.Theme.find "crimson") in
   let bg role = Attr.bg (Theme.Role.color role) in
   let on role style =
-    List.exists (Theme.attrs ~font:(fun _ -> []) style) ~f:(Attr.equal (bg role))
+    List.exists (Theme.attrs ~theme ~font:(fun _ -> []) style) ~f:(Attr.equal (bg role))
   in
   List.iter
     [ Ches_screen.Style.Border

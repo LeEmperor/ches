@@ -33,9 +33,19 @@ end
 module Input : sig
   type t =
     | Key of Key.t
+    | Key_at of { key : Key.t; at : Time_ns.t }
+    (** Event-time stamped editor key; [Key] uses [Time_ns.now ()]. *)
+    | Toggle_tick of Time_ns.t
+    (** Flush a timed Insert terminal-toggle prefix after 200ms of inactivity. *)
     | Terminal of Ches_terminal.Model.event
     | Terminal_update of { generation : int; event : Ches_terminal.Model.event }
+    | Terminal_session_update of { terminal : int; generation : int; event : Ches_terminal.Model.event }
     | Terminal_key of Ches_terminal.Model.key
+    | Terminal_key_at of { key : Ches_terminal.Model.key; at : Time_ns.t }
+    (** Event-time stamped key; the unstamped form uses [Time_ns.now ()]. *)
+    | Terminal_tick of Time_ns.t
+    (** Full input-effect turn: flush a deferred Insert j after 150ms, independently
+        of cursor animation. *)
     | Paste_start
     | Paste_end
     | Animation_tick of Time_ns.t
@@ -66,20 +76,52 @@ end
 
 type t
 
-(** One persistent shell, independent of its transient float. [Space t t] opens
-    or hides it; first open starts in the input document's parent or browser's
+(** Numbered persistent shells share one transient float. The selected ID defaults
+    to 1; [Space /] toggles it. [N Space /] selects N, opening it when hidden or
+    switching directly from a different visible session, and hides it when already
+    visible. IDs are positive integers and sessions are created lazily.
+    Each first open starts in the input document's parent or browser's
     directory (unnamed buffers use the startup directory). Too-small allocations
     hide without stopping it. Reopen retains even an exited snapshot;
-    [Ctrl-\\ Ctrl-r] explicitly starts a new shell only after exit/failure.
-    [Ctrl-\\ Ctrl-n] hides and restores prior available focus. Other keys,
-    including Escape, Ctrl-c, Tab and arrows, reach the child unchanged.
+    Normal [r] explicitly starts a new shell only after exit/failure, in that
+    session's captured initial directory. Size preferences default to 100x30 per
+    session; hidden editor sizing commands affect the selected session.
+    Hiding restores prior available focus. In terminal Insert, keys including
+    Escape, Ctrl-backslash, Ctrl-c, Tab and arrows reach the child unchanged;
+    Ctrl-Space switches to terminal Normal instead.
     Bracketed paste ignores shortcuts, strips controls except tabs/line breaks,
     is capped at 1 MiB including child bracket markers, and is dropped on
     overflow or loss of ownership; input is swallowed through its end marker. *)
 val terminal_capturing : t -> bool
+val terminal_key_pending : t -> bool
+(** Whether the frontend should schedule [Terminal_tick], including with smear off. *)
+val toggle_key_pending : t -> bool
+(** Whether to schedule [Toggle_tick], independently of animation and terminal jk.
+    Insert recognizes optional positive ASCII digits followed by Space /, with
+    each gap strictly less than 200ms. At 200ms the prefix is literal. Paste
+    bypasses recognition. Ownership loss safely cancels the bounded prefix. *)
 val take_terminal_requests : t -> t * Ches_terminal.Model.request list
+(** Legacy drain with session IDs discarded; single-session callers only. *)
+val take_terminal_session_requests : t -> t * (int * Ches_terminal.Model.request) list
+(** Requests carry the session that owned them when enqueued, in enqueue order. *)
+val terminal_number : t -> int
+val terminal_numbers : t -> int list
+(** Sorted cached session IDs, including the selected session (initially 1). *)
 val terminal_visible : t -> bool
 val terminal_snapshot : t -> Ches_terminal.Model.snapshot option
+(** Latest backend screen, even while inspection is frozen. *)
+val terminal_inspection : t -> Terminal_tile.inspection option
+(** [None] is Insert: all shell keys, including Escape and Ctrl-backslash, pass
+    through. [Some] is a frozen, visible-screen-only read-only Text_view, with
+    characterwise/linewise/blockwise Visual selection (v/V/Ctrl-v). Block state is
+    available through [Terminal_tile.block_selection]; its underlying Text_view
+    keeps a latent characterwise selection for navigation. Ctrl-Space enters Normal; i/a resumes
+    the latest screen. Live output continues draining without changing inspection.
+    All modes retain terminal input ownership: the frontend must keep sending
+    [Terminal_key], not editor keys. Normal/Visual pastes are swallowed through
+    their closing marker. Space / hides in inspection; r restarts a dead shell.
+    Reopening a live shell enters Insert. Exited/failed shells enter Normal.
+    Yanks use the shared unnamed register and clipboard via Controller.yank. *)
 val terminal_generation : t -> int
 val terminal_failure : t -> string option
 val terminal_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option

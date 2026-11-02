@@ -176,7 +176,7 @@ launch_env=""
 keep_startup_tiles=false
 launch() {
   shell "clear; stty -g > $work/stty.before"
-  t send-keys -t "$session" -l "${launch_env:+$launch_env }$ches $*"
+  t send-keys -t "$session" -l "${launch_env:+$launch_env }$ches --workspace --theme crimson $*"
   t send-keys -t "$session" Enter
   if poll alternate_is 1 && poll screen_has "NORMAL"; then
     ok "launched ches $*"
@@ -249,7 +249,7 @@ printf 'alpha\nbeta\ngamma\ndelta\n' > "$work/bare.original"
 cp "$work/bare.original" "$work/bare.txt"
 # Unlike launch(), do not hide tiles or configure numbers: verify --bare itself.
 shell "clear; stty -g > $work/stty.before"
-type_text "$ches --bare --no-lsp bare.txt"
+type_text "$ches --workspace --bare --no-lsp bare.txt"
 keys Enter
 if poll alternate_is 1; then ok "launched ches --bare"; else fail "--bare did not start"; fi
 expect_cursor "0 0 1"
@@ -506,7 +506,7 @@ fi
 if [ "$palette_only" = false ] || [ "$lsp_only" = true ]; then
 if [ "$lsp_only" = false ]; then
 # ---------------------------------------------------------------------------
-section "all installed tiles are shown at startup"
+section "explicit workspace shows all installed tiles at startup"
 printf 'startup workspace\n' > "$work/startup.txt"
 resize 160 30
 keep_startup_tiles=true
@@ -2219,13 +2219,14 @@ save_screen "palette-workspace-after"
 keys Space c c
 type_text 'tile'
 keys Tab Tab Tab Tab BTab
-expect_screen "4/20 ─"
+# The four Tile Term commands also match "tile".
+expect_screen "4/24 ─"
 expect_palette 20 13 80 14
 resize 50 12
 expect_palette 1 1 48 10
 expect_cursor "9 2 1"
 expect_screen "│ > tile"
-expect_screen "4/20 ─"
+expect_screen "4/24 ─"
 save_screen "palette-resize-clamped"
 resize 14 4
 expect_palette 0 0 14 4
@@ -2233,7 +2234,7 @@ expect_cursor "7 1 1"
 save_screen "palette-minimum"
 resize 120 40
 expect_palette 20 13 80 14
-expect_screen "4/20 ─"
+expect_screen "4/24 ─"
 expect_screen "│ > tile"
 save_screen "palette-resize-restored"
 resize 120 3

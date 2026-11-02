@@ -13,7 +13,8 @@ module Preset : sig
   [@@deriving sexp_of, equal, enumerate]
 end
 
-(** Legacy default preset (Crimson), corresponding to [Ches_theme.Theme.default]. *)
+(** Legacy default preset (Crimson). Rendering defaults to
+    [Ches_theme.Theme.default] instead. *)
 val selected : Preset.t
 
 module Role : sig

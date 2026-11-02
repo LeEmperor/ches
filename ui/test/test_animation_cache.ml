@@ -94,3 +94,33 @@ let%test_unit "cached animation draws identical Notty images without rebuilding 
   assert (!overlay_attrs > 0);
   assert (Option.is_some (Frame.render !ui ~width:80 ~height:24).cursor)
 ;;
+
+let%expect_test "idle frontend clock does not rebuild the base with smear disabled" =
+  let text = Ches_core.Text_buffer.of_string "idle document"
+    |> Result.map_error ~f:Ches_core.Text_buffer.Invalid_text.to_string_hum
+    |> Result.ok_or_failwith in
+  let controller = Ches_app.Controller.create
+      (Ches_core.Editor.create ~cell_width:Cell_map.width text) in
+  let work = ref 0 in
+  let font style = incr work; Theme.Font.default style in
+  let handle = Bonsai_term_test.create_handle
+      (Editor_view.app ~smear_enabled:false ~font controller ~exit:(fun () -> Effect.Ignore)) in
+  Bonsai_term_test.set_dimensions handle { width = 80; height = 24 };
+  let recompute () =
+    for _ = 1 to 3 do Bonsai_test.Handle.recompute_view handle done in
+  recompute ();
+  let baseline = !work in
+  assert (baseline > 0);
+  for _ = 1 to 20 do
+    Bonsai_test.Handle.advance_clock_by handle (Time_ns.Span.of_ms 17.);
+    recompute ();
+    assert (!work = baseline)
+  done;
+  (* Prove the instrumentation observes a subsequent real transition. *)
+  Bonsai_term_test.send_event handle (Key_press { key = ASCII 'l'; mods = [] });
+  recompute ();
+  assert (!work > baseline);
+  ignore ([%expect.output] : string);
+  printf "idle timeout clock: no base work; next key rebuilds\n";
+  [%expect {| idle timeout clock: no base work; next key rebuilds |}]
+;;

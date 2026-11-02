@@ -50,6 +50,9 @@ end
 
 type t =
   | Toggle_terminal
+  | Select_terminal of int (** Select a positive session ID, toggling if already visible. *)
+  | Adjust_terminal_size of int (** Steps of 10 columns and 2 rows, outer size. *)
+  | Reset_terminal_size
   | Toggle_directory
   | Directory_major
   | Directory_side
@@ -146,8 +149,9 @@ type t =
 
 (** [scale t ~count] repeats a resize step [count] times, for a Normal-mode count:
     [Shift], [Adjust_width], [Adjust_split], [Adjust_status_size], and
-    [Adjust_directory_size] with their step multiplied by [count] (positive, at most
+    [Adjust_directory_size], and [Adjust_terminal_size] with their step multiplied by [count] (positive, at most
     [Command.max_count]). Each result is clamped where it is applied, like repeated
-    presses. [None] for every other command, which takes no count ([Scroll] carries
-    its own). *)
+    presses. [Toggle_terminal] instead yields [Select_terminal count]: the count
+    is a session ID, never a number of toggles. [None] for every other command,
+    including an explicit [Select_terminal] ([Scroll] carries its own count). *)
 val scale : t -> count:int -> t option

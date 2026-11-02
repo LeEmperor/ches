@@ -36,7 +36,8 @@ let command =
          Space v n/N toggle absolute/relative line numbers; Space v s toggles the smear cursor (off by default; --smear opts in);\n\
           Space v T chooses a theme with live preview (Enter accepts; Escape restores).\n\
         Space v t toggles status; Space v p h/l/k/j places it, p -/+ sizes it;\n\
-         Space v z toggles zen; Space v e cycles retained problems; idle Escape acknowledges.\n\
+         Zen is the startup default; Space v z toggles workspace (--workspace starts there).\n\
+         Space v e cycles retained problems; idle Escape acknowledges.\n\
          Space v b toggles the problems preview; Space v f filters workspace/current document;\n\
          Space v o focuses problems: j/k, gg/G, Ctrl-d/u navigate, e inspects, a acknowledges,\n\
          Enter jumps to a supported current-file location; Escape cancels/back/returns.\n\
@@ -65,7 +66,7 @@ let command =
               match Ches_theme.Theme.find name with
               | Some theme -> theme
               | None -> failwithf "Unknown theme %S; use --list-themes for available IDs" name ())))
-        ~doc:"NAME Initial color theme (default crimson; Space v T chooses at runtime)"
+        ~doc:"NAME Initial color theme (default vim-classic; Space v T chooses at runtime)"
      and demo_problems = flag "--demo-problems" no_arg
        ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"
      and demo_diagnostics = flag "--demo-diagnostics" no_arg
@@ -76,8 +77,10 @@ let command =
         ~doc:" Do not run a language server (ocamllsp or slang-server)"
      and smear_enabled = flag "--smear" no_arg
        ~doc:" Enable the animated smear cursor (default off; Space v s toggles)"
+     and workspace = flag "--workspace" no_arg
+       ~doc:" Start in workspace instead of the default Zen (Space v z toggles)"
      and bare = flag "--bare" ~aliases:[ "--superzen" ] no_arg
-       ~doc:" Start borderless with transient feedback only (Space v B toggles)"
+       ~doc:" Start borderless with transient feedback only; overrides --workspace (Space v B returns to workspace)"
      and demo_report = flag "--demo-report" no_arg
        ~doc:" Install a static, error-free report view for manual tile testing"
      and buffer_presentation = flag "--buffers"
@@ -131,7 +134,7 @@ let command =
            (* One runner for the VCS view's git commands (Space g g); it inherits this
               process's environment and never prompts on the terminal. *)
            let vcs = Ches_ui.Vcs_host.create () in
-            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~bare ~theme ~buffer_presentation ?report ?source ~vcs controller with
+            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~zen:(not workspace) ~bare ~theme ~buffer_presentation ?report ?source ~vcs controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

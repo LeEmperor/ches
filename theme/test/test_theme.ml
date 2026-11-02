@@ -5,7 +5,7 @@ let channels (r, g, b) = [ r; g; b ]
 
 let%test_unit "registry is total, valid, distinct, and normalized" =
   assert (List.length Theme.all = 44);
-  assert (String.equal (Theme.id Theme.default) "crimson");
+  assert (String.equal (Theme.id Theme.default) "vim-classic");
   assert (not (List.contains_dup (List.map Theme.all ~f:Theme.id) ~compare:String.compare));
   List.iter Theme.all ~f:(fun theme ->
     assert (not (String.is_empty (Theme.title theme)));

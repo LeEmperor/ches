@@ -270,7 +270,10 @@ let default =
     ; git 'a' (Request_view { view = vcs; request = "commit-abort" })
     ; git 'l' (Request_view { view = vcs; request = "file-log" })
     ; [ leader; Key.char 'c'; Key.char 'c' ], View Open_palette
-    ; [ leader; Key.char 't'; Key.char 't' ], View Toggle_terminal
+    ; [ leader; Key.char '/' ], View Toggle_terminal
+    ; [ leader; Key.char 't'; Key.char '+' ], View (Adjust_terminal_size 1)
+    ; [ leader; Key.char 't'; Key.char '-' ], View (Adjust_terminal_size (-1))
+    ; [ leader; Key.char 't'; Key.char 'r' ], View Reset_terminal_size
     ; [ leader; Key.char 'f'; Key.char 'l' ], View Open_line_picker
     ; [ leader; Key.char 'f'; Key.char 'f' ], View Open_file_picker
     ; [ leader; Key.char 'f'; Key.char 'g' ], View Open_content_picker

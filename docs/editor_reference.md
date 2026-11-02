@@ -3,46 +3,181 @@
 Detailed keybindings, editing semantics, workspace behavior, and development
 checks for [Ches](../README.md).
 
+## Startup defaults
+
+`ches PATH` starts with the **Vim Classic** (`vim-classic`) colour scheme in
+**Zen**: the document retains its frame, while status and supporting workspace
+tiles are suppressed. This is separate from borderless Bare mode.
+
+- `Space v z` toggles Zen/Workspace; `--workspace` starts directly in Workspace.
+- `--bare` (alias `--superzen`) starts borderless and takes priority over the Zen
+  default and `--workspace`. `Space v B` toggles Bare; startup Bare returns to
+  Workspace when disabled.
+- `--theme NAME` overrides Vim Classic; `Space v T` changes themes during use.
+- Tile hotkey hints, including those in Tile Terms, are hidden by default.
+  In editor Normal mode, `Space v ?` toggles them for the session.
+
 ## Floating terminal
 
-In Normal mode, press **`Space t t`**, or choose **Toggle terminal** in the command
-palette. Ches lazily starts one interactive `$SHELL` (falling back to `/bin/sh`)
+The floating-terminal system is called **Tile Terms**. In Normal or Insert mode,
+press **`Space /`**, or choose **Toggle Tile Term** in the command
+palette. Ches lazily starts an interactive `$SHELL` (falling back to `/bin/sh`)
 inside a real pseudo-terminal. Its initial directory is the current file's parent,
 or the focused directory browser's directory. Changing files afterwards does not
 change the running shell's directory; use `cd` in the shell.
 
+### Numbered terminal sessions
+
+Prefix the toggle with a positive count to choose a separate cached terminal:
+
+- **`3 Space /`** opens terminal 3; **`4 Space /`** opens terminal 4.
+- **Uncounted `Space /`** toggles the most recently selected terminal (initially 1).
+- Selecting the already-visible number hides it. Selecting a different number
+  switches directly to that terminal in the same floating window.
+- These toggles work directly in editor and terminal Insert mode, as well as
+  Normal mode and terminal Visual mode; no preliminary `jk` is needed.
+
+Each terminal has its own shell PID, environment, working directory, jobs, screen,
+exit status, and preferred size. It starts only on first opening, in the then-current
+file/browser directory; explicit shell restarts reuse that initial directory.
+Numbers are sparse identifiers, so opening terminal 4 does not launch 1–3. The
+window title shows **Tile Term N**.
+
+Hidden terminals stay running and continue consuming output without taking focus.
+Reopening a live terminal enters Insert; an exited terminal retains its final
+screen until Normal `r` restarts that terminal alone. All terminals are retained
+for the current Ches session and cleaned up when Ches exits; they are not restored
+across editor restarts.
+
 The terminal floats over the existing workspace, including bare and zen modes.
-It prefers a 100×30 outer frame and shrinks to fit. Its shell receives the actual
+It initially prefers a 100×30 outer frame and shrinks to fit. Its shell receives the actual
 content dimensions. If fewer than 20 columns or 6 rows are available, Ches refuses
 to open it, or hides an already-open terminal. The shell keeps running while hidden
-and continues consuming output; reopen with `Space t t` after making room.
+and continues consuming output; reopen with `Space /` after making room.
 
-While the terminal is focused, ordinary editor bindings are suspended:
+The floating terminal has its own **Insert, Normal, and Visual modes**, independent
+of the document's mode. Opening or reopening a live shell starts in Insert.
 
-- **`Ctrl-\`, then `Ctrl-n`** hides the window and restores the previous available
-  editor/view focus. These are two successive control-key presses.
-- **Escape, Tab, Shift-Tab, arrows, navigation/function keys, Ctrl-C, Ctrl-D, and
-  Ctrl-Z** go to the child application. Escape does not hide the window, and `jk`
-  is ordinary shell text. `Ctrl-C` interrupts the foreground job normally.
-- The **`Ctrl-\` prefix** is reserved for Ches. If the next key is not a terminal
-  shortcut, both keys are forwarded to the child. To send a literal Ctrl-\,
-  press it twice; both presses are forwarded.
-- Clipboard paste supports Unicode, tabs, and line breaks and uses bracketed
-  paste when the application requests it. Other control characters are filtered.
-  Pastes exceeding roughly 1 MiB are dropped as a whole; interrupted pastes are
-  drained without inserting their remainder into the editor.
+### Universal toggle timing
+
+In **editor Insert and terminal Insert**, Ches recognizes **`Space /`** and
+**`N Space /`** with a **200 ms window between each successive key**. A gap of
+200 ms or more ends recognition. Normal/Visual mode keeps its usual untimed
+leader/count bindings.
+
+This requires a short typeahead delay for **Space and potential number prefixes**:
+
+- A standalone Space or positive number is delivered after 200 ms of inactivity.
+- A key that cannot continue the shortcut flushes the held text immediately, in
+  order, before processing that key normally.
+- A fast successful shortcut consumes the entire sequence. It does not insert
+  spaces, digits, or `/` into the document or shell.
+- Type Space, pause at least 200 ms, then `/` to enter literal ` /`. Bracketed
+  clipboard paste always bypasses recognition, including pasted `2 /` or `jk`.
+- Numbers start at 1; a standalone `0` remains ordinary text. Multi-digit IDs work
+  as long as each key arrives within the window and the number fits an integer.
+
+Toggling from editor Insert preserves that mode: hiding the terminal returns you
+to typing in the original document. Switching terminal numbers routes pending
+text to its original owner, never to the newly selected shell. If the original
+buffer/session loses ownership before replay, the prefix is canceled rather than
+redirected. The timeout runs even when cursor animation is disabled.
+
+### Terminal size preferences
+
+Ches retains a **requested outer size for each numbered terminal in the current editor session**, separately
+from the size that fits on screen. This is ordinary UI state, not a separate daemon
+or an on-disk preference. It survives hide/reopen, shell restart, file changes, and
+temporary screen-size clamps, but resets when Ches itself exits.
+Size commands affect the currently selected terminal, including while it is hidden.
+New terminal numbers start with their own default 100×30 preference.
+
+| Context | Keys | Action |
+| --- | --- | --- |
+| Terminal Normal/Visual | `+` or `=` | Grow by 10 columns and 2 rows |
+| Terminal Normal/Visual | `-` | Shrink by 10 columns and 2 rows |
+| Terminal Normal/Visual | `Space t r` | Reset requested size to 100×30 |
+| Editor Normal | `Space t +` / `Space t -` | Grow/shrink terminal preference, even while hidden |
+| Editor Normal | `Space t r` | Reset terminal size |
+
+Counts multiply the adjustment: terminal Normal `3+` grows by 30 columns and 6
+rows; editor `3 Space t +` does the same. The palette also offers **Grow Tile Term**,
+**Shrink Tile Term**, and **Reset Tile Term size**.
+
+Visible size changes take effect immediately and resize the child PTY. Hidden
+changes apply when reopening. Requested size is bounded to 20×6–1000×500 and is
+clamped to available screen space when displayed. Growing beyond the current
+screen still changes the preference: enlarging the outer terminal later reveals
+the requested size. Resizing in inspection preserves the frozen screen/selection;
+`i` resumes the latest resized live grid.
+
+### Terminal Insert mode
+
+Keys go to the shell, including **Escape, Ctrl-\, Tab, Shift-Tab, arrows,
+navigation/function keys, Ctrl-C, Ctrl-D, and Ctrl-Z**. Escape remains available
+to nested terminal applications. Rapid `Space /` and `N Space /` toggle/select
+terminals directly, using the [200 ms matching window](#universal-toggle-timing).
+`Ctrl-C` interrupts the foreground job normally.
+
+Type **`jk` within 150 ms** to enter terminal Normal mode. Neither character is
+sent to the shell. A standalone `j` is held for up to 150 ms, then delivered even
+if no more input arrives. A different next key flushes `j` before that key; slower
+`jk` reaches the shell normally. Clipboard paste bypasses this shortcut, so pasted
+`jk` remains literal text.
+
+Alternatively, press **`Ctrl-Space`** to enter terminal Normal mode. `Ctrl-@` is equivalent on
+terminals that encode it as NUL. This freezes the visible screen for inspection;
+the PTY keeps consuming output and the shell keeps running.
+
+Clipboard paste supports Unicode, tabs, and line breaks and uses bracketed paste
+when the application requests it. Other control characters are filtered. Pastes
+exceeding roughly 1 MiB are dropped as a whole; interrupted pastes are drained
+without inserting their remainder into the editor.
+
+### Terminal Normal and Visual modes
+
+| Keys | Action |
+| --- | --- |
+| `h` / `j` / `k` / `l`, or arrows | Move the inspection cursor |
+| `w` / `b`, `0` / `$`, `gg` / `G` | Word, line, and screen navigation; counts supported |
+| `v` / `V` / `Ctrl-v` | Characterwise / linewise / rectangular Visual selection |
+| `o` in Visual | Swap selection endpoints |
+| `y` in Visual | Yank selection to Ches's unnamed register and system clipboard |
+| `yy` in Normal | Yank the current terminal row |
+| `Escape` | Cancel selection or pending input, staying in terminal Normal |
+| `Ctrl-Space` | Cancel selection and return to terminal Normal |
+| `i` / `a` | Resume Insert and display the latest live screen |
+| `Space /` | Hide the terminal and restore the previous available editor/view focus |
+| `+` / `=` / `-` | Grow/shrink terminal size; counts supported |
+| `Space t r` | Reset terminal size to 100×30 |
+| `r` after shell exit/failure | Start a fresh shell |
+
+Selection is read-only and cannot change shell output or the edited document.
+After hiding, use the editor's `p` / `P` to paste a yank. Characterwise, linewise,
+and block yanks retain their kind; linewise copies include the terminal row's
+padding spaces. Wide glyphs and combining marks are copied as whole characters.
+Normal/Visual paste is swallowed rather than executed in the shell.
+
+Inspection covers the screen captured when entering Normal mode, without
+scrollback history. New output does not move the inspection cursor or change the
+selected text. Resize clips the frozen grid around the cursor; returning to Insert
+shows the latest resized live grid. The footer indicates the terminal-local mode.
+Hotkey hints are hidden by default; toggle `Space v ?` in the editor before
+opening a Tile Term to show its key guidance. Mode, exit status, and errors remain
+visible with hints off, and hiding hints does not change PTY dimensions.
 
 Hiding and reopening preserves the shell PID, environment, jobs, and screen. When
-the shell exits, Ches retains its final screen and displays its exit status. Press
-**`Ctrl-\`, then `Ctrl-r`** to start a fresh shell after exit or startup failure.
+the shell exits, Ches retains its final screen and displays its exit status in
+terminal Normal mode. Press **`r`** to start a fresh shell after exit or startup failure.
 Reopening an exited terminal alone does not restart it. Quitting Ches shuts down
 the terminal session and reaps its shell, escalating if children do not exit.
 
-The initial implementation is **Linux-only, with one terminal per editor session**.
+The implementation is **Linux-only, with multiple cached numbered sessions and one
+visible floating terminal at a time**.
 It supports UTF-8, wide/combining characters, ANSI/256/RGB colours, common text
 attributes, and alternate screens through vendored libvterm 0.3.3, advertising
 `TERM=xterm-256color`. There is no terminal scrollback browser, mouse forwarding,
-multiple-terminal selector, docking, or shell-session restoration across editor
+docking, or shell-session restoration across editor
 restarts. Use a program's own scrolling or a shell multiplexer when needed.
 
 For a real-frontend check after building, run:
@@ -129,9 +264,14 @@ Backend details and focused checks are in [`terminal/README.md`](../terminal/REA
 | Normal | `Space v T` | Open the live theme chooser (also **Choose theme** in the palette) |
 | Normal | `Space v r` | Reset workspace document placement; in bare, reset only its line numbers to off |
 | Normal | `Space c c` | Open the command palette (see [Command palette](#command-palette)) |
-| Normal | `Space t t` | Open the persistent floating terminal (see [Floating terminal](#floating-terminal)) |
-| Terminal | `Ctrl-\`, then `Ctrl-n` | Hide terminal, keeping its shell alive |
-| Terminal | `Ctrl-\`, then `Ctrl-r` | Restart an exited or failed shell |
+| Normal/Insert / Terminal modes | `Space /` | Toggle the persistent floating terminal; timed in Insert (see [Floating terminal](#floating-terminal)) |
+| Normal/Insert / Terminal modes | `N Space /` | Select/open cached terminal N; uncounted toggle uses the last selected |
+| Terminal Insert | Rapid `jk` or `Ctrl-Space` | Enter terminal Normal mode |
+| Normal | `Space t +` / `Space t -` / `Space t r` | Grow / shrink / reset terminal size, even while hidden |
+| Terminal Normal/Visual | `Space /` | Hide terminal, keeping its shell alive |
+| Terminal Normal/Visual | `i` / `a` | Resume shell input |
+| Terminal Normal/Visual | `v` / `V` / `Ctrl-v`, then motions and `y` | Select and yank terminal text |
+| Terminal Normal | `r` | Restart an exited or failed shell |
 | Normal | `Space f l` | Fuzzy search current-document lines (including unsaved edits) |
 | Normal | `Space f f` | Find project files; open/activate retained buffers |
 | Normal | `Space f g` | Search project contents on disk; validate and jump |
@@ -337,7 +477,7 @@ applies edits directly, without a confirmation dialog or filesystem undo.**
 `Space v b` toggles a bottom preview; `Space v f` switches workspace/current-file
 filtering. Tile hotkey hints are hidden by default; `Space v ?` toggles them in
 Problems, History, and the demo report, including focused lists and details, and
-in all picker/palette control footers. For text-input floats, toggle before opening
+in Tile Terms and all picker/palette control footers. For text-input floats, toggle before opening
 or use **Toggle tile hotkey hints** in the palette; captured keys still edit queries.
 Overflow counts, detail positions, picker status, errors and action feedback remain visible.
 `Space v o` shows and focuses the pane. It remains read-only:

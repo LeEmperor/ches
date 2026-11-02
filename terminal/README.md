@@ -26,6 +26,11 @@ The C-only `forkpty`/`execve` path creates a new session and real controlling
 terminal; OCaml never executes in the child. Inherited signal dispositions and
 masks are reset, and nonstandard descriptors are closed before exec.
 
+The frontend's `ui/terminal_host.ml` pools these single-shell runtimes by terminal
+number. It launches them lazily, drains hidden sessions independently, coalesces
+events per number, delivers ready sessions fairly, and shuts down the entire pool
+on editor exit. Generation checks are local to each numbered terminal.
+
 The nonblocking PTY master is close-on-exec. The Async pump runs independently of
 UI visibility, with a 10 ms interval and a 64 KiB per-direction work budget per
 turn. It handles short writes, EAGAIN, EINTR, Linux EIO-as-EOF, protocol replies,

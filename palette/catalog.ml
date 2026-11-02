@@ -71,8 +71,8 @@ let default =
   let editor ~id ~title ?keywords (command : Ches_core.Command.t) =
     Entry.create ~id ~title ?keywords (Editor command)
   in
-  let view ~id ~title ?keywords (command : View_command.t) =
-    Entry.create ~id ~title ?keywords (View command)
+  let view ~id ~title ?description ?keywords (command : View_command.t) =
+    Entry.create ~id ~title ?description ?keywords (View command)
   in
   let numbers = [ "gutter"; "numbering"; "line numbers" ] in
   let conflict = [ "merge"; "rebase"; "markers"; "resolve"; "smerge" ] in
@@ -391,7 +391,10 @@ let default =
       ; view ~id:"directory.focus" ~title:"Focus directory browser or editor" Focus_directory
       ; view ~id:"directory.grow" ~title:"Grow directory sidebar" (Adjust_directory_size 4)
       ; view ~id:"directory.shrink" ~title:"Shrink directory sidebar" (Adjust_directory_size (-4))
-    ; view ~id:"terminal.toggle" ~title:"Toggle terminal" ~keywords:[ "shell"; "toggleterm"; "float" ] Toggle_terminal
+    ; view ~id:"terminal.toggle" ~title:"Toggle Tile Term" ~description:"Show or hide the selected Tile Term." ~keywords:[ "shell"; "toggleterm"; "float" ] Toggle_terminal
+    ; view ~id:"terminal.grow" ~title:"Grow Tile Term" ~description:"Increase the selected Tile Term's preferred size." ~keywords:[ "shell"; "size" ] (Adjust_terminal_size 1)
+    ; view ~id:"terminal.shrink" ~title:"Shrink Tile Term" ~description:"Decrease the selected Tile Term's preferred size." ~keywords:[ "shell"; "size" ] (Adjust_terminal_size (-1))
+    ; view ~id:"terminal.reset-size" ~title:"Reset Tile Term size" ~description:"Restore the selected Tile Term's default size." ~keywords:[ "shell"; "default" ] Reset_terminal_size
     ]
   |> Or_error.ok_exn
 ;;

@@ -80,7 +80,7 @@ module Content_picker_host = struct
     }
 end
 
-let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
@@ -111,8 +111,17 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
     | Some _, Some _ -> invalid_arg "Only one initial picker host is allowed"
     | Some host, None -> host.Content_picker_host.initial_ui
     | None, Some host -> host.File_picker_host.initial_ui
-    | None, None -> Ui_state.create ~smear_enabled ?bare ?theme ?buffer_presentation ?report
+    | None, None ->
+      let ui = Ui_state.create ~smear_enabled ?bare ?theme ?buffer_presentation ?report
         ~source_attached:(Option.is_some source) ~views:[ vcs_entry ] controller in
+      (* Headless assembly retains Workspace. Enter Zen through the normal command
+         path only for frontend startup; Bare keeps its Workspace return target.
+         The first render reconciles the actual terminal dimensions. *)
+      if zen && not (Ui_state.bare ui) then
+        fst (Ui_state.apply_all ui ~width:0 ~height:0
+          (List.map (String.to_list " vz") ~f:(fun c ->
+             Ui_state.Input.Key (Ches_input.Key.char c))))
+      else ui in
   let current_ui = ref initial_ui in
   let render_cache = Frame.Cache.create () in
   let last_drawn_theme = ref None in
@@ -180,24 +189,33 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
          | Loading | Partial -> true
          | Complete _ | Failed _ | Cancelled -> false)
   in
-  let model, inject =
+  let model, inject_action =
     Bonsai.state_machine_with_input
        ~default_model:initial_ui
-      ~apply_action:(fun context input model inputs ->
+      ~apply_action:(fun context input model action ->
         match input with
          | Inactive -> clear_preview (); model
-        | Active ({ Dimensions.width; height }, write_to_tty) ->
-           (* Only animation ticks may skip effects. File work still goes through
-              the full effect/synchronization path below; explicit visual stamps
-              let its nonpublishing turns retain workspace and terminal base. *)
-          if not (List.is_empty inputs)
-             && List.for_all inputs ~f:(function Ui_state.Input.Animation_tick _ -> true | _ -> false)
-             && Option.equal [%equal: int * int] !synchronized_dimensions (Some (width, height))
-          then (
-            let model, _ = Ui_state.apply_all model ~width ~height inputs in
-            current_ui := model;
-            model)
-          else (
+         | Active ({ Dimensions.width; height }, write_to_tty) ->
+            (* Capture belongs to the model at this transition, not the last
+               displayed handler: several events can arrive before a redraw. *)
+            let inputs = match action with
+              | `Inputs inputs -> inputs
+              | `Event (event, at) ->
+                Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event
+                |> List.map ~f:(function
+                  | Ui_state.Input.Key key -> Ui_state.Input.Key_at { key; at }
+                  | Ui_state.Input.Terminal_key key -> Ui_state.Input.Terminal_key_at { key; at }
+                  | input -> input) in
+            (* Pure animation turns retain the base image and skip host effects.
+               Timeout ticks can flush input, so always use the full path below. *)
+            if not (List.is_empty inputs)
+               && List.for_all inputs ~f:(function Ui_state.Input.Animation_tick _ -> true | _ -> false)
+               && Option.equal [%equal: int * int] !synchronized_dimensions (Some (width, height))
+            then (
+              let model, _ = Ui_state.apply_all model ~width ~height inputs in
+              current_ui := model;
+              model)
+            else (
             let inputs = if Option.equal [%equal: int * int]
                 !synchronized_dimensions (Some (width, height)) then inputs
               else Ui_state.Input.Resize :: inputs in
@@ -233,7 +251,7 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
                | None -> preview_pumping := false; Effect.Ignore
                | Some snapshot ->
                  let%bind.Effect () = Bonsai.Apply_action_context.inject context
-                   [ Ui_state.Input.File_preview snapshot ] in
+                    (`Inputs [ Ui_state.Input.File_preview snapshot ]) in
                  let%bind.Effect () = Effect.of_deferred_thunk (fun () -> changed) in
                  pump () in
              Bonsai.Apply_action_context.schedule_event context (pump ()));
@@ -241,10 +259,10 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
           active_line_session := Option.map (Ui_state.line_picker model) ~f:Line_picker_tile.session;
           active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
           let model, clipboard = Ui_state.take_clipboard model in
-          let model, terminal_requests = Ui_state.take_terminal_requests model in
+          let model, terminal_requests = Ui_state.take_terminal_session_requests model in
           if not (List.is_empty terminal_requests) then
             Bonsai.Apply_action_context.schedule_event context
-              (Effect.of_thunk (fun () -> Terminal_host.submit terminal terminal_requests));
+              (Effect.of_thunk (fun () -> Terminal_host.submit_sessions terminal terminal_requests));
           Option.iter clipboard ~f:(fun text ->
             Bonsai.Apply_action_context.schedule_event
               context
@@ -265,22 +283,22 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
               (match vcs with
                | Some host -> Effect.of_thunk (fun () -> Vcs_host.submit host jobs)
                | None -> Bonsai.Apply_action_context.inject context
-                   (List.map jobs ~f:(fun job ->
-                      Ui_state.Input.Vcs (Finished (Ches_vcs.Job.never_started job)))));
+                   (`Inputs (List.map jobs ~f:(fun job ->
+                      Ui_state.Input.Vcs (Finished (Ches_vcs.Job.never_started job))))));
           let model, requests = Ui_state.take_file_requests model in
           List.iter requests ~f:(fun request ->
             Bonsai.Apply_action_context.schedule_event context
               (match file_picker with
                | Some host -> Effect.of_thunk (fun () -> host.consume request)
                | None -> Bonsai.Apply_action_context.inject context
-                   [ Ui_state.Input.File_picker_accept request ]));
+                   (`Inputs [ Ui_state.Input.File_picker_accept request ])));
           let model, requests = Ui_state.take_content_requests model in
           List.iter requests ~f:(fun request ->
             Bonsai.Apply_action_context.schedule_event context
               (match content_picker with
                | Some host -> Effect.of_thunk (fun () -> host.consume request)
                | None -> Bonsai.Apply_action_context.inject context
-                   [ Ui_state.Input.Content_picker_accept request ]));
+                   (`Inputs [ Ui_state.Input.Content_picker_accept request ])));
           if not !picker_turn_scheduled
              && (line_needs_turn model || picker_needs_turn model
                  || Ches_content_picker_host.Runtime.needs_turn content_runtime model)
@@ -299,7 +317,7 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
                  else Async.return []) in
                picker_turn_scheduled := false;
                (* Obsolete turns still wake replacements, without doing their work. *)
-               Bonsai.Apply_action_context.inject context events));
+               Bonsai.Apply_action_context.inject context (`Inputs events)));
           (match status with
            | Exit when was_running ->
               Terminal_host.stop terminal;
@@ -318,6 +336,7 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
        dimensions, write_to_tty)
       graph
   in
+  let inject = let%arr inject_action in fun inputs -> inject_action (`Inputs inputs) in
   Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
     ~on_deactivate:(Bonsai.return
       (Effect.of_thunk (fun () ->
@@ -380,11 +399,11 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
     ~on_activate:(let%arr inject in
       let rec pump () =
         let%bind.Effect event = Effect.of_deferred_thunk (fun () ->
-          Terminal_host.next_update terminal) in
+          Terminal_host.next_session_update terminal) in
         match event with
         | None -> Effect.Ignore
-        | Some (generation, event) ->
-          let%bind.Effect () = inject [ Ui_state.Input.Terminal_update { generation; event } ] in
+        | Some (terminal, generation, event) ->
+          let%bind.Effect () = inject [ Ui_state.Input.Terminal_session_update { terminal; generation; event } ] in
           pump ()
       in
       pump ())
@@ -400,14 +419,17 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
       ~when_to_start_next_effect:`Every_multiple_of_period_non_blocking
       ~trigger_on_activate:true
       (Bonsai.return (Time_ns.Span.of_ms 17.))
-      (let%arr inject
-       and model
-       and get_current_time in
-       if Animation.active (Ui_state.animation model)
-       then (
-         let%bind.Effect now = get_current_time in
-         inject [ Ui_state.Input.Animation_tick now ])
-       else Effect.Ignore)
+       (let%arr inject and get_current_time in
+        let%bind.Effect now = get_current_time in
+        (* Read the transition's latest state, including keys delivered since the
+           last display. All deadlines use the same clock, independently of smear. *)
+        let model = !current_ui in
+        let inputs =
+          (if Ui_state.toggle_key_pending model then [ Ui_state.Input.Toggle_tick now ] else [])
+          @ (if Ui_state.terminal_key_pending model then [ Ui_state.Input.Terminal_tick now ] else [])
+          @ (if Animation.active (Ui_state.animation model)
+             then [ Ui_state.Input.Animation_tick now ] else []) in
+        if List.is_empty inputs then Effect.Ignore else inject inputs)
       graph
   in
   let rendered =
@@ -432,23 +454,24 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?bare ?theme ?buffer_pr
     draw_overlay ~theme:(Ui_state.theme model) ?font ~base frame
   in
   let handler =
-    let%arr inject and model in
+    let%arr inject_action and get_current_time in
     fun event ->
-      match Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event with
-      | [] -> Effect.Ignore
-      | inputs -> inject inputs
+      (* Date the event before it queues; normalization uses that same timestamp
+         for every resulting key and the same clock as timeout ticks. *)
+      let%bind.Effect at = get_current_time in
+      inject_action (`Event (event, at))
   in
   ~view, ~handler
 ;;
 
-let app ?smear_enabled ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
+let app ?terminal ?smear_enabled ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
   ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph) =
-  let terminal = Terminal_host.create () in
-  app_with_terminal ~terminal ?smear_enabled ?bare ?theme ?buffer_presentation
+  let terminal = Option.value_or_thunk terminal ~default:Terminal_host.create in
+  app_with_terminal ~terminal ?smear_enabled ~zen ?bare ?theme ?buffer_presentation
     ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions graph
 ;;
 
-let run ?(smear_enabled = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
+let run ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
   let terminal = Terminal_host.create () in
   (* Shutdown hooks outlive [run]; release their runtime reference after cleanup. *)
   let terminal_at_shutdown = ref (Some terminal) in
@@ -474,7 +497,7 @@ let run ?(smear_enabled = false) ?bare ?theme ?font ?buffer_presentation ?report
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-        (app_with_terminal ~terminal ~smear_enabled ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
+        (app_with_terminal ~terminal ~smear_enabled ~zen ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
     ~f:(fun result ->
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;

@@ -39,10 +39,15 @@ end
     {!Theme.Font.default}. Current-document line work is always scheduled through
     yielded bounded turns; [file_picker] is an optional file-consumer override.
     File scope is resolved once from startup and retained across tab activation.
-    Each instance owns one terminal runtime: requests are submitted after transitions,
-    snapshots enter asynchronously, and deactivation shuts down the child. *)
+    Each instance owns a lazy pool of numbered terminal runtimes: requests are
+    submitted after transitions, tagged snapshots enter asynchronously, and
+    deactivation shuts down all children. [zen] defaults to false for assembly
+    compatibility; true enters Zen on startup unless [bare] is true. Explicit
+    picker hosts retain their supplied initial UI state. *)
 val app
-  :  ?smear_enabled:bool
+  :  ?terminal:Terminal_host.t
+   -> ?smear_enabled:bool
+   -> ?zen:bool
    -> ?bare:bool
    -> ?theme:Ches_theme.Theme.t
   -> ?buffer_presentation:Ches_input.View_command.Buffer_presentation.t
@@ -85,6 +90,7 @@ val draw_overlay : ?theme:Ches_theme.Theme.t -> ?font:(Ches_screen.Style.t -> Th
     and process shutdown. *)
 val run
   :  ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
+   -> ?zen:bool (** Start in Zen; false by default. [bare] takes precedence. *)
    -> ?bare:bool (** Start in borderless document presentation. *)
    -> ?theme:Ches_theme.Theme.t (** Initial theme; Space v T previews and chooses themes. *)
   -> ?font:(Ches_screen.Style.t -> Theme.Font.t list)

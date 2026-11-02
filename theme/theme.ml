@@ -246,7 +246,7 @@ let () =
   List.iter all ~f:(fun t -> List.iter Role.all ~f:(fun role -> validate_rgb (color t role)))
 ;;
 
-let default = crimson
+let default = vim_classic
 let normalize s =
   String.lowercase (String.strip s)
   |> String.map ~f:(function ' ' | '_' -> '-' | c -> c)

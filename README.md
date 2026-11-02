@@ -31,10 +31,15 @@ for general distribution.
 - **Command palette:** centered floating fuzzy search over Normal-mode commands,
   with shortcuts derived from the active bindings; works in zen without resizing
   the document or docked tiles.
-- **Floating terminal:** `Space t t` opens a persistent interactive shell over the
-  workspace. `Ctrl-\` then `Ctrl-n` hides it; reopening keeps the shell, running
-  commands, and screen. Supports colours, shell control keys, paste, resize, and
-  alternate-screen programs. See [terminal controls and limits](docs/editor_reference.md#floating-terminal).
+- **Tile Terms:** `Space /` opens a persistent interactive shell over the
+  workspace; `3 Space /` selects an independent cached terminal 3. Uncounted
+  `Space /` toggles the last selected terminal. Both work directly in editor and
+  terminal Insert, with a 200 ms matching window. Rapid `jk` (or `Ctrl-Space`) enters terminal Normal mode for navigation and Visual
+  selection/yanking; `i` resumes typing, and Normal `Space /` hides the window.
+  Normal `+` / `-` resize it, retaining the preferred size across hide/reopen.
+  Key hints are hidden by default; `Space v ?` in the editor toggles them.
+  Supports colours, shell control keys, paste, resize, and alternate-screen
+  programs. See [terminal controls and limits](docs/editor_reference.md#floating-terminal).
 - **Live themes:** 44 built-in dark/light palettes, including monochrome and
   retro-terminal styles. `Space v T` opens a fuzzy live-preview chooser; Enter
   applies, Escape restores. `--theme NAME` selects at startup; `--list-themes`
@@ -98,13 +103,20 @@ The local shell command points to the built executable at
 `_build/default/bin/ches.exe`:
 
 ```sh
+# Default: Vim Classic theme in Zen (framed document, supporting tiles hidden):
 ches PATH
+# Start with the full workspace instead:
+ches --workspace PATH
 # Start directly in the stripped-down presentation:
 ches --bare PATH
 # Choose a palette, or browse the available IDs:
 ches --bare --theme glacier PATH
 ches --list-themes
 ```
+
+`Space v z` switches between Zen and Workspace. Zen retains the document frame;
+Bare (`--bare`, alias `--superzen`) is the separate borderless presentation.
+An explicit `--theme NAME` overrides the default `vim-classic` palette.
 
 An existing file is opened for editing; a nonexistent path starts an empty
 document that is created on save. A directory (including `ches .`) opens a listing
@@ -136,9 +148,14 @@ when editing; `--list-themes` needs neither a terminal nor a PATH argument.
 | `Space q` | Quit if all buffers are clean and no files are marked missing |
 | `Space Q` | Quit and discard unsaved changes |
 | `Space c c` | Open the command palette |
-| `Space t t` | Open the persistent floating terminal |
-| Terminal: `Ctrl-\`, then `Ctrl-n` | Hide terminal and return to the editor |
-| Terminal: `Ctrl-\`, then `Ctrl-r` | Restart an exited or failed shell |
+| `Space /` in Normal/Insert or terminal modes | Toggle floating terminal; Insert uses a 200 ms matching window |
+| `N Space /` in Normal/Insert or terminal modes | Open/select cached terminal N; each has its own shell, output, and size |
+| Terminal Insert: rapid `jk` or `Ctrl-Space` | Enter terminal Normal mode for navigation and copying |
+| Terminal Normal: `i` / `a`, `v` / `V` / `Ctrl-v`, `y` / `yy` | Type, select, or yank terminal text |
+| Terminal: `Space /` | Hide terminal and return to the editor's prior mode |
+| Terminal Normal: `r` | Restart an exited or failed shell |
+| Terminal Normal: `+` / `-`; editor: `Space t +` / `Space t -` | Grow/shrink terminal size, retained within the session |
+| `Space t r` in editor/terminal Normal | Reset terminal size to 100×30 |
 | `Space f l` | Fuzzy search current-document lines; Enter jumps to the selected match |
 | `Space f f` | Find project files; Enter opens or activates a retained buffer |
 | `Space f g` | Search project contents on disk literally; Enter validates and jumps |

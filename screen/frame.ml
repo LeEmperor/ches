@@ -46,9 +46,11 @@ let floating_layer ?allocation ?floating ui ~width ~height =
       Option.map (Ui_state.terminal_layout ui ~width ~height) ~f:(fun layout ->
         let content = layout.content in
         { Floating_layer.id = Terminal_tile.id; layout
-        ; content = Terminal_tile.render (Ui_state.terminal_snapshot ui)
+         ; content = Terminal_tile.render ~hotkey_hints ~number:(Ui_state.terminal_number ui) (Ui_state.terminal_snapshot ui)
+             ?inspection:(Ui_state.terminal_inspection ui)
             ~failure:(Ui_state.terminal_failure ui) ~width:content.width ~rows:content.height
-        ; cursor = Terminal_tile.cursor (Ui_state.terminal_snapshot ui)
+         ; cursor = Terminal_tile.cursor (Ui_state.terminal_snapshot ui)
+               ?inspection:(Ui_state.terminal_inspection ui)
               ~width:content.width ~rows:content.height })
     | None when Option.is_some (Ui_state.theme_picker ui) ->
       Option.bind (Ui_state.theme_picker_layout ui ~width ~height) ~f:(fun layout ->

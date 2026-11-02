@@ -22,7 +22,7 @@ def main():
     rows = [row.split("\t") for row in listing.splitlines()]
     assert len(rows) >= 40 and all(len(row) == 3 for row in rows), listing
     assert {row[2] for row in rows} == {"dark", "light"}, listing
-    assert {"crimson", "glacier"} <= {row[0] for row in rows}, listing
+    assert {"crimson", "glacier", "vim-classic"} <= {row[0] for row in rows}, listing
     invalid = subprocess.run([str(binary), "--theme", "nonexistent-theme"], input="",
                              text=True, capture_output=True)
     assert invalid.returncode and "--list-themes" in invalid.stderr, invalid
@@ -66,7 +66,9 @@ def main():
         # First document row lies outside the centered float. Its SGR colors must
         # change during preview even though its text and geometry do not change.
         row = next(row for row in ansi.splitlines() if "THEME document" in row)
-        prefix = row.split("THEME document")[0]
+        # tmux elides unchanged SGR attributes across row boundaries (notably
+        # Vim Classic's all-black background), so include preceding rows.
+        prefix = ansi.split("THEME document")[0]
         rgb = [re.findall(rf"{channel};2;\d+;\d+;\d+", prefix)
                for channel in (38, 48)]
         assert all(rgb), f"No truecolor attributes in {row!r}"
@@ -75,9 +77,9 @@ def main():
     def alternate():
         return t("display-message", "-p", "-t", "theme", "#{alternate_on}").strip()
 
-    def launch(theme):
-        send(f"stty -g > before; {shlex.quote(str(binary))} --no-lsp --bare "
-             f"--theme {theme} document.txt; printf '%s' $? > exit-code; stty -g > after\n")
+    def launch(*options):
+        args = shlex.join([str(binary), "--no-lsp", *options, "document.txt"])
+        send(f"stty -g > before; {args}; printf '%s' $? > exit-code; stty -g > after\n")
         wait(lambda: alternate() == "1" and "THEME document" in screen(), "startup")
         time.sleep(.15)
 
@@ -94,10 +96,53 @@ def main():
         t("new-session", "-d", "-s", "theme", "-x", "140", "-y", "44", "-c", str(root),
           "env LC_ALL=C.UTF-8 TERM=tmux-256color bash --norc --noprofile")
         t("set-option", "-t", "theme", "status", "off")
-        launch("glacier")
+        def assert_zen():
+            text = screen()
+            assert "╭─ " in text and "│" in text and "╰" in text, text
+            assert "document.txt" in text, text
+            assert not any(label in text for label in
+                           ("╭─ Status", "Problems (", "History:", "Demo report (")), text
+
+        def assert_workspace():
+            wait(lambda: "╭─ Status" in screen() and "Problems (workspace)" in screen()
+                 and "History:" in screen(), "workspace support tiles")
+
+        # No theme or presentation flag: exercise the actual CLI startup defaults.
+        launch()
+        assert_zen()
+        vim = colors("default-vim-classic-zen")
+        assert vim == ("38;2;211;211;211", "48;2;0;0;0"), vim
+        send(" vz")
+        assert_workspace()
+        assert colors("default-revealed-workspace") == vim
+        send(" vz")
+        wait(lambda: "╭─ Status" not in screen(), "return to Zen")
+        assert_zen()
+        finish()
+
+        launch("--workspace")
+        assert_workspace()
+        assert colors("explicit-workspace-vim-classic") == vim
+        finish()
+        for options in (("--workspace", "--bare"), ("--bare", "--workspace")):
+            launch(*options)
+            text = screen()
+            assert text.splitlines()[0].startswith("THEME document"), text
+            assert not any(label in text for label in ("╭", "╰", "│", "NORMAL")), text
+            assert colors("bare-" + "-".join(option[2:] for option in options)) == vim
+            finish()
+
+        launch("--theme", "glacier")
+        assert_zen()
+        light = colors("theme-override-zen-glacier")
+        assert light != vim
+        finish()
+        print("ok: default CLI Vim Classic RGB + framed Zen; Space v z reveals Workspace; --workspace override; --bare wins in both orders; --theme overrides color while retaining Zen")
+
+        launch("--bare", "--theme", "glacier")
         light = colors("startup-glacier")
         finish()
-        launch("crimson")
+        launch("--bare", "--theme", "crimson")
         dark = colors("startup-crimson")
         assert dark != light
         send(" vT")

@@ -12,6 +12,40 @@ let show (event : Event.t) =
 
 let key ?(mods = []) key : Event.t = Key_press { key; mods }
 
+let%test_unit "frontend keeps terminal capture through Ctrl-Space variants and Visual" =
+  let module U = Ches_screen.Ui_state in
+  let module M = Ches_terminal.Model in
+  let text = Result.ok (Ches_core.Text_buffer.of_string "unchanged") |> Option.value_exn in
+  let controller = Ches_app.Controller.create
+      (Ches_core.Editor.create ~cell_width:Ches_screen.Cell_map.width text) in
+  let cache = Ches_screen.Frame.Cache.create () in
+  let initial = U.create ~bare:true controller in
+  let feed ui event =
+    let inputs = Terminal_input.inputs ~terminal:(U.terminal_capturing ui) event in
+    fst (Ches_screen.Frame.Cache.apply_inputs cache ui ~width:120 ~height:40 inputs) in
+  let chars ui s = List.fold (String.to_list s) ~init:ui
+      ~f:(fun ui c -> feed ui (key (ASCII c))) in
+  List.iter [ key ~mods:[ Ctrl ] (ASCII ' ')
+            ; key ~mods:[ Ctrl ] (ASCII '@'); key (ASCII '\000') ] ~f:(fun normal ->
+    let ui = chars initial " /" in
+    assert (U.terminal_capturing ui);
+    let ui, _ = U.take_terminal_requests ui in
+    let ui = feed ui normal in
+    assert (U.terminal_capturing ui);
+    assert (Option.is_some (U.terminal_inspection ui));
+    let ui = chars ui "v" in
+    assert (U.terminal_capturing ui);
+    let ui = feed ui (key Escape) |> fun ui -> chars ui "i" in
+    assert (U.terminal_capturing ui);
+    assert (Option.is_none (U.terminal_inspection ui));
+    let ui = feed ui (key Escape) in
+    let ui, requests = U.take_terminal_requests ui in
+    assert (List.equal M.equal_request requests
+      [ M.Key { code = Escape; modifiers = M.no_modifiers } ]);
+    let ui = feed ui normal |> fun ui -> chars ui " /" in
+    assert (not (U.terminal_capturing ui)))
+;;
+
 let%test_unit "terminal capture preserves every key and modifier combination" =
   let module M = Ches_terminal.Model in
   let keys : (Event.Key.t * M.key_code) list =

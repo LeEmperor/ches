@@ -41,6 +41,9 @@ end
 
 type t =
   | Toggle_terminal
+  | Select_terminal of int
+  | Adjust_terminal_size of int
+  | Reset_terminal_size
   | Toggle_directory
   | Directory_major
   | Directory_side
@@ -109,13 +112,16 @@ type t =
 
 let scale t ~count =
   match t with
+  | Toggle_terminal -> Some (Select_terminal count)
+  | Adjust_terminal_size steps -> Some (Adjust_terminal_size (steps * count))
   | Shift cells -> Some (Shift (cells * count))
   | Adjust_width cells -> Some (Adjust_width (cells * count))
   | Adjust_split points -> Some (Adjust_split (points * count))
   | Adjust_status_size cells -> Some (Adjust_status_size (cells * count))
   | Adjust_directory_size cells -> Some (Adjust_directory_size (cells * count))
   | Toggle_directory
-  | Toggle_terminal
+  | Select_terminal _
+  | Reset_terminal_size
   | Directory_major
   | Directory_side
   | Hide_directory
