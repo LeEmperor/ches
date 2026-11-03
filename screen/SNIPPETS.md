@@ -5,6 +5,34 @@ Enter acceptance starts `Ches_completion.Snippet.Session` after finalizing known
 additional edits. The final completion cursor relocates the expansion base, so
 imports before the primary edit also relocate every placeholder.
 
+## Development demo command
+
+In a file's Normal mode, press **Space c c**, type **Insert demo snippet**, and
+press **Enter** (searching `development.insert-demo-snippet` also works). This
+development utility is available in the regular build; it needs no language server
+and works with automatic completion disabled. The catalog has no category field;
+its description and search keywords identify it as Development.
+
+The command enters Insert at the current Normal-mode cursor, like `i` (before the
+current character, without replacing an identifier), and accepts this template
+through the same completion planner, insertion and snippet acceptance path:
+
+```text
+assign ${1:signal} = ${2:value};
+// mirror: $1
+$0
+```
+
+The `signal` field is immediately active. Typing replaces it and its mirror;
+Tab selects `value`, and the next Tab ends the session at the start of the final
+line. Shift-Tab returns to the previous field. Escape leaves Insert; one undo
+then removes the expansion and its field edits, and redo restores the text without
+reactivating fields. No indentation or language-specific adaptation is added.
+
+The action is listed only over the current file, not directory buffers or other
+read-only/non-file views. Insert/Visual mode, block insertion and active paste are
+not supported. Ordinary snippet cancellation rules below still apply.
+
 ## Resolve limitation
 
 Snippet acceptance does not wait for resolve. Only additional edits already known

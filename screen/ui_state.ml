@@ -667,6 +667,51 @@ let start_completion ?(manual = false) t =
     ; source_commands = if t.source_attached && not (String.is_empty token.resource)
         then Complete request :: t.source_commands else t.source_commands }
 ;;
+
+let demo_snippet_available t =
+  let editor = Controller.editor t.controller in
+  has_document t
+  && Controller.Kind.equal (Controller.kind t.controller) File
+  && Mode.equal (Editor.mode editor) Normal
+  && List.is_empty (Editor.block_insert_points editor)
+  && not (Host.pasting t.host)
+;;
+
+let insert_demo_snippet t =
+  if not (demo_snippet_available t) then t else
+  let controller, _, _ = Controller.dispatch (Controller.cancel_pending t.controller)
+      [ Editor (Enter_insert Before_cursor) ] in
+  let editor = Controller.editor controller in
+  let text = Editor.text editor and cursor = Editor.cursor editor in
+  let serial = t.completion_serial + 1 in
+  let token = { Completion.Token.resource = Option.value (Editor.path editor) ~default:""
+    ; generation = 0; revision = Editor.revision editor; request = serial } in
+  (* A single local candidate, without buffer words or a provider request. Keep
+     the real planning/install/accept handoff, including its insert undo group. *)
+  match Completion.start ~token ~text ~cursor
+      ~words:(Completion.Buffer_words.create Text_buffer.empty) ~limit:1 with
+  | None -> t
+  | Some (model, request) ->
+    let template = Snippet.parse "assign ${1:signal} = ${2:value};\n// mirror: $1\n$0"
+      |> Or_error.ok_exn in
+    let expanded = Snippet.text template in
+    let candidate : Completion.Candidate.t =
+      { id = "development.insert-demo-snippet"; source = Lsp "development"
+      ; label = "Insert demo snippet"; detail = None
+      (* Match the existing prefix, but insert at [i]'s anchor without replacing it. *)
+      ; filter_text = Text_buffer.slice text ~pos:request.fallback_start
+          ~len:(cursor - request.fallback_start)
+      ; sort_text = ""; primary = { start = cursor; stop = cursor; text = expanded }
+      ; additional = []; cursor = String.length expanded; snippet = Some template } in
+    let model = Completion.receive model
+        { token; source = "development"; candidates = [candidate]; incomplete = false } in
+    let t = { t with controller; completion_serial = serial
+      ; completion = Some { model; token; owner = Session.context_id t.session
+          ; document = Controller.document_id controller; installed = false
+          ; metadata = String.Map.empty; resolving = None; base = text; base_cursor = cursor } } in
+    accept_completion (cycle_completion t Next)
+;;
+
 let prefs t = t.prefs
 let bare_prefs t = t.bare_prefs
 let workspace_prefs t = t.workspace_prefs
@@ -2021,6 +2066,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Scroll _
   | Toggle_smear
   | Toggle_completion | Toggle_completion_ghost
+  | Insert_demo_snippet
   | Toggle_status
   | Toggle_hotkey_hints
   | Position_status _
@@ -2061,6 +2107,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   match view with
   | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
   | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
+  | Insert_demo_snippet -> None
   | Present_buffers presentation -> Some
       (match presentation with
        | Top -> "Open buffers in top strip"
@@ -2772,16 +2819,18 @@ let open_palette t ~width ~height =
         Option.filter (Option.map t.help ~f:Help_tile.origin) ~f:(View_registry.installed t.views)
     in
     let local = local_entries t origin in
+    let globals =
+      Ches_palette.Catalog.entries Ches_palette.Catalog.default
+      |> List.filter ~f:(fun entry ->
+        not (Keymap.Action.equal (Ches_palette.Catalog.Entry.action entry)
+          (View Insert_demo_snippet))
+        || (demo_snippet_available t && View_id.equal current document_id))
+      |> Ches_palette.Catalog.create |> Or_error.ok_exn
+    in
     let catalog =
-      if List.is_empty local
-      then Ches_palette.Catalog.default
-      else (
-        match
-          Ches_palette.Catalog.create
-            (List.map local ~f:fst @ Ches_palette.Catalog.entries Ches_palette.Catalog.default)
-        with
-        | Ok catalog -> catalog
-        | Error _ -> Ches_palette.Catalog.default)
+      Ches_palette.Catalog.create
+        (List.map local ~f:fst @ Ches_palette.Catalog.entries globals)
+      |> Result.ok |> Option.value ~default:globals
     in
     let palette =
       Palette_tile.create
@@ -3062,6 +3111,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   match view with
   | Toggle_completion -> { t with completion_enabled = not t.completion_enabled }
   | Toggle_completion_ghost -> { t with completion_ghost_enabled = not t.completion_ghost_enabled }
+  | Insert_demo_snippet -> insert_demo_snippet t
   | Toggle_terminal -> toggle_terminal t ~width ~height
   | Select_terminal number -> select_terminal t number ~width ~height
   | Adjust_terminal_size steps -> adjust_terminal_size t steps

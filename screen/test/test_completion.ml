@@ -606,6 +606,67 @@ let snippet_menu ?(initial = "") ?(prefix = "ial") ?(additional = []) syntax =
 
 let active t = not (List.is_empty (Ui_state.snippet_ranges t))
 
+let%expect_test "demo palette command inserts at the Normal cursor and uses live linked fields with one undo" =
+  let initial = "préTAIL" in
+  let t = press (ui initial) "lll ccInsert demo snippet<CR>" in
+  assert (Mode.equal (Editor.mode (editor t)) Insert && active t && not (has_menu t));
+  assert (String.equal (text t) "préassign signal = value;\n// mirror: signal\nTAIL");
+  assert (Editor.cursor (editor t) = String.length "préassign signal");
+  assert ([%equal: Snippet.range list] (Ui_state.snippet_ranges t)
+    [{ start = 11; stop = 17 }; { start = 38; stop = 44 }]);
+  let t = press t "bus" in
+  assert (String.equal (text t) "préassign bus = value;\n// mirror: bus\nTAIL");
+  let t = press t "<Tab>" in
+  assert (Editor.cursor (editor t) = String.length "préassign bus = value");
+  let t = run t [ Key Ches_input.Key.Shift_tab ] in
+  assert (Editor.cursor (editor t) = String.length "préassign bus");
+  let t = press t "<Tab>42<Tab>" in
+  assert (not (active t));
+  assert (Editor.cursor (editor t) = String.length "préassign bus = 42;\n// mirror: bus\n");
+  let final = text t in
+  let t = press t "<Esc>u" in
+  assert (String.equal (text t) initial && not (active t));
+  let t = press t "<C-r>" in
+  assert (String.equal (text t) final && not (active t));
+  [%expect {| |}]
+;;
+
+let%expect_test "demo command also works on an empty file and does not request a server" =
+  List.iter [ui ""; attached ""] ~f:(fun t ->
+    let t = press t " ccdevelopment.insert-demo-snippet<CR>" in
+    assert (active t && Editor.cursor (editor t) = 13);
+    let _, requests = Ui_state.take_source_requests t in
+    assert (not (List.exists requests ~f:(function
+      | Ches_error.Source_request.Complete _ | Resolve_completion _ -> true | _ -> false)));
+    assert (String.equal (text (press t "<Esc>u")) ""));
+  [%expect {| |}]
+;;
+
+let%expect_test "demo is absent over directory and read-only views; block Insert cannot open its palette" =
+  let directory = Ui_state.create ~tiles_visible:false
+      (Controller.create ~kind:Directory (Editor.create ~path:"/tmp"
+        ~cell_width:Cell_map.width Text_buffer.empty)) in
+  let report = Ui_state.create ~report:Report_tile.demo ~tiles_visible:true
+      (Controller.create (Editor.create ~path:"/demo.txt" ~cell_width:Cell_map.width Text_buffer.empty))
+      |> fun t -> press t " vD" in
+  List.iter [directory; report] ~f:(fun t ->
+    let before = text t, Editor.revision (editor t) in
+    let t = press t " ccInsert demo snippet" in
+    let palette = Ui_state.palette t |> Option.value_exn |> Palette_tile.palette in
+    assert (List.is_empty (Ches_palette.Palette.results palette));
+    let t = press t "<CR><Esc>" in
+    assert ([%equal: string * int] before (text t, Editor.revision (editor t)));
+    assert (not (active t)));
+  let t = press (ui "abc\ndef") "<C-v>jI" in
+  assert (not (List.is_empty (Editor.block_insert_points (editor t))));
+  let opened = press t " cc" in
+  assert (Option.is_none (Ui_state.palette opened));
+  assert (not (String.is_substring (text opened) ~substring:"assign") && not (active opened));
+  let t = press (ui "") " cccompletion.toggle<CR> ccInsert demo snippet<CR>" in
+  assert (not (Ui_state.completion_enabled t) && active t);
+  [%expect {| |}]
+;;
+
 let%expect_test "snippet Enter does not activate when resolved edits cannot finalize" =
   let t, req = snippet_menu "${1:default}/$1" in
   let t = metadata t req [ info "alpha" ] |> fun t -> press t "<Tab>" in

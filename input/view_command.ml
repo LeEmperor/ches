@@ -42,6 +42,7 @@ end
 type t =
   | Toggle_completion
   | Toggle_completion_ghost
+  | Insert_demo_snippet
   | Toggle_terminal
   | Select_terminal of int
   | Adjust_terminal_size of int
@@ -124,6 +125,7 @@ let scale t ~count =
   | Adjust_directory_size cells -> Some (Adjust_directory_size (cells * count))
   | Toggle_directory
   | Toggle_completion | Toggle_completion_ghost
+  | Insert_demo_snippet
   | Select_terminal _
   | Reset_terminal_size
   | Directory_major

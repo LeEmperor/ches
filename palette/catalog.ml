@@ -403,6 +403,9 @@ let default =
         ~keywords:[ "suggestions"; "autocomplete" ] Toggle_completion
     ; view ~id:"completion.ghost" ~title:"Toggle completion ghost preview"
         ~keywords:[ "suggestions"; "inline"; "suffix" ] Toggle_completion_ghost
+    ; view ~id:"development.insert-demo-snippet" ~title:"Insert demo snippet"
+        ~description:"Development utility: linked snippet fields in the current file (no server required)"
+        ~keywords:[ "development"; "test"; "placeholders"; "linked fields" ] Insert_demo_snippet
     ]
   |> Or_error.ok_exn
 ;;

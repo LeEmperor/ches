@@ -756,6 +756,21 @@ choices, transformations, nested defaults, and conflicting defaults are not yet
 supported; completions using unsupported or malformed snippets are skipped.
 Templates come from the language server; there is no built-in/user template catalog.
 
+For a server-independent hands-on test, open the command palette from a file's
+Normal mode (`Space c c`) and select **Insert demo snippet**. This development
+utility inserts at the current cursor and activates `signal` immediately:
+
+```text
+assign signal = value;
+// mirror: signal
+```
+
+Type a name to update both `signal` occurrences, press Tab to edit `value`, then
+Tab again to finish on the final empty line. Escape followed by `u` undoes the
+expansion and field edits together. The action is included in the regular build,
+needs no LSP, and works with automatic completion disabled. It is available in
+file Normal mode, not directory/read-only views or block insertion.
+
 Automatic completion is suppressed while editing snippet fields. Paste, newline,
 movement, buffer/focus changes, and edits crossing a field boundary end the snippet
 before normal handling. Expansion and linked edits join the current Insert undo
