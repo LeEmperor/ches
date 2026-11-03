@@ -1,5 +1,10 @@
 # Backlog
 
+## Language-aware editing
+
+- [Symbol rename](symbol_rename.md): deferred ticket for LSP-driven rename,
+  reviewed multi-file edits, unsaved-buffer application, and an explicit undo policy.
+
 ## Snippet catalog and organization
 
 - [Snippet collections and hardware-development catalog](snippet_collections.md):
