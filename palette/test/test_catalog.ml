@@ -78,6 +78,9 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     navigation.hover               Hover
     navigation.declaration         Go to declaration
     navigation.definition          Go to definition
+    navigation.references          Find references
+    navigation.instance            Select active instance
+    navigation.instantiation       Go to instantiation
     navigation.back                Jump back
     navigation.forward             Jump forward
     tabs.next                      Next file tab                          Space b n
@@ -229,8 +232,8 @@ let%expect_test "realistic queries" =
   search "save";
   [%expect {|
     file.save                      [Save] buffer
+    navigation.instance            [S]elect [a]cti[ve] instance
     tabs.close-discarding-changes  Close file tab, discarding un[save]d changes
-    app.quit-discarding-changes    Quit, discarding un[save]d changes
     |}];
   search "quit";
   [%expect

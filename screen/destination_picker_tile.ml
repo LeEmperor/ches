@@ -9,6 +9,7 @@ let spec = Ches_tile.Spec.result_picker id ~title:"Choose destination"
 
 type t =
   { items : L.target list
+  ; title : string
   ; query : string
   ; view : int Selection.t
   }
@@ -30,7 +31,8 @@ let ids t = List.map (results t) ~f:(fun r -> r.Fuzzy.Match.item)
 let fit t ~rows =
   { t with view = Selection.fit t.view (ids t) ~equal:Int.equal ~rows:(result_rows rows) }
 ;;
-let create items = fit { items; query = ""; view = Selection.empty } ~rows:1
+let create items = fit { items; title = "Choose destination"; query = ""; view = Selection.empty } ~rows:1
+let with_title t title = { t with title }
 let selected t = Option.bind t.view.selected ~f:(List.nth t.items)
 let query t = t.query
 let interpret = Palette_tile.interpret
@@ -70,10 +72,11 @@ let render ?(hotkey_hints = false) ?notice t ~width ~rows : Tile_shell.Content.t
               (if selected then "> " else "  ") target.path (position target)
               (encoding target.encoding)) ~width))
   in
-  { title = "Choose destination"
+  let count = sprintf "%d/%d" (List.length matches) (List.length t.items) in
+  { title = sprintf "%s (%s)" t.title count
   ; footer = Some (Tile_shell.Label.footer ~notice ~pending:None
-      ~default:(if hotkey_hints then "Tab/Shift-Tab select | Enter jump | Esc cancel"
-                else "Enter jump | Esc cancel"))
+      ~default:(count ^ " | " ^ (if hotkey_hints then "Tab/Shift-Tab select | Enter jump | Esc cancel"
+                else "Enter jump | Esc cancel")))
   ; body = List.take body (Int.max 0 rows)
   }
 ;;

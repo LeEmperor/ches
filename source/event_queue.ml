@@ -11,7 +11,7 @@ let empty = { newest_first = []; dropped = 0 }
 
 let rec classify (event : Source_event.t) =
   match event with
-  | Query_result _ | Completion _ | Completion_metadata _ -> `Completion, "", ""
+  | Instance_context_changed _ | Query_result _ | Completion _ | Completion_metadata _ -> `Completion, "", ""
   | Servers _ -> `Servers, "", ""
   | Owned { resource; generation; event } ->
     let kind, source, target = classify event in

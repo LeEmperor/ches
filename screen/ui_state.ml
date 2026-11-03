@@ -18,6 +18,15 @@ type destination_version =
   | Retained of Controller.Document_id.t * int
   | On_disk of string option
 
+type instance_context =
+  { origin : navigation_origin
+  ; source : string
+  ; module_name : string
+  ; module_range : Query.range
+  ; module_offsets : (int * int) list
+  ; hier_path : string option
+  }
+
 type snippet_session =
   { fields : Snippet.Session.t
   ; owner : Buffer_id.t option
@@ -147,6 +156,11 @@ type t =
   ; navigation_serial : int
   ; hover : Hover_tile.t option
   ; destinations : Destination_picker_tile.t option
+  ; instances : Instance_picker_tile.t option
+  ; instance_origin : instance_context option
+  ; active_instance : instance_context option
+  ; context_revisions : int String.Map.t
+  ; servers : Ches_error.Source_event.Server.t list option
   ; destination_versions : destination_version String.Map.t
   ; jump_history : Jump_history.t
   ; configuration_path : (string, string) Result.t
@@ -314,6 +328,11 @@ let create
   ; navigation_serial = 0
   ; hover = None
   ; destinations = None
+  ; instances = None
+  ; instance_origin = None
+  ; active_instance = None
+  ; context_revisions = String.Map.empty
+  ; servers = None
   ; destination_versions = String.Map.empty
   ; jump_history = Jump_history.empty
   ; configuration_path = Error "Configuration path is unavailable"
@@ -364,6 +383,7 @@ let create
          @ [ Palette_tile.spec
             ; Hover_tile.spec
             ; Destination_picker_tile.spec
+            ; Instance_picker_tile.spec
             ; Terminal_tile.spec
             ; Theme_picker_tile.spec
             ; Snippet_picker_tile.spec
@@ -490,6 +510,46 @@ let theme_picker t = t.theme_picker
 let snippet_picker t = t.snippet_picker
 let hover t = t.hover
 let destinations t = t.destinations
+let instances t = t.instances
+
+let module_offsets t ~encoding (range : Query.range) =
+  let text = Text_buffer.to_string (Editor.text (Controller.editor t.controller)) in
+  (* Convert only the server's negotiated encoding, once at discovery. *)
+  match Query.offset encoding ~text range.start, Query.offset encoding ~text range.stop with
+  | Some start, Some stop when start < stop -> [start, stop]
+  | _ -> []
+;;
+
+let instance_context_current t (context : instance_context) =
+  let editor = Controller.editor t.controller in
+  let origin = context.origin in
+  Option.equal Buffer_id.equal origin.owner (Session.context_id t.session)
+  && Controller.Document_id.equal origin.document (Controller.document_id t.controller)
+  && Editor.revision editor = origin.request.token.revision
+  && Option.equal Int.equal (Option.bind origin.owner ~f:(Session.source_generation t.session))
+       (Some origin.request.token.generation)
+  && Editor.cursor_line editor >= context.module_range.start.line
+  && Editor.cursor_line editor <= context.module_range.stop.line
+  && not (List.is_empty context.module_offsets)
+  && List.for_all context.module_offsets ~f:(fun (start, stop) ->
+    Editor.cursor editor >= start && Editor.cursor editor < stop)
+;;
+
+let active_instance_label t =
+  Option.bind t.active_instance ~f:(fun context ->
+    if instance_context_current t context then
+      Option.map context.hier_path ~f:(fun path -> "Instance: " ^ path)
+    else None)
+;;
+
+let clear_stale_instance_notice t =
+  match Ches_error.Error.notification (Controller.feedback t.controller) with
+  | Some notice when String.equal notice.source "navigation"
+      && String.is_prefix notice.text ~prefix:"Instance: "
+      && not (Option.equal String.equal (Some notice.text) (active_instance_label t)) ->
+    { t with controller = Controller.update_feedback t.controller Command_completed }
+  | _ -> t
+;;
 
 let navigation_current t (origin : navigation_origin) =
   let editor = Controller.editor t.controller in
@@ -515,9 +575,11 @@ let dismiss_navigation t =
         | _ -> true) in
       if queued then commands else Cancel_query origin.request.token :: commands in
   let host = Host.invalidate_paste (Host.invalidate_paste t.host Hover_tile.id) Destination_picker_tile.id in
-  let host = if Option.is_some t.hover || Option.is_some t.destinations
+  let host = Host.invalidate_paste host Instance_picker_tile.id in
+  let host = if Option.is_some t.hover || Option.is_some t.destinations || Option.is_some t.instances
     then Host.return host else host in
   { t with navigation = None; hover = None; destinations = None
+    ; instances = None; instance_origin = None
     ; destination_versions = String.Map.empty; host; source_commands }
 ;;
 
@@ -1276,6 +1338,9 @@ let hover_layout t ~width ~height =
 let destinations_layout t ~width ~height =
   Option.bind t.destinations ~f:(fun _ -> palette_placement ~width ~height)
 ;;
+let instances_layout t ~width ~height =
+  Option.bind t.instances ~f:(fun _ -> palette_placement ~width ~height)
+;;
 
 let picker_placement ~width ~height =
   Floating.layout
@@ -1357,6 +1422,7 @@ let effective_floating floating t ~width ~height =
   | Some _ -> floating
   | None when Option.is_some t.hover -> Some (Hover_tile.id, hover_layout t ~width ~height)
   | None when Option.is_some t.destinations -> Some (Destination_picker_tile.id, destinations_layout t ~width ~height)
+  | None when Option.is_some t.instances -> Some (Instance_picker_tile.id, instances_layout t ~width ~height)
   | None when t.terminal_visible ->
     Some (Terminal_tile.id, terminal_layout t ~width ~height)
   | None when Option.is_some t.theme_picker ->
@@ -1517,6 +1583,8 @@ let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option 
   then Option.map t.snippet_picker ~f:(Snippet_picker_tile.cursor ~width:content.width)
   else if View_id.equal id Destination_picker_tile.id
   then Option.map t.destinations ~f:(Destination_picker_tile.cursor ~width:content.width)
+  else if View_id.equal id Instance_picker_tile.id
+  then Option.map t.instances ~f:(Instance_picker_tile.cursor ~width:content.width)
   else if View_id.equal id Palette_tile.id
   then Option.map t.palette ~f:(Palette_tile.cursor ~width:content.width)
   else if View_id.equal id File_picker_tile.id
@@ -1643,6 +1711,7 @@ let leave t id =
   else if View_id.equal id Snippet_picker_tile.id
   then { t with snippet_picker = None; snippet_picker_snapshot = None }
   else if View_id.equal id Hover_tile.id || View_id.equal id Destination_picker_tile.id
+       || View_id.equal id Instance_picker_tile.id
   then dismiss_navigation t
   else if View_id.equal id Palette_tile.id
   then (* Leaving closes the palette and discards its query; nothing runs. *)
@@ -1675,7 +1744,7 @@ let leave t id =
 (* Every view with state to leave: the registered views, then the floats. *)
 let leave_ids t =
   View_registry.ids t.views
-  @ [ Terminal_tile.id; Hover_tile.id; Destination_picker_tile.id ]
+  @ [ Terminal_tile.id; Hover_tile.id; Destination_picker_tile.id; Instance_picker_tile.id ]
   @ [ Snippet_picker_tile.id; Theme_picker_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
     ; Confirm_tile.id; Prompt_tile.id; Popup_tile.id ]
 ;;
@@ -2066,16 +2135,22 @@ let synchronize t ~width ~height =
     | Some origin ->
       let focus = Host.focused t.host ~available:(fun _ -> true) in
       let expected = if Option.is_some t.hover then Hover_tile.id
-        else if Option.is_some t.destinations then Destination_picker_tile.id else document_id in
+        else if Option.is_some t.destinations then Destination_picker_tile.id
+        else if Option.is_some t.instances then Instance_picker_tile.id else document_id in
       if not (navigation_current t origin) || not (View_id.equal focus expected)
          || (Option.is_some t.hover && Option.is_none (hover_layout t ~width ~height))
          || (Option.is_some t.destinations && Option.is_none (destinations_layout t ~width ~height))
+         || (Option.is_some t.instances && Option.is_none (instances_layout t ~width ~height))
       then dismiss_navigation t else t in
   let t = { t with
     hover = Option.map t.hover ~f:(fun hover -> Hover_tile.fit hover
       ~width:(minor_width t ~width ~height Hover_tile.id) ~rows:(minor_rows t ~width ~height Hover_tile.id))
     ; destinations = Option.map t.destinations ~f:(Destination_picker_tile.fit
-      ~rows:(minor_rows t ~width ~height Destination_picker_tile.id)) } in
+      ~rows:(minor_rows t ~width ~height Destination_picker_tile.id))
+    ; instances = Option.map t.instances ~f:(Instance_picker_tile.fit
+      ~rows:(minor_rows t ~width ~height Instance_picker_tile.id))
+    ; active_instance = Option.filter t.active_instance ~f:(instance_context_current t) } in
+  let t = clear_stale_instance_notice t in
   (* Suppressed side placement keeps its request/buffer, but must never retain
      invisible input focus. With no files, the directory remains the major surface. *)
   let t = if Option.is_some (Session.input_directory t.session)
@@ -2371,6 +2446,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
   | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward
+  | Find_references | Select_active_instance | Go_to_instantiation
   | Show_language_servers
   | Toggle_terminal
   | Select_terminal _
@@ -2435,7 +2511,8 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
-  | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward -> None
+  | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward
+  | Find_references | Select_active_instance | Go_to_instantiation -> None
   | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
   | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
   | Insert_demo_snippet -> None
@@ -3230,19 +3307,81 @@ let start_navigation t ~width ~height kind =
       ; source_commands = Query request :: t.source_commands }
 ;;
 
+let source_serves t source resource =
+  match t.servers with
+  (* Direct/unmanaged sources have no inventory; retain conservative invalidation
+     until the manager supplies an authoritative attachment snapshot. *)
+  | None -> true
+  | Some servers -> List.exists servers ~f:(fun server ->
+      String.equal server.Ches_error.Source_event.Server.source source
+      && List.mem server.resources resource ~equal:String.equal)
+;;
+
+let invalidate_source t source =
+  let completion = Option.first_some t.completion
+    (Option.map t.completion_acceptance ~f:(fun pending -> pending.session)) in
+  let t = if Option.exists completion ~f:(fun c -> source_serves t source c.token.resource)
+    then dismiss_completion t else t in
+  let affected = Option.exists t.navigation ~f:(fun origin ->
+    match t.instance_origin with
+    | Some context -> String.equal context.source source
+    | None -> source_serves t source origin.request.token.resource) in
+  let t = if affected then dismiss_navigation t else t in
+  { t with active_instance = Option.filter t.active_instance ~f:(fun context ->
+      not (String.equal context.source source)) }
+;;
+
 let receive_navigation t (reply : Query.reply) =
+  (* Mutation is connection-wide even if its originating cursor has moved. *)
+  let t = match reply.result with
+    | Instance_activated _ when source_serves t reply.source
+        (Option.value (Editor.path (Controller.editor t.controller)) ~default:"") ->
+      let current_activation = Option.exists t.navigation ~f:(fun origin ->
+        Completion.Token.equal origin.request.token reply.token
+        && Query.equal_kind origin.request.kind reply.kind
+        && navigation_current t origin) in
+      let t = dismiss_completion { t with active_instance = None } in
+      if current_activation then t else dismiss_navigation t
+    | _ -> t in
   match t.navigation with
   | Some origin when navigation_current t origin
       && Completion.Token.equal origin.request.token reply.token
       && origin.request.cursor = reply.cursor && Query.equal_kind origin.request.kind reply.kind
       && View_id.equal (Host.focused t.host ~available:(fun _ -> true)) document_id
-      && Option.is_none t.hover && Option.is_none t.destinations ->
+      && Option.is_none t.hover && Option.is_none t.destinations && Option.is_none t.instances ->
     let width, height = Option.value t.fitted_dimensions ~default:(80, 24) in
     (match reply.result with
      | Failed text -> navigation_notice (dismiss_navigation t) text
      | Hover_result None -> navigation_notice (dismiss_navigation t) "No hover information"
-     | Locations [] -> navigation_notice (dismiss_navigation t) "No destinations found"
-     | Locations [target] -> jump_target t ~width ~height target
+     | Locations [] -> navigation_notice (dismiss_navigation t)
+         (match reply.kind with References -> "No references found"
+          | Instantiation -> "No instantiation location (top-level or unavailable)"
+          | _ -> "No destinations found")
+     | Locations [target] when not (Query.equal_kind reply.kind References) -> jump_target t ~width ~height target
+     | Instance_activated activated ->
+       let context = Option.filter t.instance_origin ~f:(fun context ->
+         String.equal context.source reply.source
+         && String.equal context.module_name activated.module_name
+         && match origin.request.kind with
+            | Activate_instance selected -> Query.equal_instance_activated selected activated
+            | _ -> false) in
+       let t = dismiss_navigation t in
+       (match context with
+        | None -> t
+        | Some context -> navigation_notice
+            { t with active_instance = Some { context with hier_path = Some activated.hier_path } }
+            ("Instance: " ^ activated.hier_path))
+     | Instance_list list ->
+       if List.is_empty list.instances then navigation_notice (dismiss_navigation t) "No instances found"
+       else if Option.is_none (palette_placement ~width ~height) then
+         navigation_notice (dismiss_navigation t) "Instances cannot fit"
+       else
+         let context = { origin; source = reply.source; module_name = list.module_name
+            ; module_range = list.module_range; module_offsets = module_offsets t ~encoding:list.encoding list.module_range
+           ; hier_path = None } in
+         { t with instances = Some (Instance_picker_tile.create ~module_name:list.module_name
+             ~active:list.active list.instances)
+         ; instance_origin = Some context; host = Host.focus t.host Instance_picker_tile.id }
      | Hover_result (Some hover) ->
        if Option.is_none (palette_placement ~width ~height) then
          navigation_notice (dismiss_navigation t) "Hover cannot fit"
@@ -3258,7 +3397,10 @@ let receive_navigation t (reply : Query.reply) =
            | None -> Map.set versions ~key:path ~data:(On_disk (disk_version path))
            | Some (_, controller) -> Map.set versions ~key:path
                ~data:(Retained (Controller.document_id controller, Editor.revision (Controller.editor controller)))) in
-         { t with destinations = Some (Destination_picker_tile.create targets); destination_versions
+         let picker = Destination_picker_tile.create targets in
+         let picker = if Query.equal_kind reply.kind References
+           then Destination_picker_tile.with_title picker "Find references" else picker in
+         { t with destinations = Some picker; destination_versions
          ; host = Host.focus t.host Destination_picker_tile.id })
   | _ -> t
 ;;
@@ -3622,6 +3764,9 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Hover -> start_navigation t ~width ~height Query.Hover
   | Go_to_declaration -> start_navigation t ~width ~height Query.Declaration
   | Go_to_definition -> start_navigation t ~width ~height Query.Definition
+  | Find_references -> start_navigation t ~width ~height Query.References
+  | Select_active_instance -> start_navigation t ~width ~height Query.Instances
+  | Go_to_instantiation -> start_navigation t ~width ~height Query.Instantiation
   | Jump_back -> traverse_navigation t ~width ~height ~forward:false
   | Jump_forward -> traverse_navigation t ~width ~height ~forward:true
   | Toggle_completion -> { t with completion_enabled = not t.completion_enabled }
@@ -3713,8 +3858,10 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Run_view_command { view; command } -> run_view_command t ~width ~height view command
   | Request_view { view; request } -> request_view t ~width ~height view request
   | Restart_source when t.source_attached ->
+    let t = dismiss_completion (dismiss_navigation { t with active_instance = None; context_revisions = String.Map.empty }) in
     { t with source_commands = Restart :: t.source_commands }
   | Kill_source when t.source_attached ->
+    let t = dismiss_completion (dismiss_navigation { t with active_instance = None; context_revisions = String.Map.empty }) in
     { t with source_commands = Kill :: t.source_commands }
   | Restart_source | Kill_source -> t
   | Show_language_servers ->
@@ -4063,6 +4210,9 @@ let paste_capture t ~width ~height id text =
     | _ when View_id.equal id Destination_picker_tile.id ->
       { t with destinations = Option.map t.destinations ~f:(fun picker ->
           Destination_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text)) }
+    | _ when View_id.equal id Instance_picker_tile.id ->
+      { t with instances = Option.map t.instances ~f:(fun picker ->
+          Instance_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text)) }
     | _ when View_id.equal id Content_picker_tile.id ->
       Option.iter t.content_picker ~f:(fun picker ->
         Content_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text));
@@ -4173,6 +4323,27 @@ let feed_palette t ~width ~height palette key =
 
 let route t ~width ~height key =
   match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id when View_id.equal id Instance_picker_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Instance_picker_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    (match decision, t.instances with
+     | Return, _ -> dismiss_navigation t, Controller.Status.Running
+     | Content (Event event), Some picker ->
+       { t with instances = Some (Instance_picker_tile.update picker
+           ~rows:(minor_rows t ~width ~height id) event) }, Running
+     | Content Accept, Some picker ->
+       (match t.navigation, t.instance_origin, Instance_picker_tile.selected picker with
+        | Some origin, Some context, Some selected when navigation_current t origin ->
+          let t = start_navigation (dismiss_completion (dismiss_navigation t)) ~width ~height
+            (Activate_instance { module_name = context.module_name; hier_path = selected.hier_path }) in
+          { t with instance_origin = Some context; active_instance = None }, Running
+        | _, _, None -> navigation_notice t "No matching instance", Running
+        | _ -> navigation_notice (dismiss_navigation t) "Instance is no longer current", Running)
+     | Workspace command, _ -> apply_view_command (dismiss_navigation t) ~width ~height command, Running
+     | Notice text, _ -> { t with host = Host.with_notice t.host text }, Running
+     | _ -> t, Running)
   | Some id when View_id.equal id Hover_tile.id ->
     let host, decision = Host.key t.host key
       ~lookup:(Keymap.lookup (Controller.keymap t.controller))
@@ -4479,6 +4650,33 @@ let rec receive t (event : Ches_error.Source_event.t) =
   (* Arrival can race the frontend tick, including queued source batches. *)
   let t = expire_completion_acceptance t ~at:(Time_ns.now ()) in
   match event with
+  | Instance_context_changed { source; revision; module_name; hier_path } ->
+    if Option.exists (Map.find t.context_revisions source) ~f:(fun previous -> revision <= previous)
+    then t else
+    let pending = match t.navigation, t.instance_origin with
+      | Some origin, Some context when String.equal context.source source ->
+        (match origin.request.kind with
+         | Activate_instance choice when
+             Option.value_map module_name ~default:true ~f:(String.equal choice.module_name)
+             && Option.value_map hier_path ~default:true ~f:(String.equal choice.hier_path) -> Some (origin, context)
+         | _ -> None)
+      | _ -> None in
+    let active_instance = Option.filter t.active_instance ~f:(fun context ->
+      not (String.equal context.source source)
+      || (Option.equal String.equal module_name (Some context.module_name)
+          && Option.equal String.equal hier_path context.hier_path)) in
+    let t = invalidate_source t source in
+    let t = { t with active_instance
+      ; context_revisions = Map.set t.context_revisions ~key:source ~data:revision } in
+    (* Within the affected pool, preserve only the mutation acknowledgement
+       continuation. Old read-only results and discovery choices are discarded. *)
+    (match pending with
+     | None -> t
+     | Some (origin, context) ->
+       { t with navigation = Some origin; instance_origin = Some context
+         ; source_commands = List.filter t.source_commands ~f:(function
+             | Cancel_query token -> not (Completion.Token.equal token origin.request.token)
+             | _ -> true) })
   | Query_result reply -> receive_navigation t reply
   | Completion reply ->
     (match t.completion with
@@ -4518,7 +4716,14 @@ let rec receive t (event : Ches_error.Source_event.t) =
        else resolve_completion { t with completion = Some c }
      | _ -> t)
   | Servers servers ->
-    { t with views = View_registry.map t.views Language_servers_tile.key
+    let t = List.fold (Option.value t.servers ~default:[]) ~init:t ~f:(fun t previous ->
+      let unchanged = List.exists servers ~f:(fun server ->
+        String.equal server.Ches_error.Source_event.Server.source previous.source
+        && Ches_error.Source_event.Server.equal_status server.status previous.status) in
+      if unchanged then t else
+        invalidate_source { t with context_revisions = Map.remove t.context_revisions previous.source }
+          previous.source) in
+    { t with servers = Some servers; views = View_registry.map t.views Language_servers_tile.key
         ~f:(fun state -> Language_servers_tile.inventory state servers) }
   | Owned { event = Servers _ as event; _ } -> receive t event
   | Owned { resource; generation; event } ->
@@ -4543,9 +4748,12 @@ let rec receive t (event : Ches_error.Source_event.t) =
           not ([%equal: string * string] held key))
         @ [ key, update, text ]
     }
-  | Stopped _ | Unavailable _ -> apply_source (dismiss_navigation t) update ~text
-  | Diagnostics _ | Started _ -> apply_source t update ~text
-  | Owned _ | Servers _ | Completion _ | Completion_metadata _ | Query_result _ -> assert false
+  | Stopped { source; _ } | Unavailable { source; _ } | Started { source; _ } ->
+    apply_source (invalidate_source
+      { t with context_revisions = Map.remove t.context_revisions source } source) update ~text
+  | Diagnostics _ -> apply_source t update ~text
+  | Owned _ | Servers _ | Completion _ | Completion_metadata _ | Query_result _
+  | Instance_context_changed _ -> assert false
 ;;
 
 let receive_all t ~width ~height events =
@@ -4605,9 +4813,11 @@ let toggle_step text c =
 let rec apply t ~width ~height (input : Input.t) =
   let t = match input with
     | Key (Escape | Ctrl 'c') | Key_at { key = (Escape | Ctrl 'c'); _ }
-        when Option.is_some t.navigation && Option.is_none t.hover && Option.is_none t.destinations ->
+        when Option.is_some t.navigation && Option.is_none t.hover && Option.is_none t.destinations
+          && Option.is_none t.instances ->
       dismiss_navigation t
-    | Paste_start when Option.is_some t.navigation && Option.is_none t.destinations -> dismiss_navigation t
+    | Paste_start when Option.is_some t.navigation && Option.is_none t.destinations
+        && Option.is_none t.instances -> dismiss_navigation t
     | _ -> t in
   (* Even a key held by the timed toggle recognizer ends the opportunity for
      deferred edits. It need not have changed revision/cursor yet. *)

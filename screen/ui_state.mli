@@ -180,8 +180,11 @@ val snippet_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t 
 (** Language-query floats retain the originating document identity. *)
 val hover : t -> Hover_tile.t option
 val destinations : t -> Destination_picker_tile.t option
+val instances : t -> Instance_picker_tile.t option
+val active_instance_label : t -> string option
 val hover_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 val destinations_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+val instances_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 val file_picker_visible_stamp : t -> (int * int * int) option
 
 val create

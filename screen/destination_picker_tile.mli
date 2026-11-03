@@ -4,6 +4,9 @@ type t [@@deriving sexp_of]
 val id : Ches_tile.View_id.t
 val spec : Ches_tile.Spec.t
 val create : Ches_error.Language_query.target list -> t
+(** Change the result heading without resetting query, selection, or scrolling.
+    Rendered headings and default footers include matching/total counts. *)
+val with_title : t -> string -> t
 (** Exact original target, including both ranges and encoding. Selection identity
     is its original list index, allowing identical labels and duplicate targets. *)
 val selected : t -> Ches_error.Language_query.target option

@@ -232,6 +232,7 @@ Backend details and focused checks are in [`terminal/README.md`](../terminal/REA
 | Normal | `Space l i` | Open live Language servers status; also search `lsp` in the palette |
 | Normal (file) | `K` | Hover: show server-provided type/documentation information |
 | Normal (file) | `gd` / `gD` | Go to declaration/interface / definition/source, with capability-aware fallback |
+| Normal (file) | `gr` | Find references, including declarations, in a searchable result picker |
 | Normal (file) | `Ctrl-o` / `Ctrl-i` | Jump back / forward through symbol-navigation history |
 | Normal (file) | `Tab` | Jump forward alias for terminals that encode Ctrl-i as Tab |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
@@ -679,9 +680,9 @@ which the server reads itself. For example:
 ```
 
 See the [slang-server configuration documentation](https://hudson-trading.github.io/slang-server/start/config/).
-Ches consumes LSP diagnostics, completion, hover, declaration and definition
-navigation. Slang-specific hierarchy/active-instance selection and waveform
-features are not wired into the editor.
+Ches consumes LSP diagnostics, completion, hover, declaration/definition navigation,
+and references, plus Slang active-instance selection and instantiation navigation.
+A full Slang hierarchy tree and waveform features are not wired into the editor.
 
 ### Hover and symbol navigation
 
@@ -692,6 +693,7 @@ Place the text cursor on a symbol in a file's Normal mode:
 | `K` | Show hover information in a scrollable floating view |
 | `gd` | Request declaration first, then definition if unavailable or not found |
 | `gD` | Request definition first, then declaration if unavailable or not found |
+| `gr` | Find references in a searchable picker, including declarations |
 | `Ctrl-o` | Jump back |
 | `Ctrl-i` / `Tab` | Jump forward |
 
@@ -719,8 +721,8 @@ symbol resolution and source availability. The implementation request is not use
 Slang advertises definition but not declaration, so both keys normally use its
 definition handler. Hover can include elaborated types, widths, enum/parameter
 values, and documentation according to server support. Instance-dependent results
-reflect Slang's selected elaboration context; Ches does not yet provide an
-active-instance selector.
+reflect Slang's analysis; see active-instance controls below for selecting context
+and the installed-server hover limitation.
 
 Queries flush pending document changes before execution and are cancelled or
 ignored after cursor, mode, focus, buffer, document, or server-lifetime changes.
@@ -734,6 +736,54 @@ retains at most 128 entries, storing paths and byte offsets rather than snapshot
 Edits do not relocate old marks: their numeric offsets are reused only if still
 valid, otherwise traversal reports an error without advancing history. History is
 session-local and navigation does not alter text undo history.
+
+#### Find references
+
+Press **`gr`** on a symbol in Normal mode, or choose **Find references** from the
+command palette. This uses the standard LSP references request with declarations
+included. It works with both ocamllsp and slang-server when advertised by the
+attached server; it does not fall back to definition lookup.
+
+All nonempty results open the **Find references** picker, even a single result.
+The heading shows matching/total counts. Filter by path/line, use Tab/Shift-Tab or
+Ctrl-n/Ctrl-p to select, and Enter to jump. Escape cancels. Jumps reuse retained
+dirty buffers and enter the same Ctrl-o/Ctrl-i history. Changed destinations are
+rejected rather than jumping to stale coordinates. Empty or unsupported queries
+produce a notice. The existing 256-target transport limit applies; oversized
+responses report an error rather than silently omitting results.
+
+#### Slang active-instance context
+
+With the cursor inside a module's definition in Normal mode, choose **Select
+active instance** from the command palette (`Space c c`). Ches asks the server for
+the enclosing module and lists its elaborated hierarchy paths. Search the list,
+select with Tab/Shift-Tab, and press Enter to activate; `*` marks the previously
+active path independently of the current picker selection. Escape cancels.
+
+Activation changes server context only: it does not edit or navigate the file.
+Confirmed context appears as `Instance: top.some_instance` in the status fields
+when visible, in the selection notice, and alongside hover information for that
+module. It is cleared when document/server context can no longer be trusted.
+Hover, completion and navigation results from the previous context are invalidated;
+other server pools retain their own state.
+
+Choose **Go to instantiation** to navigate to the current instance's use site. This
+uses normal target validation and jump history, so Ctrl-o returns. If the server
+provides no usable location, Ches reports that instead of guessing. Some server
+versions return the module's own range for a top-level instance.
+
+These commands require Slang's advertised extensions and an elaborated design with
+reachable instances. A standalone file may support hover/references but have no
+instance list until the server has a configured build/source set. Ches does not
+silently select a build file or change project settings. Unsupported servers and
+contexts receive a notice; there is no source-text module-name guessing.
+
+**Installed-server observation:** the tested Slang `0.3.1+a7a2d08` confirmed
+switching between `top.narrow` and `top.wide`, but subsequent fresh hover responses
+still included both 8-bit and 32-bit type variants. Ches displays what the server
+returns; active selection does not guarantee that this version narrows every
+hover to a single width. Standard references worked in the same probe, and
+ocamllsp returned the declaration and both uses of a test value.
 
 ### Code completion
 

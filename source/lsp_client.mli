@@ -29,12 +29,17 @@
        Results contain at most 512 plain-text items, with at most 128 additional edits
        each; invalid/overlapping edits, snippets and commands are rejected. Completion
        lists retain [isIncomplete]. No resolve or command execution is advertised.
-     - [Query] handles hover and declaration/definition-first navigation. It flushes
+      - [Query] handles hover, declaration/definition-first navigation, standard
+        references and typed instance discovery/activation/instantiation. It flushes
        changes, checks the exact snapshot and cursor, and emits [Query_result].
        One query per document and 32 per connection survive, with a shared ten-second
        deadline across fallback. [Cancel_query] is exact-token; edit/close/restart
        cancel pending work. Unsupported/unavailable queries fail explicitly.
-       See source/NAVIGATION.md for normalization and consumer requirements.
+        See source/NAVIGATION.md and source/INSTANCES.md for normalization and
+        consumer requirements. Instance context invalidation cancels queries and
+        completion work across all documents on the connection. Mutations retain
+        bounded acknowledgement observers after cancellation/deadline, since a late
+        successful mutation must still invalidate server-dependent results.
      - Each [publishDiagnostics] becomes a [Diagnostics] snapshot for {!Config.source}:
       an open document under Ches's own resource name and mapped revision; any
       other file unversioned, by its path relative to the working directory (absolute
@@ -45,7 +50,9 @@
 
     Requests the server makes of the client (progress tokens, configuration, capability
     registration) get empty answers, and any other request "method not found"; the
-    server's other notifications and its stderr (beyond the stop reason) are dropped. *)
+     Slang active-instance notifications and standard annotation refresh requests
+     invalidate connection context; refresh requests are acknowledged with null.
+     Other notifications and stderr (beyond the stop reason) are dropped. *)
 open! Core
 open! Async
 

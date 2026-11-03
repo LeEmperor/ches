@@ -8,6 +8,7 @@ module Id = struct
     | Pending
     | Position
     | Message
+    | Instance
   [@@deriving sexp_of, equal, enumerate]
 end
 

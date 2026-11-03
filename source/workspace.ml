@@ -24,6 +24,7 @@ let start ~create () =
            | Servers _ -> Servers []
             | Completion reply -> Completion { reply with source = name reply.source }
             | Query_result reply -> Query_result { reply with source = name reply.source }
+            | Instance_context_changed info -> Instance_context_changed { info with source = name info.source }
             | Completion_metadata info -> Completion_metadata { info with source = name info.source }
           | Diagnostics d -> Diagnostics { d with source = name d.source }
           | Started d -> Started { d with source = name d.source }
@@ -40,7 +41,8 @@ let start ~create () =
           | `Events events ->
             if not !stopped && Option.exists (Hashtbl.find drivers resource) ~f:(fun (current, _, _) -> current = generation)
              then List.iter events ~f:(fun event -> match event with
-               | Servers _ -> emit (Ches_error.Source_event.Servers [])
+                | Servers _ -> emit (Ches_error.Source_event.Servers [])
+                | Instance_context_changed _ -> emit (scoped event)
                | _ -> emit (Ches_error.Source_event.Owned { resource; generation; event = scoped event }));
             if !stopped || Ivar.is_full finished then Deferred.unit else pump ()
         in

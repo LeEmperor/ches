@@ -101,6 +101,25 @@ let accepted () =
   t, req, revision t
 ;;
 
+let%test_unit "pool context invalidation drops old completion and deferred resolve only for its resources" =
+  let server source resources : Ches_error.Source_event.Server.t =
+    { source; resources; program = "fake"; args = []; root = "/"; status = Running } in
+  let inventory = Ches_error.Source_event.Servers
+    [server "test" ["/completion-resolve-review.ml"]; server "other" ["/other.sv"]] in
+  let changed source = Ches_error.Source_event.Instance_context_changed
+    { source; revision = 1; module_name = None; hier_path = None } in
+  let pending, req = query () in
+  let pending = run pending [Source inventory; Source (changed "test")] in
+  let late = reply pending req [candidate req "alpha"] |> fun t -> press t "<Tab>" in
+  assert (not (String.is_prefix (text late) ~prefix:"alpha"));
+  List.iter ["test", false; "other", true] ~f:(fun (source, applies) ->
+    let t, req, at = accepted () in
+    let t = run t [Source inventory; Source (changed source)] in
+    let t = metadata t req [info ~revision:at ~additional:(extras "import\n") "alpha"] in
+    assert (String.equal (text t)
+      (if applies then "alpha\nimport\ntrailing" else "alpha\ntrailing")))
+;;
+
 let%expect_test "deferred acceptance expires without typing and cancels its source token" =
   let t, req, at = accepted () in
   let t = run t [Toggle_tick (Time_ns.add (Time_ns.now ()) (Time_ns.Span.of_int_sec 2))] in

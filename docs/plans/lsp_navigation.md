@@ -53,6 +53,9 @@ screen orchestration/bindings, and pure views/history respectively.
 
 ## Status
 
+Slang active-instance controls and standard references were subsequently added in
+[the instance/reference phase](instances_and_references.md).
+
 Implemented and validated. Shared request/response and coordinate types live in
 `error/language_query.mli`. Transport details are in `source/NAVIGATION.md`; pure
 view/history contracts are in `screen/HOVER_NAVIGATION.md`.
