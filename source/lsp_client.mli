@@ -29,7 +29,13 @@
        Results contain at most 512 plain-text items, with at most 128 additional edits
        each; invalid/overlapping edits, snippets and commands are rejected. Completion
        lists retain [isIncomplete]. No resolve or command execution is advertised.
-    - Each [publishDiagnostics] becomes a [Diagnostics] snapshot for {!Config.source}:
+     - [Query] handles hover and declaration/definition-first navigation. It flushes
+       changes, checks the exact snapshot and cursor, and emits [Query_result].
+       One query per document and 32 per connection survive, with a shared ten-second
+       deadline across fallback. [Cancel_query] is exact-token; edit/close/restart
+       cancel pending work. Unsupported/unavailable queries fail explicitly.
+       See source/NAVIGATION.md for normalization and consumer requirements.
+     - Each [publishDiagnostics] becomes a [Diagnostics] snapshot for {!Config.source}:
       an open document under Ches's own resource name and mapped revision; any
       other file unversioned, by its path relative to the working directory (absolute
       when outside it).

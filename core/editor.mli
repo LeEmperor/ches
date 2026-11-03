@@ -250,6 +250,10 @@ val cursor : t -> int
     Invalid/out-of-range positions return an error without modifying the editor. *)
 val go_to_display_position : t -> line:int -> column:int -> t Or_error.t
 
+(** Navigate to an exact UTF-8 byte boundary in Normal mode, preserving zero-width
+    scalar positions. Line ends normalize as for other Normal cursor movements. *)
+val go_to_offset : t -> int -> t Or_error.t
+
 (** Convert an absolute UTF-8 byte boundary using this editor's width table to
     one-based line/display-cell coordinates. Zero-width scalars map to the
     preceding visible glyph (or cell 1), as in [Cell_layout.cursor_span]; display

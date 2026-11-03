@@ -1,6 +1,8 @@
 open! Core
 
 type t =
+  | Query of Language_query.request
+  | Cancel_query of Ches_completion.Model.Token.t
   | Complete of Ches_completion.Model.Request.t
   | Resolve_completion of { token : Ches_completion.Model.Token.t; candidate_id : string; revision : int }
   | Cancel_completion of Ches_completion.Model.Token.t

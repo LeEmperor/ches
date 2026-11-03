@@ -112,6 +112,7 @@ let changed root revision text : Source_request.t =
 let show ~root (event : Source_event.t) =
   let hide = String.substr_replace_all ~pattern:root ~with_:"<root>" in
   match event with
+  | Query_result reply -> print_s [%sexp (reply : Ches_error.Language_query.reply)]
   | Completion reply -> print_s [%sexp (reply : Ches_completion.Model.Reply.t)]
   | Completion_metadata _ -> ()
   | Servers _ -> ()

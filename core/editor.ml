@@ -198,6 +198,14 @@ let display_position_of_offset t offset =
     Ok (line + 1, col + 1))
 ;;
 
+let go_to_offset t offset =
+  if not (Mode.equal t.mode Normal)
+  then Or_error.error_string "Navigation requires Normal mode"
+  else if not (B.is_boundary t.text offset)
+  then Or_error.error_string "Invalid document byte boundary"
+  else Ok (set_cursor t offset)
+;;
+
 let go_to_display_position t ~line ~column =
   if not (Mode.equal t.mode Normal)
   then Or_error.error_string "Problem navigation requires Normal mode"

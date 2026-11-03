@@ -6,6 +6,7 @@ module Source_request = Ches_error.Source_request
 module Finding = Feedback.Diagnostics.Finding
 module Cell_layout = Ches_core.Cell_layout
 module Types = Lsp.Types
+module Query = Ches_error.Language_query
 
 let find_program prog =
   let executable file =
@@ -228,6 +229,8 @@ type session =
   ; pending : (Jsonrpc.Response.t -> unit) Int.Table.t
   ; mutable encoding : Convert.encoding
   ; mutable initialized : bool
+  ; mutable query_caps : Query.kind list
+  ; queries : (Query.request * int * Clock_ns.Event.t_unit) String.Table.t
   ; mutable completion : bool
   ; mutable completion_resolve : bool
   ; mutable completion_triggers : string list
@@ -315,6 +318,16 @@ let cancel_completions session =
   List.iter (Hashtbl.keys session.completions) ~f:(cancel_completion session)
 ;;
 
+let cancel_query session file =
+  Option.iter (Hashtbl.find_and_remove session.queries file) ~f:(fun (_, id, timer) ->
+    Clock_ns.Event.abort_if_possible timer ();
+    Hashtbl.remove session.pending id;
+    send session (Notification (Jsonrpc.Notification.create ~method_:"$/cancelRequest"
+      ~params:(`Assoc ["id", `Int id]) ())))
+;;
+
+let cancel_queries session = List.iter (Hashtbl.keys session.queries) ~f:(cancel_query session)
+
 let cancel_resolve session file =
   Option.iter (Hashtbl.find_and_remove session.resolves file) ~f:(fun (_, id, timer) ->
     Clock_ns.Event.abort_if_possible timer ();
@@ -343,6 +356,10 @@ let report_stop t session ~reason =
   then (
     cancel_changes session;
     cancel_completions session;
+    List.iter (Hashtbl.data session.queries) ~f:(fun (q, _, _) ->
+      t.emit (Query_result { token = q.token; cursor = q.cursor; kind = q.kind;
+        source = t.config.source; result = Failed ("Language server stopped: " ^ reason) }));
+    cancel_queries session;
     clear_retained session;
     t.session <- None;
     let reason =
@@ -452,6 +469,78 @@ let flush_document t session file =
   cancel_change session file;
   if current t session && not session.closed then
     Option.iter (Hashtbl.find t.documents file) ~f:(synchronize_document t session)
+;;
+
+let query t (q : Query.request) =
+  let token = q.token in
+  let file = canonical token.resource in
+  let emit result = t.emit (Query_result { token; cursor = q.cursor; kind = q.kind;
+    source = t.config.source; result }) in
+  let fail message = emit (Failed message) in
+  match t.session with
+  | None -> fail "Language server is unavailable or starting"
+  | Some session when not session.initialized || session.closed -> fail "Language server is not running"
+  | Some session ->
+    match Hashtbl.find t.documents file with
+    | Some document when String.equal document.resource token.resource
+        && document.revision = token.revision
+        && [%equal: int option] document.owner (Some token.generation) ->
+      cancel_query session file;
+      (match Completion_wire.position session.encoding document.text q.cursor with
+       | None -> fail "Invalid language query cursor"
+       | Some position ->
+         flush_document t session file;
+         if not (Option.exists (Hashtbl.find session.opened file) ~f:(fun sent -> sent.version = document.version))
+         then fail "Language server cannot synchronize this document"
+         else if Hashtbl.length session.queries >= 32 then fail "Too many pending language queries"
+         else
+           let methods = match q.kind with
+             | Hover -> [Query.Hover] | Declaration -> [Declaration; Definition]
+             | Definition -> [Definition; Declaration] in
+           let encoding = match session.encoding with
+             | Utf8 -> Query.Utf8 | Utf16 -> Utf16 | Utf32 -> Utf32 in
+           let valid () = current t session && not t.stopped && not session.closed
+             && Option.exists (Hashtbl.find t.documents file) ~f:(fun now ->
+               phys_equal now.recent document.recent && now.revision = token.revision
+               && [%equal: int option] now.owner document.owner) in
+           let deadline = Time_ns.add (Time_ns.now ()) (Time_ns.Span.of_int_sec 10) in
+           let rec attempt methods tried =
+             match methods with
+             | [] -> if tried then emit (Locations []) else fail "Language server does not support this query"
+             | kind :: rest when not (List.mem session.query_caps kind ~equal:Query.equal_kind) -> attempt rest tried
+             | kind :: rest ->
+               let id = session.next_id in
+               session.next_id <- id + 1;
+               let timer = Clock_ns.Event.run_at deadline (fun () ->
+                 cancel_query session file;
+                 if valid () then fail "Language query timed out") () in
+               Hashtbl.set session.queries ~key:file ~data:(q, id, timer);
+               Hashtbl.set session.pending ~key:id ~data:(fun response ->
+                 match Hashtbl.find session.queries file with
+                 | Some (active, active_id, _) when active_id = id && Query.equal_request active q ->
+                   Clock_ns.Event.abort_if_possible timer ();
+                   Hashtbl.remove session.queries file;
+                   if valid () then (match response.result with
+                     | Error error ->
+                       let fallback = match error.code with MethodNotFound | RequestFailed -> true | _ -> false in
+                       (* A recoverable error is only recovered if another provider
+                          can actually be tried. Exhaustion must not turn a server
+                          failure into a successful empty navigation result. *)
+                       if not (Query.equal_kind kind Hover) && fallback
+                          && List.exists rest ~f:(fun kind -> List.mem session.query_caps kind ~equal:Query.equal_kind)
+                       then attempt rest true else fail error.message
+                     | Ok json -> (match Navigation_wire.decode encoding kind json with
+                       | Ok (Locations []) when not (List.is_empty rest) -> attempt rest true
+                       | Ok result -> emit result | Error message -> fail message))
+                 | _ -> ());
+               let method_ = match kind with Hover -> "textDocument/hover"
+                 | Declaration -> "textDocument/declaration" | Definition -> "textDocument/definition" in
+               send session (Request (Jsonrpc.Request.create ~id:(`Int id) ~method_
+                 ~params:(`Assoc ["textDocument", `Assoc ["uri", `String (Lsp.Uri.to_string document.uri)];
+                   "position", Types.Position.yojson_of_t position]) ()))
+           in
+           attempt methods false)
+    | _ -> fail "Language query document snapshot is stale or unattached"
 ;;
 
 let complete t (completion : Ches_completion.Model.Request.t) =
@@ -740,7 +829,11 @@ let initialize t session =
         (Types.ClientCapabilities.create
             ~general:(Types.GeneralClientCapabilities.create ~positionEncodings:[ UTF8; UTF16; UTF32 ] ())
            ~textDocument:
-              (Types.TextDocumentClientCapabilities.create
+               (Types.TextDocumentClientCapabilities.create
+                   ~hover:(Types.HoverClientCapabilities.create ~dynamicRegistration:false
+                     ~contentFormat:[Markdown; PlainText] ())
+                   ~declaration:(Types.DeclarationClientCapabilities.create ~dynamicRegistration:false ~linkSupport:true ())
+                   ~definition:(Types.DefinitionClientCapabilities.create ~dynamicRegistration:false ~linkSupport:true ())
                   ~completion:(Types.CompletionClientCapabilities.create
                     ~completionList:(Types.CompletionClientCapabilities.create_completionList
                       ~itemDefaults:["editRange"; "insertTextFormat"; "insertTextMode"; "data"] ())
@@ -769,9 +862,14 @@ let initialize t session =
     if current t session
     then (
       match response.result with
-      | Error error ->
-        fail t session ~reason:(sprintf "initialize failed: %s" error.message)
-      | Ok json ->
+       | Error error ->
+         fail t session ~reason:(sprintf "initialize failed: %s" error.message)
+       | Ok json ->
+         let caps = Option.value (Completion_wire.field json "capabilities") ~default:`Null in
+         session.query_caps <- List.filter [Query.Hover; Declaration; Definition] ~f:(fun kind ->
+           let key = match kind with Hover -> "hoverProvider" | Declaration -> "declarationProvider"
+             | Definition -> "definitionProvider" in
+           match Completion_wire.field caps key with Some (`Bool true) | Some (`Assoc _) -> true | _ -> false);
         (match Lsp.Client_request.response_of_json initialize json with
          | exception exn ->
            fail t session ~reason:(sprintf "initialize failed: %s" (Exn.to_string exn))
@@ -783,7 +881,7 @@ let initialize t session =
              session.completion_triggers <- Option.value_map result.capabilities.completionProvider
                ~default:[] ~f:(fun options -> Option.value options.triggerCharacters ~default:[]);
              (match result.capabilities.positionEncoding with
-              | Some (Other _) -> session.completion <- false | _ -> ());
+               | Some (Other _) -> session.completion <- false; session.query_caps <- [] | _ -> ());
             session.sync_kind <- (match result.capabilities.textDocumentSync with
               | Some (`TextDocumentSyncKind kind) -> kind
               | Some (`TextDocumentSyncOptions options) -> Option.value options.change ~default:None
@@ -815,6 +913,7 @@ let rec read t session =
 ;;
 
 let close_pipes session =
+  cancel_queries session;
   cancel_changes session;
   cancel_completions session;
   clear_retained session;
@@ -904,7 +1003,9 @@ let start_session t =
          let session =
            { process
            ; next_id = 1
-           ; pending = Int.Table.create ()
+            ; pending = Int.Table.create ()
+            ; query_caps = []
+            ; queries = String.Table.create ()
             ; encoding = Utf16
              ; completion = false
              ; completion_resolve = false
@@ -942,6 +1043,7 @@ let start_session t =
    then a kill if it outlives the grace period. *)
 let end_session t =
   Option.iter t.session ~f:(fun session ->
+    cancel_queries session;
     cancel_changes session;
     cancel_completions session;
     clear_retained session;
@@ -967,6 +1069,12 @@ let end_session t =
 
 let rec handle_request t (request : Source_request.t) =
   match request with
+  | Query q -> query t q
+  | Cancel_query token ->
+    Option.iter t.session ~f:(fun session ->
+      let file = canonical token.resource in
+      if Option.exists (Hashtbl.find session.queries file) ~f:(fun (q, _, _) ->
+        Ches_completion.Model.Token.equal q.token token) then cancel_query session file)
   | Complete completion -> complete t completion
   | Resolve_completion { token; candidate_id; revision } -> resolve_completion t token candidate_id revision
   | Cancel_completion token ->
@@ -989,7 +1097,8 @@ let rec handle_request t (request : Source_request.t) =
      | Some document when String.equal document.resource resource ->
        Hash_set.remove t.saves file;
         Option.iter t.session ~f:(fun session ->
-          cancel_change session file;
+           cancel_change session file;
+           cancel_query session file;
            cancel_completion session file;
            forget_completion session file;
          Option.iter (Hashtbl.find_and_remove session.opened file) ~f:(fun opened ->
@@ -1001,7 +1110,7 @@ let rec handle_request t (request : Source_request.t) =
      | _ -> ())
    | Document_changed { resource; text; revision } ->
      let file = canonical resource in
-      Option.iter t.session ~f:(fun session -> cancel_completion session file; cancel_resolve session file);
+      Option.iter t.session ~f:(fun session -> cancel_query session file; cancel_completion session file; cancel_resolve session file);
     let previous = Hashtbl.find t.documents file in
     if Option.exists previous ~f:(fun d -> not (String.equal d.resource resource))
     then (
@@ -1149,7 +1258,14 @@ let start_workspace ?(config_for_path = Config.for_path) ~cell_width () =
     { Source.Driver.handle = (fun request -> match request with
         | Document_opened { resource; generation } -> open_document resource generation
         | Document_closed { resource } -> close resource
-        | Inspect -> publish ()
+         | Inspect -> publish ()
+         | Query q ->
+           (match Hashtbl.find resources q.token.resource with
+            | Some (_, driver) -> driver.handle request
+            | None -> emit (Query_result { token = q.token; cursor = q.cursor; kind = q.kind;
+                source = "lsp"; result = Failed "No language server attached to this document" }))
+         | Cancel_query token ->
+           Option.iter (Hashtbl.find resources token.resource) ~f:(fun (_, driver) -> driver.handle request)
          | Document_changed { resource; _ } | Document_saved { resource; _ } ->
            Option.iter (Hashtbl.find resources resource) ~f:(fun (_, driver) -> driver.handle request)
           | Complete { token = { resource; _ }; _ } | Cancel_completion { resource; _ } ->

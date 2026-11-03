@@ -5,6 +5,11 @@
 open! Core
 
 type t =
+  | Query of Language_query.request
+  (** Hover or declaration/definition-first lookup on the exact current snapshot.
+      Unsupported or unavailable queries emit a failed Query_result. *)
+  | Cancel_query of Ches_completion.Model.Token.t
+  (** Exact-token cancellation; edits, close and restart also invalidate queries. *)
   | Complete of Ches_completion.Model.Request.t
   (** Query the attached pooled server against this token's exact document snapshot.
        Requests before initialization or for stale tokens are ignored. *)

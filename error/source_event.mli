@@ -19,6 +19,9 @@ module Server : sig
 end
 
 type t =
+  | Query_result of Language_query.reply
+  (** Independent of diagnostic coalescing. Consumers check the token and cursor
+      against the current buffer lifetime, revision and pending request. *)
   | Completion of Ches_completion.Model.Reply.t
   (** Plain-text completion results; route immediately, independently of diagnostics. *)
   | Completion_metadata of { token : Ches_completion.Model.Token.t; source : string; items : Completion_info.t list }
@@ -45,5 +48,5 @@ type t =
 [@@deriving sexp_of]
 
 (** The feedback update, stamping [current_revision] onto diagnostics.
-    [Servers], [Completion] and [Completion_metadata] yield [Noop]. *)
+    [Servers], [Query_result], [Completion] and [Completion_metadata] yield [Noop]. *)
 val to_update : t -> current_revision:int -> Feedback.update

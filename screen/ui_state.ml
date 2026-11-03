@@ -6,6 +6,17 @@ module Host = Ches_tile.Host
 module View_id = Ches_tile.View_id
 module Completion = Ches_completion.Model
 module Snippet = Ches_completion.Snippet
+module Query = Ches_error.Language_query
+
+type navigation_origin =
+  { request : Query.request
+  ; owner : Buffer_id.t option
+  ; document : Controller.Document_id.t
+  }
+
+type destination_version =
+  | Retained of Controller.Document_id.t * int
+  | On_disk of string option
 
 type snippet_session =
   { fields : Snippet.Session.t
@@ -132,6 +143,12 @@ type toggle_pending =
 
 type t =
   { controller : Controller.t
+  ; navigation : navigation_origin option
+  ; navigation_serial : int
+  ; hover : Hover_tile.t option
+  ; destinations : Destination_picker_tile.t option
+  ; destination_versions : destination_version String.Map.t
+  ; jump_history : Jump_history.t
   ; configuration_path : (string, string) Result.t
   ; snippet : snippet_session option
   ; completion : completion_session option
@@ -293,6 +310,12 @@ let create
     then Session.focus_directory session false else session in
   let controller = Option.value_exn (Session.active_controller session) in
   { controller
+  ; navigation = None
+  ; navigation_serial = 0
+  ; hover = None
+  ; destinations = None
+  ; destination_versions = String.Map.empty
+  ; jump_history = Jump_history.empty
   ; configuration_path = Error "Configuration path is unavailable"
   ; snippet = None
   ; completion = None
@@ -339,6 +362,8 @@ let create
          ]
          @ View_registry.specs views
          @ [ Palette_tile.spec
+            ; Hover_tile.spec
+            ; Destination_picker_tile.spec
             ; Terminal_tile.spec
             ; Theme_picker_tile.spec
             ; Snippet_picker_tile.spec
@@ -463,6 +488,38 @@ let take_terminal_requests t =
 let theme t = Option.value_map t.theme_picker ~f:Theme_picker_tile.preview ~default:t.theme
 let theme_picker t = t.theme_picker
 let snippet_picker t = t.snippet_picker
+let hover t = t.hover
+let destinations t = t.destinations
+
+let navigation_current t (origin : navigation_origin) =
+  let editor = Controller.editor t.controller in
+  Option.equal Buffer_id.equal origin.owner (Session.context_id t.session)
+  && Controller.Document_id.equal origin.document (Controller.document_id t.controller)
+  && Editor.revision editor = origin.request.token.revision
+  && Editor.cursor editor = origin.request.cursor
+  && Mode.equal (Editor.mode editor) Normal
+  && Option.equal Int.equal
+       (Option.bind origin.owner ~f:(Session.source_generation t.session))
+       (Some origin.request.token.generation)
+;;
+
+let dismiss_navigation t =
+  let source_commands = match t.navigation with
+    | None -> t.source_commands
+    | Some origin ->
+      let queued = List.exists t.source_commands ~f:(function
+        | Query request -> Completion.Token.equal request.token origin.request.token
+        | _ -> false) in
+      let commands = List.filter t.source_commands ~f:(function
+        | Query request -> not (Completion.Token.equal request.token origin.request.token)
+        | _ -> true) in
+      if queued then commands else Cancel_query origin.request.token :: commands in
+  let host = Host.invalidate_paste (Host.invalidate_paste t.host Hover_tile.id) Destination_picker_tile.id in
+  let host = if Option.is_some t.hover || Option.is_some t.destinations
+    then Host.return host else host in
+  { t with navigation = None; hover = None; destinations = None
+    ; destination_versions = String.Map.empty; host; source_commands }
+;;
 
 let snippet_picker_current t =
   Option.exists t.snippet_picker_snapshot ~f:(fun s ->
@@ -1213,6 +1270,13 @@ let snippet_picker_layout t ~width ~height =
   Option.bind t.snippet_picker ~f:(fun _ -> palette_placement ~width ~height)
 ;;
 
+let hover_layout t ~width ~height =
+  Option.bind t.hover ~f:(fun _ -> palette_placement ~width ~height)
+;;
+let destinations_layout t ~width ~height =
+  Option.bind t.destinations ~f:(fun _ -> palette_placement ~width ~height)
+;;
+
 let picker_placement ~width ~height =
   Floating.layout
     ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
@@ -1291,6 +1355,8 @@ let prompt_layout t ~width ~height =
 let effective_floating floating t ~width ~height =
   match floating with
   | Some _ -> floating
+  | None when Option.is_some t.hover -> Some (Hover_tile.id, hover_layout t ~width ~height)
+  | None when Option.is_some t.destinations -> Some (Destination_picker_tile.id, destinations_layout t ~width ~height)
   | None when t.terminal_visible ->
     Some (Terminal_tile.id, terminal_layout t ~width ~height)
   | None when Option.is_some t.theme_picker ->
@@ -1449,6 +1515,8 @@ let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option 
   then Option.map t.theme_picker ~f:(Theme_picker_tile.cursor ~width:content.width)
   else if View_id.equal id Snippet_picker_tile.id
   then Option.map t.snippet_picker ~f:(Snippet_picker_tile.cursor ~width:content.width)
+  else if View_id.equal id Destination_picker_tile.id
+  then Option.map t.destinations ~f:(Destination_picker_tile.cursor ~width:content.width)
   else if View_id.equal id Palette_tile.id
   then Option.map t.palette ~f:(Palette_tile.cursor ~width:content.width)
   else if View_id.equal id File_picker_tile.id
@@ -1574,6 +1642,8 @@ let leave t id =
   then { t with theme_picker = None }
   else if View_id.equal id Snippet_picker_tile.id
   then { t with snippet_picker = None; snippet_picker_snapshot = None }
+  else if View_id.equal id Hover_tile.id || View_id.equal id Destination_picker_tile.id
+  then dismiss_navigation t
   else if View_id.equal id Palette_tile.id
   then (* Leaving closes the palette and discards its query; nothing runs. *)
     { t with palette = None; palette_origin = None }
@@ -1605,7 +1675,7 @@ let leave t id =
 (* Every view with state to leave: the registered views, then the floats. *)
 let leave_ids t =
   View_registry.ids t.views
-  @ [ Terminal_tile.id ]
+  @ [ Terminal_tile.id; Hover_tile.id; Destination_picker_tile.id ]
   @ [ Snippet_picker_tile.id; Theme_picker_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
     ; Confirm_tile.id; Prompt_tile.id; Popup_tile.id ]
 ;;
@@ -1991,6 +2061,21 @@ let synchronize t ~width ~height =
     | Some _ | None -> t
   in
   let t = withdraw_ask t ~width ~height in
+  let t = match t.navigation with
+    | None -> t
+    | Some origin ->
+      let focus = Host.focused t.host ~available:(fun _ -> true) in
+      let expected = if Option.is_some t.hover then Hover_tile.id
+        else if Option.is_some t.destinations then Destination_picker_tile.id else document_id in
+      if not (navigation_current t origin) || not (View_id.equal focus expected)
+         || (Option.is_some t.hover && Option.is_none (hover_layout t ~width ~height))
+         || (Option.is_some t.destinations && Option.is_none (destinations_layout t ~width ~height))
+      then dismiss_navigation t else t in
+  let t = { t with
+    hover = Option.map t.hover ~f:(fun hover -> Hover_tile.fit hover
+      ~width:(minor_width t ~width ~height Hover_tile.id) ~rows:(minor_rows t ~width ~height Hover_tile.id))
+    ; destinations = Option.map t.destinations ~f:(Destination_picker_tile.fit
+      ~rows:(minor_rows t ~width ~height Destination_picker_tile.id)) } in
   (* Suppressed side placement keeps its request/buffer, but must never retain
      invisible input focus. With no files, the directory remains the major surface. *)
   let t = if Option.is_some (Session.input_directory t.session)
@@ -2285,6 +2370,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
+  | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward
   | Show_language_servers
   | Toggle_terminal
   | Select_terminal _
@@ -2349,6 +2435,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
+  | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward -> None
   | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
   | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
   | Insert_demo_snippet -> None
@@ -3046,6 +3133,136 @@ let open_theme_picker t ~width ~height =
       ~rows:(minor_rows t ~width ~height Theme_picker_tile.id)) }
 ;;
 
+let navigation_notice t text =
+  { t with host = Host.with_notice t.host text
+    ; controller = Controller.update_feedback t.controller
+        (Notify { source = "navigation"; scope = None; severity = Info; text; history = false }) }
+;;
+
+let current_location t =
+  Option.map (Editor.path (Controller.editor t.controller)) ~f:(fun path ->
+    { Jump_history.path = Session.normalize t.session path
+    ; offset = Editor.cursor (Controller.editor t.controller) })
+;;
+
+let disk_version path = Option.try_with (fun () -> Stdlib.Digest.file path)
+;;
+
+let reveal_navigation t ~width ~height ~path ~offset =
+  let position = ref None in
+  let validate controller =
+    let open Or_error.Let_syntax in
+    let%bind offset = offset (Controller.editor controller) in
+    let%map _ = Editor.go_to_offset (Controller.editor controller) offset in
+    position := Some offset in
+  match Session.open_or_activate ~must_exist:true ~validate (session t) path with
+  | Error error -> Error error
+  | Ok (session, _) ->
+    let controller = Option.value_exn (Session.active_controller session) in
+    let offset = Option.value_exn !position in
+    (match Controller.jump_offset controller offset with
+     | Error error -> Error error
+     | Ok controller ->
+       let session = Session.replace_active session controller in
+       let t = dismiss_navigation t in
+       Ok (adopt_session_state (file_tab t) session ~width ~height))
+;;
+
+let jump_target t ~width ~height (target : Query.target) =
+  let origin = current_location t in
+  let offset editor =
+    let text = Text_buffer.to_string (Editor.text editor) in
+    let range (range : Query.range) =
+      match Query.offset target.encoding ~text range.start, Query.offset target.encoding ~text range.stop with
+      | Some start, Some stop when start <= stop -> Some (start, stop)
+      | _ -> None in
+    match range target.range, range target.selection with
+    | Some (start, stop), Some (selected, selected_stop)
+        when start <= selected && selected_stop <= stop -> Ok selected
+    | _ -> Or_error.error_string "Invalid navigation destination range" in
+  match reveal_navigation t ~width ~height ~path:target.path ~offset with
+  | Error error -> navigation_notice (dismiss_navigation t) (Error.to_string_hum error)
+  | Ok t ->
+    (match origin, current_location t with
+     | Some origin, Some destination ->
+       { t with jump_history = Jump_history.record t.jump_history ~origin ~destination }
+     | _ -> t)
+;;
+
+let traverse_navigation t ~width ~height ~forward =
+  if not (snippet_insertion_available t)
+     || not (View_id.equal (focused_view t ~width ~height) document_id)
+  then t else
+  match current_location t with
+  | None -> navigation_notice t "Jump history requires a named document"
+  | Some current ->
+    let peek = if forward then Jump_history.peek_forward else Jump_history.peek_back in
+    match peek t.jump_history ~current with
+    | None -> navigation_notice t "No further jump history"
+    | Some (destination, jump_history) ->
+      match reveal_navigation t ~width ~height ~path:destination.path
+          ~offset:(fun _ -> Ok destination.offset) with
+      | Error error -> navigation_notice t (Error.to_string_hum error)
+      | Ok t -> { t with jump_history }
+;;
+
+let start_navigation t ~width ~height kind =
+  let t = dismiss_navigation t in
+  let editor = Controller.editor t.controller in
+  if not (snippet_insertion_available t)
+     || not (View_id.equal (focused_view t ~width ~height) document_id)
+     || Option.is_some (active_tab_view t)
+  then navigation_notice t "Navigation requires a Normal document"
+  else match Editor.path editor with
+  | None -> navigation_notice t "Navigation requires a named document"
+  | Some _ when not t.source_attached -> navigation_notice t "Language source unavailable"
+  | Some path ->
+    let serial = t.navigation_serial + 1 in
+    let owner = Session.context_id t.session in
+    let generation = Option.bind owner ~f:(Session.source_generation t.session)
+      |> Option.value ~default:0 in
+    let token = { Completion.Token.resource = Session.normalize t.session path
+      ; generation; revision = Editor.revision editor; request = serial } in
+    let request = { Query.token; cursor = Editor.cursor editor; kind } in
+    { t with navigation_serial = serial
+      ; navigation = Some { request; owner; document = Controller.document_id t.controller }
+      ; controller = Controller.cancel_pending t.controller
+      ; source_commands = Query request :: t.source_commands }
+;;
+
+let receive_navigation t (reply : Query.reply) =
+  match t.navigation with
+  | Some origin when navigation_current t origin
+      && Completion.Token.equal origin.request.token reply.token
+      && origin.request.cursor = reply.cursor && Query.equal_kind origin.request.kind reply.kind
+      && View_id.equal (Host.focused t.host ~available:(fun _ -> true)) document_id
+      && Option.is_none t.hover && Option.is_none t.destinations ->
+    let width, height = Option.value t.fitted_dimensions ~default:(80, 24) in
+    (match reply.result with
+     | Failed text -> navigation_notice (dismiss_navigation t) text
+     | Hover_result None -> navigation_notice (dismiss_navigation t) "No hover information"
+     | Locations [] -> navigation_notice (dismiss_navigation t) "No destinations found"
+     | Locations [target] -> jump_target t ~width ~height target
+     | Hover_result (Some hover) ->
+       if Option.is_none (palette_placement ~width ~height) then
+         navigation_notice (dismiss_navigation t) "Hover cannot fit"
+       else { t with hover = Some (Hover_tile.create hover); host = Host.focus t.host Hover_tile.id }
+     | Locations targets ->
+       if Option.is_none (palette_placement ~width ~height) then
+         navigation_notice (dismiss_navigation t) "Destinations cannot fit"
+       else
+         let destination_versions = List.fold targets ~init:String.Map.empty ~f:(fun versions target ->
+           let path = Session.normalize t.session target.Query.path in
+           if Map.mem versions path then versions else
+           match Session.find_resource (session t) path with
+           | None -> Map.set versions ~key:path ~data:(On_disk (disk_version path))
+           | Some (_, controller) -> Map.set versions ~key:path
+               ~data:(Retained (Controller.document_id controller, Editor.revision (Controller.editor controller)))) in
+         { t with destinations = Some (Destination_picker_tile.create targets); destination_versions
+         ; host = Host.focus t.host Destination_picker_tile.id })
+  | _ -> t
+;;
+
 let open_snippet_picker t ~width ~height =
   if not (snippet_insertion_available t)
      || Option.is_some (active_tab_view t)
@@ -3402,6 +3619,11 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     | Directory_major | Directory_side | Focus_directory | Toggle_directory -> leave_bare t
     | _ -> t in
   match view with
+  | Hover -> start_navigation t ~width ~height Query.Hover
+  | Go_to_declaration -> start_navigation t ~width ~height Query.Declaration
+  | Go_to_definition -> start_navigation t ~width ~height Query.Definition
+  | Jump_back -> traverse_navigation t ~width ~height ~forward:false
+  | Jump_forward -> traverse_navigation t ~width ~height ~forward:true
   | Toggle_completion -> { t with completion_enabled = not t.completion_enabled }
   | Toggle_completion_ghost -> { t with completion_ghost_enabled = not t.completion_ghost_enabled }
   | Insert_demo_snippet -> insert_demo_snippet t
@@ -3838,6 +4060,9 @@ let paste_capture t ~width ~height id text =
     | _ when View_id.equal id Snippet_picker_tile.id ->
       { t with snippet_picker = Option.map t.snippet_picker ~f:(fun picker ->
           Snippet_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text)) }
+    | _ when View_id.equal id Destination_picker_tile.id ->
+      { t with destinations = Option.map t.destinations ~f:(fun picker ->
+          Destination_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text)) }
     | _ when View_id.equal id Content_picker_tile.id ->
       Option.iter t.content_picker ~f:(fun picker ->
         Content_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text));
@@ -3948,6 +4173,50 @@ let feed_palette t ~width ~height palette key =
 
 let route t ~width ~height key =
   match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id when View_id.equal id Hover_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Hover_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    (match decision, t.hover with
+     | Return, _ | Content Close, _ -> dismiss_navigation t, Controller.Status.Running
+     | Content (Scroll motion), Some hover ->
+       { t with hover = Some (Hover_tile.scroll hover
+           ~width:(minor_width t ~width ~height id) ~rows:(minor_rows t ~width ~height id) motion) }, Running
+     | Workspace command, _ -> apply_view_command (dismiss_navigation t) ~width ~height command, Running
+     | Notice text, _ -> { t with host = Host.with_notice t.host text }, Running
+     | _ -> t, Running)
+  | Some id when View_id.equal id Destination_picker_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Destination_picker_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    (match decision, t.destinations with
+     | Return, _ -> dismiss_navigation t, Controller.Status.Running
+     | Content (Event event), Some picker ->
+       { t with destinations = Some (Destination_picker_tile.update picker
+           ~rows:(minor_rows t ~width ~height id) event) }, Running
+     | Content Accept, Some picker ->
+       (match t.navigation, Destination_picker_tile.selected picker with
+        | Some origin, Some target when navigation_current t origin ->
+          let version = Map.find t.destination_versions (Session.normalize t.session target.path) in
+          let current = match version with
+            | None -> false
+            | Some (On_disk None) -> false
+            | Some (On_disk (Some version)) ->
+              Option.is_none (Session.find_resource (session t) target.path)
+              && Option.equal String.equal (Some version) (disk_version (Session.normalize t.session target.path))
+            | Some (Retained (document, revision)) ->
+              Option.exists (Session.find_resource (session t) target.path) ~f:(fun (_, controller) ->
+                Controller.Document_id.equal document (Controller.document_id controller)
+                && revision = Editor.revision (Controller.editor controller)) in
+          if current then jump_target t ~width ~height target, Running
+          else navigation_notice (dismiss_navigation t) "Destination changed while choosing", Running
+        | _, None -> navigation_notice t "No matching destination", Running
+        | _ -> navigation_notice (dismiss_navigation t) "Destination is no longer current", Running)
+     | Workspace command, _ -> apply_view_command (dismiss_navigation t) ~width ~height command, Running
+     | Notice text, _ -> { t with host = Host.with_notice t.host text }, Running
+     | _ -> t, Running)
   | Some id when View_id.equal id Snippet_picker_tile.id ->
     let host, decision = Host.key t.host key
       ~lookup:(Keymap.lookup (Controller.keymap t.controller))
@@ -4210,6 +4479,7 @@ let rec receive t (event : Ches_error.Source_event.t) =
   (* Arrival can race the frontend tick, including queued source batches. *)
   let t = expire_completion_acceptance t ~at:(Time_ns.now ()) in
   match event with
+  | Query_result reply -> receive_navigation t reply
   | Completion reply ->
     (match t.completion with
      | Some c when completion_current t c ->
@@ -4273,8 +4543,9 @@ let rec receive t (event : Ches_error.Source_event.t) =
           not ([%equal: string * string] held key))
         @ [ key, update, text ]
     }
-  | Diagnostics _ | Started _ | Stopped _ | Unavailable _ -> apply_source t update ~text
-  | Owned _ | Servers _ | Completion _ | Completion_metadata _ -> assert false
+  | Stopped _ | Unavailable _ -> apply_source (dismiss_navigation t) update ~text
+  | Diagnostics _ | Started _ -> apply_source t update ~text
+  | Owned _ | Servers _ | Completion _ | Completion_metadata _ | Query_result _ -> assert false
 ;;
 
 let receive_all t ~width ~height events =
@@ -4332,6 +4603,12 @@ let toggle_step text c =
 ;;
 
 let rec apply t ~width ~height (input : Input.t) =
+  let t = match input with
+    | Key (Escape | Ctrl 'c') | Key_at { key = (Escape | Ctrl 'c'); _ }
+        when Option.is_some t.navigation && Option.is_none t.hover && Option.is_none t.destinations ->
+      dismiss_navigation t
+    | Paste_start when Option.is_some t.navigation && Option.is_none t.destinations -> dismiss_navigation t
+    | _ -> t in
   (* Even a key held by the timed toggle recognizer ends the opportunity for
      deferred edits. It need not have changed revision/cursor yet. *)
   let t = match input, t.completion_acceptance with

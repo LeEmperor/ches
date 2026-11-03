@@ -643,6 +643,7 @@ let%expect_test "unbound Normal-mode keys and a lone Escape do nothing" =
     {|
     Clear_search_highlight
     (View Open_directory_entry)
+    (View Jump_forward)
     Redo
     NORMAL 0:0 (Info"Already at newest change")
     > |abc

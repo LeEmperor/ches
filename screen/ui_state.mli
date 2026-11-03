@@ -177,6 +177,11 @@ val theme_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t op
 (** Explicit snippet discovery over a captured catalog and editor snapshot. *)
 val snippet_picker : t -> Snippet_picker_tile.t option
 val snippet_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+(** Language-query floats retain the originating document identity. *)
+val hover : t -> Hover_tile.t option
+val destinations : t -> Destination_picker_tile.t option
+val hover_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+val destinations_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 val file_picker_visible_stamp : t -> (int * int * int) option
 
 val create

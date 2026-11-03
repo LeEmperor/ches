@@ -230,6 +230,10 @@ Backend details and focused checks are in [`terminal/README.md`](../terminal/REA
 | Normal | `Space g l` | Show the current file's history in the VCS view, opening and focusing it (see [Browsing history](#browsing-history)) |
 | Normal | `Space v R` / `Space v K` | Restart the diagnostic source (ocamllsp, slang-server, or `--synthetic-checker`), or crash the synthetic one (provisional keys) |
 | Normal | `Space l i` | Open live Language servers status; also search `lsp` in the palette |
+| Normal (file) | `K` | Hover: show server-provided type/documentation information |
+| Normal (file) | `gd` / `gD` | Go to declaration/interface / definition/source, with capability-aware fallback |
+| Normal (file) | `Ctrl-o` / `Ctrl-i` | Jump back / forward through symbol-navigation history |
+| Normal (file) | `Tab` | Jump forward alias for terminals that encode Ctrl-i as Tab |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
 | Normal | `Ctrl-e` / `Ctrl-y` | Scroll the view down / up a line, or N with a count |
 | Normal | `Ctrl-d` / `Ctrl-u` | Scroll view and cursor down / up half a screen, or N lines |
@@ -675,8 +679,61 @@ which the server reads itself. For example:
 ```
 
 See the [slang-server configuration documentation](https://hudson-trading.github.io/slang-server/start/config/).
-Ches consumes LSP diagnostics and plain-text completion. Hover, go-to-definition,
-and slang's HDL hierarchy and waveform features are not wired into the editor.
+Ches consumes LSP diagnostics, completion, hover, declaration and definition
+navigation. Slang-specific hierarchy/active-instance selection and waveform
+features are not wired into the editor.
+
+### Hover and symbol navigation
+
+Place the text cursor on a symbol in a file's Normal mode:
+
+| Key | Action |
+| --- | --- |
+| `K` | Show hover information in a scrollable floating view |
+| `gd` | Request declaration first, then definition if unavailable or not found |
+| `gD` | Request definition first, then declaration if unavailable or not found |
+| `Ctrl-o` | Jump back |
+| `Ctrl-i` / `Tab` | Jump forward |
+
+The same actions appear in the palette as **Hover**, **Go to declaration**, **Go
+to definition**, **Jump back**, and **Jump forward**. Lowercase `k` remains upward
+movement, and `Space v K` retains its synthetic-source test action. Tab's history
+alias applies only to the Normal-mode file document; completion, snippets, pickers,
+directory focus and terminals retain their own Tab behavior.
+
+Hover displays the server's content, with lightweight Markdown formatting, readable
+code blocks, and visible link text/URLs. In the popup, `j`/`k` or `Ctrl-e`/`Ctrl-y`
+scroll a row, `Ctrl-d`/`Ctrl-u` scroll a page portion, and `gg`/`G` go to the ends.
+`q` or Escape closes and returns focus. Long content is bounded and truncation is
+marked. The popup does not execute links.
+
+One navigation destination opens directly. Multiple destinations open a searchable
+picker; filter by path/line, use Tab/Shift-Tab or Ctrl-n/Ctrl-p to select, and Enter
+to jump. Escape cancels. Locations use the server's selected symbol range and
+negotiated UTF-8/16/32 encoding. Existing dirty destination buffers are reused;
+missing files or invalid positions fail without creating files or discarding edits.
+
+For the inspected OCaml server, declaration asks Merlin for the interface (`.mli`)
+and definition asks for implementation source (`.ml`). Actual locations depend on
+symbol resolution and source availability. The implementation request is not used.
+Slang advertises definition but not declaration, so both keys normally use its
+definition handler. Hover can include elaborated types, widths, enum/parameter
+values, and documentation according to server support. Instance-dependent results
+reflect Slang's selected elaboration context; Ches does not yet provide an
+active-instance selector.
+
+Queries flush pending document changes before execution and are cancelled or
+ignored after cursor, mode, focus, buffer, document, or server-lifetime changes.
+Unsupported operations, no results, and failures produce notices rather than
+unexpected movement. A destination picker also rejects changed targets before
+acceptance; reopen the query to refresh it.
+
+History records successful symbol jumps and preserves intervening cursor movement
+for reverse traversal. A new jump discards the forward branch. Each direction
+retains at most 128 entries, storing paths and byte offsets rather than snapshots.
+Edits do not relocate old marks: their numeric offsets are reused only if still
+valid, otherwise traversal reports an error without advancing history. History is
+session-local and navigation does not alter text undo history.
 
 ### Code completion
 

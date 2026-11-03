@@ -40,6 +40,11 @@ module Placement = struct
 end
 
 type t =
+  | Hover
+  | Go_to_declaration
+  | Go_to_definition
+  | Jump_back
+  | Jump_forward
   | Toggle_completion
   | Toggle_completion_ghost
   | Insert_demo_snippet
@@ -128,6 +133,7 @@ let scale t ~count =
   | Adjust_status_size cells -> Some (Adjust_status_size (cells * count))
   | Adjust_directory_size cells -> Some (Adjust_directory_size (cells * count))
   | Toggle_directory
+  | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward
   | Toggle_completion | Toggle_completion_ghost
   | Insert_demo_snippet
   | Insert_snippet | Open_configuration

@@ -85,6 +85,11 @@ let default =
     ; view ~id:"language-servers.inspect" ~title:"Language servers"
         ~description:"Live managed servers and attachments for the current file"
         ~keywords:[ "lsp"; "attached"; "clients"; "status"; "server" ] Show_language_servers
+    ; view ~id:"navigation.hover" ~title:"Hover" ~keywords:[ "symbol"; "documentation"; "lsp" ] Hover
+    ; view ~id:"navigation.declaration" ~title:"Go to declaration" Go_to_declaration
+    ; view ~id:"navigation.definition" ~title:"Go to definition" Go_to_definition
+    ; view ~id:"navigation.back" ~title:"Jump back" Jump_back
+    ; view ~id:"navigation.forward" ~title:"Jump forward" Jump_forward
     ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab
     ; view ~id:"tabs.previous" ~title:"Previous file tab" ~keywords:[ "buffer"; "switch" ] Previous_tab
     ; view ~id:"tabs.close" ~title:"Close file tab" ~keywords:[ "buffer" ] Close_tab
