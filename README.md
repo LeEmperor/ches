@@ -2,6 +2,8 @@
 
 **A modal terminal editor with a tile-based workspace.**
 
+*THIS IS MY PERSONAL EDITOR; FEEL FREE TO CLONE AND BUILD FROM SOURCE BUT ALL DECISIONS ARE MINE*
+
 Ches brings Vim-style editing, floating shells, code completion, language-server
 navigation, and Git into one keyboard-driven workspace. Written in OCaml, with a
 [Bonsai_term](https://github.com/janestreet/bonsai_term) frontend.
