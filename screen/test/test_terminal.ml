@@ -72,26 +72,26 @@ let%test_unit "preferred terminal size survives clamping hide and hidden adjustm
     let l = U.terminal_layout t ~width:1200 ~height:600 |> Option.value_exn in
     l.outer.width, l.outer.height in
   let t = open_big (Helpers.ui "x") |> take |> fst in
-  [%test_eq: int * int] (size t) (132, 40);
+  [%test_eq: int * int] (size t) (200, 60);
   let t = big t ([ ctrl ' ' ] @ Helpers.keys "3+") in
-  [%test_eq: int * int] (size t) (162, 46);
+  [%test_eq: int * int] (size t) (230, 66);
   let t, requests = take t in
   let l = U.terminal_layout t ~width:1200 ~height:600 |> Option.value_exn in
   requests_equal requests [ Resize { rows = l.content.height; cols = l.content.width } ];
   let t = Helpers.run ~width:40 ~height:12 t [ Resize ] in
   let t = big t [ Resize ] in
-  [%test_eq: int * int] (size t) (162, 46);
+  [%test_eq: int * int] (size t) (230, 66);
   let t = big t (Helpers.keys " /") |> take |> fst in
   let t = big t (Helpers.keys "2 t-") in
   requests_equal (snd (take t)) [];
   let t = open_big t in
-  [%test_eq: int * int] (size t) (142, 42);
+  [%test_eq: int * int] (size t) (210, 62);
   let t = big t ([ ctrl ' ' ] @ Helpers.keys "999+") in
   [%test_eq: int * int] (size t) (1000, 500);
   let t = big t (Helpers.keys "999-") in
   [%test_eq: int * int] (size t) (20, 6);
   let t = big t (Helpers.keys " tr") in
-  [%test_eq: int * int] (size t) (132, 40)
+  [%test_eq: int * int] (size t) (200, 60)
 ;;
 let snapshot ?exited () : M.snapshot =
   { rows = [| [| { M.text = "界"; width = 2; style }
@@ -198,13 +198,13 @@ let%test_unit "palette sizing while hidden retains preferred size without starti
   requests_equal (snd (take t)) [];
   let t = big t (Helpers.keys " /") in
   let l = U.terminal_layout t ~width:240 ~height:80 |> Option.value_exn in
-  [%test_eq: int * int] (l.outer.width, l.outer.height) (142, 42);
+  [%test_eq: int * int] (l.outer.width, l.outer.height) (210, 62);
   let t = big t ([ ctrl ' ' ] @ Helpers.keys " /") |> take |> fst in
   let t = big t (Helpers.keys " ccshrink tile term<CR> ccreset tile term size<CR>") in
   requests_equal (snd (take t)) [];
   let t = big t (Helpers.keys " /") in
   let l = U.terminal_layout t ~width:240 ~height:80 |> Option.value_exn in
-  [%test_eq: int * int] (l.outer.width, l.outer.height) (132, 40)
+  [%test_eq: int * int] (l.outer.width, l.outer.height) (200, 60)
 ;;
 
 let%test_unit "lazy session; exact content geometry; hide preserves shell and snapshot" =
@@ -789,18 +789,18 @@ let%test_unit "numbered sessions keep independent preferred sizes and hidden siz
     l.outer.width, l.outer.height in
   let t = big (Helpers.ui "document") "3 /" |> routed |> fst in
   let t = big (normal t) "3+" in
-  [%test_eq: int * int] (size t) (162, 46);
+  [%test_eq: int * int] (size t) (230, 66);
   let t = big t "v4 /" in
-  [%test_eq: int * int] (size t) (132, 40);
+  [%test_eq: int * int] (size t) (200, 60);
   assert (Option.is_none (U.terminal_inspection t));
   let t = big (normal t) " /2 t-" |> routed |> fst in
   assert (not (U.terminal_visible t));
   let t = big t " /" in
-  [%test_eq: int * int] (size t) (112, 36);
+  [%test_eq: int * int] (size t) (180, 56);
   let t = big (normal t) "3 /" in
-  [%test_eq: int * int] (size t) (162, 46);
+  [%test_eq: int * int] (size t) (230, 66);
   let t = big (normal t) " tr4 /" in
-  [%test_eq: int * int] (size t) (112, 36)
+  [%test_eq: int * int] (size t) (180, 56)
 ;;
 
 let%test_unit "toggle count scales to selector, explicit selectors never repeat" =
