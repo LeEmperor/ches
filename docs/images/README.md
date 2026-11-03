@@ -1,6 +1,25 @@
 # README screenshots
 
-These five PNGs show the real Ches executable editing this repository's source,
+## Personal editing sessions
+
+The root README features five screenshots supplied by the author on 2026-11-03.
+They show Ches being used on an OCaml/Hardcaml networking project, rather than
+this editor's own source. These are unmodified copies of the supplied PNGs;
+terminal chrome, local paths, source, and shell output are retained.
+
+| Asset | Original filename | Contents |
+| --- | --- | --- |
+| `daily-workspace.png` | `~/main_work.png` | Full tile workspace with source, directory browser, tabs, status, problems, and history. |
+| `daily-zen.png` | `~/Documents/zenmode.png` | Focused Zen editing with relative line numbers. |
+| `daily-completion.png` | `~/Documents/completion_zenmode.png` | LSP and buffer completions in Zen mode. |
+| `daily-tile-term.png` | `~/Documents/work_with_tileterm.png` | Floating shell running a Hardcaml RTL generator. |
+| `daily-git.png` | `~/Documents/main_with_vcs.png` | Source and completion alongside Git status, branches, history, and a README diff. |
+
+The capture script below does not generate or overwrite these `daily-*` assets.
+
+## Reproducible terminal-frame captures
+
+The five original PNGs below show the real Ches executable editing this repository's source,
 captured on 2026-11-03. All are **1728 × 1056**, RGB, with embedded `Description`
 and `Capture` text metadata. The theme is the default **Vim Classic**; absolute
 line numbers are explicitly enabled for these captures.

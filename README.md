@@ -2,19 +2,21 @@
 
 **A modal terminal editor with a tile-based workspace.**
 
-*THIS IS MY PERSONAL EDITOR; FEEL FREE TO CLONE AND BUILD FROM SOURCE BUT ALL DECISIONS ARE MINE*
-
 Ches brings Vim-style editing, floating shells, code completion, language-server
 navigation, and Git into one keyboard-driven workspace. Written in OCaml, with a
 [Bonsai_term](https://github.com/janestreet/bonsai_term) frontend.
+
+This is my personal editor, built around the way I work. Feel free to clone it
+and build from source; the direction and design decisions are mine.
 
 [Getting started](#getting-started) · [Keybindings](docs/editor_reference.md#keys) ·
 [Configuration](docs/configuration.md) · [Packaging](docs/releases.md) ·
 [Documentation](docs/README.md)
 
-![Ches in Zen mode, editing its own OCaml snippet engine with syntax highlighting and line numbers.](docs/images/editor.png)
+![Ches editing OCaml hardware-design code, with file tabs, a directory browser, status, problems, and notification history.](docs/images/daily-workspace.png)
 
-*Ches editing Ches: `completion/snippet.ml`, in the default Vim Classic theme.*
+*My everyday workspace: OCaml source in the middle, project files on the left,
+and status and diagnostics around the edges.*
 
 ## A workspace that stays out of your way
 
@@ -36,13 +38,23 @@ navigation, and Git into one keyboard-driven workspace. Written in OCaml, with a
   colors, adjustable layouts, and optional key hints. Runtime changes remain
   session-local unless you put them in your configuration.
 
-## From Zen to a workspace
+## Focus when you want it, tiles when you need them
 
-**`Space v z`** switches between focused editing and the tile workspace. Keep a
-directory browser beside your source, with status, problems and notification
-history in supporting tiles.
+**`Space v z`** switches between the tile workspace above and focused Zen editing
+below. Hide the supporting views without leaving your file, then bring them back
+when you need the directory browser, problems, or notification history. For an
+even smaller interface, **`Space v B`** toggles borderless Bare mode.
 
-![Ches with Zen disabled: directory browser, real source, status, problems and history tiles.](docs/images/workspace.png)
+![Ches in Zen mode editing an OCaml scrambler implementation, with relative line numbers and a bottom status line.](docs/images/daily-zen.png)
+
+## Completion in context
+
+Language-server suggestions and words from the current buffer appear beside your
+cursor, with their sources labeled. LSP entries can also show type information,
+so you can choose a completion without leaving the code. Use **Ctrl-n** in Insert
+mode to request completion manually.
+
+![Ches completion popup in Zen mode, showing LSP suggestions with types alongside buffer-word matches.](docs/images/daily-completion.png)
 
 ## Tile Terms
 
@@ -50,7 +62,7 @@ An interactive shell, one toggle away. **`Space /`** opens or hides a Tile Term;
 **`3 Space /`** selects terminal 3. Each numbered session keeps its shell, jobs,
 screen, and preferred size while hidden.
 
-![Tile Term 1 floating over real Ches source and running read-only commands against the repository.](docs/images/tile-terms.png)
+![Tile Term 1 floating over OCaml source, running a Hardcaml RTL generator and showing its command-line help and generated Verilog path.](docs/images/daily-tile-term.png)
 
 Toggle directly from Normal or Insert mode. Use rapid **`jk`** to enter terminal
 Normal mode, then navigate, select, and yank text into the editor. **`i`** returns
@@ -58,6 +70,15 @@ to the shell; **`+` / `-`** resize the float.
 
 See the [Tile Terms guide](docs/editor_reference.md#floating-terminal) for modes,
 numbered sessions, and Insert-mode shortcut timing.
+
+## Git beside your code
+
+**`Space g g`** opens the Git view. Review diffs, stage files or individual hunks
+and lines, write commits, and browse branches and history without switching to
+another application. Keep the source visible alongside the change you're
+reviewing.
+
+![Ches with OCaml source and completion on the left, Git files, branches and commits in the middle, and a colored README diff on the right.](docs/images/daily-git.png)
 
 ## Find code without losing your place
 
@@ -78,33 +99,11 @@ jump when you're ready, and use **Ctrl-o** to return.
 
 </details>
 
-These captures use real repository files and live application output. The
-[capture recipe](docs/images/README.md) describes the reproducible terminal-frame
-rasterization and its limits.
+The screenshots above show my own editing sessions. The two navigation examples
+use reproducible terminal-frame captures; see the
+[image notes](docs/images/README.md) for their capture recipe and rendering limits.
 
 ## Getting started
-
-### Linux download packages
-
-Ches can be packaged as an extract-and-run **`.tar.gz`** containing its executable,
-notices, source snapshot, manifest and checksums. Basic editing does **not** require
-an OCaml/opam installation: highlighting assets and terminal emulation are embedded.
-
-The currently tested build targets **Linux x86-64 with glibc 2.38 or newer**
-(built on Ubuntu 24.04). It is not a universal static binary. Git, ripgrep, language
-servers, and `ocamlc` for evaluating `config.ml` are optional external tools for
-their respective features.
-
-From the development checkout, create a download package with:
-
-```sh
-python3 scripts/package_release.py --version snapshot --strip -j 6
-```
-
-Artifacts are written to `dist/`. See the [release/installation guide](docs/releases.md)
-for extraction, verification, platform requirements, and the outstanding
-source/license work before a public release. No hosted release is published by
-this command.
 
 ### Build from source
 
@@ -125,6 +124,28 @@ ches --bare core/editor.ml   # Borderless editing (also --superzen)
 ches --theme glacier .       # Choose a different theme
 ches --list-themes           # Browse available palettes
 ```
+
+### Linux packages
+
+Ches can be packaged as an extract-and-run **`.tar.gz`** containing its executable,
+notices, source snapshot, manifest and checksums. Basic editing does **not** require
+an OCaml/opam installation: highlighting assets and terminal emulation are embedded.
+
+The currently tested build targets **Linux x86-64 with glibc 2.38 or newer**
+(built on Ubuntu 24.04). It is not a universal static binary. Git, ripgrep, language
+servers, and `ocamlc` for evaluating `config.ml` are optional external tools for
+their respective features.
+
+From the development checkout, create a download package with:
+
+```sh
+python3 scripts/package_release.py --version snapshot --strip -j 6
+```
+
+Artifacts are written to `dist/`. See the [release/installation guide](docs/releases.md)
+for extraction, verification, platform requirements, and the outstanding
+source/license work before a public release. No hosted release is published by
+this command.
 
 ### A few keys to start
 
