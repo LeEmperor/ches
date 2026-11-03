@@ -34,6 +34,11 @@ dune exec -j 12 ches -- PATH
 The executable is `_build/default/bin/ches.exe`. A local shell command or symlink
 can expose it as `ches`.
 
+For relocatable Linux download archives, use
+`python3 scripts/package_release.py --version snapshot --strip -j 6`.
+See [release packaging](releases.md) for platform requirements, source selection,
+verification, optional runtime tools and remaining distribution-audit work.
+
 `ches.opam` is generated from `dune-project`; package metadata changes belong in
 `dune-project`.
 

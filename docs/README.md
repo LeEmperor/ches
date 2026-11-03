@@ -19,6 +19,8 @@
 
 ## Building and understanding Ches
 
+- [Release packaging](releases.md): Linux tarballs, runtime requirements,
+  installation, checksums and source/license audit status.
 - [Development](development.md): toolchain, dependencies, builds, tests, and smoke suites.
 - [Architecture](architecture.md): code layout and boundaries between editing,
   application state, rendering, and asynchronous hosts.

@@ -1,2 +1,4 @@
 _build/
 .vibe-wise/
+dist/
+__pycache__/
