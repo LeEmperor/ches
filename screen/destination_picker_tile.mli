@@ -10,6 +10,8 @@ val with_title : t -> string -> t
 (** Exact original target, including both ranges and encoding. Selection identity
     is its original list index, allowing identical labels and duplicate targets. *)
 val selected : t -> Ches_error.Language_query.target option
+val selected_identity : t -> int option
+val with_preview : t -> Ches_navigation_preview_model.Model.state option -> t
 val query : t -> string
 val fit : t -> rows:int -> t
 val interpret : Ches_input.Key.t list -> Palette_tile.action Ches_tile.Content_key.t

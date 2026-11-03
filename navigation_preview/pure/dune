@@ -1,0 +1,4 @@
+(library
+ (name ches_navigation_preview_model)
+ (libraries core ches_core ches_error)
+ (preprocess (pps ppx_jane)))

@@ -7,6 +7,7 @@ module View_id = Ches_tile.View_id
 module Completion = Ches_completion.Model
 module Snippet = Ches_completion.Snippet
 module Query = Ches_error.Language_query
+module Navigation_preview = Ches_navigation_preview_model.Model
 
 type navigation_origin =
   { request : Query.request
@@ -16,7 +17,14 @@ type navigation_origin =
 
 type destination_version =
   | Retained of Controller.Document_id.t * int
-  | On_disk of string option
+  | On_disk of Navigation_file_stamp.t option
+
+type navigation_preview_key =
+  { origin_serial : int
+  ; identity : int
+  ; target : Query.target
+  ; retained : (Controller.Document_id.t * int) option
+  }
 
 type instance_context =
   { origin : navigation_origin
@@ -172,6 +180,9 @@ type t =
   ; context_revisions : int String.Map.t
   ; servers : Ches_error.Source_event.Server.t list option
   ; destination_versions : destination_version String.Map.t
+  ; navigation_preview : Navigation_preview.request option
+  ; navigation_preview_key : navigation_preview_key option
+  ; navigation_preview_serial : int
   ; jump_history : Jump_history.t
   ; configuration_path : (string, string) Result.t
   ; snippet : snippet_session option
@@ -348,6 +359,9 @@ let create
   ; context_revisions = String.Map.empty
   ; servers = None
   ; destination_versions = String.Map.empty
+  ; navigation_preview = None
+  ; navigation_preview_key = None
+  ; navigation_preview_serial = 0
   ; jump_history = Jump_history.empty
   ; configuration_path = Error "Configuration path is unavailable"
   ; snippet = None
@@ -596,6 +610,7 @@ let dismiss_navigation t =
   let host = if Option.is_some t.hover || Option.is_some t.destinations || Option.is_some t.instances
     then Host.return host else host in
   { t with navigation = None; hover = None; destinations = None
+    ; navigation_preview = None; navigation_preview_key = None
     ; instances = None; instance_origin = None
     ; destination_versions = String.Map.empty; host; source_commands }
 ;;
@@ -662,6 +677,97 @@ let dismiss_snippet_picker t =
 ;;
 let session t = Session.replace_active t.session t.controller
 let has_document t = Option.is_some (Session.context_id t.session)
+
+let current_navigation_preview_key t =
+  match t.navigation, t.destinations with
+  | Some origin, Some picker when navigation_current t origin ->
+    Option.bind (Destination_picker_tile.selected_identity picker) ~f:(fun identity ->
+      Option.map (Destination_picker_tile.selected picker) ~f:(fun target ->
+        let retained = Option.map (Session.find_resource (session t) target.path)
+          ~f:(fun (_, controller) ->
+            Controller.document_id controller, Editor.revision (Controller.editor controller)) in
+        { origin_serial = origin.request.token.request; identity; target; retained }))
+  | _ -> None
+;;
+
+let equal_navigation_preview_key a b =
+  a.origin_serial = b.origin_serial && a.identity = b.identity
+  && Query.equal_target a.target b.target
+  && Option.equal (fun (ad, ar) (bd, br) ->
+    Controller.Document_id.equal ad bd && ar = br) a.retained b.retained
+;;
+
+let navigation_preview_request t =
+  if t.exited || not (Option.equal equal_navigation_preview_key
+      t.navigation_preview_key (current_navigation_preview_key t)) then None
+  else t.navigation_preview
+;;
+
+let same_navigation_preview_request a b =
+  a.Navigation_preview.generation = b.Navigation_preview.generation
+  && Query.equal_target a.target b.target
+;;
+
+let navigation_preview_target_current t target =
+  let retained = Session.find_resource (session t) target.Query.path in
+  match Map.find t.destination_versions (Session.normalize t.session target.path), retained with
+  | Some (Retained (document, revision)), Some (_, controller) ->
+    Controller.Document_id.equal document (Controller.document_id controller)
+    && revision = Editor.revision (Controller.editor controller)
+  | Some (Retained _), None | Some (On_disk _), Some _ -> false
+  | _ -> true
+;;
+
+let navigation_preview_buffer t request =
+  if not (Option.exists (navigation_preview_request t)
+      ~f:(same_navigation_preview_request request)) then None else
+  if not (navigation_preview_target_current t request.target) then
+    Some (Navigation_preview.Invalid_target "Destination changed while choosing") else
+  Option.map (Session.find_resource (session t) request.Navigation_preview.target.path)
+    ~f:(fun (_, controller) ->
+      let editor = Controller.editor controller in
+      Navigation_preview.of_buffer ~revision:(Editor.revision editor) request.target (Editor.text editor))
+;;
+
+let reconcile_navigation_preview t =
+  let key = current_navigation_preview_key t in
+  if Option.equal equal_navigation_preview_key t.navigation_preview_key key then t else
+  let serial = t.navigation_preview_serial + 1 in
+  let request = Option.map key ~f:(fun key ->
+    { Navigation_preview.generation = serial; target = key.target }) in
+  let state = Option.map request ~f:(fun _ -> Navigation_preview.Loading) in
+  { t with navigation_preview_key = key; navigation_preview = request
+    ; navigation_preview_serial = serial
+    ; destinations = Option.map t.destinations ~f:(fun picker ->
+        Destination_picker_tile.with_preview picker state) }
+;;
+
+let receive_navigation_preview t (snapshot : Navigation_preview.snapshot) =
+  let t = reconcile_navigation_preview t in
+  if not (Option.exists (navigation_preview_request t)
+      ~f:(same_navigation_preview_request snapshot.request)) then t else
+  let retained = Option.bind t.navigation_preview_key ~f:(fun key -> key.retained) in
+  let current = match snapshot.state, retained with
+    | Ready { source = Buffer { revision }; _ }, Some (_, current) -> revision = current
+    | Ready { source = Buffer _; _ }, None -> false
+    | Ready { source = Disk _; _ }, Some _ -> false
+    | _ -> true in
+  if not current then t else
+  let disk_current = match snapshot.state with
+    | Ready { source = Disk { stamp = observed }; _ } ->
+      let path = Session.normalize t.session snapshot.request.target.path in
+      (match Map.find t.destination_versions path with
+        | Some (On_disk (Some stamp)) ->
+          Option.equal String.equal observed (Some (Navigation_file_stamp.to_string stamp))
+          && Option.equal Navigation_file_stamp.equal (Some stamp) (Navigation_file_stamp.read path)
+       | Some (On_disk None) | Some (Retained _) -> false
+       | None -> true)
+    | _ -> true in
+  let state = if disk_current && navigation_preview_target_current t snapshot.request.target then snapshot.state
+    else Navigation_preview.Invalid_target "Destination changed while choosing" in
+  { t with destinations = Option.map t.destinations ~f:(fun picker ->
+      Destination_picker_tile.with_preview picker (Some state)) }
+;;
 
 let completion_enabled t = t.completion_enabled
 let completion_ghost_enabled t = t.completion_ghost_enabled
@@ -2241,7 +2347,7 @@ let synchronize t ~width ~height =
     ; instances = Option.map t.instances ~f:(Instance_picker_tile.fit
       ~rows:(minor_rows t ~width ~height Instance_picker_tile.id))
     ; active_instance = Option.filter t.active_instance ~f:(instance_context_current t) } in
-  let t = clear_stale_instance_notice t in
+  let t = reconcile_navigation_preview t |> clear_stale_instance_notice in
   (* Suppressed side placement keeps its request/buffer, but must never retain
      invisible input focus. With no files, the directory remains the major surface. *)
   let t = if Option.is_some (Session.input_directory t.session)
@@ -3320,7 +3426,7 @@ let current_location t =
     ; offset = Editor.cursor (Controller.editor t.controller) })
 ;;
 
-let disk_version path = Option.try_with (fun () -> Stdlib.Digest.file path)
+let disk_version = Navigation_file_stamp.read
 ;;
 
 let reveal_navigation t ~width ~height ~path ~offset =
@@ -3521,6 +3627,7 @@ let receive_navigation t (reply : Query.reply) =
             { Query.path; range; selection = range; encoding = Utf8 }) in
           { t with destinations = Some (Destination_picker_tile.with_title
               (Destination_picker_tile.create targets) "Choose counterpart")
+            ; navigation_preview = None; navigation_preview_key = None
             ; host = Host.focus t.host Destination_picker_tile.id })
      | Locations [target] when not (Query.equal_kind reply.kind References) -> jump_target t ~width ~height target
      | Instance_activated activated ->
@@ -3565,8 +3672,9 @@ let receive_navigation t (reply : Query.reply) =
          let picker = Destination_picker_tile.create targets in
          let picker = if Query.equal_kind reply.kind References
            then Destination_picker_tile.with_title picker "Find references" else picker in
-         { t with destinations = Some picker; destination_versions
-         ; host = Host.focus t.host Destination_picker_tile.id })
+          { t with destinations = Some picker; destination_versions
+          ; navigation_preview = None; navigation_preview_key = None
+          ; host = Host.focus t.host Destination_picker_tile.id })
   | _ -> t
 ;;
 
@@ -4559,7 +4667,7 @@ let route t ~width ~height key =
             | Some (On_disk None) -> false
             | Some (On_disk (Some version)) ->
               Option.is_none (Session.find_resource (session t) target.path)
-              && Option.equal String.equal (Some version) (disk_version (Session.normalize t.session target.path))
+              && Option.equal Navigation_file_stamp.equal (Some version) (disk_version (Session.normalize t.session target.path))
             | Some (Retained (document, revision)) ->
               Option.exists (Session.find_resource (session t) target.path) ~f:(fun (_, controller) ->
                 Controller.Document_id.equal document (Controller.document_id controller)

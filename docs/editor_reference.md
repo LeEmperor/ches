@@ -753,6 +753,34 @@ rejected rather than jumping to stale coordinates. Empty or unsupported queries
 produce a notice. The existing 256-target transport limit applies; oversized
 responses report an error rather than silently omitting results.
 
+#### Source previews in result pickers
+
+References and multiple-destination pickers include a **Source preview** below the
+results when there are at least eight content rows. Move through results with
+Tab/Shift-Tab or Ctrl-n/Ctrl-p to inspect source without opening each file. The
+preview shows line numbers and highlights the selected symbol range, including
+multiline and zero-width locations. It keeps the target line visible as the picker
+resizes; small allocations retain the result list without the preview.
+
+Already-open buffers supply their current text, including unsaved edits; the header
+identifies `buffer rN` or `disk`. Browsing previews never activates a buffer, starts
+a language server, changes text, or adds jump-history entries. Enter performs the
+usual validated jump; Escape cancels without moving the document.
+
+Disk preview work is asynchronous, debounced by 40 ms, and limited to one physical
+read at a time. Rapid selection changes cancel or discard obsolete results. Loading,
+missing/unreadable files, unsupported text, stale targets and preview limits appear
+as explicit messages. Disk collection scans at most 8 MiB, retains at most 32 lines
+and 64 KiB, and copies at most 4096 bytes per line. Targets beyond the scan/line
+limits show a limit message; long surrounding lines indicate truncation. Previews
+highlight the target but do not apply language syntax highlighting yet.
+
+File metadata is checked at result discovery, preview collection/delivery and
+navigation acceptance; retained buffers use document identity and revision. These
+checks catch ordinary replacements and edits, but cannot guarantee that a server's
+coordinates still refer to the same symbol after concurrent changes. A failed
+preview does not itself prevent an otherwise valid Enter navigation.
+
 #### Slang active-instance context
 
 With the cursor inside a module's definition in Normal mode, choose **Select

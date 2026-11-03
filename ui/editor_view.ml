@@ -142,6 +142,14 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
   let initial_ui = Option.value_map startup_configuration ~default:initial_ui
     ~f:(apply_startup_configuration ?theme_override:theme initial_ui) in
   let current_ui = ref initial_ui in
+  let navigation_preview = Navigation_preview_host.create ~buffer:(fun request ->
+    Ui_state.navigation_preview_buffer !current_ui request) () in
+  let navigation_preview_pumping = ref false in
+  let synchronize_navigation_preview model =
+    current_ui := model;
+    Navigation_preview_host.follow navigation_preview
+      (if Ui_state.exited model then None else Ui_state.navigation_preview_request model);
+    model in
   let configuration = Option.value_or_thunk configuration ~default:(fun () -> Configuration_host.create ()) in
   let snippets = Option.value_or_thunk snippets ~default:Snippet_host.create in
   let word_index = Word_index_host.create () in
@@ -216,7 +224,7 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
        ~default_model:initial_ui
       ~apply_action:(fun context input model action ->
         match input with
-         | Inactive -> clear_preview (); model
+         | Inactive -> clear_preview (); Navigation_preview_host.clear navigation_preview; model
          | Active ({ Dimensions.width; height }, write_to_tty) ->
             let model = match action with
               | `Words (request, words) ->
@@ -225,14 +233,17 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
               | `Snippets (generation, result) ->
                 Frame.Cache.invalidate render_cache;
                 Ui_state.receive_snippets model ~generation result
-              | `Configuration (generation, result) ->
-                Frame.Cache.invalidate render_cache;
-                Ui_state.receive_configuration model ~generation result
+               | `Configuration (generation, result) ->
+                 Frame.Cache.invalidate render_cache;
+                 Ui_state.receive_configuration model ~generation result
+               | `Navigation_preview snapshot ->
+                 Frame.Cache.invalidate render_cache;
+                 Ui_state.receive_navigation_preview model snapshot
               | `Inputs _ | `Event _ -> model in
             (* Capture belongs to the model at this transition, not the last
                displayed handler: several events can arrive before a redraw. *)
             let inputs = match action with
-              | `Words _ | `Snippets _ | `Configuration _ -> []
+               | `Words _ | `Snippets _ | `Configuration _ | `Navigation_preview _ -> []
               | `Inputs inputs -> inputs
               | `Event (event, at) ->
                 Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event
@@ -247,7 +258,7 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
                && Option.equal [%equal: int * int] !synchronized_dimensions (Some (width, height))
             then (
               let model, _ = Ui_state.apply_all model ~width ~height inputs in
-              current_ui := model;
+               let model = synchronize_navigation_preview model in
               model)
             else (
             let inputs = if Option.equal [%equal: int * int]
@@ -270,10 +281,24 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
                 ~root:project_root ~width ~height with
               | Ok model -> model
               | Error error -> Ui_state.with_notice ~source:"content picker" model (Error.to_string_hum error) in
-             synchronize_preview model
+              synchronize_navigation_preview (synchronize_preview model)
           in
             let model, status = Frame.Cache.apply_inputs render_cache ~after_step:activate_pickers model ~width ~height inputs in
-           let model = synchronize_preview model in
+            let model = synchronize_navigation_preview (synchronize_preview model) in
+            if not !navigation_preview_pumping
+               && Option.is_some (Navigation_preview_host.snapshot navigation_preview)
+            then (
+              navigation_preview_pumping := true;
+              let rec pump () =
+                let changed = Navigation_preview_host.changed navigation_preview in
+                match Navigation_preview_host.snapshot navigation_preview with
+                | None -> navigation_preview_pumping := false; Effect.Ignore
+                | Some snapshot ->
+                  let%bind.Effect () = Bonsai.Apply_action_context.inject context
+                    (`Navigation_preview snapshot) in
+                  let%bind.Effect () = Effect.of_deferred_thunk (fun () -> changed) in
+                  pump () in
+              Bonsai.Apply_action_context.schedule_event context (pump ()));
            if not !preview_pumping && Option.is_some (Ches_file_preview.Provider.snapshot preview)
            then (
              preview_pumping := true;
@@ -364,7 +389,8 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
                (* Obsolete turns still wake replacements, without doing their work. *)
                Bonsai.Apply_action_context.inject context (`Inputs events)));
           (match status with
-           | Exit when was_running ->
+            | Exit when was_running ->
+               Navigation_preview_host.stop navigation_preview;
               Word_index_host.stop word_index;
               Snippet_host.stop snippets;
               Configuration_host.stop configuration;
@@ -421,7 +447,10 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
       in
       pump ())
     graph;
-  Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
+   Bonsai.Edge.lifecycle
+     ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Navigation_preview_host.stop navigation_preview)))
+     graph;
+   Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
     ~on_deactivate:(Bonsai.return
       (Effect.of_thunk (fun () ->
         Option.iter !active_file_session ~f:(fun session ->

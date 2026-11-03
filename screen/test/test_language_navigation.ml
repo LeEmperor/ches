@@ -3,6 +3,7 @@ open Ches_core
 open Ches_app
 open Ches_screen
 module Q = Ches_error.Language_query
+module Preview = Ches_navigation_preview_model.Model
 
 let width = 100
 let height = 25
@@ -303,4 +304,200 @@ let%test_unit "same file picker and hover closure return focus without moving or
                 (Text_buffer.to_string (Editor.text (editor origin))));
       assert (Editor.is_dirty (editor closed));
       assert (Option.is_none (Ui_state.hover closed))))
+;;
+
+let preview_request t = Option.value_exn (Ui_state.navigation_preview_request t)
+let preview_text t = Frame.to_string (Frame.render t ~width ~height)
+
+let%test_unit "navigation preview loads dirty retained text and exact range without navigation effects" =
+  with_files (fun _ a b ->
+    let retained, _ = Ui_state.open_file (create a "origin text") ~width ~height b |> Or_error.ok_exn in
+    let retained = press retained "i界é<Esc>" in
+    let origin, _ = Ui_state.open_file retained ~width ~height a |> Or_error.ok_exn in
+    let pending, query, _ = request origin "gr" in
+    let destination = { (target b 1) with
+      range = { start = { line = 0; character = 0 }; stop = { line = 0; character = 3 } }
+      ; selection = { start = { line = 0; character = 1 }; stop = { line = 0; character = 2 } } } in
+    let picker = reply pending query (Locations [destination]) in
+    let req = preview_request picker in
+    assert (Q.equal_target req.target destination);
+    assert (String.is_substring (preview_text picker) ~substring:"Loading");
+    let state = Ui_state.navigation_preview_buffer picker req |> Option.value_exn in
+    (match state with
+     | Ready { source = Buffer _; lines = line :: _; _ } ->
+       assert (String.equal line.text "界édisk");
+       assert (List.exists line.highlights ~f:(fun h -> h.start = String.length "界" && h.stop = String.length "界é"))
+     | _ -> assert false);
+    let ready = Ui_state.receive_navigation_preview picker { request = req; state } in
+    assert (String.is_substring (preview_text ready) ~substring:"界édisk");
+    let wrong_revision = match state with
+      | Preview.Ready payload -> Preview.Ready { payload with source = Buffer { revision = -1 } }
+      | _ -> assert false in
+    let rejected = Ui_state.receive_navigation_preview picker { request = req; state = wrong_revision } in
+    assert (not (String.is_substring (preview_text rejected) ~substring:"界édisk"));
+    assert (Editor.cursor (editor ready) = Editor.cursor (editor origin));
+    assert (Option.equal String.equal (Editor.path (editor ready)) (Some a));
+    assert (List.length (Session.buffers (Ui_state.session ready)) = 2);
+    let _, commands = Ui_state.take_source_requests ready in
+    assert (not (List.exists commands ~f:(function Document_opened _ -> true | _ -> false)));
+    let cancelled = press ready "<Esc><C-o>" in
+    assert (Option.is_none (Ui_state.navigation_preview_request cancelled));
+    assert (Option.equal String.equal (Editor.path (editor cancelled)) (Some a));
+    let late = Ui_state.receive_navigation_preview cancelled { request = req; state } in
+    assert (Option.is_none (Ui_state.destinations late));
+    assert (Option.is_none (Ui_state.navigation_preview_request late));
+    let jumped = press ready "<CR>" in
+    assert (Option.equal String.equal (Editor.path (editor jumped)) (Some b));
+    assert (Editor.cursor (editor jumped) = String.length "界"))
+;;
+
+let%test_unit "preview request is stable across fit but rejects A B A and empty query replies" =
+  with_files (fun _ a b ->
+    let pending, query, _ = request (create a "origin text") "gD" in
+    let picker = reply pending query (Locations [target b 0; target b 1]) in
+    let first = preview_request picker in
+    let fitted = run picker [Resize] in
+    assert ((preview_request fitted).generation = first.generation);
+    let second = press fitted "<Tab>" in
+    assert ((preview_request second).generation > first.generation);
+    let again = press second "<S-Tab>" in
+    let latest = preview_request again in
+    assert (Q.equal_target latest.target first.target);
+    assert (latest.generation > first.generation);
+    let stale = Ui_state.receive_navigation_preview again
+        { request = first; state = Unreadable "obsolete-preview-marker" } in
+    assert (not (String.is_substring (preview_text stale) ~substring:"obsolete-preview-marker"));
+    let changed_target = { latest with target = target b 2 } in
+    let stale = Ui_state.receive_navigation_preview again
+        { request = changed_target; state = Unreadable "wrong-target-marker" } in
+    assert (not (String.is_substring (preview_text stale) ~substring:"wrong-target-marker"));
+    let switched, _ = Ui_state.open_file again ~width ~height b |> Or_error.ok_exn in
+    let switched = press switched "iedited<Esc>" in
+    let stale = Ui_state.receive_navigation_preview switched
+        { request = latest; state = Unreadable "obsolete-preview-marker" } in
+    assert (Option.is_none (Ui_state.navigation_preview_request stale));
+    assert (Option.is_none (Ui_state.destinations stale));
+    assert (String.is_prefix (Text_buffer.to_string (Editor.text (editor stale))) ~prefix:"edited");
+    let moved = press again "<Esc>l" in
+    let stale = Ui_state.receive_navigation_preview moved
+        { request = latest; state = Unreadable "obsolete-preview-marker" } in
+    assert (Option.is_none (Ui_state.destinations stale));
+    assert (Editor.cursor (editor stale) = 1);
+    let empty = run again (Helpers.paste "no-such-target") in
+    assert (Option.is_none (Ui_state.navigation_preview_request empty));
+    let stale = Ui_state.receive_navigation_preview empty
+        { request = latest; state = Unreadable "obsolete-preview-marker" } in
+    assert (not (String.is_substring (preview_text stale) ~substring:"obsolete-preview-marker"));
+    List.iter [0, 0; 12, 3; 30, 8; 70, 16; 100, 25] ~f:(fun (width, height) ->
+      let frame = Frame.render again ~width ~height in
+      assert (List.length frame.rows = height);
+      List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width))))
+;;
+
+let%test_unit "retained target disappearance invalidates preview before any disk fallback" =
+  with_files (fun _ a b ->
+    let retained, id = Ui_state.open_file (create a "origin text") ~width ~height b |> Or_error.ok_exn in
+    let origin, _ = Ui_state.open_file retained ~width ~height a |> Or_error.ok_exn in
+    let pending, query, _ = request origin "gr" in
+    let picker = reply pending query (Locations [target b 0]) in
+    let old = preview_request picker in
+    let state = Ui_state.navigation_preview_buffer picker old |> Option.value_exn in
+    let closed, did_close = Ui_state.close_buffer picker ~width ~height id ~force:true in
+    assert did_close;
+    let closed = Ui_state.receive_navigation_preview closed { request = old; state } in
+    let current = preview_request closed in
+    assert (current.generation > old.generation);
+    assert (match Ui_state.navigation_preview_buffer closed current with Some (Invalid_target _) -> true | _ -> false);
+    let closed = Ui_state.receive_navigation_preview closed
+        { request = current; state = Option.value_exn (Ui_state.navigation_preview_buffer closed current) } in
+    assert (String.is_substring (preview_text closed) ~substring:"Destination changed"))
+;;
+
+let%test_unit "disk preview changed since navigation result cannot install a target highlight" =
+  with_files (fun _ a b ->
+    let pending, query, _ = request (create a "origin text") "gr" in
+    let picker = reply pending query (Locations [target b 0]) in
+    let req = preview_request picker in
+    Out_channel.write_all b ~data:"changed disk content";
+    let state = Preview.Ready
+        { source = Disk { stamp = None }; first_line = 0; truncated = false
+        ; lines = [{ text = "changed disk content"; truncated = false
+                   ; highlights = [{ start = 0; stop = 1 }] }] } in
+    let ready = Ui_state.receive_navigation_preview picker { request = req; state } in
+    assert (String.is_substring (preview_text ready) ~substring:"Destination changed");
+    assert (not (String.is_substring (preview_text ready) ~substring:"changed disk content"));
+    assert (Option.equal String.equal (Editor.path (editor ready)) (Some a)))
+;;
+
+let%test_unit "source invalidation clears selected preview and rejects late delivery" =
+  with_files (fun root a b ->
+    let pending, query, _ = request (create a "origin text") "gr" in
+    let picker = reply pending query (Locations [target b 0]) in
+    let req = preview_request picker in
+    let stopped = run picker [Source (Stopped { source = "fake"; root; reason = "exit" })] in
+    assert (Option.is_none (Ui_state.navigation_preview_request stopped));
+    let stopped = Ui_state.receive_navigation_preview stopped
+        { request = req; state = Unreadable "obsolete-preview-marker" } in
+    assert (Option.is_none (Ui_state.destinations stopped));
+    assert (List.length (Session.buffers (Ui_state.session stopped)) = 1);
+    assert (Editor.cursor (editor stopped) = 0))
+;;
+
+let%test_unit "disk preview must match captured stamp even if the original path is restored" =
+  with_files (fun root a b ->
+    let pending, query, _ = request (create a "origin text") "gr" in
+    let picker = reply pending query (Locations [target b 0]) in
+    let req = preview_request picker in
+    let original = Ches_app.Navigation_file_stamp.read b |> Option.value_exn in
+    let replacement = root ^ "/replacement" in
+    Exn.protect ~f:(fun () ->
+      Out_channel.write_all replacement ~data:"other version";
+      let other = Ches_app.Navigation_file_stamp.read replacement |> Option.value_exn in
+      let payload stamp text = Preview.Ready
+        { source = Disk { stamp = Some (Ches_app.Navigation_file_stamp.to_string stamp) }
+        ; first_line = 0; truncated = false
+        ; lines = [{ text; truncated = false; highlights = [{ start = 0; stop = 1 }] }] } in
+      (* Delivery sees the original metadata again, but the worker's snapshot
+         came from a different physical version. *)
+      let rejected = Ui_state.receive_navigation_preview picker
+          { request = req; state = payload other "wrong-version-marker" } in
+      assert (String.is_substring (preview_text rejected) ~substring:"Destination changed");
+      assert (not (String.is_substring (preview_text rejected) ~substring:"wrong-version-marker"));
+      let accepted = Ui_state.receive_navigation_preview picker
+          { request = req; state = payload original "matching-version-marker" } in
+      assert (String.is_substring (preview_text accepted) ~substring:"matching-version-marker"))
+      ~finally:(fun () -> Core_unix.unlink replacement))
+;;
+
+let%test_unit "special-file destination cannot be accepted even when metadata is unchanged" =
+  with_files (fun root a _ ->
+    let fifo = root ^ "/fifo" in
+    Core_unix.mkfifo fifo ~perm:0o600;
+    Exn.protect ~f:(fun () ->
+      let pending, query, _ = request (create a "origin text") "gr" in
+      let picker = reply pending query (Locations [target fifo 0]) in
+      let rejected = press picker "<CR>" in
+      assert (Option.equal String.equal (Editor.path (editor rejected)) (Some a));
+      assert (List.length (Session.buffers (Ui_state.session rejected)) = 1);
+      assert (String.is_substring (Option.value_exn (Ui_state.message rejected)).text
+        ~substring:"Destination changed"))
+      ~finally:(fun () -> Core_unix.unlink fifo))
+;;
+
+let%test_unit "preview read failure leaves validated acceptance and dirty origin history intact" =
+  with_files (fun _ a b ->
+    let origin = press (create a "origin text") "iunsaved <Esc>" in
+    let before = Text_buffer.to_string (Editor.text (editor origin)) in
+    let pending, query, _ = request origin "gr" in
+    let picker = reply pending query (Locations [target b 1]) in
+    let req = preview_request picker in
+    let failed = Ui_state.receive_navigation_preview picker
+        { request = req; state = Unreadable "read failed" } in
+    let jumped = press failed "<CR>" in
+    assert (Option.equal String.equal (Editor.path (editor jumped)) (Some b));
+    assert (Editor.cursor (editor jumped) = 1);
+    let back = press jumped "<C-o>" in
+    assert (Option.equal String.equal (Editor.path (editor back)) (Some a));
+    assert (Editor.is_dirty (editor back));
+    [%test_eq: string] (Text_buffer.to_string (Editor.text (editor back))) before)
 ;;

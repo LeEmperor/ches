@@ -19,6 +19,7 @@ frames. Bonsai_term adapts terminal events and displays those frames.
 | `error/` | Notifications, active problems, and bounded history |
 | `source/` | Asynchronous diagnostic sources and language-server completion/hover/navigation client |
 | `completion/` | Pure completion sessions, buffer-word candidates, cycling, and edit plans |
+| `navigation_preview/` | Bounded source-window extraction and target highlights for navigation result pickers |
 | `config/` | Settings defaults/validation and isolated executable OCaml configuration loading |
 | `tile/` | Shared tile host, focus, and input routing |
 | `palette/` | Command catalog and fuzzy matching |

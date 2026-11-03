@@ -185,6 +185,12 @@ val hover : t -> Hover_tile.t option
 val signature_help : t -> Signature_overlay.t option
 val signature_help_enabled : t -> bool
 val destinations : t -> Destination_picker_tile.t option
+val navigation_preview_request : t -> Ches_navigation_preview_model.Model.request option
+(** Bounded current retained-buffer extraction, without activation or disk I/O.
+    Call against the current installed state after debounce. *)
+val navigation_preview_buffer
+  : t -> Ches_navigation_preview_model.Model.request -> Ches_navigation_preview_model.Model.state option
+val receive_navigation_preview : t -> Ches_navigation_preview_model.Model.snapshot -> t
 val instances : t -> Instance_picker_tile.t option
 val active_instance_label : t -> string option
 val hover_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option

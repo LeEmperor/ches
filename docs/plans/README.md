@@ -20,6 +20,7 @@ history of decisions and verification; for current controls, use the
 - [Slang instance context and Find references](instances_and_references.md)
 - [Signature help, OCaml companions, and config caching](signatures_companions_cache.md)
 - [Completion-specific styling](completion_styling.md)
+- [Source previews for navigation results](navigation_previews.md)
 - [Floating tiles](floating_tiles.md)
 - [VCS workspace](vcs_workspace.md)
 - [Performance tests](performance_tests.md)
