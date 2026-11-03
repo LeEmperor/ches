@@ -1271,7 +1271,9 @@ let geometry_in ?(buffers_in_status = false) t ~allocation ~reserve_status_row =
 ;;
 
 let editor_companion t ~width ~height =
-  if suppress_workspace t || Option.is_some (active_tab_view t)
+  (* Zen hides persistent workspace furniture, but this is part of the active
+     editing flow, like the VCS tab itself. Only Bare suppresses it entirely. *)
+  if bare t || Option.is_some (active_tab_view t)
      || Option.is_some (Session.input_directory t.session) || width < 80 || height < 8
   then None
   else Option.bind (Editor.path (Controller.editor t.controller)) ~f:(fun path ->

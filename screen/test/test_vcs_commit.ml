@@ -206,6 +206,36 @@ let%test_unit "the message editor replaces the preview while the VCS lists stay 
     assert (Vcs_view.Focus.equal (Vcs_view.focus (vcs t)) Diff))
 ;;
 
+let%test_unit "default frontend Zen startup keeps VCS context beside the message editor" =
+  with_repo (fun repo ->
+    let run = run ~quiet:true repo in
+    (* The production frontend enters Zen before its first sized render. *)
+    let t = Helpers.run ~width:0 ~height:0 (create repo) (Helpers.keys " vz") in
+    assert (Ui_state.zen t);
+    let t = run t " gg" in
+    let t = run t "cc" in
+    let t = run t "iZen draft<Esc>" in
+    assert (Ui_state.zen t);
+    let workspace = Ui_state.workspace t ~width ~height in
+    let lists = Option.value_exn (Workspace.minor workspace Vcs_view.id) in
+    assert (lists.rect.x = 0 && lists.rect.width = 40);
+    assert (workspace.document.rect.x = lists.rect.width + Workspace.gap);
+    assert (Option.is_none workspace.status);
+    let frame = Frame.render t ~width ~height in
+    let text = Frame.to_string frame in
+    assert (String.is_substring text ~substring:"first");
+    assert (String.is_substring text ~substring:"Zen draft");
+    assert ((Option.value_exn frame.cursor).x >= workspace.document.rect.x);
+    let t = run t " gg3<Tab>" in
+    assert (View_id.equal (Ui_state.focused_view t ~width ~height) Ui_state.document_id);
+    assert (Ui_state.zen t);
+    let t = run t " gc" in
+    assert (String.equal (Fixture.git repo [ "log"; "-1"; "--format=%s" ]) "Zen draft\n");
+    assert (Ui_state.zen t);
+    assert (View_id.equal (Ui_state.focused_view t ~width ~height) Vcs_view.id);
+    assert (Option.is_none (Workspace.minor (Ui_state.workspace t ~width ~height) Vcs_view.id)))
+;;
+
 let%test_unit "aborting restores each VCS placement and leaves unrelated layout preferences intact" =
   List.iter [ View_registry.Placement.Tab; Split; Band ] ~f:(fun placement ->
     with_repo (fun repo ->
