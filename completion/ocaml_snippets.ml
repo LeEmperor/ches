@@ -136,16 +136,19 @@ $0|snippet}
   ; design "input-interface" "hci" "Hardcaml input interface; open Hardcaml, ppx_hardcaml; rising clock, active-high synchronous clear"
       {snippet|module I = struct
   type 'a t =
-    { clock : 'a
-    ; clear : 'a
-    ; ${1:d} : 'a [@bits ${2:8}]
+    { clock_i : 'a
+    ; clear_i : 'a
+    ; ${1:d_i} : 'a [@bits ${2:8}]
     }
   [@@deriving hardcaml]
 end
 $0|snippet}
   ; design "output-interface" "hco" "Hardcaml output interface; open Hardcaml, ppx_hardcaml"
       {snippet|module O = struct
-  type 'a t = { ${1:q} : 'a [@bits ${2:8}] }
+  type 'a t =
+    { ${1:q1_o} : 'a [@bits ${2:8}]
+    ; ${3:q2_o} : 'a [@bits ${4:8}]
+    }
   [@@deriving hardcaml]
 end
 $0|snippet}
