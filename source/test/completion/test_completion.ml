@@ -304,7 +304,7 @@ let%expect_test "fake LSP advertises snippets, inherits format2, skips unsupport
     assert (String.equal plain.primary.text "$1 literal" && Option.is_none plain.snippet);
     let base = Ches_core.Text_buffer.of_string "\nfoSuffix" |> Result.ok |> Option.value_exn in
     let model, _ = Model.start ~token:query.token ~text:base ~cursor:3
-      ~words:(Model.Buffer_words.create base) ~limit:10 |> Option.value_exn in
+      ~words:(Model.Buffer_words.create base) ~limit:10 () |> Option.value_exn in
     let model = Model.receive model { reply with candidates = [linked] } in
     let plan = Model.plan model Next |> Option.value_exn in
     assert (Model.cursor plan = 9);
@@ -326,7 +326,7 @@ let%expect_test "fake LSP advertises snippets, inherits format2, skips unsupport
     (* Rebuild with resolved extras, just as the host does: primary and snippet
        remain the original immutable candidate, even after hostile insertion fields. *)
     let original_model, _ = Model.start ~token:query.token ~text:base ~cursor:3
-      ~words:(Model.Buffer_words.create base) ~limit:10 |> Option.value_exn in
+      ~words:(Model.Buffer_words.create base) ~limit:10 () |> Option.value_exn in
     let candidate = { linked with additional } in
     let model = Model.receive original_model { reply with candidates = [candidate] } in
     let plan = Model.plan model Next |> Option.value_exn in
@@ -435,7 +435,7 @@ let%expect_test "normalized additional edits are deferred through Tab and applie
     let%bind additional = resolved () in
     let base = Ches_core.Text_buffer.of_string "\nfoSuffix" |> Result.ok |> Option.value_exn in
     let model, _ = Model.start ~token:query.token ~text:base ~cursor:3
-      ~words:(Model.Buffer_words.create base) ~limit:10 |> Option.value_exn in
+      ~words:(Model.Buffer_words.create base) ~limit:10 () |> Option.value_exn in
     let candidate = { (List.hd_exn reply.candidates) with additional } in
     let model = Model.receive model { reply with candidates = [candidate] } in
     let plan = Model.plan model Next |> Option.value_exn in

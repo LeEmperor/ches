@@ -4,6 +4,8 @@
 
 ## Using Ches
 
+- [OCaml configuration](configuration.md): startup settings, session-only changes,
+  reload behavior, and an editable example.
 - [Editor reference](editor_reference.md): startup defaults, complete keybindings,
   editing semantics, workspace controls, Git, diagnostics, and Tile Terms.
 - [Directory workspace](directory_workspace.md): file tabs, directory navigation,

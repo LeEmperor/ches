@@ -5,6 +5,11 @@ are the source-facing API. A candidate carries `snippet : Snippet.t option`;
 its `primary.text` must equal `Snippet.text` when present. Buffer words use `None`.
 Malformed/unsupported snippets should be skipped by providers.
 
+`Model.start ?prefer_local_snippets ~token ~text ~cursor ~words ~limit ()`
+defaults to preferring local snippets over LSP suggestions. With `false`, LSP
+suggestions precede local snippets; both remain available ahead of buffer words.
+The preference is retained throughout the model's provider rebuilds.
+
 `snippet.mli` is the authoritative interface. All offsets are UTF-8 **bytes**.
 `fields` returns sorted positive field numbers with occurrence ranges relative to
 expanded text; `final_cursor` is `$0` or expansion end. Supported syntax is `$1`,

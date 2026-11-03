@@ -83,21 +83,26 @@ type direction = Next | Previous [@@deriving sexp_of, equal]
 type ghost = { at : int; text : string } [@@deriving sexp_of, equal]
 
 (** Empty prefixes are permitted for server-triggered completion. Callers control
-    when to start; automatic empty-prefix sessions should normally be suppressed. *)
+    when to start; automatic empty-prefix sessions should normally be suppressed.
+    [prefer_local_snippets] defaults to [true]; [false] ranks LSP suggestions
+    ahead of local snippets without excluding either source. *)
 val start
-  :  token:Token.t
+  :  ?prefer_local_snippets:bool
+  -> token:Token.t
   -> text:Text_buffer.t
   -> cursor:int
   -> words:Buffer_words.t
   -> limit:int
+  -> unit
   -> (t * Request.t) option
 
 (** Ignore mismatched tokens and all replies after the first application. Replace
     this provider's contribution, validate against base, preserve selection.
     Inspect at most 1000 candidates per reply, matching [filter_text] against the
     original identifier prefix case-sensitively before applying the menu limit.
-    An empty prefix matches all candidates. Parsed templates rank before plain
-    provider words; deduplication preserves distinct placeholder semantics. *)
+    An empty prefix matches all candidates. Within each source priority, parsed
+    templates rank before plain words; deduplication preserves distinct placeholder
+    semantics. *)
 val receive : t -> Reply.t -> t
 val candidates : t -> Candidate.t list
 val selected : t -> Candidate.t option

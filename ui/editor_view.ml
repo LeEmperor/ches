@@ -80,7 +80,19 @@ module Content_picker_host = struct
     }
 end
 
-let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let apply_startup_configuration ?theme_override ui result =
+  let apply settings = Ui_state.apply_configuration ?theme_override ui settings in
+  match Result.bind result ~f:apply with
+  | Ok ui -> ui
+  | Error error ->
+    let ui = match apply Ches_config_runtime.Settings.default with
+      | Ok ui -> ui
+      | Error _ -> ui in
+    Ui_state.with_notice ~source:"configuration" ui
+      ("Configuration startup failed; using defaults: " ^ error)
+;;
+
+let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
@@ -122,7 +134,10 @@ let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false
           (List.map (String.to_list " vz") ~f:(fun c ->
              Ui_state.Input.Key (Ches_input.Key.char c))))
       else ui in
+  let initial_ui = Option.value_map startup_configuration ~default:initial_ui
+    ~f:(apply_startup_configuration ?theme_override:theme initial_ui) in
   let current_ui = ref initial_ui in
+  let configuration = Option.value_or_thunk configuration ~default:(fun () -> Configuration_host.create ()) in
   let snippets = Option.value_or_thunk snippets ~default:Snippet_host.create in
   let render_cache = Frame.Cache.create () in
   let last_drawn_theme = ref None in
@@ -201,11 +216,14 @@ let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false
               | `Snippets (generation, result) ->
                 Frame.Cache.invalidate render_cache;
                 Ui_state.receive_snippets model ~generation result
+              | `Configuration (generation, result) ->
+                Frame.Cache.invalidate render_cache;
+                Ui_state.receive_configuration model ~generation result
               | `Inputs _ | `Event _ -> model in
             (* Capture belongs to the model at this transition, not the last
                displayed handler: several events can arrive before a redraw. *)
             let inputs = match action with
-              | `Snippets _ -> []
+              | `Snippets _ | `Configuration _ -> []
               | `Inputs inputs -> inputs
               | `Event (event, at) ->
                 Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event
@@ -270,6 +288,10 @@ let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false
           if not (List.is_empty snippet_requests) then
             Bonsai.Apply_action_context.schedule_event context
               (Effect.of_thunk (fun () -> Snippet_host.submit snippets snippet_requests));
+          let model, configuration_requests = Ui_state.take_config_reload_requests model in
+          if not (List.is_empty configuration_requests) then
+            Bonsai.Apply_action_context.schedule_event context
+              (Effect.of_thunk (fun () -> Configuration_host.submit configuration configuration_requests));
           let model, terminal_requests = Ui_state.take_terminal_session_requests model in
           if not (List.is_empty terminal_requests) then
             Bonsai.Apply_action_context.schedule_event context
@@ -332,6 +354,7 @@ let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false
           (match status with
            | Exit when was_running ->
               Snippet_host.stop snippets;
+              Configuration_host.stop configuration;
               Terminal_host.stop terminal;
               Async.don't_wait_for (Terminal_host.shutdown terminal);
               Option.iter source ~f:Ches_source.Source.stop;
@@ -358,6 +381,19 @@ let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false
         | None -> Effect.Ignore
         | Some reply ->
           let%bind.Effect () = inject_action (`Snippets reply) in
+          pump ()
+      in
+      pump ())
+    graph;
+  Bonsai.Edge.lifecycle
+    ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Configuration_host.stop configuration)))
+    ~on_activate:(let%arr inject_action in
+      let rec pump () =
+        let%bind.Effect reply = Effect.of_deferred_thunk (fun () -> Configuration_host.next configuration) in
+        match reply with
+        | None -> Effect.Ignore
+        | Some reply ->
+          let%bind.Effect () = inject_action (`Configuration reply) in
           pump ()
       in
       pump ())
@@ -489,14 +525,30 @@ let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false
   ~view, ~handler
 ;;
 
-let app ?terminal ?snippets ?smear_enabled ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
+let app ?terminal ?snippets ?configuration ?startup_configuration ?smear_enabled ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
   ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph) =
   let terminal = Option.value_or_thunk terminal ~default:Terminal_host.create in
-  app_with_terminal ~terminal ?snippets ?smear_enabled ~zen ?bare ?theme ?buffer_presentation
+  app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration ?smear_enabled ~zen ?bare ?theme ?buffer_presentation
     ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions graph
 ;;
 
-let run ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
+let run ?configuration ?startup_configuration ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
+  let configuration = Option.value_or_thunk configuration ~default:(fun () -> Configuration_host.create ()) in
+  let configuration_at_shutdown = ref (Some configuration) in
+  Async.Shutdown.at_shutdown (fun () ->
+    match !configuration_at_shutdown with
+    | None -> Async.return ()
+    | Some host ->
+      let%map.Async.Deferred () = Configuration_host.shutdown host in
+      configuration_at_shutdown := None);
+  (* Also cover startup helpers: Async shutdown lets the loader reap children.
+     Once mounted, terminal shutdown restores raw mode and the alternate screen. *)
+  Async.Signal.handle
+    [ Async.Signal.term; Async.Signal.hup; Async.Signal.int; Async.Signal.quit ]
+    ~f:(fun (_ : Signal.t) -> Async.shutdown 1);
+  let%bind.Async.Deferred startup_configuration = match startup_configuration with
+    | Some result -> Async.return result
+    | None -> Configuration_host.startup configuration in
   let terminal = Terminal_host.create () in
   (* Shutdown hooks outlive [run]; release their runtime reference after cleanup. *)
   let terminal_at_shutdown = ref (Some terminal) in
@@ -506,12 +558,6 @@ let run ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?font ?buffer_prese
     | Some terminal ->
       let%map.Async.Deferred () = Terminal_host.shutdown terminal in
       terminal_at_shutdown := None);
-  (* Terminating signals shut down through Async, whose shutdown handlers restore the
-     terminal; the default action would leave it in raw mode on the alternate screen.
-     Unsaved changes are discarded. *)
-  Async.Signal.handle
-    [ Async.Signal.term; Async.Signal.hup; Async.Signal.int; Async.Signal.quit ]
-    ~f:(fun (_ : Signal.t) -> Async.shutdown 1);
   (* However the process ends, git children get their termination grace, so none is
      left holding [index.lock]. Idempotent with the wait below. *)
   Option.iter vcs ~f:(fun host ->
@@ -522,12 +568,15 @@ let run ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?font ?buffer_prese
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-        (app_with_terminal ~terminal ~smear_enabled ~zen ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
+        (app_with_terminal ~terminal ~configuration ~startup_configuration ~smear_enabled ~zen ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
     ~f:(fun result ->
+      Configuration_host.stop configuration;
       Option.iter source ~f:Ches_source.Source.stop;
       Ches_app.Controller.close controller;
       let%bind.Async.Deferred () = Terminal_host.shutdown terminal in
       terminal_at_shutdown := None;
+      let%bind.Async.Deferred () = Configuration_host.shutdown configuration in
+      configuration_at_shutdown := None;
       let%map.Async.Deferred (_ : [ `Finished | `Timed_out ]) =
         match vcs with
         | None -> Async.return `Finished

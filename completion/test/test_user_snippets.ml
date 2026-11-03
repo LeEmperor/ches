@@ -138,7 +138,7 @@ let%test_unit "candidate bounds and template ranking preserve distinct semantics
   assert (List.is_empty (candidates catalog (String.make 4097 'f')));
   let base = text "f foo" in
   let token = { M.Token.resource = "test"; generation = 0; revision = 0; request = 1 } in
-  let session limit = M.start ~token ~text:base ~cursor:1 ~words:(M.Buffer_words.create base) ~limit
+  let session limit = M.start ~token ~text:base ~cursor:1 ~words:(M.Buffer_words.create base) ~limit ()
     |> Option.value_exn |> fst in
   let templates = U.candidates catalog ~path:None ~text:base ~cursor:1 ~limit:100 in
   let plain = { (List.hd_exn templates) with M.Candidate.id = "plain"; source = Lsp "test"
@@ -187,7 +187,7 @@ let%test_unit "escaped multiline defaults survive JSON, indentation and linked r
 let%test_unit "builtin template survives same-label LSP word and different LSP template" =
   let base = text "aff" in
   let token = { M.Token.resource = "test.sv"; generation = 0; revision = 0; request = 1 } in
-  let model = M.start ~token ~text:base ~cursor:3 ~words:(M.Buffer_words.create base) ~limit:10
+  let model = M.start ~token ~text:base ~cursor:3 ~words:(M.Buffer_words.create base) ~limit:10 ()
       |> Option.value_exn |> fst in
   let builtin = candidates ~path:"test.sv" U.builtins "aff" |> List.hd_exn in
   let template = Snippet.parse "${1:aff}$0" |> Or_error.ok_exn in

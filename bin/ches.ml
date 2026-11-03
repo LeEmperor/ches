@@ -63,12 +63,12 @@ let command =
       and list_themes = flag "--list-themes" no_arg
         ~doc:" List theme IDs, titles and dark/light kinds without opening the editor"
       and theme = flag "--theme"
-        (optional_with_default Ches_theme.Theme.default
+        (optional
            (Command.Arg_type.create (fun name ->
               match Ches_theme.Theme.find name with
               | Some theme -> theme
               | None -> failwithf "Unknown theme %S; use --list-themes for available IDs" name ())))
-        ~doc:"NAME Initial color theme (default vim-classic; Space v T chooses at runtime)"
+        ~doc:"NAME Override configuration theme (default vim-classic; Space v T chooses at runtime)"
      and demo_problems = flag "--demo-problems" no_arg
        ~doc:" Seed synthetic problems with locations for manual pane/navigation testing"
      and demo_diagnostics = flag "--demo-diagnostics" no_arg
@@ -136,7 +136,7 @@ let command =
            (* One runner for the VCS view's git commands (Space g g); it inherits this
               process's environment and never prompts on the terminal. *)
            let vcs = Ches_ui.Vcs_host.create () in
-            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~zen:(not workspace) ~bare ~theme ~buffer_presentation ?report ?source ~vcs controller with
+            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~zen:(not workspace) ~bare ?theme ~buffer_presentation ?report ?source ~vcs controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

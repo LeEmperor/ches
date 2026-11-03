@@ -49,6 +49,10 @@ val app
    -> ?snippets:Snippet_host.t
         (** Optional runtime override. Each app otherwise owns one asynchronous
             snippet loader, drained after transitions and stopped on deactivation. *)
+   -> ?configuration:Configuration_host.t
+        (** Reload worker override. Creating an app never runs startup config. *)
+   -> ?startup_configuration:Configuration_host.configuration
+        (** Explicit preloaded startup result; errors apply defaults and notify. *)
    -> ?smear_enabled:bool
    -> ?zen:bool
    -> ?bare:bool
@@ -90,9 +94,15 @@ val draw_overlay : ?theme:Ches_theme.Theme.t -> ?font:(Ches_screen.Style.t -> Th
     SIGHUP, SIGINT and SIGQUIT end the process with status 1, discarding unsaved
     changes, after restoring the terminal (and after the same bounded wait for [vcs]).
     The embedded terminal is stopped and its shutdown awaited on both editor exit
-    and process shutdown. *)
+    and process shutdown. Before mounting the interactive app, loads configuration
+    through [configuration] (a fresh production host by default), unless an explicit
+    [startup_configuration] result was supplied. Failed startup uses defaults and
+    reports the diagnostic. Explicit [theme] overrides config and is retained on
+    reload; omitting it allows the configuration theme. *)
 val run
-  :  ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
+  :  ?configuration:Configuration_host.t
+   -> ?startup_configuration:Configuration_host.configuration
+   -> ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
    -> ?zen:bool (** Start in Zen; false by default. [bare] takes precedence. *)
    -> ?bare:bool (** Start in borderless document presentation. *)
    -> ?theme:Ches_theme.Theme.t (** Initial theme; Space v T previews and chooses themes. *)

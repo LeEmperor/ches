@@ -53,6 +53,7 @@ type t =
   | Toggle_completion_ghost
   | Insert_demo_snippet
   | Reload_snippets
+  | Reload_configuration (** Queue an asynchronous configuration reload. *)
   | Toggle_terminal
   | Select_terminal of int (** Select a positive session ID, toggling if already visible. *)
   | Adjust_terminal_size of int (** Steps of 10 columns and 2 rows, outer size. *)

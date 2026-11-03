@@ -23,6 +23,7 @@ type completion_session =
   ; resolving : (string * int) option
   ; base : Text_buffer.t
   ; base_cursor : int
+  ; prefer_local_snippets : bool
   }
 
 type completion_acceptance =
@@ -125,6 +126,12 @@ type t =
   ; completion_words : completion_words Buffer_id.Map.t
   ; completion_enabled : bool
   ; completion_ghost_enabled : bool
+  ; completion_min_prefix_chars : int
+  ; completion_prefer_local_snippets : bool
+  ; configuration_theme_override : Ches_theme.Theme.t option
+  ; config_generation : int
+  ; config_reload_requests : int list
+  ; config_loading : bool
   ; session : Session.t
   ; scrolls : Scroll.t Buffer_id.Map.t
   ; paste_buffer : Buffer_id.t option
@@ -221,7 +228,7 @@ let directory_id = View_id.of_string "directory"
 let demo_report_unavailable = "Demo report unavailable; launch with --demo-report"
 
 let create
-  ?(theme = Ches_theme.Theme.default)
+  ?theme
   ?(prefs = Geometry.Prefs.default)
   ?(bare_prefs = Presentation.Bare_prefs.default)
   ?workspace_prefs
@@ -272,6 +279,12 @@ let create
   ; completion_words = Buffer_id.Map.empty
   ; completion_enabled = true
   ; completion_ghost_enabled = false
+  ; completion_min_prefix_chars = 1
+  ; completion_prefer_local_snippets = true
+  ; configuration_theme_override = theme
+  ; config_generation = 0
+  ; config_reload_requests = []
+  ; config_loading = false
   ; session
   ; scrolls = Buffer_id.Map.empty
   ; paste_buffer = None
@@ -329,7 +342,7 @@ let create
   ; terminal_prefix = []
   ; terminal_inspection = None
   ; terminal_paste = None
-  ; theme
+  ; theme = Option.value theme ~default:Ches_theme.Theme.default
   ; theme_picker = None
   ; theme_picker_return = document_id
   ; palette_origin = None
@@ -499,6 +512,50 @@ let expire_completion_acceptance t ~at =
   | _ -> t
 ;;
 
+let apply_configuration ?theme_override t (settings : Ches_config_runtime.Settings.t) =
+  match Ches_config_runtime.Settings.validate settings with
+  | Error error -> Error (Error.to_string_hum error)
+  | Ok _ ->
+    match Ches_theme.Theme.find settings.theme with
+    | None -> Error ("Unknown configuration theme: " ^ settings.theme)
+    | Some configured_theme ->
+      let configuration_theme_override = Option.first_some theme_override t.configuration_theme_override in
+      let theme = Option.value configuration_theme_override ~default:configured_theme in
+      let line_numbers = if settings.line_numbers then Line_numbers.Absolute else Off in
+      let t = dismiss_completion t in
+      let host = if Option.is_some t.theme_picker then
+          Host.focus (Host.invalidate_paste t.host Theme_picker_tile.id) t.theme_picker_return
+        else t.host in
+      Ok { t with completion_enabled = settings.completion_enabled
+        ; completion_ghost_enabled = settings.completion_ghost_preview
+        ; completion_min_prefix_chars = settings.completion_min_prefix_chars
+        ; completion_prefer_local_snippets = settings.completion_prefer_local_snippets
+        ; configuration_theme_override; theme; theme_picker = None; host
+        ; prefs = { t.prefs with line_numbers }
+        ; bare_prefs = { line_numbers } }
+;;
+
+let take_config_reload_requests t =
+  { t with config_reload_requests = [] }, List.rev t.config_reload_requests
+;;
+
+let reload_configuration t =
+  let generation = t.config_generation + 1 in
+  { t with config_generation = generation; config_loading = true
+    ; config_reload_requests = generation :: t.config_reload_requests }
+;;
+
+let receive_configuration t ~generation result =
+  if generation <> t.config_generation || not t.config_loading then t else
+  let result = Result.bind result ~f:(apply_configuration t) in
+  let t, severity, text = match result with
+    | Ok t -> t, Ches_error.Error.Severity.Info, "Configuration reloaded"
+    | Error error -> t, Ches_error.Error.Severity.Error, "Could not reload configuration: " ^ error in
+  { t with config_loading = false
+    ; controller = Controller.update_feedback t.controller
+        (Notify { source = "configuration"; scope = None; severity; text; history = true }) }
+;;
+
 let take_snippet_reload_requests t =
   { t with snippet_reload_requests = [] }, List.rev t.snippet_reload_requests
 ;;
@@ -569,8 +626,8 @@ let resolved_finalize c ~revision =
     Option.bind (completion_metadata c selected) ~f:(fun info ->
       Option.bind info.additional ~f:(fun additional ->
         let selected = { selected with additional } in
-        Option.bind (Completion.start ~token:c.token ~text:c.base ~cursor:c.base_cursor
-          ~words:(Completion.Buffer_words.create Text_buffer.empty) ~limit:1)
+        Option.bind (Completion.start ~prefer_local_snippets:c.prefer_local_snippets ~token:c.token ~text:c.base ~cursor:c.base_cursor
+          ~words:(Completion.Buffer_words.create Text_buffer.empty) ~limit:1 ())
           ~f:(fun (model, _) ->
             let source = match selected.source with Buffer | Snippet -> "" | Lsp source -> source in
             let model = Completion.receive model
@@ -683,8 +740,8 @@ let start_completion ?(manual = false) t =
     | Some words -> Completion.Buffer_words.update words text in
   let t = Option.value_map owner ~default:t ~f:(fun id ->
     { t with completion_words = Map.set t.completion_words ~key:id ~data:{ document; words } }) in
-  match Completion.start ~token ~text ~cursor:(Editor.cursor editor)
-      ~words ~limit:100 with
+  match Completion.start ~prefer_local_snippets:t.completion_prefer_local_snippets ~token ~text ~cursor:(Editor.cursor editor)
+      ~words ~limit:100 () with
   | None -> t
   | Some (model, request) ->
     let snippets = Ches_completion.User_snippets.candidates t.user_snippets
@@ -696,13 +753,21 @@ let start_completion ?(manual = false) t =
     let preceding = Option.value_map (Text_buffer.prev_boundary text request.cursor)
       ~default:"" ~f:(fun at -> Text_buffer.slice text ~pos:at ~len:(request.cursor - at)) in
     let punctuation = List.mem [ "."; ":"; ">"; "/" ] preceding ~equal:String.equal in
-    if not manual && not identifier_character && not punctuation then t else
+    let rec prefix_chars at count =
+      if at <= request.fallback_start then count else
+      match Text_buffer.prev_boundary text at with
+      | None -> count
+      | Some previous -> prefix_chars previous (count + 1) in
+    if not manual && not punctuation
+       && (not identifier_character
+           || prefix_chars request.cursor 0 < t.completion_min_prefix_chars) then t else
     let request = if punctuation && not manual then
         { request with trigger = Character preceding }
       else request in
     { t with completion_serial = serial
     ; completion = Some { model; token; owner; document = Controller.document_id t.controller; installed = false
-        ; metadata = String.Map.empty; resolving = None; base = text; base_cursor = Editor.cursor editor }
+        ; metadata = String.Map.empty; resolving = None; base = text; base_cursor = Editor.cursor editor
+        ; prefer_local_snippets = t.completion_prefer_local_snippets }
     ; source_commands = if t.source_attached && not (String.is_empty token.resource)
         then Complete request :: t.source_commands else t.source_commands }
 ;;
@@ -728,7 +793,7 @@ let insert_demo_snippet t =
   (* A single local candidate, without buffer words or a provider request. Keep
      the real planning/install/accept handoff, including its insert undo group. *)
   match Completion.start ~token ~text ~cursor
-      ~words:(Completion.Buffer_words.create Text_buffer.empty) ~limit:1 with
+      ~words:(Completion.Buffer_words.create Text_buffer.empty) ~limit:1 () with
   | None -> t
   | Some (model, request) ->
     let template = Snippet.parse "assign ${1:signal} = ${2:value};\n// mirror: $1\n$0"
@@ -747,7 +812,8 @@ let insert_demo_snippet t =
     let t = { t with controller; completion_serial = serial
       ; completion = Some { model; token; owner = Session.context_id t.session
           ; document = Controller.document_id controller; installed = false
-          ; metadata = String.Map.empty; resolving = None; base = text; base_cursor = cursor } } in
+          ; metadata = String.Map.empty; resolving = None; base = text; base_cursor = cursor
+          ; prefer_local_snippets = true } } in
     accept_completion (cycle_completion t Next)
 ;;
 
@@ -2106,7 +2172,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_smear
   | Toggle_completion | Toggle_completion_ghost
   | Insert_demo_snippet
-  | Reload_snippets
+  | Reload_snippets | Reload_configuration
   | Toggle_status
   | Toggle_hotkey_hints
   | Position_status _
@@ -2148,7 +2214,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
   | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
   | Insert_demo_snippet -> None
-  | Reload_snippets -> None
+  | Reload_snippets | Reload_configuration -> None
   | Present_buffers presentation -> Some
       (match presentation with
        | Top -> "Open buffers in top strip"
@@ -3144,8 +3210,9 @@ let close_split t ~width ~height =
 ;;
 
 let apply_view_command t ~width ~height (view : View_command.t) =
-  let t = finalize_completion t in
-  let t = if Option.is_some t.theme_picker then return_to_document t else t in
+  let t = if View_command.equal view Reload_configuration then t else finalize_completion t in
+  let t = if not (View_command.equal view Reload_configuration) && Option.is_some t.theme_picker
+    then return_to_document t else t in
   let t = match view with
     | Directory_major | Directory_side | Focus_directory | Toggle_directory -> leave_bare t
     | _ -> t in
@@ -3154,6 +3221,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Toggle_completion_ghost -> { t with completion_ghost_enabled = not t.completion_ghost_enabled }
   | Insert_demo_snippet -> insert_demo_snippet t
   | Reload_snippets -> reload_snippets t
+  | Reload_configuration -> reload_configuration t
   | Toggle_terminal -> toggle_terminal t ~width ~height
   | Select_terminal number -> select_terminal t number ~width ~height
   | Adjust_terminal_size steps -> adjust_terminal_size t steps

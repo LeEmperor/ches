@@ -6,7 +6,7 @@ let text s = Text_buffer.of_string s |> Result.ok |> Option.value_exn
 let token = { Token.resource = "/example.ml"; generation = 3; revision = 0; request = 1 }
 let start s at =
   let base = text s in
-  start ~token ~text:base ~cursor:at ~words:(Buffer_words.create base) ~limit:100
+  start ~token ~text:base ~cursor:at ~words:(Buffer_words.create base) ~limit:100 ()
   |> Option.value_exn |> fst
 ;;
 let candidate ?(additional = []) ?filter_text id ~start ~stop inserted =
@@ -22,6 +22,25 @@ let apply t base revision p =
   applied t p ~revision, result
 ;;
 let string = Text_buffer.to_string
+
+let%test_unit "local snippet preference reverses source priority and survives provider rebuilds" =
+  let base = text "f foobar" in
+  let template = Ches_completion.Snippet.parse "${1:foo}$0" |> Or_error.ok_exn in
+  let local = { (candidate "local" ~start:0 ~stop:1 "foo") with
+    source = Snippet; snippet = Some template; sort_text = "zzz" } in
+  let lsp = candidate "lsp" ~start:0 ~stop:1 "far" in
+  List.iter [true; false] ~f:(fun prefer_local_snippets ->
+    let t, _ = Ches_completion.Model.start ~prefer_local_snippets ~token ~text:base ~cursor:1
+        ~words:(Buffer_words.create base) ~limit:100 () |> Option.value_exn in
+    let t = receive t { token; source = "local"; candidates = [local]; incomplete = false } in
+    let t = reply t [lsp] in
+    let expected = if prefer_local_snippets then ["local"; "lsp"; "buffer:foobar"]
+      else ["lsp"; "local"; "buffer:foobar"] in
+    let ids t = List.map (candidates t) ~f:(fun c -> c.Candidate.id) in
+    assert (List.equal String.equal (ids t) expected);
+    let t = receive t { token; source = "local"; candidates = [local]; incomplete = false } in
+    assert (List.equal String.equal (ids t) expected))
+;;
 
 let%test_unit "cycles primary only; finalize adds only selected extras and ends session" =
   let base = text "f\n" in
@@ -196,5 +215,5 @@ let%test_unit "whole-buffer words, UTF prefix, lexical order regardless of proxi
   assert (List.equal String.equal (List.map items ~f:(fun c -> c.Candidate.label))
     [ String.make 70000 'a'; "alpha" ]);
   assert (Option.is_none (Ches_completion.Model.start ~token ~text:base ~cursor:5000
-      ~words:(Buffer_words.create base) ~limit:100))
+      ~words:(Buffer_words.create base) ~limit:100 ()))
 ;;

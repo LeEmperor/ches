@@ -44,7 +44,7 @@ let%test_unit "empty-slot model session takes only the first lexical candidates 
   let vocabulary = List.init 150 ~f:(fun i -> sprintf "word%03d" i) in
   let t = text (". " ^ String.concat ~sep:" " (List.rev vocabulary)) in
   let token = { Token.resource = "empty-slot"; generation = 1; revision = 0; request = 1 } in
-  let session, request = start ~token ~text:t ~cursor:1 ~words:(W.create t) ~limit:100
+  let session, request = start ~token ~text:t ~cursor:1 ~words:(W.create t) ~limit:100 ()
     |> Option.value_exn in
   [%test_eq: string list] (List.map (candidates session) ~f:(fun c -> c.Candidate.label))
     (List.take vocabulary 100);

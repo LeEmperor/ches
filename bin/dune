@@ -5,3 +5,8 @@
   core_unix.filename_unix)
  (preprocess
   (pps ppx_jane)))
+
+(rule
+ (alias runtest)
+ (deps test_configuration_cli.py)
+ (action (run python3 %{dep:test_configuration_cli.py} %{exe:ches.exe})))

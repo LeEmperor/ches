@@ -76,6 +76,16 @@ end
 
 type t
 
+(** Pure atomic application; validates the snapshot/theme before any changes.
+    [theme_override] persists across reloads. Explicit [create ~theme] is also
+    retained. Creation does not request configuration loading; see CONFIGURATION.md. *)
+val apply_configuration
+  : ?theme_override:Ches_theme.Theme.t
+  -> t -> Ches_config_runtime.Settings.t -> (t, string) Result.t
+val take_config_reload_requests : t -> t * int list
+val receive_configuration
+  : t -> generation:int -> (Ches_config_runtime.Settings.t, string) Result.t -> t
+
 (** Automatic suggestions are enabled initially; ghost preview is independent and
     initially disabled. Candidate edits are installed only by acceptance keys. *)
 val completion_enabled : t -> bool

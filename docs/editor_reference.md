@@ -680,6 +680,11 @@ and slang's HDL hierarchy and waveform features are not wired into the editor.
 
 ### Code completion
 
+Startup preferences can be set in [OCaml configuration](configuration.md), including
+automatic completion, ghost preview, trigger length, and local-snippet priority.
+Palette changes last only for the current session; Reload configuration restores
+defaults plus the values in your file.
+
 Automatic completion is enabled by default in ordinary Insert mode. After one
 identifier character, a small menu offers matching words from the current buffer
 and candidates from an attached language server. Punctuation `.`, `:`, `>`, and

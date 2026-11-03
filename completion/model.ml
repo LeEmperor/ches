@@ -146,7 +146,7 @@ type t =
   ; expected_cursor : int; limit : int; buffer : Candidate.t list
   ; providers : (string * Candidate.t list) list; items : Candidate.t list
   ; selected_index : int; installed : Candidate.t option; finalized : bool
-  ; stamp : unit ref }
+  ; prefer_local_snippets : bool; stamp : unit ref }
 
 type plan_kind = Primary | Finalize
 type plan =
@@ -161,14 +161,14 @@ let matches t ~revision ~cursor =
   not t.finalized && revision = t.expected_revision && cursor = t.expected_cursor
 ;;
 
-let start ~token ~text ~cursor ~words ~limit =
+let start ?(prefer_local_snippets = true) ~token ~text ~cursor ~words ~limit () =
   if limit <= 0 then None else
     Option.map (prefix_start text cursor) ~f:(fun start ->
       let buffer = Buffer_words.candidates words ~text ~cursor ~limit in
       { token; base = text; prefix = B.slice text ~pos:start ~len:(cursor - start)
       ; initial_cursor = cursor; expected_revision = token.revision
       ; expected_cursor = cursor; limit; buffer; providers = []; items = buffer
-      ; selected_index = 0; installed = None; finalized = false; stamp = ref () },
+      ; selected_index = 0; installed = None; finalized = false; prefer_local_snippets; stamp = ref () },
       { Request.token; cursor; fallback_start = start; fallback_stop = cursor
       ; trigger = Automatic })
 ;;
@@ -203,8 +203,12 @@ let receive t (reply : Reply.t) =
     let lsp = List.sort providers ~compare:(fun (a, _) (b, _) -> String.compare a b)
       |> List.concat_map ~f:snd
       |> List.stable_sort ~compare:(fun a b ->
+        let local c = Candidate.equal_source c.Candidate.source Snippet in
+        let source = if t.prefer_local_snippets then Bool.compare (local b) (local a)
+          else Bool.compare (local a) (local b) in
         let template = Bool.compare (Option.is_none a.Candidate.snippet)
             (Option.is_none b.Candidate.snippet) in
+        if source <> 0 then source else
         if template <> 0 then template else String.compare a.sort_text b.sort_text)
     in
     let items = List.fold (lsp @ t.buffer) ~init:[] ~f:(fun acc item ->

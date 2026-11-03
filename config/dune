@@ -1,0 +1,12 @@
+(library
+ (name ches_config_runtime)
+ (modules settings loader api_source)
+ (libraries core core_unix async)
+ (preprocess (pps ppx_jane)))
+
+(rule
+ (targets api_source.ml)
+ (deps ches_config.ml embed.ml)
+ (action
+  (with-stdout-to %{targets}
+   (run %{ocaml} %{dep:embed.ml} %{dep:ches_config.ml}))))
