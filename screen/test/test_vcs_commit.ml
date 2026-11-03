@@ -28,14 +28,14 @@ let with_repo ?(stage = true) f =
     f repo)
 ;;
 
-let create ?plan (repo : Fixture.t) =
+let create ?plan ?placement (repo : Fixture.t) =
   let controller =
     Controller.open_file ~cell_width:Cell_map.width (Fixture.path repo "a.txt")
     |> Or_error.ok_exn
   in
   Ui_state.create
     ~tiles_visible:false
-    ~views:[ Vcs_view.entry ?plan ~cwd:repo.work () ]
+    ~views:[ Vcs_view.entry ?plan ?placement ~cwd:repo.work () ]
     controller
 ;;
 
@@ -157,6 +157,90 @@ let popup_rows t =
       let outer = layout.outer in
       List.iter (List.take (List.drop lines outer.y) outer.height) ~f:(fun line ->
         print_endline (cut line ~x:outer.x ~width:outer.width)))
+;;
+
+let%test_unit "the message editor replaces the preview while the VCS lists stay usable" =
+  with_repo (fun repo ->
+    let run = run ~quiet:true repo in
+    let t = run (create repo) " gg" in
+    let t = run t "<Tab>cc" in
+    let t = run t "iInline subject<Esc>" in
+    let workspace = Ui_state.workspace t ~width ~height in
+    let lists = Option.value_exn (Workspace.minor workspace Vcs_view.id) in
+    assert (lists.rect.x = 0 && lists.rect.width = 40);
+    assert (workspace.document.rect.x = lists.rect.width + Workspace.gap);
+    let frame = Frame.render t ~width ~height in
+    let left =
+      List.map frame.rows ~f:(fun row ->
+        Span.take row ~n:lists.rect.width
+        |> List.map ~f:(fun (span : Span.t) -> span.text)
+        |> String.concat)
+      |> String.concat ~sep:"\n"
+    in
+    assert (String.is_substring left ~substring:"first");
+    assert (String.is_substring left ~substring:"a.txt");
+    assert (not (String.is_substring left ~substring:"Diff"));
+    assert (String.is_substring (Frame.to_string frame) ~substring:"Inline subject");
+    let cursor = Option.value_exn frame.cursor in
+    assert (cursor.x >= workspace.document.rect.x);
+    (* Focus the existing companion, browse commits, then Tab returns to the draft.
+       Selecting a commit must not replace or edit the message. *)
+    let t = run t " gg3j" in
+    assert (View_id.equal (Ui_state.focused_view t ~width ~height) Vcs_view.id);
+    assert (Option.is_some (Workspace.minor (Ui_state.workspace t ~width ~height) Vcs_view.id));
+    let t = run t "<Tab>" in
+    assert (View_id.equal (Ui_state.focused_view t ~width ~height) (View_id.of_string "document"));
+    assert (String.is_prefix
+      (Ches_core.Text_buffer.to_string (Editor.text (Controller.editor (Ui_state.controller t))))
+      ~prefix:"Inline subject");
+    (* A narrow terminal gets the full editor; widening restores the companion. *)
+    let narrow = Helpers.run ~width:60 ~height t [ Ui_state.Input.Resize ] in
+    assert (Option.is_none (Workspace.minor (Ui_state.workspace narrow ~width:60 ~height) Vcs_view.id));
+    let t = Helpers.run ~width ~height narrow [ Ui_state.Input.Resize ] in
+    assert (Option.is_some (Workspace.minor (Ui_state.workspace t ~width ~height) Vcs_view.id));
+    let t = run t " gc" in
+    assert (String.equal (Fixture.git repo [ "log"; "-1"; "--format=%s" ]) "Inline subject\n");
+    assert (View_id.equal (Ui_state.focused_view t ~width ~height) Vcs_view.id);
+    assert (Option.is_none (Workspace.minor (Ui_state.workspace t ~width ~height) Vcs_view.id));
+    let t = run t "<Tab>" in
+    assert (Vcs_view.Focus.equal (Vcs_view.focus (vcs t)) Diff))
+;;
+
+let%test_unit "aborting restores each VCS placement and leaves unrelated layout preferences intact" =
+  List.iter [ View_registry.Placement.Tab; Split; Band ] ~f:(fun placement ->
+    with_repo (fun repo ->
+      let run = run ~quiet:true repo in
+      let t = run (create ~placement repo) " gg" in
+      let before = Ui_state.workspace t ~width ~height in
+      let t = run t "cc" in
+      assert (Option.equal View_registry.Placement.equal
+        (View_registry.placement (Ui_state.views t) Vcs_view.id) (Some placement));
+      let during = Ui_state.workspace t ~width ~height in
+      let lists = Option.value_exn (Workspace.minor during Vcs_view.id) in
+      assert (lists.rect.x = 0 && lists.rect.width = 40);
+      assert (List.count during.minors ~f:(fun pane ->
+        Workspace.Pane_id.equal pane.id (Minor Vcs_view.id)) = 1);
+      let t = run t " ga" in
+      assert (Option.equal View_registry.Placement.equal
+        (View_registry.placement (Ui_state.views t) Vcs_view.id) (Some placement));
+      assert (Workspace.equal before (Ui_state.workspace t ~width ~height));
+      assert (not (Sys_unix.file_exists_exn (message_file repo)))))
+;;
+
+let%test_unit "switching away from a draft removes its companion; returning restores it" =
+  with_repo (fun repo ->
+    let run = run ~quiet:true repo in
+    let t = run (create repo) " gg" in
+    let t = run t "cc" in
+    let t = run t "iKeep this draft<Esc> bp bp" in
+    assert (String.equal (Option.value_exn (Editor.path (Controller.editor (Ui_state.controller t))))
+      (Fixture.path repo "a.txt"));
+    assert (Option.is_none (Workspace.minor (Ui_state.workspace t ~width ~height) Vcs_view.id));
+    let t = run t " bn bn" in
+    assert (Option.is_some (Workspace.minor (Ui_state.workspace t ~width ~height) Vcs_view.id));
+    assert (String.is_prefix
+      (Ches_core.Text_buffer.to_string (Editor.text (Controller.editor (Ui_state.controller t))))
+      ~prefix:"Keep this draft"))
 ;;
 
 let%expect_test "c opens the commit popup over the view; - s toggles a switch; q declines" =
@@ -504,6 +588,7 @@ let%expect_test "a failing pre-commit hook keeps the buffer; c c reopens it; Spa
     let t = run ~quiet:true repo (create repo) " gg" in
     let t = run repo t "cc" in
     let t = run repo t "iHooked<Esc> gc" in
+    assert (Option.is_some (Workspace.minor (Ui_state.workspace t ~width ~height) Vcs_view.id));
     where repo t;
     head repo;
     commands repo t;
@@ -527,7 +612,7 @@ let%expect_test "a failing pre-commit hook keeps the buffer; c c reopens it; Spa
     where repo t;
     buffer repo t;
     [%expect {|
-      focused vcs; tabs [a.txt *VCS: main CHES_COMMIT_EDITMSG]; file CHES_COMMIT_EDITMSG line 1
+      focused vcs; tabs [a.txt VCS: main *CHES_COMMIT_EDITMSG]; file CHES_COMMIT_EDITMSG line 1
       focused document; tabs [a.txt VCS: main *CHES_COMMIT_EDITMSG]; file CHES_COMMIT_EDITMSG line 1
       message: A commit message is already open: Space g c commits it, Space g a aborts
       --- $DIR/work/.git/CHES_COMMIT_EDITMSG
@@ -635,7 +720,7 @@ let%expect_test "Space g c and Space g a refuse outside the pending message buff
       message: No pending commit message here; nothing ran
       focused document; tabs [*a.txt]; file a.txt line 1
       message: No pending commit message here; nothing ran
-      focused vcs; tabs [a.txt *VCS: main CHES_COMMIT_EDITMSG]; file CHES_COMMIT_EDITMSG line 1
+      focused vcs; tabs [a.txt VCS: main *CHES_COMMIT_EDITMSG]; file CHES_COMMIT_EDITMSG line 1
       message: No pending commit message here; nothing ran
       focused document; tabs [*a.txt VCS: main CHES_COMMIT_EDITMSG]; file a.txt line 1
       message: No pending commit message here; nothing ran

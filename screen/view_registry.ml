@@ -204,6 +204,8 @@ module Entry = struct
         ; placement : Placement.t
         ; opens_in : Placement.t
         ; pending : 'action Ask.t option
+        ; editor : 'state -> string option
+        ; companion : 'state -> bool -> 'state
         }
         -> t
     | Unavailable of
@@ -212,7 +214,8 @@ module Entry = struct
         ; notice : string
         }
 
-  let install ?(placement = Placement.Hidden) ?(opens_in = Placement.Band) adapter state =
+  let install ?(placement = Placement.Hidden) ?(opens_in = Placement.Band)
+        ?(editor = fun _ -> None) ?(companion = fun state _ -> state) adapter state =
     (match opens_in with
      | Hidden ->
        raise_s
@@ -220,7 +223,7 @@ module Entry = struct
            "View_registry.Entry.install: opens_in Hidden"
              ~view:(adapter.Adapter.spec.id : View_id.t)]
      | Band | Tab | Split -> ());
-    Installed { adapter; state; placement; opens_in; pending = None }
+    Installed { adapter; state; placement; opens_in; pending = None; editor; companion }
   ;;
 
   let unavailable id ~title ~notice = Unavailable { id; title; notice }
@@ -334,10 +337,20 @@ let set_placement t id placement =
   place t id placement
 ;;
 
-let fit t controller ~viewport =
+let editor_companion t ~path =
+  List.find_map t ~f:(function
+    | Entry.Installed { adapter; state; placement; editor; _ }
+      when not (Placement.equal placement Hidden) ->
+      Option.bind (editor state) ~f:(fun editing ->
+        Option.some_if (String.equal path editing) adapter.spec.id)
+    | _ -> None)
+;;
+
+let fit ?companion t controller ~viewport =
   List.map t ~f:(function
-    | Entry.Installed ({ adapter; state; _ } as entry) ->
+    | Entry.Installed ({ adapter; state; companion = present; _ } as entry) ->
       let rows, width = viewport adapter.spec.id in
+      let state = present state (Option.exists companion ~f:(View_id.equal adapter.spec.id)) in
       Entry.Installed { entry with state = adapter.fit state controller ~rows ~width }
     | Unavailable _ as entry -> entry)
 ;;

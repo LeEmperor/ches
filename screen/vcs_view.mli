@@ -538,8 +538,9 @@ type planner =
     absolute. *)
 val create : ?plan:planner -> cwd:string -> unit -> t
 
-(** [View_registry.Entry.install ~placement ~opens_in:Tab adapter (create ?plan ~cwd
-    ())]; [placement] defaults to [Hidden]. *)
+(** Installs the view with [opens_in:Tab] and its pending commit message as an editor
+    companion: lists only beside the message, the normal layout elsewhere.
+    [placement] defaults to [Hidden]. *)
 val entry
   :  ?placement:View_registry.Placement.t
   -> ?plan:planner

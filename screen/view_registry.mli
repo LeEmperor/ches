@@ -338,10 +338,17 @@ module Entry : sig
   (** [placement] defaults to [Hidden]. [opens_in] (default [Band]; not [Hidden]) is
       where {!View_command.t.Focus_view} and {!View_command.t.Toggle_view} show the
       view when it is hidden: [Tab] adds and activates a tab, [Split] replaces the
-      split view. *)
+      split view.
+
+      [editor] identifies a file the view has opened for editing. While that file
+      is active, the application may show the view beside the editor; [companion]
+      selects that presentation before fitting (false restores the normal view).
+      Defaults: no editor and unchanged presentation. *)
   val install
     :  ?placement:Placement.t
     -> ?opens_in:Placement.t
+    -> ?editor:('state -> string option)
+    -> ?companion:('state -> bool -> 'state)
     -> ('state, _) Adapter.t
     -> 'state
     -> t
@@ -394,9 +401,13 @@ val leave : t -> View_id.t -> t
 (** Hide the view and {!leave} it: how every placement closes a view. *)
 val close : t -> View_id.t -> t
 
+(** A visible view whose editable file is [path]. Its companion presentation is
+    fitted beside that file without changing the view's retained placement. *)
+val editor_companion : t -> path:string -> View_id.t option
+
 (** Fit every installed view, hidden ones included; [viewport id] is its
-    [(rows, width)]. *)
-val fit : t -> Ches_app.Controller.t -> viewport:(View_id.t -> int * int) -> t
+    [(rows, width)]. [companion] selects the view presented beside its editor. *)
+val fit : ?companion:View_id.t -> t -> Ches_app.Controller.t -> viewport:(View_id.t -> int * int) -> t
 
 val text_view : t -> View_id.t -> Ches_tile.Text_view.t option
 

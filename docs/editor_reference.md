@@ -1251,7 +1251,13 @@ commit-msg hooks), `-s` (`--signoff`: add a `Signed-off-by` line) and `-e`
   pre-filled; with nothing staged, `a` just rewords HEAD). Both open the message
   file, `.git/CHES_COMMIT_EDITMSG`, as an ordinary file tab with the cursor on the
   first line, below which a `#` comment block names the branch, the switches and the
-  staged files (from the split, it opens in the editor pane). Write the message with
+  staged files. At 80 columns or wider (and at least eight rows), the message editor
+  occupies the right side while the VCS's files, branches and recent commits stay
+  visible on the left. `Space g g` focuses those lists without leaving the draft;
+  `Tab` there returns to the message. The diff preview returns when you finish,
+  abort, or switch away from the message tab. Smaller terminals show the full-width
+  message editor, and widening restores the lists. The VCS's tab, split or band
+  placement is preserved. Write the message with
   the usual editing keys, then `Space g c` (palette `VCS: finish commit`) saves the
   buffer and runs `git commit --cleanup=strip -F` on it (with `--amend` for an
   amend, and the switches chosen in the popup): comment lines and surrounding blank

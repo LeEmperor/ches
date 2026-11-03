@@ -1270,16 +1270,30 @@ let geometry_in ?(buffers_in_status = false) t ~allocation ~reserve_status_row =
     ~line_count:(Text_buffer.line_count (Editor.text (Controller.editor t.controller)))
 ;;
 
+let editor_companion t ~width ~height =
+  if suppress_workspace t || Option.is_some (active_tab_view t)
+     || Option.is_some (Session.input_directory t.session) || width < 80 || height < 8
+  then None
+  else Option.bind (Editor.path (Controller.editor t.controller)) ~f:(fun path ->
+    View_registry.editor_companion t.views ~path)
+;;
+
 let workspace t ~width ~height =
   let prefs = t.workspace_prefs in
-  let minors = if suppress_workspace t then [] else View_registry.band t.views in
+  let companion = editor_companion t ~width ~height in
+  let is_companion id = Option.exists companion ~f:(View_id.equal id) in
+  let minors = if suppress_workspace t then [] else
+    List.filter (View_registry.band t.views) ~f:(fun id -> not (is_companion id)) in
   Workspace.allocate
     ~minors
     ?split:(if suppress_workspace t then None
-      else Option.map (View_registry.split t.views) ~f:(fun id -> id, t.split))
-    ?side:(Option.bind (Session.directory_presentation t.session) ~f:(fun p ->
-      Option.some_if (Poly.equal p.placement Side && not (suppress_workspace t) && Option.is_some (Session.active_id t.session))
-        (directory_id, t.directory_size)))
+      else Option.bind (View_registry.split t.views) ~f:(fun id ->
+        Option.some_if (not (is_companion id)) (id, t.split)))
+    ?side:(match companion with
+      | Some id -> Some (id, Int.clamp_exn (width * 2 / 5) ~min:30 ~max:60)
+      | None -> Option.bind (Session.directory_presentation t.session) ~f:(fun p ->
+        Option.some_if (Poly.equal p.placement Side && not (suppress_workspace t) && Option.is_some (Session.active_id t.session))
+          (directory_id, t.directory_size)))
     (if suppress_workspace t then { prefs with status_visible = false } else prefs)
     ~allocation:{ Geometry.Rect.x = 0; y = 0; width; height }
 ;;
@@ -2170,7 +2184,8 @@ let synchronize t ~width ~height =
   let t =
     { t with
       views =
-        View_registry.fit t.views t.controller ~viewport:(fun id ->
+        View_registry.fit ?companion:(editor_companion t ~width ~height)
+          t.views t.controller ~viewport:(fun id ->
           minor_rows t ~width ~height id, minor_width t ~width ~height id)
     ; palette =
         Option.map t.palette
@@ -3694,6 +3709,8 @@ let workspace_notice t ~width ~height text =
 let focus_view t ~width ~height id =
   let t = leave_bare t in
   match View_registry.placement t.views id with
+  | Some _ when Option.exists (editor_companion t ~width ~height) ~f:(View_id.equal id) ->
+    toggle_focus t ~width ~height id ~show:Fn.id
   | Some Tab
     when Option.exists (active_tab_view t) ~f:(View_id.equal id)
          && View_id.equal (focused_view t ~width ~height) id ->

@@ -284,6 +284,7 @@ type t =
   ; mutation : Mutation.t option
   ; anchor : Anchor.t option (** Applied to the next [Loaded] diff of its target. *)
   ; pending : Pending.t option (** See [live_pending]. *)
+  ; companion : bool (** Lists beside the pending message's document editor. *)
   ; scope : Log_scope.t (** The log the next refresh reads (phase 8). *)
   ; file_log : File_log.t option (** See [File_log]. *)
   ; graph : string String.Map.t
@@ -318,6 +319,7 @@ let create ?(plan = B.plan) ~cwd () =
   ; mutation = None
   ; anchor = None
   ; pending = None
+  ; companion = false
   ; scope = Log_scope.default
   ; file_log = None
   ; graph = String.Map.empty
@@ -674,7 +676,17 @@ let fit_list t focus ~body =
 ;;
 
 let layout t ~rows ~width =
-  Layout.compute ~width ~rows ~focus:t.focus ~log:t.log_visible
+  if t.companion
+  then
+    let log = (Layout.compute ~width ~rows ~focus:t.list_focus ~log:t.log_visible).log in
+    { Layout.mode = Single
+    ; lists = Some
+        { Geometry.Rect.x = 0; y = 0; width
+        ; height = Option.value_map log ~default:rows ~f:(fun rect -> rect.y) }
+    ; diff = None
+    ; log
+    }
+  else Layout.compute ~width ~rows ~focus:t.focus ~log:t.log_visible
 ;;
 
 (* Blank columns on each side of the diff's title and text, in a diff part [width]
@@ -2284,6 +2296,7 @@ let perform t controller ~context ~rows ~width action =
   | Focus_list focus ->
     let t = end_visual t in
     with_jobs (request_diff { t with focus; list_focus = focus })
+  | Focus_diff | Select | Toggle_diff when t.companion -> outcome t ~return:true
   | Focus_diff | Select -> outcome { t with focus = Diff }
   | Toggle_diff ->
     if Focus.equal t.focus Diff
@@ -2421,12 +2434,15 @@ let commands t =
       @ hunks
       @ Text_view.commands t.diff_view
     | Files | Branches | Commits ->
+      let preview = if t.companion then "Return to the commit message" else "Focus the diff" in
       let enter =
         match selected t t.focus with
         | Some (Header _) -> [ c "toggle-fold" [ Enter ] "Fold or unfold the section" ]
         | Some (Item _) when Focus.equal t.focus Branches ->
           [ c "checkout" [ Enter ] "Check out the branch" ]
-        | Some (Item _) -> [ c "select" [ Enter ] "Focus the diff of the selection" ]
+        | Some (Item _) ->
+          [ c "select" [ Enter ]
+              (if t.companion then preview else "Focus the diff of the selection") ]
         | None -> []
       in
       let copy =
@@ -2461,8 +2477,8 @@ let commands t =
       in
       always
       @ panels
-      @ [ c "focus-diff" [ k '0' ] "Focus the diff"
-        ; c "toggle-diff" [ Tab ] "Focus the diff"
+      @ [ c "focus-diff" [ k '0' ] preview
+        ; c "toggle-diff" [ Tab ] preview
         ]
       @ enter
       @ actions
@@ -2762,6 +2778,7 @@ let words keys = Option.some_if (not (List.is_empty keys)) (String.concat ~sep:"
 
 let list_hints t (focus : Focus.t) =
   let operation = Option.to_list (operation_hint t) in
+  let preview = if t.companion then "Tab message" else "Tab diff" in
   let header =
     match selected t focus with
     | Some (Header _) -> true
@@ -2783,7 +2800,7 @@ let list_hints t (focus : Focus.t) =
     (* [c] is refused while a file is conflicted, a pull while an operation runs. *)
     let commit = if files_lists t [ Conflicted ] then [] else [ "c commit" ] in
     let remote = if List.is_empty operation then [ "p P pull/push" ] else operation in
-    selection @ fold @ [ "Tab diff" ] @ commit @ remote @ [ "2 3 panels"; "q" ]
+    selection @ fold @ [ preview ] @ commit @ remote @ [ "2 3 panels"; "q" ]
   | Branches ->
     let branch =
       match selected_item t Branches with
@@ -2800,9 +2817,10 @@ let list_hints t (focus : Focus.t) =
     (if branch then [ "Enter checkout" ] else fold)
     @ [ "n new"; "- previous" ]
     @ merge
+    @ (if t.companion then [ preview ] else [])
     @ [ "1 3 panels"; "q" ]
   | Commits | Diff ->
-    [ "l log"; "+ more" ] @ fold @ [ "Tab diff" ] @ operation @ [ "1 2 panels"; "q" ]
+    [ "l log"; "+ more" ] @ fold @ [ preview ] @ operation @ [ "1 2 panels"; "q" ]
 ;;
 
 let diff_hints t ~visual =
@@ -2969,5 +2987,9 @@ let adapter : (t, action) View_registry.Adapter.t =
 ;;
 
 let entry ?(placement = View_registry.Placement.Hidden) ?plan ~cwd () =
-  View_registry.Entry.install ~placement ~opens_in:Tab adapter (create ?plan ~cwd ())
+  View_registry.Entry.install ~placement ~opens_in:Tab
+    ~editor:(fun t -> Option.map t.pending ~f:(fun pending -> pending.path))
+    ~companion:(fun t companion ->
+      { t with companion; focus = if companion then t.list_focus else t.focus })
+    adapter (create ?plan ~cwd ())
 ;;
