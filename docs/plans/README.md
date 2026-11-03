@@ -16,6 +16,7 @@ history of decisions and verification; for current controls, use the
 - [OCaml-defined snippets and variable-backed defaults](ocaml_snippets.md)
 - [Snippet discovery and configuration navigation](snippet_discovery.md)
 - [Snippet collections and catalog backlog](../backlog/snippet_collections.md) (proposed tickets)
+- [LSP hover, symbol navigation, and jump history](lsp_navigation.md)
 - [Floating tiles](floating_tiles.md)
 - [VCS workspace](vcs_workspace.md)
 - [Performance tests](performance_tests.md)

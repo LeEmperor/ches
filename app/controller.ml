@@ -126,6 +126,14 @@ let jump t ~line ~column =
     })
 ;;
 
+let jump_offset t offset =
+  Result.map (Editor.go_to_offset t.editor offset) ~f:(fun editor ->
+    { (cancel_pending t) with
+      editor
+    ; highlighting = Highlighting.update t.highlighting editor ~reset:false
+    })
+;;
+
 let apply_insert_edits t ~expected_revision ~edits ~cursor =
   if not (Kind.equal t.kind File)
   then Or_error.error_string "Completion edits require a file buffer"

@@ -23,6 +23,7 @@ let start ~create () =
            match event with
            | Servers _ -> Servers []
             | Completion reply -> Completion { reply with source = name reply.source }
+            | Query_result reply -> Query_result { reply with source = name reply.source }
             | Completion_metadata info -> Completion_metadata { info with source = name info.source }
           | Diagnostics d -> Diagnostics { d with source = name d.source }
           | Started d -> Started { d with source = name d.source }
@@ -47,7 +48,15 @@ let start ~create () =
     in
     { Source.Driver.handle = (fun request ->
          match request with
-         | Inspect -> emit (Ches_error.Source_event.Servers [])
+          | Inspect -> emit (Ches_error.Source_event.Servers [])
+         | Query q ->
+           (match Hashtbl.find drivers q.token.resource with
+            | Some (_, source, _) -> Source.send source request
+            | None -> emit (Ches_error.Source_event.Query_result { token = q.token;
+                cursor = q.cursor; kind = q.kind; source = "source";
+                result = Failed "No language server attached to this document" }))
+         | Cancel_query token ->
+           Option.iter (Hashtbl.find drivers token.resource) ~f:(fun (_, source, _) -> Source.send source request)
         | Ches_error.Source_request.Document_opened { resource; generation } -> open_document resource generation
         | Document_closed { resource } -> close resource
         | Document_changed { resource; _ } | Document_saved { resource; _ } ->

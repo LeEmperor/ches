@@ -128,6 +128,12 @@ let default =
   in
   create
     [ move [ 'h' ] Left
+    ; [ Key.char 'K' ], View Hover
+    ; [ Key.char 'g'; Key.char 'd' ], View Go_to_declaration
+    ; [ Key.char 'g'; Key.char 'D' ], View Go_to_definition
+    ; [ Ctrl 'o' ], View Jump_back
+    ; [ Ctrl 'i' ], View Jump_forward
+    ; [ Tab ], View Jump_forward
     ; move [ 'j' ] Down
     ; move [ 'k' ] Up
     ; move [ 'l' ] Right

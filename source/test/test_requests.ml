@@ -13,6 +13,8 @@ let show t requests =
   List.iter (List.rev !requests) ~f:(fun (request : Ches_error.Source_request.t) ->
     print_s
       (match request with
+       | Query _ -> [%message "query"]
+       | Cancel_query _ -> [%message "cancel query"]
        | Complete _ -> [%message "complete"]
        | Resolve_completion _ -> [%message "resolve completion"]
        | Cancel_completion _ -> [%message "cancel completion"]

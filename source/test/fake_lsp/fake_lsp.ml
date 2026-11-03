@@ -69,6 +69,9 @@ let hold_resolve = ref false
 let bad_resolve = ref false
 let snippets = ref false
 let completion_replies = Queue.create ()
+let navigation = ref "none"
+let navigation_result = ref "normal"
+let hold_query = ref false
 
 let log method_ =
   if not (String.is_empty !log_file) then
@@ -247,13 +250,73 @@ let handle (packet : Jsonrpc.Packet.t) =
        let textDocumentSync = Option.some_if (not (String.equal !sync "absent")) textDocumentSync in
         let completionProvider = Option.some_if (not !no_completion)
            (Types.CompletionOptions.create ~triggerCharacters:["."] ~resolveProvider:!next_completion ()) in
-        let capabilities = Types.ServerCapabilities.create ?positionEncoding ?textDocumentSync ?completionProvider () in
-      send
+         let capabilities = Types.ServerCapabilities.create ?positionEncoding ?textDocumentSync ?completionProvider () in
+       let result = Types.InitializeResult.yojson_of_t
+         (Types.InitializeResult.create ~capabilities ()) in
+       let result = match result with
+         | `Assoc fields -> `Assoc (List.map fields ~f:(fun (key, value) ->
+           if not (String.equal key "capabilities") then key, value else
+           let fields = match value with `Assoc fields -> fields | _ -> [] in
+           let providers = match !navigation with
+             | "ocaml" -> ["hoverProvider", `Bool true; "declarationProvider", `Assoc [];
+                 "definitionProvider", `Bool true]
+             | "slang" -> ["hoverProvider", `Assoc []; "definitionProvider", `Assoc []]
+             | "declaration" -> ["declarationProvider", `Bool true]
+             | "disabled" -> ["hoverProvider", `Bool false; "declarationProvider", `Bool false;
+                 "definitionProvider", `Bool false]
+             | _ -> [] in
+           key, `Assoc (providers @ fields)))
+         | _ -> assert false in
+       send
         (Response
            (Jsonrpc.Response.ok
               id
-              (Types.InitializeResult.yojson_of_t
-                 (Types.InitializeResult.create ~capabilities ())))))
+               result)))
+   | Request { id; method_ = ("textDocument/hover" | "textDocument/declaration" | "textDocument/definition" as method_);
+       params = Some params } ->
+     let field json name = match json with
+       | `Assoc fields -> List.Assoc.find_exn fields name ~equal:String.equal
+       | _ -> failwith "query object expected" in
+     let uri = field (field params "textDocument") "uri" |> Lsp.Uri.t_of_yojson in
+     let _, _, text = Hashtbl.find_exn documents (Lsp.Uri.to_path uri) in
+     let p = field params "position" |> Types.Position.t_of_yojson in
+     assert (offset text p = String.length text);
+     let is_decl = String.equal method_ "textDocument/declaration" in
+     let is_def = String.equal method_ "textDocument/definition" in
+     let first = (is_decl && not (String.is_prefix !navigation_result ~prefix:"reverse-"))
+       || (is_def && String.is_prefix !navigation_result ~prefix:"reverse-") in
+     let mode = String.chop_prefix_if_exists !navigation_result ~prefix:"reverse-" in
+     if (first && List.mem ["locate"; "method"; "error"] mode ~equal:String.equal)
+        || ((not first) && List.mem ["fallback-error"; "fallback-method"; "fallback-locate"] mode ~equal:String.equal) then
+       send (Response (Jsonrpc.Response.error id (Jsonrpc.Response.Error.make
+         ~code:(match mode with "locate" | "fallback-locate" -> RequestFailed
+           | "method" | "fallback-method" -> MethodNotFound | _ -> InternalError)
+         ~message:(if String.equal mode "locate" then "locate: builtin or no location" else "genuine server error") ())))
+     else
+       let point = Types.Position.yojson_of_t p in
+       let full = `Assoc ["start", `Assoc ["line", `Int 0; "character", `Int 0]; "end", point] in
+       let selection = `Assoc ["start", point; "end", point] in
+       let result =
+         if first && (String.equal mode "null" || String.is_prefix mode ~prefix:"fallback-")
+            || String.equal mode "all-null" then `Null
+         else if first && String.equal mode "empty" then `List []
+         else if String.equal method_ "textDocument/hover" then
+           `Assoc ["contents", `List [`Assoc ["kind", `String "markdown"; "value", `String ("**type**\n\n" ^ text)];
+             `String "legacy\ntext"; `Assoc ["language", `String "ocaml"; "value", `String "val x : int\nval y : int"]];
+             "range", full]
+         else if String.equal mode "destination" then
+           let destination = Filename.concat (Filename.dirname (Lsp.Uri.to_path uri)) "destination #%é.ml" in
+           let uri = Lsp.Uri.to_string (Lsp.Uri.of_path destination) in
+           let uri = "file://localhost" ^ String.chop_prefix_exn uri ~prefix:"file://" in
+           let point n = `Assoc ["line", `Int 0; "character", `Int (units "é😀chosen" n)] in
+           `List [`Assoc ["targetUri", `String uri;
+             "targetRange", `Assoc ["start", point 0; "end", point 12];
+             "targetSelectionRange", `Assoc ["start", point 6; "end", point 12]]]
+         else if is_decl then `Assoc ["uri", `String (Lsp.Uri.to_string uri); "range", selection]
+         else `List [`Assoc ["targetUri", `String (Lsp.Uri.to_string uri); "targetRange", full;
+           "targetSelectionRange", selection]] in
+       if !hold_query then Queue.enqueue completion_replies (id, result)
+       else send (Response (Jsonrpc.Response.ok id result))
    | Request { id; method_ = "textDocument/completion"; params = Some params } ->
      let field json name = match json with
        | `Assoc fields -> List.Assoc.find_exn fields name ~equal:String.equal
@@ -411,7 +474,10 @@ let () =
        ; "-next-completion", Set next_completion, ""
        ; "-hold-resolve", Set hold_resolve, ""
         ; "-bad-resolve", Set bad_resolve, ""
-        ; "-snippets", Set snippets, ""
+         ; "-snippets", Set snippets, ""
+         ; "-navigation", Set_string navigation, ""
+         ; "-navigation-result", Set_string navigation_result, ""
+         ; "-hold-query", Set hold_query, ""
     ]
     ignore
      "fake_lsp";

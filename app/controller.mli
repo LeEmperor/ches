@@ -172,6 +172,7 @@ val feed_input : t -> Keymap.Input.t -> t * Keymap.Action.t list
 
 (** Validated current-document navigation only. No IO, edits, or feedback resolution. *)
 val jump : t -> line:int -> column:int -> t Or_error.t
+val jump_offset : t -> int -> t Or_error.t
 
 module For_testing : sig
   val has_live_highlight_provider : t -> bool

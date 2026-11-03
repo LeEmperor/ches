@@ -75,6 +75,11 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     {|
     file.save                      Save buffer                            Space w
     language-servers.inspect       Language servers
+    navigation.hover               Hover
+    navigation.declaration         Go to declaration
+    navigation.definition          Go to definition
+    navigation.back                Jump back
+    navigation.forward             Jump forward
     tabs.next                      Next file tab                          Space b n
     tabs.previous                  Previous file tab                      Space b p
     tabs.close                     Close file tab                         Space b c
@@ -275,8 +280,8 @@ let%expect_test "empty query lists available commands in catalog order" =
     {|
     file.save                      Save buffer
     language-servers.inspect       Language servers
-    tabs.next                      Next file tab
-    tabs.previous                  Previous file tab
+    navigation.hover               Hover
+    navigation.declaration         Go to declaration
     |}]
 ;;
 

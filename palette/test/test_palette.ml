@@ -38,9 +38,9 @@ let%expect_test "opening lists available commands and selects the first" =
     query: ""
     > file.save
       language-servers.inspect
-      tabs.next
-      tabs.previous
-      ... 87 more
+      navigation.hover
+      navigation.declaration
+      ... 92 more
     |}]
 ;;
 
@@ -57,7 +57,7 @@ let%expect_test "typing filters; ordinary letters such as j and k are query text
   [%expect
     {|
     query: "jk"
-    (no selection)
+    > navigation.back
     |}]
 ;;
 
@@ -146,7 +146,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 90 more
+      ... 95 more
     |}]
 ;;
 
