@@ -13,7 +13,7 @@ let candidate ?(additional = []) ?filter_text id ~start ~stop inserted =
   { Candidate.id; source = Lsp "test"; label = id; detail = None
   ; filter_text = Option.value filter_text ~default:inserted; sort_text = id
   ; primary = { Text_edit.start; stop; text = inserted }; additional
-  ; cursor = String.length inserted }
+  ; cursor = String.length inserted; snippet = None }
 ;;
 let reply t candidates = receive t { Reply.token; source = "test"; candidates; incomplete = false }
 let apply t base revision p =
@@ -85,6 +85,25 @@ let%test_unit "invalid UTF boundaries, overlap and inserted cursor are rejected"
   let t = reply (start "é" 2) [ bad_boundary; bad_overlap; bad_cursor ] in
   assert (List.is_empty (candidates t));
   assert (Option.is_none (plan t Next))
+;;
+
+let%test_unit "snippet candidates require expanded primary text and preserve snippet identity" =
+  let snippet = Ches_completion.Snippet.parse "${1:foo}$0" |> Or_error.ok_exn in
+  let plain = candidate "plain" ~start:0 ~stop:1 "foo" in
+  let bad = { plain with id = "bad"; primary = { plain.primary with text = "raw" }
+                       ; snippet = Some snippet } in
+  assert (List.is_empty (candidates (reply (start "f" 1) [ bad ])));
+  let templated = { plain with id = "snippet"; snippet = Some snippet } in
+  let t = reply (start "f" 1) [ templated; plain ] in
+  assert (List.length (candidates t) = 2);
+  assert (Option.is_some (Option.value_exn (selected t)).snippet);
+  let _, result = apply t (text "f") 1 (Option.value_exn (plan t Next)) in
+  [%test_eq: string] (string result) "foo";
+  let buffer = text "foo f" in
+  let words = Buffer_words.create buffer in
+  let items = Buffer_words.candidates words ~text:buffer ~cursor:5 ~limit:10 in
+  assert (not (List.is_empty items));
+  assert (List.for_all items ~f:(fun c -> Option.is_none c.snippet))
 ;;
 
 let%test_unit "dedup executable edits prefers LSP and ghost is conservative" =

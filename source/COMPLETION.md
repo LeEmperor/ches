@@ -2,7 +2,7 @@
 
 ## Completion and lazy resolve transport
 
-New transport (no Candidate layout changes):
+Transport messages:
 - `Source_request.Resolve_completion { token; candidate_id; revision }`: lazily
   resolve the selected item, guarded by the **current editor revision** (which
   may be newer than token.revision after Tab installs a primary).
@@ -25,7 +25,7 @@ on metadata arrival while the menu is active. Session dismissal sends
 Cancel_completion (which releases the raw cache); selecting another LSP candidate
 should send a new Resolve_completion, superseding the previous resolve. Selecting
 a buffer candidate must ignore the old response via the selection guard. A
-resolve response never changes primary edits.
+resolve response never changes primary edits or the candidate's parsed snippet.
 The source retains bounded raw items for 10 seconds, and cancels outstanding
 resolve on any document change; a new request after Tab can use retained items.
 
@@ -35,7 +35,7 @@ resolve on any document change; a new request after Tab can use retained items.
 model. `resolved_finalize` rebuilds a one-candidate planning model from that base,
 substitutes the resolved additional edit list, acknowledges the primary already
 installed in the real editor, and asks the model for its normal atomic finalize
-plan. This avoids changing the shared Candidate/model API. The resolved list
+plan. The resolved list
 **replaces**, rather than appends to, the original additional edits; Some [] clears
 them. Finalization is permitted only after a real successful primary installation.
 An untouched menu with resolved docs/extras cannot fabricate an installed primary
@@ -108,7 +108,37 @@ explicit textEdit wins. Defaults are expanded into the raw item sent to resolve,
 preserving server data. Initial metadata includes kind/docs/detail; resolve can
 enrich docs/detail/additional edits but never changes the primary or ranking.
 
-Deliberate limitations: no snippets, commands, indentation adjustment,
+### Snippet insertion subset
+
+The client advertises `snippetSupport=true`. For effective `insertTextFormat=2`,
+normalization parses the primary insertion with `Ches_completion.Snippet.parse`.
+The candidate carries `snippet=Some parsed` and `primary.text=Snippet.text parsed`;
+plain-format candidates carry `snippet=None`. Format defaults and item overrides
+apply before parsing. The insertion comes from explicit textEdit.newText (including
+InsertReplaceEdit), inherited editRange with textEditText/insertText/label, or the
+ordinary insertText/label fallback. Additional edits always remain literal text.
+Cycling places the cursor at the **end of the expanded text**, independently of
+the first numbered field or `$0`; field activation belongs to explicit acceptance
+in the host.
+
+Supported syntax: `$1`, `${1}`, `${1:default}`, linked occurrences of the same
+number, escaped `\$`, `\}`, `\\`, and a single `$0`/`${0}` final cursor marker.
+Defaults are literal text (including Unicode); a later default also populates
+earlier mirrors. Without `$0`, the final cursor defaults to the expansion's end.
+Malformed syntax, variables, choices, transforms, nested placeholders, conflicting
+linked defaults, multiple final markers and defaults on `$0` are deliberately
+rejected: the entire item is skipped, never inserted as raw snippet syntax.
+The parser bounds input to 65,536 bytes, expansion to 1,048,576 bytes and occurrences
+to 4,096; tabstop numbers have at most nine digits. Invalid buffer text is rejected.
+All parsed offsets and candidate cursor offsets are UTF-8 bytes.
+
+Resolve sends the retained original snippet syntax and inherited opaque data to
+the server. Resolved insertion/format fields are ignored: the already presented
+expanded primary and parsed snippet remain authoritative. Resolved extras are
+still checked in the original snapshot against that original primary, including
+exact Unicode boundaries, edit bounds and overlap checks. Commands remain rejected.
+
+Deliberate limitations: no commands, indentation adjustment,
 commit-character acceptance, or dynamic capability registration. Unsupported items are
 skipped. Servers with an unknown position encoding are not queried. Requests
 before initialization are ignored, as are requests whose current snapshot cannot
@@ -119,6 +149,11 @@ Independent protocol verification: `dune runtest -j 6 source/test/completion`.
 It covers Unicode conversion, flush ordering, plain/fallback/additional edits,
 unsupported items, late replies after cancellation/revision/supersession/reopen,
 capability checks, pooled request bounds, restart, and event queue isolation.
+Snippet cases additionally cover inherited format2/textEditText/insert-replace,
+explicit textEdit precedence, plain overrides, linked Unicode defaults, escapes,
+malformed/unsupported syntax, literal extras, expanded-text cycling cursor,
+resolve after primary installation with hostile replacement insertion fields,
+and invalid/overlapping resolved extras.
 Next-phase cases cover default inheritance/item overrides, UTF16 insert/replace
 normalization, textEditText, opaque default data round-trip, lazy resolve after
 primary installation, stale resolve after change/cancel/supersession/close/restart,

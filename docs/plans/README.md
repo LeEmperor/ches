@@ -9,6 +9,7 @@ history of decisions and verification; for current controls, use the
 - [Directory workspace](directory_workspace.md)
 - [File picker](file_picker.md)
 - [Automatic code completion](completion.md)
+- [Snippet completion and placeholders](snippets.md)
 - [Floating tiles](floating_tiles.md)
 - [VCS workspace](vcs_workspace.md)
 - [Performance tests](performance_tests.md)

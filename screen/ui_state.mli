@@ -85,6 +85,9 @@ val completion_selected : t -> Ches_completion.Model.Candidate.t option
 val completion_info : t -> Ches_error.Completion_info.t option
 val completion_ghost : t -> Ches_completion.Model.ghost option
 
+(** Absolute byte ranges of the active field, including linked occurrences. *)
+val snippet_ranges : t -> Ches_completion.Snippet.range list
+
 (** Numbered persistent shells share one transient float. The selected ID defaults
     to 1; [Space /] toggles it. [N Space /] selects N, opening it when hidden or
     switching directly from a different visible session, and hides it when already

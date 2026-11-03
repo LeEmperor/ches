@@ -1,5 +1,6 @@
 open! Core
 module Model = Ches_completion.Model
+module Snippet = Ches_completion.Snippet
 module Text_edit = Ches_core.Text_edit
 
 type encoding = Utf8 | Utf16 | Utf32 [@@deriving sexp_of]
@@ -133,12 +134,17 @@ let decode ~encoding ~text ~(request : Model.Request.t) ~source json =
     let%bind base = base in
     let%bind label = string_field item "label" in
     let%bind () = match int_field item "insertTextFormat", int_field item "insertTextMode", field item "command" with
-      | (None | Some 1), (None | Some 1), (None | Some `Null) -> Some ()
+      | (None | Some 1 | Some 2), (None | Some 1), (None | Some `Null) -> Some ()
       | _ -> None in
     let%bind primary = match field item "textEdit" with
       | None | Some `Null -> Some { Text_edit.start = request.fallback_start; stop = request.fallback_stop;
           text = Option.value (string_field item "insertText") ~default:label }
       | Some json -> primary_edit encoding text request json in
+    let%bind primary, snippet = match int_field item "insertTextFormat" with
+      | Some 2 ->
+        Option.map (Snippet.parse primary.text |> Result.ok) ~f:(fun snippet ->
+          { primary with text = Snippet.text snippet }, Some snippet)
+      | _ -> Some (primary, None) in
     let%bind additional = match field item "additionalTextEdits" with
       | None | Some `Null -> Some []
       | Some (`List edits) when List.length edits <= 128 ->
@@ -152,7 +158,7 @@ let decode ~encoding ~text ~(request : Model.Request.t) ~source json =
       ; source = Lsp source; label; detail = string_field item "detail"
       ; filter_text = Option.value (string_field item "filterText") ~default:label
       ; sort_text = Option.value (string_field item "sortText") ~default:label
-      ; primary; additional; cursor = String.length primary.text })
+      ; primary; snippet; additional; cursor = String.length primary.text })
   in
   { Model.Reply.token = request.token; source; candidates; incomplete }, List.rev !retained
 ;;
@@ -170,8 +176,10 @@ let resolved ~encoding ~text ~(candidate : Model.Candidate.t) raw json =
       Some (`Assoc (fresh @ List.filter old ~f:(fun (key, _) ->
         not (List.Assoc.mem fresh key ~equal:String.equal))))
     | _ -> None in
-  let%bind () = match int_field fields "insertTextFormat", field fields "command" with
-    | (None | Some 1), (None | Some `Null) -> Some () | _ -> None in
+  (* The cached candidate already owns its expanded primary and parsed snippet.
+     Resolve's insertion/format fields cannot replace that structure. *)
+  let%bind () = match field fields "command" with
+    | None | Some `Null -> Some () | _ -> None in
   let%bind additional = match field fields "additionalTextEdits" with
     | None | Some `Null -> Some candidate.additional
     | Some (`List edits) when List.length edits <= 128 -> Option.all (List.map edits ~f:(edit encoding text))

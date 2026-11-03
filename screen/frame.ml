@@ -325,6 +325,11 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
                    then `Current else `Match)
   in
   let selection = Editor.selection editor in
+  let snippet_ranges = Ui_state.snippet_ranges ui in
+  let snippet_highlight offset =
+    List.exists snippet_ranges ~f:(fun range ->
+      offset >= range.start
+      && (offset < range.stop || (range.start = range.stop && offset = range.start))) in
   let block = Editor.block editor in
   (* A block insert's points, all drawn as styled cells: the first, the cursor's own,
      in its own style, so that the theme can color it, which it cannot do for the
@@ -455,7 +460,12 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
           let point = List.Assoc.find insert_points line ~equal:Int.equal in
           let glyphs =
             match point with
-            | None -> glyphs
+            | None ->
+              if snippet_highlight (line_start + line_length)
+              then extend_to_point glyphs ~line_length
+                  ~total:(Cell_layout.Index.total_width layout)
+                  (Some (Cell_layout.Index.total_width layout))
+              else glyphs
             | Some (col, _) when Option.is_none (Cell_layout.Index.pos_of_column layout col) ->
               extend_to_point glyphs ~line_length
                 ~total:(Cell_layout.Index.total_width layout) (Some col)
@@ -484,6 +494,8 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
                 | Some (col, style)
                   when glyph.width > 0 && glyph.col <= col && col < glyph.col + glyph.width ->
                   Some style
+                | Some _ | None when snippet_highlight offset ->
+                  Some `Selection
                 | Some _ | None when glyph.pos >= line_length -> None
                 | Some _ | None ->
                 match selection with

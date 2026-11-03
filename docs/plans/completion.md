@@ -64,7 +64,7 @@ candidates ranked by server sort text before buffer-only suggestions. Ghost
 preview defaults off; both palette toggles are session-local.
 
 The combined candidate limit is 100. The host bounds pending requests to one per
-document and 32 per connection, with a ten-second timeout. Snippets, commands,
+document and 32 per connection, with a ten-second timeout. Completion commands,
 indentation adjustment, commit-character acceptance, and dynamic completion
 capability registration remain deferred.
 
@@ -121,5 +121,6 @@ and `git diff --check`. Existing edit-allocation tests now account explicitly fo
 the bounded descriptor overhead while retaining no-old-text-scan and one-destination
 checks. New menu appearance still needs interactive evaluation.
 
-Next feature phase: snippet expansion and placeholder navigation, with an explicit
-handoff from Tab-based candidate cycling to Tab-based placeholder navigation.
+Snippet expansion and placeholder navigation are now implemented with an explicit
+Enter handoff from candidate cycling to field navigation; see [the snippet plan](snippets.md)
+for supported syntax, lifecycle, and validation.

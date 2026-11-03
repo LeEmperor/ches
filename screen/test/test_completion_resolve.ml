@@ -23,7 +23,7 @@ let query ?(initial = "\ntrailing") () =
 let candidate ?(additional = []) (req : M.Request.t) id : M.Candidate.t =
   { id; source = Lsp "test"; label = id; detail = None; filter_text = "alpha"; sort_text = id
   ; primary = { start = req.fallback_start; stop = req.fallback_stop; text = "alpha" }
-  ; additional; cursor = 5 }
+  ; additional; cursor = 5; snippet = None }
 ;;
 
 let reply t (req : M.Request.t) candidates =

@@ -177,6 +177,7 @@ let%expect_test "array and null responses use plain-text fallback semantics" =
   assert (not reply.incomplete && List.length reply.candidates = 2);
   assert (String.equal (List.nth_exn reply.candidates 0).primary.text "inserted");
   assert (String.equal (List.nth_exn reply.candidates 1).primary.text "label-only");
+  assert (List.for_all reply.candidates ~f:(fun candidate -> Option.is_none candidate.snippet));
   assert (List.is_empty (normalize `Null).candidates);
   [%expect {| |}];
   return ()
@@ -191,7 +192,7 @@ let%expect_test "list defaults inherit absent properties, explicit item fields w
   let edit = `Assoc ["range", range 2 5; "newText", `String "explicit"] in
   let ir insert replace = `Assoc ["insert", insert; "replace", replace; "newText", `String "replace"] in
   let result = `Assoc ["itemDefaults", defaults; "items", `List [
-    `Assoc ["label", `String "snippet-default"];
+    `Assoc ["label", `String "snippet-default"; "textEditText", `String "$UNSUPPORTED"];
     `Assoc ["label", `String "default-range"; "insertTextFormat", `Int 1; "textEditText", `String "é"];
     `Assoc ["label", `String "override"; "insertTextFormat", `Int 1; "textEditText", `String "ignored";
       "textEdit", edit; "data", `Null];
@@ -234,6 +235,122 @@ let next_source root args =
     match replies events with [] -> receive () | reply :: _ -> return (reply, metadata events) in
   let%map reply, info = receive () in
   source, query, reply, info
+;;
+
+let%expect_test "snippet normalization parses insertion only and validates extras against expanded primary" =
+  let query = { (request "a.ml" 7 1 1) with cursor = 7; fallback_start = 4; fallback_stop = 7 } in
+  let p character = `Assoc ["line", `Int 0; "character", `Int character] in
+  let range a b = `Assoc ["start", p a; "end", p b] in
+  let edit a b text = `Assoc ["range", range a b; "newText", `String text] in
+  let item label fields = `Assoc (("label", `String label) :: fields) in
+  let reply, raw = Completion_wire.decode ~encoding:Utf16 ~text:"😀fooZZ" ~request:query
+    ~source:"fake" (`List [
+      item "fallback" ["insertTextFormat", `Int 2; "insertText", `String "${1:é}-$1$0!"];
+      item "${2:label}" ["insertTextFormat", `Int 2];
+      item "explicit-ir" ["insertTextFormat", `Int 2;
+        "textEdit", `Assoc ["insert", range 2 5; "replace", range 2 7;
+          "newText", `String "${1:ok}$1"];
+        "insertText", `String "$UNSUPPORTED";
+        "additionalTextEdits", `List [edit 0 2 "$1 literal"]];
+      item "bad-extra-boundary" ["insertTextFormat", `Int 2; "insertText", `String "$1";
+        "additionalTextEdits", `List [edit 1 2 "bad"]];
+      item "nested" ["insertTextFormat", `Int 2; "insertText", `String "${1:${2:x}}"];
+      item "plain" ["insertText", `String "${1:literal}"]]) in
+  let fallback, label, explicit, plain = match reply.candidates with
+    | [a; b; c; d] -> a, b, c, d | _ -> failwith "unexpected normalized snippets" in
+  let snippet = Option.value_exn fallback.snippet in
+  assert (String.equal fallback.primary.text "é-é!");
+  assert (fallback.cursor = 6 && Ches_completion.Snippet.final_cursor snippet = 5);
+  assert (Ches_completion.Snippet.equal snippet
+    (Ches_completion.Snippet.parse "${1:é}-$1$0!" |> Or_error.ok_exn));
+  assert (String.equal label.primary.text "label" && Option.is_some label.snippet);
+  assert (Ches_core.Text_edit.equal explicit.primary { start = 4; stop = 9; text = "okok" });
+  assert ([%equal: Ches_core.Text_edit.t list] explicit.additional
+    [{ start = 0; stop = 4; text = "$1 literal" }]);
+  assert (String.equal plain.primary.text "${1:literal}" && Option.is_none plain.snippet);
+  let original = List.Assoc.find_exn raw fallback.id ~equal:String.equal in
+  List.iter [original; `Assoc ["documentation", `String "docs-only"]] ~f:(fun response ->
+    let fields, additional = Completion_wire.resolved ~encoding:Utf16 ~text:"😀fooZZ"
+      ~candidate:fallback original response |> Option.value_exn in
+    assert (List.is_empty additional);
+    assert (Poly.equal (Completion_wire.field fields "insertTextFormat") (Some (`Int 2))));
+  let resolve extras = Completion_wire.resolved ~encoding:Utf16 ~text:"😀fooZZ"
+    ~candidate:fallback original (`Assoc [
+      "insertTextFormat", `Int 1; "insertText", `String "changed";
+      "textEdit", edit 99 100 "$UNSUPPORTED";
+      "additionalTextEdits", `List extras]) in
+  let _, additional = resolve [edit 0 2 "import"] |> Option.value_exn in
+  assert ([%equal: Ches_core.Text_edit.t list] additional [{ start = 0; stop = 4; text = "import" }]);
+  List.iter [[edit 2 3 "overlap"]; [edit 1 2 "surrogate"]; [edit 99 100 "outside"];
+    [edit 0 2 "a"; edit 0 2 "b"]] ~f:(fun extras -> assert (Option.is_none (resolve extras)));
+  assert (Option.is_none (Completion_wire.resolved ~encoding:Utf16 ~text:"😀fooZZ"
+    ~candidate:fallback original (`Assoc ["command", `Assoc ["command", `String "execute"]])));
+  [%expect {| |}];
+  return ()
+;;
+
+let%expect_test "fake LSP advertises snippets, inherits format2, skips unsupported syntax and preserves snippet on resolve" =
+  H.with_root (fun root ->
+    let%bind source, query, reply, _ = next_source root ["-snippets"] in
+    let linked, escaped, explicit, plain = match reply.candidates with
+      | [a; b; c; d] -> a, b, c, d | _ -> failwith "unexpected fake snippet candidates" in
+    let snippet = Option.value_exn linked.snippet in
+    assert (Ches_core.Text_edit.equal linked.primary { start = 1; stop = 9; text = "é + é!" });
+    assert ([%equal: Ches_completion.Snippet.field list] (Ches_completion.Snippet.fields snippet)
+      [{ number = 1; ranges = [{ start = 0; stop = 2 }; { start = 5; stop = 7 }] }]);
+    assert (linked.cursor = 8 && Ches_completion.Snippet.final_cursor snippet = 7);
+    assert (String.equal escaped.primary.text "$literal } \\ x" && Option.is_some escaped.snippet);
+    assert (Ches_core.Text_edit.equal explicit.primary { start = 1; stop = 3; text = "okok" });
+    assert (String.equal plain.primary.text "$1 literal" && Option.is_none plain.snippet);
+    let base = Ches_core.Text_buffer.of_string "\nfoSuffix" |> Result.ok |> Option.value_exn in
+    let model, _ = Model.start ~token:query.token ~text:base ~cursor:3
+      ~words:(Model.Buffer_words.create base) ~limit:10 |> Option.value_exn in
+    let model = Model.receive model { reply with candidates = [linked] } in
+    let plan = Model.plan model Next |> Option.value_exn in
+    assert (Model.cursor plan = 9);
+    let installed = Ches_core.Text_edit.apply base (Model.edits plan) |> Or_error.ok_exn in
+    assert (String.equal (Ches_core.Text_buffer.to_string installed) "\né + é!");
+    Source.send source (H.changed root 2 "\né + é!");
+    Source.send source (Resolve_completion { token = query.token; candidate_id = linked.id; revision = 2 });
+    let rec resolved () =
+      match%bind Clock_ns.with_timeout (Time_ns.Span.of_int_sec 10) (Source.next_batch source) with
+      | `Timeout -> failwith "snippet resolve timeout"
+      | `Result events ->
+        match List.find (metadata events) ~f:(fun info -> Option.is_some info.additional) with
+        | Some info -> return info | None -> resolved () in
+    let%bind info = resolved () in
+    assert (Option.equal Int.equal info.revision (Some 2));
+    assert (Option.equal String.equal info.documentation (Some "Resolved **docs**"));
+    let additional = Option.value_exn info.additional in
+    assert ([%equal: Ches_core.Text_edit.t list] additional [{ start = 0; stop = 0; text = "import\n" }]);
+    (* Rebuild with resolved extras, just as the host does: primary and snippet
+       remain the original immutable candidate, even after hostile insertion fields. *)
+    let original_model, _ = Model.start ~token:query.token ~text:base ~cursor:3
+      ~words:(Model.Buffer_words.create base) ~limit:10 |> Option.value_exn in
+    let candidate = { linked with additional } in
+    let model = Model.receive original_model { reply with candidates = [candidate] } in
+    let plan = Model.plan model Next |> Option.value_exn in
+    let model = Model.applied model plan ~revision:2 in
+    let finalize = Model.finalize model |> Option.value_exn in
+    let final = Ches_core.Text_edit.apply installed (Model.edits finalize) |> Or_error.ok_exn in
+    assert (String.equal (Ches_core.Text_buffer.to_string final) "import\n\né + é!");
+    assert (Option.equal Ches_completion.Snippet.equal candidate.snippet linked.snippet);
+    assert (List.is_empty (replies (drain source)));
+    Source.stop source;
+    [%expect {| |}];
+    return ())
+;;
+
+let%expect_test "fake snippet resolve still rejects overlapping additional edits" =
+  H.with_root (fun root ->
+    let%bind source, query, reply, _ = next_source root ["-snippets"; "-bad-resolve"] in
+    Source.send source (Resolve_completion { token = query.token;
+      candidate_id = (List.hd_exn reply.candidates).id; revision = 1 });
+    let%bind () = pause () in
+    assert (not (List.exists (metadata (drain source)) ~f:(fun info -> Option.is_some info.additional)));
+    Source.stop source;
+    [%expect {| |}];
+    return ())
 ;;
 
 let%expect_test "fake defaults choose replace and lazy resolve enriches metadata without applying edits" =

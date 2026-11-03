@@ -12,7 +12,7 @@ module Candidate = struct
   type t =
     { id : string; source : source; label : string; detail : string option
     ; filter_text : string; sort_text : string; primary : Text_edit.t
-    ; additional : Text_edit.t list; cursor : int }
+    ; additional : Text_edit.t list; cursor : int; snippet : Snippet.t option }
   [@@deriving sexp_of, equal]
 end
 
@@ -135,7 +135,7 @@ module Buffer_words = struct
           { Candidate.id = "buffer:" ^ word; source = Buffer; label = word; detail = None
           ; filter_text = word; sort_text = word
           ; primary = { start; stop = cursor; text = word }; additional = []
-          ; cursor = String.length word })
+          ; cursor = String.length word; snippet = None })
   ;;
 end
 
@@ -174,7 +174,8 @@ let start ~token ~text ~cursor ~words ~limit =
 ;;
 
 let valid_candidate base (c : Candidate.t) =
-  Result.is_ok (Text_edit.inverse base (c.primary :: c.additional))
+  Option.for_all c.snippet ~f:(fun snippet -> String.equal c.primary.text (Snippet.text snippet))
+  && Result.is_ok (Text_edit.inverse base (c.primary :: c.additional))
   && match B.of_string c.primary.text with
   | Error _ -> false
   | Ok text -> B.is_boundary text c.cursor
@@ -184,6 +185,7 @@ let equivalent (a : Candidate.t) (b : Candidate.t) =
   Text_edit.equal a.primary b.primary
   && List.equal Text_edit.equal a.additional b.additional
   && a.cursor = b.cursor
+  && Option.equal Snippet.equal a.snippet b.snippet
 ;;
 
 let receive t (reply : Reply.t) =

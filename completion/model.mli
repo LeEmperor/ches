@@ -14,8 +14,8 @@ end
 module Candidate : sig
   type source = Buffer | Lsp of string [@@deriving sexp_of, equal]
   (** Edits use the session's base snapshot. [cursor] is a byte boundary within
-      [primary.text], not an absolute document offset. Plain text only: hosts must
-      advertise snippetSupport=false and skip unexpected snippet-formatted items. *)
+      [primary.text], not an absolute document offset. When [snippet] is present,
+      [primary.text] must equal [Snippet.text snippet]. *)
   type t =
     { id : string
     ; source : source
@@ -26,6 +26,7 @@ module Candidate : sig
     ; primary : Text_edit.t
     ; additional : Text_edit.t list
     ; cursor : int
+    ; snippet : Snippet.t option
     }
   [@@deriving sexp_of, equal]
 end

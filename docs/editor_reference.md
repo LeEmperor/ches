@@ -727,8 +727,44 @@ details, and additional edits. Known additional edits apply at acceptance. If
 resolution is still pending, acceptance keeps the primary text and allows up to
 one second for extras to arrive while the accepted buffer/cursor remain unchanged.
 Any subsequent key or paste cancels this deferred action; typing never waits.
-Snippets, completion commands, indentation adjustment, commit-character acceptance,
+Completion commands, indentation adjustment, commit-character acceptance,
 and dynamic capability registration remain unsupported.
+
+#### Snippet placeholders
+
+Language-server completions can contain snippet fields. Cycling with Tab inserts
+the expanded text but does not activate those fields. **Enter accepts the candidate
+and activates its first numbered field**, highlighting its default text and linked
+occurrences.
+
+| Key | While snippet fields are active |
+| --- | --- |
+| Typing | Replace the selected default, then edit the field; linked occurrences update together |
+| `Tab` | Select the next numbered field; after the last, move to the final cursor position and finish |
+| `Shift-Tab` | Select the previous field; at the first, reselect it |
+| `Escape` | Retain expanded text, end the snippet, and return to Normal mode |
+| `Ctrl-n` | End the snippet and explicitly request completion |
+
+For example, a server snippet `assign ${1:signal} = $1;$0` expands to
+`assign signal = signal;`. Enter selects the first `signal`; typing `ready`
+updates both occurrences, and Tab moves to the position after the semicolon.
+
+Supported syntax includes `$1`, `${1}`, `${1:default}`, linked occurrences, `$0`
+for the final cursor, and escaped backslashes, dollar signs, and closing braces.
+When `$0` is absent, the final cursor is at the end of the expansion. Variables,
+choices, transformations, nested defaults, and conflicting defaults are not yet
+supported; completions using unsupported or malformed snippets are skipped.
+Templates come from the language server; there is no built-in/user template catalog.
+
+Automatic completion is suppressed while editing snippet fields. Paste, newline,
+movement, buffer/focus changes, and edits crossing a field boundary end the snippet
+before normal handling. Expansion and linked edits join the current Insert undo
+transaction; undo/redo does not reactivate a cancelled session.
+
+Snippet acceptance uses additional edits already known at Enter and cancels pending
+resolve before activating fields. Late-resolved imports are therefore omitted for
+that acceptance, rather than shifting fields after editing has begun. Plain
+completions retain the deferred-resolution behavior described above.
 
 ### Synthetic checker (live diagnostic source)
 

@@ -67,6 +67,7 @@ let no_completion = ref false
 let next_completion = ref false
 let hold_resolve = ref false
 let bad_resolve = ref false
+let snippets = ref false
 let completion_replies = Queue.create ()
 
 let log method_ =
@@ -211,7 +212,7 @@ let handle (packet : Jsonrpc.Packet.t) =
        List.Assoc.find_exn fields key ~equal:String.equal | _ -> failwith "initialize object" in
      let capabilities = field (Option.value_exn params) "capabilities" in
      let item = field (field (field capabilities "textDocument") "completion") "completionItem" in
-      assert (Poly.equal (field item "snippetSupport") (`Bool false));
+       assert (Poly.equal (field item "snippetSupport") (`Bool true));
       if !next_completion then (
         assert (Poly.equal (field item "insertReplaceSupport") (`Bool true));
         assert (Poly.equal (field item "commitCharactersSupport") (`Bool false));
@@ -270,7 +271,7 @@ let handle (packet : Jsonrpc.Packet.t) =
            "detail", `String (Yojson.Safe.to_string (field (field params "context") "triggerKind"));
            "additionalTextEdits", `List [edit (position 0 0) (position 0 (units "😀" 4)) "import\n"]]
        ; `Assoc ["label", `String "fallback"; "insertText", `String "fallback_text"]
-       ; `Assoc ["label", `String "snippet"; "insertTextFormat", `Int 2; "insertText", `String "${1:bad}"]
+        ; `Assoc ["label", `String "snippet"; "insertTextFormat", `Int 2; "insertText", `String "$UNSUPPORTED"]
        ; `Assoc ["label", `String "command"; "command", `Assoc ["command", `String "must.execute"]]
        ; `Assoc ["label", `String "bad-range"; "textEdit", edit (position 999 0) (position 999 1) "bad"]
        ; `Assoc ["label", `String "overlap"; "textEdit", primary; "additionalTextEdits", `List [primary]]
@@ -286,18 +287,45 @@ let handle (packet : Jsonrpc.Packet.t) =
             "data", `Assoc ["ticket", `String "opaque-default"]];
           "items", `List [
             `Assoc ["label", `String "format"; "textEditText", `String "formatted"; "kind", `Int 3];
-            `Assoc ["label", `String "snippet"; "insertTextFormat", `Int 2];
-            `Assoc ["label", `String "adjust-indent"; "insertTextMode", `Int 2]]] in
+            `Assoc ["label", `String "snippet"; "insertTextFormat", `Int 2; "textEditText", `String "$UNSUPPORTED"];
+             `Assoc ["label", `String "adjust-indent"; "insertTextMode", `Int 2]]] in
+      let result = if not !snippets then result else
+        let range a b = `Assoc ["start", position p.line a; "end", position p.line b] in
+        let item label text = `Assoc ["label", `String label; "textEditText", `String text] in
+        `Assoc ["isIncomplete", `Bool false;
+          "itemDefaults", `Assoc ["insertTextFormat", `Int 2;
+            "editRange", `Assoc ["insert", range 0 p.character; "replace", range 0 8];
+            "data", `Assoc ["ticket", `String "opaque-default"]];
+          "items", `List [
+            item "fo-linked" "${1:é} + $1$0!";
+            item "fo-escaped" {|\$literal \} \\ ${2:x}$0|};
+            `Assoc ["label", `String "fo-explicit"; "textEditText", `String "$UNSUPPORTED";
+              "textEdit", edit (position p.line 0) (position p.line 2) "${1:ok}$1"];
+            `Assoc ["label", `String "fo-plain"; "insertTextFormat", `Int 1;
+              "textEditText", `String "$1 literal"];
+            item "fo-malformed" "${1:missing";
+            item "fo-variable" "$TM_FILENAME";
+            item "fo-transform" "${1/a/b/}";
+            item "fo-choice" "${1|a,b|}";
+            `Assoc ["label", `String "fo-overlap"; "textEditText", `String "${1:x}";
+              "additionalTextEdits", `List [edit (position p.line 0) (position p.line 1) "bad"]]] ] in
       if !hold_completion then Queue.enqueue completion_replies (id, result)
       else send (Response (Jsonrpc.Response.ok id result))
    | Request { id; method_ = "completionItem/resolve"; params = Some (`Assoc fields) } ->
      let get key = List.Assoc.find_exn fields key ~equal:String.equal in
      assert (Poly.equal (get "data") (`Assoc ["ticket", `String "opaque-default"]));
-     assert (Poly.equal (get "textEditText") (`String "formatted"));
+      assert (Poly.equal (get "textEditText")
+        (`String (if !snippets then "${1:é} + $1$0!" else "formatted")));
      let p line character = `Assoc ["line", `Int line; "character", `Int character] in
      let range = if !bad_resolve then `Assoc ["start", p 1 0; "end", p 1 2]
        else `Assoc ["start", p 0 0; "end", p 0 0] in
-     let result = `Assoc (["documentation", `Assoc ["kind", `String "markdown"; "value", `String "Resolved **docs**"];
+      let fields = if not !snippets then fields else
+        ["insertTextFormat", `Int 1; "insertText", `String "mutated";
+         "textEdit", `Assoc ["range", `Assoc ["start", p 999 0; "end", p 999 1];
+           "newText", `String "$UNSUPPORTED"]]
+        @ List.filter fields ~f:(fun (key, _) ->
+          not (List.mem ["insertTextFormat"; "insertText"; "textEdit"] key ~equal:String.equal)) in
+      let result = `Assoc (["documentation", `Assoc ["kind", `String "markdown"; "value", `String "Resolved **docs**"];
        "detail", `String "resolved detail";
        "additionalTextEdits", `List [`Assoc ["range", range; "newText", `String "import\n"]]] @ fields) in
      if !hold_resolve then Queue.enqueue completion_replies (id, result)
@@ -378,7 +406,8 @@ let () =
        ; "-no-completion", Set no_completion, ""
        ; "-next-completion", Set next_completion, ""
        ; "-hold-resolve", Set hold_resolve, ""
-       ; "-bad-resolve", Set bad_resolve, ""
+        ; "-bad-resolve", Set bad_resolve, ""
+        ; "-snippets", Set snippets, ""
     ]
     ignore
      "fake_lsp";

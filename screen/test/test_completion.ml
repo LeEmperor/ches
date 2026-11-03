@@ -125,7 +125,7 @@ let candidate (request : M.Request.t) ?(additional = []) label : M.Candidate.t =
   { id = label; source = Lsp "test"; label; detail = Some "server"; filter_text = label
   ; sort_text = label
   ; primary = { start = request.fallback_start; stop = request.fallback_stop; text = label }
-  ; additional; cursor = String.length label }
+  ; additional; cursor = String.length label; snippet = None }
 ;;
 
 let reply t (request : M.Request.t) candidates =
@@ -586,5 +586,236 @@ let%expect_test "nonblocking acceptance applies a resolve only to its exact unch
   let t = Ui_state.activate_buffer t ~width:40 ~height:8 original |> Or_error.ok_exn in
   let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
   assert (String.equal (text t) "\nalpha");
+  [%expect {| |}]
+;;
+
+module Snippet = Ches_completion.Snippet
+
+let snippet_candidate ?(additional = []) req syntax =
+  let snippet = Snippet.parse syntax |> Or_error.ok_exn in
+  let expanded = Snippet.text snippet in
+  { (candidate req ~additional "alpha") with
+    primary = { start = req.fallback_start; stop = req.fallback_stop; text = expanded }
+  ; cursor = String.length expanded; snippet = Some snippet }
+;;
+
+let snippet_menu ?(initial = "") ?(prefix = "ial") ?(additional = []) syntax =
+  let t, req = request (press (attached initial) prefix) in
+  reply t req [ snippet_candidate ~additional req syntax ], req
+;;
+
+let active t = not (List.is_empty (Ui_state.snippet_ranges t))
+
+let%expect_test "snippet Enter does not activate when resolved edits cannot finalize" =
+  let t, req = snippet_menu "${1:default}/$1" in
+  let t = metadata t req [ info "alpha" ] |> fun t -> press t "<Tab>" in
+  let t, revision = resolve_request t "alpha" in
+  let t = metadata t req [ info ~revision
+    ~additional:[ { Text_edit.start = 0; stop = 99999; text = "import\n" } ] "alpha" ] in
+  let t = press t "<CR>" in
+  assert (String.equal (text t) "default/default" && not (has_menu t));
+  assert (not (active t));
+  assert (String.equal (text (press t "X")) "default/defaultX");
+  assert (String.equal (text (press t "<Esc>u")) "");
+  (* A resolved empty edit list is a successful no-op, and must still activate. *)
+  let t, req = snippet_menu "${1:default}/$1" in
+  let t = metadata t req [ info "alpha" ] |> fun t -> press t "<Tab>" in
+  let t, revision = resolve_request t "alpha" in
+  let t = metadata t req [ info ~revision ~additional:[] "alpha" ] in
+  assert (active (press t "<CR>"));
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet Backspace respects soft-tab stops and field boundaries" =
+  let make syntax = fst (snippet_menu syntax) |> fun t -> press t "<CR>" in
+  let t = press (make "${1:default}/$1") "X  <BS>" in
+  assert (String.equal (text t) "X /X " && active t);
+  let t = press t " <BS>" in
+  assert (String.equal (text t) "X /X " && active t);
+  let t = press (make "(${1:default})/$1") "X  <BS>" in
+  assert (String.equal (text t) "(X)/X" && active t);
+  let undone = press t "<Esc>u" in
+  assert (String.equal (text undone) "" && not (active undone));
+  let redone = press undone "<C-r>" in
+  assert (String.equal (text redone) "(X)/X" && not (active redone));
+  (* A soft-tab deletion extending outside the field cancels before normal handling. *)
+  let t = press (make " ${1:default}/$1") " <BS>" in
+  assert (String.equal (text t) "/ " && not (active t));
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet Enter handoff selects defaults; cycling and ordinary acceptance never activate" =
+  let make () = fst (snippet_menu "fn(${1:default}, $1)$0") in
+  let t = press (make ()) "<Tab>" in
+  assert (String.equal (text t) "fn(default, default)" && not (active t));
+  let t = press t "<Tab>" in
+  assert (String.equal (text t) "fn(default, default)" && not (active t));
+  let t = press t "<CR>" in
+  assert (active t && not (has_menu t));
+  assert (Editor.cursor (editor t) = 10);
+  assert ([%equal: Snippet.range list] (Ui_state.snippet_ranges t)
+    [ { start = 3; stop = 10 }; { start = 12; stop = 19 } ]);
+  let typed = press (press (make ()) "<Tab>") "!" in
+  assert (String.equal (text typed) "fn(default, default)!" && not (active typed));
+  let direct = press (make ()) "<CR>" in
+  assert (active direct && String.equal (text direct) "fn(default, default)");
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet Unicode replacement and subsequent edits mirror atomically in one insert undo" =
+  let t, _ = snippet_menu "(${1:default}:$1:${2:next})$0" in
+  let t = press t "<CR>" in
+  let t = run t [ Key (Ches_input.Key.Char (Uchar.of_scalar_exn 0x754c)) ] in
+  assert (String.equal (text t) "(界:界:next)");
+  assert (Editor.cursor (editor t) = 4 && active t && not (has_menu t));
+  let t = run t [ Key (Ches_input.Key.Char (Uchar.of_scalar_exn 0xe9)) ] in
+  assert (String.equal (text t) "(界é:界é:next)");
+  let t = press t "<BS>" in
+  assert (String.equal (text t) "(界:界:next)" && active t);
+  let t = press t "<Tab>X" in
+  assert (String.equal (text t) "(界:界:X)");
+  let final = text t in
+  let t = press t "<Esc>" in
+  assert (not (active t) && Mode.equal (Editor.mode (editor t)) Normal);
+  let t = press t "u" in
+  assert (String.equal (text t) "");
+  assert (String.equal (text (press t "<C-r>")) final);
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet numbered navigation reselects defaults, Shift-Tab, and final cursor exits" =
+  let t, _ = snippet_menu "${2:two}/${1:one}/$1$0!" in
+  let t = press t "<CR>X<Tab>Y" in
+  assert (String.equal (text t) "Y/X/X!");
+  let t = run t [ Key Ches_input.Key.Shift_tab ] in
+  let t = press t "Z" in
+  assert (String.equal (text t) "Y/Z/Z!");
+  let t = press t "<Tab><Tab>" in
+  assert (not (active t) && Editor.cursor (editor t) = 5);
+  let t = press t "?" in
+  assert (String.equal (text t) "Y/Z/Z?!");
+  let t, _ = snippet_menu "left$0right" in
+  let t = press t "<CR>!" in
+  assert (String.equal (text t) "left!right" && not (active t));
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet Delete and Backspace replace defaults and cancel before crossing field boundaries" =
+  let make () = fst (snippet_menu "(${1:界é})/$1") |> fun t -> press t "<CR>" in
+  List.iter [ "<Del>"; "<BS>"; "<C-h>" ] ~f:(fun key ->
+    let t = press (make ()) key in
+    assert (String.equal (text t) "()/" && active t));
+  let t = press (make ()) "X<Del>" in
+  assert (String.equal (text t) "(X/X" && not (active t));
+  let t = press (make ()) "X<BS><BS>" in
+  assert (String.equal (text t) ")/" && not (active t));
+  let t = press (make ()) "<C-t>" in
+  assert (not (active t));
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet terminal prefix timeout replays every held key through the field editor" =
+  let t, _ = snippet_menu "${1:default}/$1" in
+  let t = press t "<CR>" in
+  let at ms = Time_ns.add Time_ns.epoch (Time_ns.Span.of_ms ms) in
+  let t = run t [ Key_at { key = Ches_input.Key.char '7'; at = at 0. }
+                ; Key_at { key = Ches_input.Key.char ' '; at = at 100. }
+                ; Toggle_tick (at 300.) ] in
+  assert (String.equal (text t) "7 /7 " && active t);
+  let t = press t "x" in
+  assert (String.equal (text t) "7 x/7 x" && active t);
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet safe cancellation for paste, newline, buffer change, control command and terminal toggle" =
+  let make () = fst (snippet_menu "${1:default}/$1$0") |> fun t -> press t "<CR>" in
+  let t = run (make ()) (paste "界<CR>jk") in
+  assert (String.equal (text t) "default界\njk/default" && not (active t) && not (has_menu t));
+  let t = press (make ()) "<CR>" in
+  assert (String.equal (text t) "default\n/default" && not (active t));
+  let t = press (make ()) "<C-n>" in
+  assert (not (active t));
+  let _, requests = Ui_state.take_source_requests t in
+  assert (List.exists requests ~f:(function Complete _ -> true | _ -> false));
+  let t = press (make ()) " /" in
+  assert (Ui_state.terminal_visible t && not (active t));
+  assert (String.equal (text t) "default/default");
+  let t = make () in
+  let original = Session.active_id (Ui_state.session t) |> Option.value_exn in
+  let t, _ = Ui_state.open_file t ~width:40 ~height:8 "/__ches_snippet_other__.ml" |> Or_error.ok_exn in
+  assert (not (active t));
+  let t = Ui_state.activate_buffer t ~width:40 ~height:8 original |> Or_error.ok_exn in
+  assert (String.equal (text t) "default/default" && not (active t));
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet jk escape mirrors its deletion and a failed terminal prefix loses no keys" =
+  let make () = fst (snippet_menu "${1:default}/$1$0") |> fun t -> press t "<CR>" in
+  let t = press (make ()) "jk" in
+  assert (String.equal (text t) "/" && not (active t));
+  assert (Mode.equal (Editor.mode (editor t)) Normal);
+  let t = press (make ()) " 7x" in
+  assert (String.equal (text t) " 7x/ 7x" && active t);
+  let t = press (make ()) "j<Tab>k" in
+  assert (String.equal (text t) "j/jk");
+  assert (Mode.equal (Editor.mode (editor t)) Insert);
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet known imports relocate fields and late resolve cannot edit an active session" =
+  let extras = [ { Text_edit.start = 0; stop = 0; text = "import\n" } ] in
+  let t, req = snippet_menu ~initial:"\n" ~prefix:"Gial" ~additional:extras "${1:default}/$1$0" in
+  let t = metadata t req [ info "alpha" ] |> fun t -> press t "<Tab>" in
+  let t, revision = resolve_request t "alpha" in
+  let t = press t "<CR>" in
+  assert (String.equal (text t) "import\n\ndefault/default" && active t);
+  assert ((List.hd_exn (Ui_state.snippet_ranges t)).start = 8);
+  let t = metadata t req [ info ~revision
+    ~additional:[ { Text_edit.start = 0; stop = 0; text = "late\n" } ] "alpha" ] in
+  let t = press t "X" in
+  assert (String.equal (text t) "import\n\nX/X" && active t);
+  assert (String.equal (text (press t "<Esc>u")) "\n");
+  (* An unresolved snippet does not install the normal deferred-acceptance path. *)
+  let t, req = snippet_menu "${1:default}/$1" in
+  let t = metadata t req [ info "alpha" ] |> fun t -> press t "<Tab>" in
+  let t, revision = resolve_request t "alpha" in
+  let t = press t "<CR>" in
+  let t, requests = Ui_state.take_source_requests t in
+  assert (List.exists requests ~f:(function Cancel_completion token -> M.Token.equal token req.token | _ -> false));
+  let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
+  assert (String.equal (text t) "default/default" && active t);
+  [%expect {| |}]
+;;
+
+let%expect_test "resolved imports known before snippet Enter relocate the expansion" =
+  let t, req = snippet_menu ~initial:"\n" ~prefix:"Gial" "${1:default}/$1" in
+  let t = metadata t req [ info "alpha" ] |> fun t -> press t "<Tab>" in
+  let t, revision = resolve_request t "alpha" in
+  let t = metadata t req [ info ~revision
+    ~additional:[ { Text_edit.start = 0; stop = 0; text = "import\n" } ] "alpha" ] in
+  let t = press t "<CR>界" in
+  assert (String.equal (text t) "import\n\n界/界" && active t);
+  [%expect {| |}]
+;;
+
+let%expect_test "snippet active-field rendering preserves Unicode cells, mirrors and empty fields" =
+  let t, _ = snippet_menu "(${1:界é})/$1/${2}" in
+  let t = press t "<CR>" in
+  List.iter [ 4; 18; 80 ] ~f:(fun width ->
+    let frame = Frame.render t ~width ~height:6 in
+    List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width)));
+  let selected t =
+    let frame = Frame.render t ~width:40 ~height:6 in
+    List.concat frame.rows |> List.filter ~f:(fun span -> match span.Span.style with
+      | Document { overlay = Some Selection; _ } -> true | _ -> false)
+    |> List.map ~f:(fun span -> span.Span.text) |> String.concat in
+  assert (String.equal (selected t) "界é界é");
+  let t = press t "<Tab>" in
+  assert (String.equal (selected t) " ");
+  let t = press t "<Esc>" in
+  assert (String.equal (selected t) "");
+  let t, _ = snippet_menu "($1) trailing text" in
+  let t = press t "<CR>" in
+  assert (String.equal (selected t) ")");
   [%expect {| |}]
 ;;

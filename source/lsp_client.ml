@@ -745,7 +745,7 @@ let initialize t session =
                     ~completionList:(Types.CompletionClientCapabilities.create_completionList
                       ~itemDefaults:["editRange"; "insertTextFormat"; "insertTextMode"; "data"] ())
                     ~completionItem:(Types.CompletionClientCapabilities.create_completionItem
-                      ~snippetSupport:false ~commitCharactersSupport:false
+                      ~snippetSupport:true ~commitCharactersSupport:false
                       ~insertReplaceSupport:true ~documentationFormat:[PlainText; Markdown]
                       ~insertTextModeSupport:(Types.CompletionClientCapabilities.create_insertTextModeSupport
                         ~valueSet:[AsIs])
