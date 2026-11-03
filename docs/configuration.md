@@ -135,14 +135,23 @@ include quotes and backslashes without OCaml escaping.
 API:
 
 ```ocaml
-Snippets.add ~id ~prefix ?scope ?description body
+Snippets.add ~id ~prefix ?scope ?collection ?description body
 Snippets.disable ~id
+Snippets.set_collection_enabled ~collection enabled
 ```
 
 - `id` is a stable identity; matching IDs override earlier declarations or starters.
 - `prefix` is the case-sensitive completion trigger. `description` is optional.
 - Omitted or empty `scope` is global. Recognized scopes are `"systemverilog"`,
   `"verilog"`, `"ocaml"`, or extensions such as `".py"`.
+- `collection` optionally groups templates independently of file scope. All
+  collections default to enabled; untagged templates remain enabled. Use
+  `Snippets.set_collection_enabled ~collection:"hardcaml" false` to hide a
+  collection and its dotted descendants. The last matching toggle wins.
+- Collection toggles preserve definitions for re-enabling; `disable ~id` removes
+  an individual definition. Overrides use their own metadata and do not inherit
+  the old collection. See [collections and bundled templates](snippets.md) for
+  examples, naming rules, dependencies, and available triggers.
 - Declarations execute in order: the last operation for an ID wins. For example,
   `Snippets.disable ~id:"sv.aff"` removes the bundled clocked-block template.
 - Every declaration is validated, including ones replaced later. Errors identify
@@ -154,9 +163,9 @@ See [snippets.example.ml](snippets.example.ml) for copyable templates and
 [snippet controls](editor_reference.md#snippet-placeholders) for supported syntax.
 
 To discover templates without remembering prefixes, choose **Insert snippet**
-from the palette in a file's Normal mode. Search by prefix, description, or ID;
+from the palette in a file's Normal mode. Search by prefix, description, ID, or collection;
 the preview identifies the effective declaration's origin (bundled, legacy JSON,
-or OCaml), scope, and raw body when space permits. Enter inserts the selected
+or OCaml), scope, collection, and raw body when space permits. Enter inserts the selected
 template at the cursor and activates its fields. Escape cancels without editing.
 
 ### Legacy JSON compatibility

@@ -108,9 +108,9 @@ let%expect_test "palette toggles automatic suggestions and independent ghost ren
     |}]
 ;;
 
-let attached initial =
+let attached ?(path = "/completion-test.ml") initial =
   Ui_state.create ~tiles_visible:false ~source_attached:true
-    (Controller.create (Editor.create ~path:"/completion-test.ml" ~cell_width:Cell_map.width
+    (Controller.create (Editor.create ~path ~cell_width:Cell_map.width
       (Text_buffer.of_string initial |> Result.map_error ~f:Text_buffer.Invalid_text.to_string_hum
        |> Result.ok_or_failwith)))
 ;;
@@ -471,7 +471,9 @@ let%expect_test "Ctrl-n manually invokes with auto off, one character and empty 
   assert (not (has_menu t));
   (* Normal Ctrl-n retains its keymap behavior and does not invoke completion. *)
   assert (not (has_menu (press (ui "alpha alpine") "<C-n>")));
-  let t, req = request (press (attached "") " cccompletion.toggle<CR>i<C-n>") in
+  (* This LSP-only empty-prefix fixture should not also offer bundled OCaml templates. *)
+  let t, req = request (press (attached ~path:"/completion-test.txt" "")
+      " cccompletion.toggle<CR>i<C-n>") in
   assert (req.cursor = 0 && req.fallback_start = 0);
   let t = reply t req [ candidate req "alpha" ] |> fun t -> press t "<CR>" in
   assert (String.equal (text t) "alpha");

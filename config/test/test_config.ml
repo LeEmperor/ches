@@ -74,11 +74,11 @@ let () =
 \$ \\ literal |} ${TM_FILENAME_BASE:untitled} $0|snip} in
     let expected_operations =
       [ U.Add { id = "personal"; prefix = "q"; scopes = ["ocaml"; ".foo"]
-              ; description = Some "quoted\ntext"; body = expected_body }
+              ; collection = None; description = Some "quoted\ntext"; body = expected_body }
       ; U.Disable "sv.aff"
-      ; U.Add { id = "same"; prefix = "old"; scopes = []; description = None; body = "old" }
+      ; U.Add { id = "same"; prefix = "old"; scopes = []; collection = None; description = None; body = "old" }
       ; U.Disable "same"
-      ; U.Add { id = "same"; prefix = "last"; scopes = []; description = None; body = "last" }
+      ; U.Add { id = "same"; prefix = "last"; scopes = []; collection = None; description = None; body = "last" }
       ] in
     if not (List.equal U.equal_operation settings.snippets expected_operations) then
       failwith (sprintf "snippet round trip: expected %s, got %s"
@@ -86,11 +86,30 @@ let () =
         (Sexp.to_string_hum ([%sexp_of: U.operation list] settings.snippets)));
     let%bind defaults = load "let () = ()" in
     check (List.is_empty (ok defaults).snippets) "fresh helper leaked snippet operations";
+    let%bind collections = load {|open Ches_config
+let () =
+  Snippets.set_collection_enabled ~collection:"hardcaml" false;
+  Snippets.add ~id:"tagged" ~prefix:"q" ~collection:"hardcaml.fsm" "tagged";
+  Snippets.set_collection_enabled ~collection:"hardcaml.fsm" true;
+  Snippets.set_collection_enabled ~collection:"hardcaml" false
+|} in
+    let collection_operations =
+      [ U.Set_collection_enabled { collection = "hardcaml"; enabled = false }
+      ; U.Add { id = "tagged"; prefix = "q"; scopes = []; collection = Some "hardcaml.fsm"
+              ; description = None; body = "tagged" }
+      ; U.Set_collection_enabled { collection = "hardcaml.fsm"; enabled = true }
+      ; U.Set_collection_enabled { collection = "hardcaml"; enabled = false } ] in
+    check (List.equal U.equal_operation (ok collections).snippets collection_operations)
+      "collection metadata/toggle order round trip";
+    let catalog = U.apply U.builtins (ok collections).snippets |> Or_error.ok_exn in
+    check (List.is_empty (U.available catalog ~path:None)) "last parent toggle did not win";
     let%bind () = Deferred.List.iter ~how:`Sequential
       [ "Snippets.add ~id:\"bad.template\" ~prefix:\"q\" \"${UNKNOWN}\"", "bad.template", "body"
       ; "Snippets.add ~id:\"bad.scope\" ~prefix:\"q\" ~scope:[\"python\"] \"ok\"", "bad.scope", "unsupported scope"
       ; "Snippets.disable ~id:\" \"", "snippets[0]", "nonempty"
       ; "Snippets.add ~id:\"bad.prefix\" ~prefix:\" \" \"ok\"", "bad.prefix", "prefix"
+      ; "Snippets.add ~id:\"bad.collection\" ~prefix:\"q\" ~collection:\"a..b\" \"ok\"", "bad.collection", "collection"
+      ; "Snippets.set_collection_enabled ~collection:\"a.\" false", "snippets[0]", "collection"
       ] ~f:(fun (declaration, id, reason) ->
         let%map result = load ("open Ches_config\nlet () = " ^ declaration) in
         let message = error result in
@@ -109,6 +128,12 @@ let () = Snippets.add ~id:"invalid.first" ~prefix:"q" "${UNKNOWN}";
       "deleted configuration retained prior settings or snippet operations";
     let%bind result = load {|let () = for _ = 1 to 1000 do Ches_config.Snippets.disable ~id:"same" done|} in
     check (List.length (ok result).snippets = 1000) "1000 duplicate ordered operations rejected";
+    let%bind result = load {|let () = for _ = 1 to 1000 do
+  Ches_config.Snippets.set_collection_enabled ~collection:"hardcaml" false done|} in
+    check (List.length (ok result).snippets = 1000) "1000 collection-only operations rejected";
+    let%bind result = load {|let () = for _ = 1 to 1001 do
+  Ches_config.Snippets.set_collection_enabled ~collection:"hardcaml" false done|} in
+    check (contains (error result) "1000") "collection-only operation limit not enforced";
     let%bind result = load {|let () = for _ = 1 to 1001 do Ches_config.Snippets.disable ~id:"same" done|} in
     check (contains (error result) "1000") "operation limit not enforced";
     let%bind result = load {|let () = Ches_config.Snippets.add ~id:"huge" ~prefix:"q"
@@ -125,6 +150,15 @@ let () = Snippets.add ~id:"invalid.first" ~prefix:"q" "${UNKNOWN}";
       ] ~f:(fun input ->
         check (Result.is_error (Loader.For_testing.decode input)) "malformed v2 protocol accepted");
     check (Result.is_ok (Loader.For_testing.decode (protocol ^ "0\n"))) "valid v2 protocol rejected";
+    let legacy = Loader.For_testing.decode
+      (protocol ^ "1\nadd\n61\n62\n0\nnone\n63\n") |> Or_error.ok_exn in
+    check (List.equal U.equal_operation legacy.snippets
+      [U.Add { id = "a"; prefix = "b"; scopes = []; collection = None; description = None; body = "c" }])
+      "legacy v2 add did not default to untagged";
+    let protocol3 = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" in
+    List.iter ["1\ncollection\n612e\nfalse\n"; "1\ncollection\n61\ninvalid\n";
+               "1\nadd\n61\n62\n0\ninvalid\nnone\n63\n"] ~f:(fun suffix ->
+      check (Result.is_error (Loader.For_testing.decode (protocol3 ^ suffix))) "malformed v3 accepted");
     let%bind result = load "open Ches_config\nlet () = Completion.set_min_prefix_chars 0" in
     check (contains (error result) "must be positive") "prefix validation";
     let%bind result = load "open Ches_config\nlet () = Theme.set \"  \"" in

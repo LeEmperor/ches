@@ -4,7 +4,7 @@ module P = Snippet_picker_tile
 module U = Ches_completion.User_snippets
 
 let item id prefix description body : U.item =
-  { declaration = { id; prefix; description = Some description; body; scopes = ["ocaml"] }
+  { declaration = { id; prefix; description = Some description; body; scopes = ["ocaml"]; collection = None }
   ; origin = Ocaml }
 ;;
 
@@ -19,6 +19,23 @@ let paste t s = P.update t ~rows:10 (Paste s)
 let body t ~width ~rows = (P.render t ~width ~rows).body
 let row_text spans = String.concat (List.map spans ~f:(fun span -> span.Span.text))
 let rendered t ~width ~rows = body t ~width ~rows |> List.map ~f:row_text |> String.concat ~sep:"\n"
+
+let%test_unit "collection metadata is searchable and displayed, disabled collections disappear" =
+  let base = U.parse {|{"version":1,"snippets":[
+    {"id":"unique.id","prefix":"trigger","collection":"hardcaml.fsm","body":"$0"}]}|}
+    |> Or_error.ok_exn in
+  let picker catalog = P.create (U.available catalog ~path:None) in
+  let t = paste (picker base) "hardcaml.fsm" in
+  [%test_eq: string] (selected t) "unique.id";
+  assert (String.is_substring (rendered t ~width:80 ~rows:10) ~substring:"[hardcaml.fsm]");
+  assert (String.is_substring (rendered t ~width:80 ~rows:10) ~substring:"Collection: hardcaml.fsm");
+  let disabled = U.apply base [Set_collection_enabled { collection = "hardcaml"; enabled = false }]
+    |> Or_error.ok_exn in
+  assert (Option.is_none (P.selected (paste (picker disabled) "hardcaml.fsm")));
+  let restored = U.apply disabled [Set_collection_enabled { collection = "hardcaml"; enabled = true }]
+    |> Or_error.ok_exn in
+  [%test_eq: string] (selected (paste (picker restored) "hardcaml.fsm")) "unique.id"
+;;
 
 let%test_unit "prefix description and ID filter independently and across fields" =
   let t = P.create items in

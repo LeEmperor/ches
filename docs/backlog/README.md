@@ -1,5 +1,14 @@
 # Backlog
 
+## Snippet catalog and organization
+
+- [Snippet collections and hardware-development catalog](snippet_collections.md):
+  proposed ticket backlog for SV design/verification, Xilinx register terminology,
+  core/testing/Jane Street OCaml, Signal-first Hardcaml design/verification, and
+  collection discovery and activation.
+
+## Deferred workspace work
+
 Work deferred from the workspace-tiles feature set ([`workspace_tiles_design.md`](../workspace_tiles_design.md),
 phases 1–10, all human-accepted). On 2026-10-06 the owner chose to close that feature
 set and push the following to a later milestone. Each item still needs a concrete

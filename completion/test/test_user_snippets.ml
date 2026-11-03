@@ -14,13 +14,73 @@ let candidates ?path ?(limit = 100) catalog value =
 let ids entries = List.map entries ~f:(fun entry -> entry.M.Candidate.id)
 let has entries id = List.mem (ids entries) ("user-snippet:" ^ id) ~equal:String.equal
 
+let%test_unit "collection hierarchy is ordered, reversible, and filters every insertion path" =
+  let base = parse {|{"id":"child","prefix":"zzchild","collection":"hardcaml.fsm","body":"child"},
+    {"id":"sibling","prefix":"zzsibling","collection":"hardcaml.other","body":"sibling"},
+    {"id":"boundary","prefix":"zzboundary","collection":"hardcamlx","body":"boundary"},
+    {"id":"custom","prefix":"zzcustom","body":"custom"}|} in
+  let toggle collection enabled = U.Set_collection_enabled { collection; enabled } in
+  let apply catalog operations = U.apply catalog operations |> Or_error.ok_exn in
+  let visible catalog id = U.available catalog ~path:None
+    |> List.exists ~f:(fun item -> String.equal item.U.declaration.id id) in
+  let disabled = apply base [toggle "hardcaml" false] in
+  assert (not (visible disabled "child"));
+  assert (not (visible disabled "sibling"));
+  assert (visible disabled "boundary" && visible disabled "custom");
+  assert (not (has (candidates disabled "zzchild") "child"));
+  assert (Result.is_error (U.instantiate disabled ~id:"child" ~path:None ~text:B.empty ~cursor:0));
+  let child = apply disabled [toggle "hardcaml.fsm" true] in
+  assert (visible child "child" && not (visible child "sibling"));
+  let parent = apply child [toggle "hardcaml" false] in
+  assert (not (visible parent "child"));
+  let restored = apply parent [toggle "hardcaml" true] in
+  assert (visible restored "child" && visible restored "sibling");
+  assert (has (candidates restored "zzchild") "child");
+  assert (Result.is_ok (U.instantiate restored ~id:"child" ~path:None ~text:B.empty ~cursor:0));
+  let deleted = apply restored [Disable "child"; toggle "hardcaml" false; toggle "hardcaml" true] in
+  assert (not (visible deleted "child"));
+  let declaration : U.declaration =
+    { id = "late"; prefix = "zzlate"; scopes = []; collection = Some "hardcaml.fsm"
+    ; description = None; body = "late" } in
+  assert (not (visible (apply disabled [Add declaration]) "late"));
+  assert (visible (apply disabled [Add { declaration with collection = None }]) "late");
+  let unchanged = U.available base ~path:None in
+  List.iter [""; ".hardcaml"; "hardcaml."; "hardcaml..fsm"; "hard caml"; "a/b"; "é"]
+    ~f:(fun collection ->
+      assert (Result.is_error (U.apply base [toggle collection false; toggle "hardcaml" true]));
+      assert (Result.is_error (U.apply base [Add { declaration with collection = Some collection }])));
+  assert (List.equal U.equal_item (U.available base ~path:None) unchanged)
+;;
+
+let%test_unit "bundled collections are tagged and enabled by default in both languages" =
+  List.iter ["top.sv"; "top.ml"; "top.mli"] ~f:(fun path ->
+    let items = U.available U.builtins ~path:(Some path) in
+    assert (not (List.is_empty items));
+    List.iter items ~f:(fun item ->
+      assert (Option.is_some item.U.declaration.collection);
+      assert (Result.is_ok (U.instantiate U.builtins ~id:item.declaration.id
+        ~path:(Some path) ~text:B.empty ~cursor:0))))
+;;
+
+let%test_unit "collection-only operations obey operation and aggregate string budgets" =
+  let toggle collection = U.Set_collection_enabled { collection; enabled = false } in
+  let operations = List.init 1000 ~f:(fun _ -> toggle "hardcaml") in
+  assert (Result.is_ok (U.apply U.builtins operations));
+  assert (Result.is_error (U.apply U.builtins (toggle "hardcaml" :: operations)));
+  let name = String.make 524_288 'a' in
+  assert (Result.is_ok (U.apply U.builtins [toggle name; toggle name]));
+  let error = U.apply U.builtins [toggle name; toggle name; toggle "a"]
+    |> Result.error |> Option.value_exn |> Error.to_string_hum in
+  assert (String.is_substring error ~substring:"1 MiB")
+;;
+
 let%test_unit "discovery preserves effective raw declarations and inherited provenance" =
   let base = parse
       {|{"id":"sv.aff","prefix":"same","body":["${1:legacy}","$0"]},
         {"id":"z","prefix":"same","body":"z"},
         {"id":"ext","prefix":"ext","scope":[".foo"],"body":"x"}|} in
   let declaration : U.declaration =
-    { id = "a"; prefix = "same"; scopes = []; description = Some "typed"; body = "$TM_FILENAME" } in
+    { id = "a"; prefix = "same"; scopes = []; collection = None; description = Some "typed"; body = "$TM_FILENAME" } in
   let catalog = U.apply base [Add declaration; Disable "sv.inst"] |> Or_error.ok_exn in
   let all = U.available catalog ~path:(Some "x.sv") in
   let find id = List.find_exn all ~f:(fun item -> String.equal item.U.declaration.id id) in
@@ -121,7 +181,7 @@ let%test_unit "explicit candidate and linked edits form one ordinary editor undo
 
 let%test_unit "ordered typed operations preserve legacy base, last wins, and disable builtins" =
   let base = parse {|{"id":"legacy","prefix":"qlegacy","body":"legacy"}|} in
-  let add id prefix body = U.Add { id; prefix; body; scopes = []; description = None } in
+  let add id prefix body = U.Add { id; prefix; body; scopes = []; collection = None; description = None } in
   let catalog = U.apply base
       [ add "same" "qold" "old"; U.Disable "same"; add "same" "qnew" "new"
       ; add "sv.aff" "qoverride" "override"; U.Disable "sv.aff"; U.Disable "absent" ]
@@ -140,7 +200,7 @@ let%test_unit "ordered typed operations preserve legacy base, last wins, and dis
 
 let%test_unit "typed operations validate every declaration with ID context atomically" =
   let declaration : U.declaration =
-    { id = "bad.id"; prefix = "q"; scopes = []; description = None; body = "ok" } in
+    { id = "bad.id"; prefix = "q"; scopes = []; collection = None; description = None; body = "ok" } in
   List.iter
     [ { declaration with prefix = " " }, "prefix"
     ; { declaration with scopes = ["python"] }, "unsupported scope"
@@ -157,7 +217,7 @@ let%test_unit "typed operations validate every declaration with ID context atomi
   assert (Result.is_error (U.apply U.builtins [U.Disable " "]));
   assert (Result.is_error (U.apply U.builtins
     [U.Add { declaration with description = Some (String.make 1_048_577 'x') }]));
-  assert (List.length (candidates ~path:"x.sv" U.builtins "") = 5)
+  assert (has (candidates ~path:"x.sv" U.builtins "aff") "sv.aff")
 ;;
 
 let%test_unit "catalog variables resolve per request before indentation and choice edits stay linked" =
@@ -189,7 +249,7 @@ let%test_unit "catalog variables resolve per request before indentation and choi
 let%test_unit "bundled SV starters parse, scope, labels and candidate contract" =
   List.iter [ "x.sv"; "x.svh" ] ~f:(fun path ->
     let all = candidates ~path U.builtins "" in
-    assert (List.length all = 5);
+    assert (has all "sv.mod");
     List.iter [ "aff"; "acomb"; "mod"; "inst"; "genfor" ] ~f:(fun prefix ->
       let c = candidates ~path U.builtins prefix |> List.hd_exn in
       assert (String.equal c.label prefix);
@@ -202,7 +262,7 @@ let%test_unit "bundled SV starters parse, scope, labels and candidate contract" 
       assert (String.equal c.primary.text (Snippet.text snippet));
       assert (c.cursor = Snippet.final_cursor snippet)));
   List.iter [ "x.v"; "x.vh"; "x.ml"; "x.SV" ] ~f:(fun path ->
-    assert (List.is_empty (candidates ~path U.builtins "")));
+    assert (not (has (candidates ~path U.builtins "") "sv.aff")));
   assert (List.is_empty (candidates U.builtins ""))
 ;;
 
@@ -230,7 +290,7 @@ let%test_unit "bundled module uses an editable filename default in SystemVerilog
       assert (S.finished session);
       [%test_eq: int] (S.cursor session) (String.length "module renamed (\n    "));
   List.iter ["bruh.v"; "bruh.ml"; "bruh.txt"] ~f:(fun path ->
-    assert (List.is_empty (candidates ~path U.builtins "mod")));
+    assert (not (has (candidates ~path U.builtins "mod") "sv.mod")));
   assert (List.is_empty (candidates U.builtins "mod"))
 ;;
 
@@ -254,7 +314,7 @@ let%test_unit "omitted and empty global scopes, language scopes and custom exten
 let%test_unit "user replacement and disabling are applied to fresh bundled catalog" =
   let catalog = parse {|{"id":"sv.aff","prefix":"mine","body":"${1:custom}"},
     {"id":"sv.acomb","disabled":true},{"id":"unknown","disabled":true}|} in
-  assert (List.is_empty (candidates ~path:"a.sv" catalog "aff"));
+  assert (not (has (candidates ~path:"a.sv" catalog "aff") "sv.aff"));
   assert (has (candidates catalog "mine") "sv.aff");
   assert (not (has (candidates ~path:"a.sv" catalog "") "sv.acomb"));
   assert (has (candidates ~path:"a.sv" (parse "") "aff") "sv.aff");
@@ -294,7 +354,7 @@ let%test_unit "strict malformed configs identify entry and id without changing o
               {|{"version":1,"snippets":{}}|};
               {|{"version":1,"snippets":[],"extra":0}|}; "not json" ]
     ~f:(fun input -> error_contains input []);
-  assert (List.length (candidates ~path:"a.sv" U.builtins "") = 5)
+  assert (has (candidates ~path:"a.sv" U.builtins "aff") "sv.aff")
 ;;
 
 let%test_unit "file, entry and body limits" =

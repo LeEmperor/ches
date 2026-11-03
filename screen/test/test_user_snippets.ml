@@ -29,7 +29,7 @@ let loaded ?path initial =
 module Settings = Ches_config_runtime.Settings
 
 let declaration ?(id = "test.aff") ?(prefix = "aff") body =
-  U.Add { id; prefix; scopes = []; description = None; body }
+  U.Add { id; prefix; scopes = []; collection = None; description = None; body }
 ;;
 
 let configure t snippets =
