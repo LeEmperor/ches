@@ -37,6 +37,8 @@ cases = [
     ("tab", [b"\x09"]),
     ("shift-tab", [b"\x1b[Z"]),
     ("ctrl-a", [b"\x01"]),
+    ("ctrl-j", [b"\x0a"]),
+    ("enter", [b"\x0d"]),
     ("ctrl-underscore", [b"\x1f"]),
     ("escape", [b"\x1b"]),
     ("ctrl-backslash", [b"\x1c"]),
@@ -401,9 +403,9 @@ def main():
         command(f"{shlex.quote(sys.executable)} {shlex.quote(str(root / 'input_probe.py'))} "
                 f"{shlex.quote(str(root))}")
         keys = ["Up", "Down", "Left", "Right", "Home", "End", "DC", "BSpace",
-                 "Tab", "BTab", "C-a", "C-_", "Escape", "C-\\", "C-n", "C-\\", "C-r", "M-x", "F5"]
+                 "Tab", "BTab", "C-a", "C-j", "Enter", "C-_", "Escape", "C-\\", "C-n", "C-\\", "C-r", "M-x", "F5"]
         names = ["up", "down", "left", "right", "home", "end", "delete", "backspace",
-                  "tab", "shift-tab", "ctrl-a", "ctrl-underscore", "escape", "ctrl-backslash",
+                  "tab", "shift-tab", "ctrl-a", "ctrl-j", "enter", "ctrl-underscore", "escape", "ctrl-backslash",
                   "ctrl-n-after-backslash", "ctrl-backslash-again", "ctrl-r-after-backslash",
                   "alt-x", "f5", "rapid-jk", "standalone-j", "slow-jk", "mismatch-jx",
                   "lone-space", "lone-digits", "slow-space-slash", "slow-count-space",
@@ -463,7 +465,7 @@ def main():
                 assert .16 <= elapsed < 1., (name, "200ms idle flush", elapsed)
         wait(lambda: "CHES_PROBE_DONE" in screen(), "input probe completion")
         capture("input")
-        print("ok: arrows, Home/End, Delete/Backspace, Tab/Shift-Tab, Ctrl, Alt, F5 and UTF-8 bracketed paste; Escape and Ctrl-backslash sequences reach child raw")
+        print("ok: arrows, Home/End, Delete/Backspace, Tab/Shift-Tab, Ctrl, Alt, F5 and UTF-8 bracketed paste; Ctrl-J stays LF, Enter stays CR; Escape and Ctrl-backslash sequences reach child raw")
         print("ok: rapid jk is consumed and enters Normal; idle j flushes after 150ms; slow jk, mismatch jx and pasted jk reach child in order")
         print("ok: terminal raw bytes: idle space/digits flush at 200ms without output/animation; slow leaders, quick mismatch and Unicode preserve order; pasted literal 2 / bypasses shortcuts")
 

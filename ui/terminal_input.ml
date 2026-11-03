@@ -12,6 +12,8 @@ let key (key : Event.Key.t) (mods : Event.Modifier.t list) : Key.t option =
   match key, mods with
   | ASCII c, ([] | [ Shift ]) -> char (Uchar.of_char c)
   | Uchar u, ([] | [ Shift ]) -> char u
+  (* With CR-to-LF translation disabled, Notty reports Enter as Ctrl-M. *)
+  | ASCII ('M' | 'm'), [ Ctrl ] -> Some Enter
   | ASCII c, ([ Ctrl ] | [ Ctrl; Shift ] | [ Shift; Ctrl ]) when Char.is_alpha c ->
     Some (Ctrl (Char.lowercase c))
   | Enter, [] -> Some Enter
@@ -45,7 +47,13 @@ let terminal_key (key : Event.Key.t) (mods : Event.Modifier.t list)
     | Function n -> Function n
   in
   let has modifier = List.mem mods modifier ~equal:Event.Modifier.equal in
-  { code; modifiers = { shift = has Shift; alt = has Meta; ctrl = has Ctrl } }
+  (* Notty calls a literal LF [Enter]; the physical Enter key arrives as
+     ASCII M + Ctrl. Keep LF as Ctrl-J when forwarding to a child terminal. *)
+  match key with
+  | Enter ->
+    { code = Char (Uchar.of_char 'j')
+    ; modifiers = { shift = has Shift; alt = has Meta; ctrl = true } }
+  | _ -> { code; modifiers = { shift = has Shift; alt = has Meta; ctrl = has Ctrl } }
 ;;
 
 let inputs ?(terminal = false) (event : Event.t) : Ches_screen.Ui_state.Input.t list =

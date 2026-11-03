@@ -49,7 +49,7 @@ let%test_unit "frontend keeps terminal capture through Ctrl-Space variants and V
 let%test_unit "terminal capture preserves every key and modifier combination" =
   let module M = Ches_terminal.Model in
   let keys : (Event.Key.t * M.key_code) list =
-    ([ Escape, Escape; Enter, Enter; Tab, Tab; Backspace, Backspace
+    ([ Escape, Escape; Tab, Tab; Backspace, Backspace
     ; Insert, Insert; Delete, Delete; Home, Home; End, End
     ; Arrow `Up, Up; Arrow `Down, Down; Arrow `Left, Left; Arrow `Right, Right
     ; Page `Up, Page_up; Page `Down, Page_down
@@ -73,6 +73,29 @@ let%test_unit "terminal capture preserves every key and modifier combination" =
               if not (M.equal_key actual expected) then
                 raise_s [%message "terminal key mismatch" (actual : M.key) (expected : M.key)]
             | actual -> raise_s [%message "terminal key lost" (actual : Ches_screen.Ui_state.Input.t list)])))))
+;;
+
+let%test_unit "Notty LF remains Ctrl-J and CR remains Enter" =
+  let module M = Ches_terminal.Model in
+  let decode bytes =
+    let decoder = Notty.Unescape.create () in
+    Notty.Unescape.input decoder (Bytes.of_string bytes) 0 (String.length bytes);
+    match Notty.Unescape.next decoder with
+    | `Key (`Enter, []) -> key Enter
+    | `Key (`ASCII c, [ `Ctrl ]) -> key ~mods:[ Ctrl ] (ASCII c)
+    | _ -> failwith "unexpected newline decoding"
+  in
+  List.iter [ "\n", 'j'; "\r", 'M' ] ~f:(fun (bytes, c) ->
+    let event = decode bytes in
+    (match Terminal_input.inputs ~terminal:true event with
+     | [ Terminal_key actual ] ->
+       assert (M.equal_key actual
+         { code = M.Char (Uchar.of_char c)
+         ; modifiers = { M.no_modifiers with ctrl = true } })
+     | _ -> failwith "newline key lost");
+    match Terminal_input.inputs event with
+    | [ Key Enter ] -> ()
+    | _ -> failwith "editor Enter lost")
 ;;
 
 let%test_unit "terminal capture retains paste boundaries and ignores mouse" =

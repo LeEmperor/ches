@@ -135,8 +135,16 @@ let command =
            in
            (* One runner for the VCS view's git commands (Space g g); it inherits this
               process's environment and never prompts on the terminal. *)
-           let vcs = Ches_ui.Vcs_host.create () in
-            (match%bind Ches_ui.Editor_view.run ~smear_enabled ~zen:(not workspace) ~bare ?theme ~buffer_presentation ?report ?source ~vcs controller with
+            let vcs = Ches_ui.Vcs_host.create () in
+            (* Preserve CR (Enter) versus LF (Ctrl-J) before Notty reads stdin.
+               Notty's own terminal setup retains these input flags. Restore the
+               original settings after its shutdown handlers have run. *)
+            let tty = Core_unix.Terminal_io.tcgetattr Core_unix.stdin in
+            Stdlib.at_exit (fun () -> Core_unix.Terminal_io.tcsetattr tty Core_unix.stdin ~mode:TCSANOW);
+            Core_unix.Terminal_io.tcsetattr
+              { tty with c_icrnl = false; c_inlcr = false; c_igncr = false }
+              Core_unix.stdin ~mode:TCSANOW;
+             (match%bind Ches_ui.Editor_view.run ~smear_enabled ~zen:(not workspace) ~bare ?theme ~buffer_presentation ?report ?source ~vcs controller with
             | Ok () -> return ()
             | Error error -> fail error)))
 ;;

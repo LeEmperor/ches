@@ -40,6 +40,9 @@ output only enters libvterm; nothing is forwarded to the outer terminal.
 The screen supports libvterm's alternate screen and UTF-8 handling. Keyboard
 encoding uses the emulator's current cursor/newline modes and modifier handling;
 paste uses the current bracketed-paste mode. There is no scrollback allocation.
+The CLI disables outer-terminal CR/LF input translation so physical Enter (CR)
+stays distinct from Ctrl-J (LF). The frontend reverses Notty's LF-as-Enter naming
+when forwarding terminal input, allowing Ctrl-J to insert newlines in OpenCode.
 
 Events occupy a two-slot mailbox: latest snapshot and latest failure. Input
 waiting to be written is limited to 1 MiB, as are individual pastes and generated
