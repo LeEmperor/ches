@@ -14,6 +14,47 @@ let candidates ?path ?(limit = 100) catalog value =
 let ids entries = List.map entries ~f:(fun entry -> entry.M.Candidate.id)
 let has entries id = List.mem (ids entries) ("user-snippet:" ^ id) ~equal:String.equal
 
+let%test_unit "ordered typed operations preserve legacy base, last wins, and disable builtins" =
+  let base = parse {|{"id":"legacy","prefix":"qlegacy","body":"legacy"}|} in
+  let add id prefix body = U.Add { id; prefix; body; scopes = []; description = None } in
+  let catalog = U.apply base
+      [ add "same" "qold" "old"; U.Disable "same"; add "same" "qnew" "new"
+      ; add "sv.aff" "qoverride" "override"; U.Disable "sv.aff"; U.Disable "absent" ]
+      |> Or_error.ok_exn in
+  assert (has (candidates catalog "qlegacy") "legacy");
+  assert (has (candidates catalog "qnew") "same");
+  assert (List.is_empty (candidates catalog "qold"));
+  assert (not (has (candidates ~path:"x.sv" catalog "") "sv.aff"));
+  assert (has (candidates ~path:"x.sv" base "aff") "sv.aff");
+  assert (List.is_empty (candidates base "qnew"));
+  assert (Result.is_ok (U.apply base []));
+  let operations = List.init 1000 ~f:(fun _ -> U.Disable "same") in
+  assert (Result.is_ok (U.apply base operations));
+  assert (Result.is_error (U.apply base (U.Disable "same" :: operations)))
+;;
+
+let%test_unit "typed operations validate every declaration with ID context atomically" =
+  let declaration : U.declaration =
+    { id = "bad.id"; prefix = "q"; scopes = []; description = None; body = "ok" } in
+  List.iter
+    [ { declaration with prefix = " " }, "prefix"
+    ; { declaration with scopes = ["python"] }, "unsupported scope"
+    ; { declaration with scopes = [".bad/path"] }, "unsupported scope"
+    ; { declaration with body = "${UNKNOWN}" }, "body"
+    ; { declaration with body = String.make 65_537 'x' }, "65536"
+    ; { declaration with description = Some "\000" }, "description"
+    ; { declaration with prefix = "\255" }, "prefix"
+    ] ~f:(fun (declaration, reason) ->
+      let result = U.apply U.builtins [U.Add declaration; U.Disable declaration.id] in
+      let message = Result.error result |> Option.value_exn |> Error.to_string_hum in
+      assert (String.is_substring message ~substring:"bad.id");
+      assert (String.is_substring message ~substring:reason));
+  assert (Result.is_error (U.apply U.builtins [U.Disable " "]));
+  assert (Result.is_error (U.apply U.builtins
+    [U.Add { declaration with description = Some (String.make 1_048_577 'x') }]));
+  assert (List.length (candidates ~path:"x.sv" U.builtins "") = 5)
+;;
+
 let%test_unit "catalog variables resolve per request before indentation and choice edits stay linked" =
   let catalog = parse
       {json|{"id":"context","prefix":"ctx","body":"$TM_FILENAME/$TM_FILENAME_BASE/$TM_DIRECTORY/${TM_FILEPATH:unnamed}\n$1/${1|é\nx,long\ny|}$0!"}|json} in
@@ -58,6 +99,34 @@ let%test_unit "bundled SV starters parse, scope, labels and candidate contract" 
   List.iter [ "x.v"; "x.vh"; "x.ml"; "x.SV" ] ~f:(fun path ->
     assert (List.is_empty (candidates ~path U.builtins "")));
   assert (List.is_empty (candidates U.builtins ""))
+;;
+
+let%test_unit "bundled module uses an editable filename default in SystemVerilog scope" =
+  List.iter ["bruh.sv", "bruh"; "rtl/top.test.svh", "top.test"]
+    ~f:(fun (path, name) ->
+      let candidate = candidates ~path U.builtins "mod" |> List.hd_exn in
+      [%test_eq: string] candidate.id "user-snippet:sv.mod";
+      [%test_eq: string] candidate.primary.text
+        ("module " ^ name ^ " (\n    \n);\nendmodule");
+      let installed = Text_edit.apply (text "mod") [[candidate.primary]] |> Or_error.ok_exn in
+      let snippet = Option.value_exn candidate.snippet in
+      let module S = Snippet.Session in
+      let session = S.start snippet ~base:0 ~revision:1 ~text:installed |> Or_error.ok_exn in
+      let field = S.active session |> Option.value_exn in
+      [%test_eq: int] field.number 1;
+      [%test_eq: int] (List.length field.ranges) 1;
+      let selected = S.selection session |> Option.value_exn in
+      [%test_eq: string]
+        (B.slice installed ~pos:selected.start ~len:(selected.stop - selected.start)) name;
+      let change = S.insert session ~revision:1 ~text:installed "renamed" |> Or_error.ok_exn in
+      let edited = Text_edit.apply installed [S.edits change] |> Or_error.ok_exn in
+      [%test_eq: string] (B.to_string edited) "module renamed (\n    \n);\nendmodule";
+      let session = S.applied change ~revision:2 |> fun session -> S.navigate session Next in
+      assert (S.finished session);
+      [%test_eq: int] (S.cursor session) (String.length "module renamed (\n    "));
+  List.iter ["bruh.v"; "bruh.ml"; "bruh.txt"] ~f:(fun path ->
+    assert (List.is_empty (candidates ~path U.builtins "mod")));
+  assert (List.is_empty (candidates U.builtins "mod"))
 ;;
 
 let%test_unit "omitted and empty global scopes, language scopes and custom extensions" =

@@ -71,15 +71,15 @@ Select **Reload configuration** in the command palette (`Space c c`) to:
 
 1. Construct fresh supported defaults.
 2. Compile and execute your current configuration.
-3. Validate all settings, including the theme.
-4. Apply the complete result together.
+3. Validate all settings, including the theme and snippet declarations.
+4. Apply settings and the snippet catalog together.
 
 Removing a setter restores that setting's default on reload. Successful reloads
 discard temporary changes to supported settings while preserving buffers, unsaved
 text, and unrelated layout preferences. Completion menus and theme previews are
 dismissed when the new settings take effect. A missing file reloads defaults.
 
-A compile, execution, or validation failure preserves the current settings and
+A compile, execution, or validation failure preserves the current settings/catalog and
 reports the error. At startup, failure uses defaults and reports the diagnostic
 after opening the editor. Compiler errors reference the original filename and line.
 
@@ -103,8 +103,59 @@ than a sandboxed expression language. Ches itself does not write your config fil
 
 ## Snippets
 
-User snippets remain in the independently loaded `snippets.json` collection for
-now; this phase adds OCaml settings without migrating the snippet provider.
-**Reload configuration** reloads `config.ml`; **Reload snippets** reloads that
-collection. See [independent snippets](editor_reference.md#independent-and-user-defined-snippets)
-for its existing format and scope rules.
+Define templates in `config.ml` with `Snippets.add`:
+
+```ocaml
+let () =
+  Snippets.add
+    ~id:"personal.module"
+    ~prefix:"mymod"
+    ~scope:[ "systemverilog" ]
+    ~description:"Module named after this file"
+    {snippet|module ${1:${TM_FILENAME_BASE:untitled}} (
+    $0
+);
+endmodule|snippet}
+```
+
+The filename supplies the first field's default, which stays selected and editable
+after acceptance. Linked `$1` occurrences would mirror edits to it. The same body
+syntax supports ordinary defaults and choices. Use **named quoted strings** such
+as `{snippet|...|snippet}` when a body contains choices: the choice ending `|}`
+would prematurely close an unnamed `{|...|}` string. Named strings also let you
+include quotes and backslashes without OCaml escaping.
+
+API:
+
+```ocaml
+Snippets.add ~id ~prefix ?scope ?description body
+Snippets.disable ~id
+```
+
+- `id` is a stable identity; matching IDs override earlier declarations or starters.
+- `prefix` is the case-sensitive completion trigger. `description` is optional.
+- Omitted or empty `scope` is global. Recognized scopes are `"systemverilog"`,
+  `"verilog"`, `"ocaml"`, or extensions such as `".py"`.
+- Declarations execute in order: the last operation for an ID wins. For example,
+  `Snippets.disable ~id:"sv.aff"` removes the bundled clocked-block template.
+- Every declaration is validated, including ones replaced later. Errors identify
+  the offending ID and reject the entire settings/catalog update.
+- A fresh evaluation begins with no OCaml snippet operations. Removing a declaration
+  restores the underlying template on the next successful reload.
+
+See [snippets.example.ml](snippets.example.ml) for copyable templates and
+[snippet controls](editor_reference.md#snippet-placeholders) for supported syntax.
+
+### Legacy JSON compatibility
+
+An existing `snippets.json` remains supported. Effective order is **bundled
+starters → legacy JSON → OCaml declarations**. Delayed JSON loads and **Reload
+snippets** reapply the current OCaml layer, so they cannot overwrite your OCaml
+definitions. **Reload configuration** applies settings and OCaml snippets together;
+**Reload snippets** reloads only the legacy JSON base.
+
+When migrating, transfer your definitions into `config.ml`, validate/reload it,
+and move the JSON file to an inactive backup name. On restart, absent JSON means
+the base contains bundled starters only. This is a manual migration; the editor
+does not rewrite either file. The legacy format is documented in the
+[editor reference](editor_reference.md#legacy-json-snippet-collection).

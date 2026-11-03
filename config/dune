@@ -1,7 +1,7 @@
 (library
  (name ches_config_runtime)
  (modules settings loader api_source)
- (libraries core core_unix async)
+ (libraries core core_unix async ches_completion)
  (preprocess (pps ppx_jane)))
 
 (rule

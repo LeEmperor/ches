@@ -1,4 +1,11 @@
 (test
  (name test_config)
+ (modules test_config)
  (libraries core core_unix async ches_config_runtime)
+ (preprocess (pps ppx_jane)))
+
+(executable
+ (name check_config)
+ (modules check_config)
+ (libraries core async ches_config_runtime)
  (preprocess (pps ppx_jane)))

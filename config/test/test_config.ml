@@ -53,11 +53,78 @@ let () =
     let expected : Settings.t =
       { completion_enabled = false; completion_ghost_preview = true
       ; completion_min_prefix_chars = 3; completion_prefer_local_snippets = false
-      ; line_numbers = true; theme = "custom-theme" } in
+      ; line_numbers = true; theme = "custom-theme"; snippets = [] } in
     check (Settings.equal (ok result) expected) "real Stdlib configuration";
     check_clean ();
     let%bind defaults = load "let () = ()" in
     check (Settings.equal (ok defaults) Settings.default) "fresh defaults each load";
+    let%bind result = load {config|open Ches_config
+let () =
+  Snippets.add ~id:"personal" ~prefix:"q" ~scope:["ocaml"; ".foo"]
+    ~description:"quoted\ntext" {snip|${1|a\,b,c\|d|}
+\$ \\ literal |} ${TM_FILENAME_BASE:untitled} $0|snip};
+  Snippets.disable ~id:"sv.aff";
+  Snippets.add ~id:"same" ~prefix:"old" "old";
+  Snippets.disable ~id:"same";
+  Snippets.add ~id:"same" ~prefix:"last" "last"
+|config} in
+    let settings = ok result in
+    let module U = Ches_completion.User_snippets in
+    let expected_body = {snip|${1|a\,b,c\|d|}
+\$ \\ literal |} ${TM_FILENAME_BASE:untitled} $0|snip} in
+    let expected_operations =
+      [ U.Add { id = "personal"; prefix = "q"; scopes = ["ocaml"; ".foo"]
+              ; description = Some "quoted\ntext"; body = expected_body }
+      ; U.Disable "sv.aff"
+      ; U.Add { id = "same"; prefix = "old"; scopes = []; description = None; body = "old" }
+      ; U.Disable "same"
+      ; U.Add { id = "same"; prefix = "last"; scopes = []; description = None; body = "last" }
+      ] in
+    if not (List.equal U.equal_operation settings.snippets expected_operations) then
+      failwith (sprintf "snippet round trip: expected %s, got %s"
+        (Sexp.to_string_hum ([%sexp_of: U.operation list] expected_operations))
+        (Sexp.to_string_hum ([%sexp_of: U.operation list] settings.snippets)));
+    let%bind defaults = load "let () = ()" in
+    check (List.is_empty (ok defaults).snippets) "fresh helper leaked snippet operations";
+    let%bind () = Deferred.List.iter ~how:`Sequential
+      [ "Snippets.add ~id:\"bad.template\" ~prefix:\"q\" \"${UNKNOWN}\"", "bad.template", "body"
+      ; "Snippets.add ~id:\"bad.scope\" ~prefix:\"q\" ~scope:[\"python\"] \"ok\"", "bad.scope", "unsupported scope"
+      ; "Snippets.disable ~id:\" \"", "snippets[0]", "nonempty"
+      ; "Snippets.add ~id:\"bad.prefix\" ~prefix:\" \" \"ok\"", "bad.prefix", "prefix"
+      ] ~f:(fun (declaration, id, reason) ->
+        let%map result = load ("open Ches_config\nlet () = " ^ declaration) in
+        let message = error result in
+        check (contains message "Invalid settings result" && contains message id && contains message reason)
+          "host must reject invalid declarations with ID details") in
+    let%bind result = load {|open Ches_config
+let () = Snippets.add ~id:"invalid.first" ~prefix:"q" "${UNKNOWN}";
+         Snippets.disable ~id:"invalid.first"
+|} in
+    check (contains (error result) "invalid.first") "overridden invalid template accepted";
+    check (List.equal U.equal_operation settings.snippets expected_operations)
+      "failed load changed previous immutable settings";
+    Core_unix.unlink path;
+    let%bind removed = Loader.load ~path () in
+    check (Settings.equal (ok removed) Settings.default)
+      "deleted configuration retained prior settings or snippet operations";
+    let%bind result = load {|let () = for _ = 1 to 1000 do Ches_config.Snippets.disable ~id:"same" done|} in
+    check (List.length (ok result).snippets = 1000) "1000 duplicate ordered operations rejected";
+    let%bind result = load {|let () = for _ = 1 to 1001 do Ches_config.Snippets.disable ~id:"same" done|} in
+    check (contains (error result) "1000") "operation limit not enforced";
+    let%bind result = load {|let () = Ches_config.Snippets.add ~id:"huge" ~prefix:"q"
+  (String.make (1024 * 1024) 'x')|} in
+    check (contains (error result) "exceeds 1 MiB") "snippet serializer unbounded";
+    let protocol = "CHES_SETTINGS_2\ntrue\nfalse\n1\ntrue\nfalse\n76696d\n" in
+    List.iter
+      [ ""; "CHES_SETTINGS_1\n"; protocol ^ "0"; protocol ^ "0\nextra\n"
+      ; protocol ^ "01\n"; protocol ^ "-1\n"; protocol ^ "1001\n"
+      ; protocol ^ "1\ndisable\n0g\n"; protocol ^ "1\nother\n"
+      ; protocol ^ "1\nadd\n61\n62\n9999999999999999999999\n"
+      ; protocol ^ "1\nadd\n61\n62\n0\ninvalid\n63\n"
+      ; protocol ^ "1\ndisable\n61\ntrailing\n"
+      ] ~f:(fun input ->
+        check (Result.is_error (Loader.For_testing.decode input)) "malformed v2 protocol accepted");
+    check (Result.is_ok (Loader.For_testing.decode (protocol ^ "0\n"))) "valid v2 protocol rejected";
     let%bind result = load "open Ches_config\nlet () = Completion.set_min_prefix_chars 0" in
     check (contains (error result) "must be positive") "prefix validation";
     let%bind result = load "open Ches_config\nlet () = Theme.set \"  \"" in
@@ -101,7 +168,7 @@ let () =
     check (contains (error result) "malformed") "malformed result accepted";
     let%bind result = load {|let () = at_exit (fun () ->
   let c = open_out_bin "settings.result" in
-  output_string c "CHES_SETTINGS_1\ntrue\nfalse\n";
+  output_string c "CHES_SETTINGS_2\ntrue\nfalse\n";
   output_string c (String.make (512 * 1024) '\000');
   output_string c "\ntrue\nfalse\n76696d2d636c6173736963\n"; close_out c)
 |} in
@@ -109,7 +176,7 @@ let () =
       "malformed protocol expanded diagnostic beyond limit";
     let%bind result = load {|let () = at_exit (fun () ->
   let c = open_out "settings.result" in
-  output_string c "CHES_SETTINGS_1\ntrue\nfalse\n1\ntrue\nfalse\n_1\n"; close_out c)
+  output_string c "CHES_SETTINGS_2\ntrue\nfalse\n1\ntrue\nfalse\n_1\n0\n"; close_out c)
 |} in
     check (contains (error result) "encoding") "non-hex theme encoding accepted";
     let%bind result = load {|let () = at_exit (fun () ->

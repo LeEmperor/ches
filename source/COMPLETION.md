@@ -111,7 +111,8 @@ enrich docs/detail/additional edits but never changes the primary or ranking.
 ### Snippet insertion subset
 
 The client advertises `snippetSupport=true`. For effective `insertTextFormat=2`,
-normalization parses the primary insertion with `Ches_completion.Snippet.parse`.
+normalization parses the primary insertion with `Ches_completion.Snippet.parse`
+and resolves filename variables against the request's raw lexical resource path.
 The candidate carries `snippet=Some parsed` and `primary.text=Snippet.text parsed`;
 plain-format candidates carry `snippet=None`. Format defaults and item overrides
 apply before parsing. The insertion comes from explicit textEdit.newText (including
@@ -123,10 +124,17 @@ in the host.
 
 Supported syntax: `$1`, `${1}`, `${1:default}`, linked occurrences of the same
 number, escaped `\$`, `\}`, `\\`, and a single `$0`/`${0}` final cursor marker.
-Defaults are literal text (including Unicode); a later default also populates
-earlier mirrors. Without `$0`, the final cursor defaults to the expansion's end.
-Malformed syntax, variables, choices, transforms, nested placeholders, conflicting
-linked defaults, multiple final markers and defaults on `$0` are deliberately
+Defaults support literal text (including Unicode) and filename variables:
+`$TM_FILENAME`, `${TM_FILENAME_BASE}`, `${TM_DIRECTORY:literal}` and `TM_FILEPATH`
+in the same forms. `${1:prefix_${TM_FILENAME_BASE:untitled}}` resolves before
+installation; the resolved value is selected/editable and mirrors stay linked.
+A later default also populates earlier mirrors. Variable fallbacks are literal,
+and path values are never reparsed. Choices `${1|one,two|}` use their first option
+as the default and retain linked cycling metadata. Without `$0`, the final cursor
+defaults to the expansion's end.
+Malformed syntax, unknown variables, transforms, nested numbered fields/choices,
+recursive variable fallbacks, conflicting linked defaults, multiple final markers
+and defaults on `$0` are deliberately
 rejected: the entire item is skipped, never inserted as raw snippet syntax.
 The parser bounds input to 65,536 bytes, expansion to 1,048,576 bytes and occurrences
 to 4,096; tabstop numbers have at most nine digits. Invalid buffer text is rejected.

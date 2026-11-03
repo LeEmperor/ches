@@ -10,3 +10,6 @@ let () =
   Completion.set_prefer_local_snippets true;
   View.set_line_numbers false;
   Theme.set "vim-classic"
+
+(* Snippets.add and Snippets.disable can follow here; see snippets.example.ml.
+   Reload configuration validates settings and snippets together. *)

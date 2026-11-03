@@ -7,15 +7,17 @@ type t [@@deriving sexp_of, equal]
 
 (** UTF-8 byte offsets, relative to expanded text. Numbered fields are sorted;
     zero is the final cursor, implicitly at the end when absent. Defaults on a
-    later occurrence also populate earlier mirrors. Nested defaults
-    and transforms are rejected. Supported filename variables remain resolvable
+    later occurrence also populate earlier mirrors. Numbered defaults may contain
+    literal text and supported filename variables with literal fallbacks; nested
+    numbered fields, choices and transforms are rejected. Variables remain resolvable
     after parsing; choices use their first option as the default. *)
 val parse : string -> t Or_error.t
 (** Resolve TM_FILENAME, TM_FILENAME_BASE, TM_DIRECTORY and TM_FILEPATH against
     a lexical editor path, with no I/O. None/empty paths use literal defaults or
     empty text. [parse] retains unresolved variables and initially uses defaults;
     [resolve] may be called again for another path. Unknown variables are errors
-    at parse time. No recursive defaults or transforms. *)
+    at parse time. Variable fallbacks are literal (no further nesting). Paths are
+    inserted literally, never parsed as snippet syntax. *)
 val resolve : t -> path:string option -> t Or_error.t
 val text : t -> string
 val fields : t -> field list

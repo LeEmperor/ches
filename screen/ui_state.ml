@@ -129,6 +129,10 @@ type t =
   ; completion_acceptance : completion_acceptance option
   ; completion_serial : int
   ; user_snippets : Ches_completion.User_snippets.t
+  (* Keep the base separate so removing configuration operations restores it,
+     and late legacy replies can only replace the lower-priority layer. *)
+  ; legacy_snippets : Ches_completion.User_snippets.t
+  ; configuration_snippets : Ches_completion.User_snippets.operation list
   ; snippet_generation : int
   ; snippet_reload_requests : int list
   ; snippet_loading : bool
@@ -283,6 +287,8 @@ let create
   ; completion_acceptance = None
   ; completion_serial = 0
   ; user_snippets = Ches_completion.User_snippets.builtins
+  ; legacy_snippets = Ches_completion.User_snippets.builtins
+  ; configuration_snippets = []
   ; snippet_generation = 1
   ; snippet_reload_requests = [1]
   ; snippet_loading = true
@@ -535,6 +541,9 @@ let apply_configuration ?theme_override t (settings : Ches_config_runtime.Settin
     match Ches_theme.Theme.find settings.theme with
     | None -> Error ("Unknown configuration theme: " ^ settings.theme)
     | Some configured_theme ->
+      match Ches_completion.User_snippets.apply t.legacy_snippets settings.snippets with
+      | Error error -> Error (Error.to_string_hum error)
+      | Ok user_snippets ->
       let configuration_theme_override = Option.first_some theme_override t.configuration_theme_override in
       let theme = Option.value configuration_theme_override ~default:configured_theme in
       let line_numbers = if settings.line_numbers then Line_numbers.Absolute else Off in
@@ -546,6 +555,7 @@ let apply_configuration ?theme_override t (settings : Ches_config_runtime.Settin
         ; completion_ghost_enabled = settings.completion_ghost_preview
         ; completion_min_prefix_chars = settings.completion_min_prefix_chars
         ; completion_prefer_local_snippets = settings.completion_prefer_local_snippets
+        ; user_snippets; configuration_snippets = settings.snippets
         ; configuration_theme_override; theme; theme_picker = None; host
         ; prefs = { t.prefs with line_numbers }
         ; bare_prefs = { line_numbers } }
@@ -585,9 +595,14 @@ let reload_snippets t =
 
 let receive_snippets t ~generation result =
   if generation <> t.snippet_generation || not t.snippet_loading then t else
+  let result = Result.bind result ~f:(fun legacy_snippets ->
+    Ches_completion.User_snippets.apply legacy_snippets t.configuration_snippets
+    |> Result.map ~f:(fun user_snippets -> legacy_snippets, user_snippets)
+    |> Result.map_error ~f:Error.to_string_hum) in
   let t = dismiss_completion { t with snippet_loading = false } in
   let t, severity, text = match result with
-    | Ok user_snippets -> { t with user_snippets }, Ches_error.Error.Severity.Info, "Snippets reloaded"
+    | Ok (legacy_snippets, user_snippets) ->
+      { t with legacy_snippets; user_snippets }, Ches_error.Error.Severity.Info, "Snippets reloaded"
     | Error error -> t, Ches_error.Error.Severity.Error, "Could not reload snippets: " ^ error in
   { t with controller = Controller.update_feedback t.controller
       (Notify { source = "snippets"; scope = None; severity; text; history = true }) }

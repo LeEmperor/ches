@@ -9,7 +9,7 @@ type part = Literal of string | Stop of int | Variable of string * string option
 [@@deriving sexp_of, equal]
 type t =
   { expanded : string; occurrences : occurrence list
-  ; parts : part list; defaults : string Int.Map.t
+  ; parts : part list; defaults : part list Int.Map.t
   ; raw_choices : string list Int.Map.t; choices : string list Int.Map.t
   ; prefixes : string list; path : string option }
 [@@deriving sexp_of, equal]
@@ -74,13 +74,19 @@ let expand t ~path =
       then invalid "snippet expansion exceeds 1048576 bytes";
       Buffer.add_string output s
     in
+    let append_value = function
+      | Literal s -> append s
+      | Variable (name, default) ->
+        append (Option.first_some (variable_value name path) default |> Option.value ~default:"")
+      | Stop _ -> assert false
+    in
     List.iter t.parts ~f:(function
       | Literal s -> append s
       | Variable (name, default) ->
         append (Option.first_some (variable_value name path) default |> Option.value ~default:"")
       | Stop number ->
         let start = Buffer.length output in
-        if number <> 0 then append (Option.value (Map.find t.defaults number) ~default:"");
+        if number <> 0 then List.iter (Option.value (Map.find t.defaults number) ~default:[]) ~f:append_value;
         occurrences := { number; range = { start; stop = Buffer.length output } } :: !occurrences);
     let choice_bytes = ref 0 in
     let choices = Map.map t.raw_choices ~f:(List.map ~f:(fun value ->
@@ -88,7 +94,8 @@ let expand t ~path =
       choice_bytes := !choice_bytes + String.length value;
       if !choice_bytes > max_output then invalid "snippet choices exceed output limit";
       value)) in
-    let path = if List.exists t.parts ~f:(function Variable _ -> true | _ -> false)
+    let has_variable = List.exists ~f:(function Variable _ -> true | _ -> false) in
+    let path = if has_variable t.parts || Map.exists t.defaults ~f:has_variable
       then path else None in
     Ok { t with expanded = Buffer.contents output; occurrences = List.rev !occurrences; choices; path }
   with Invalid_snippet message -> Or_error.error_string message
@@ -137,12 +144,57 @@ let parse input =
       while !at < length && not (Char.equal input.[!at] '}') do
         match input.[!at] with
         | '\\' -> escaped value
-        | '$' -> invalid "nested defaults and variables are unsupported"
+        | '$' -> invalid "variable fallbacks must be literal"
         | c -> Buffer.add_char value c; incr at
       done;
       if !at >= length then invalid "unterminated default";
       incr at;
       Buffer.contents value
+    in
+    (* Called after '$' (and an optional '{'). This helper only accepts filename
+       variables; its fallback parser never calls back into snippet parsing. *)
+    let variable ~braced =
+      let start = !at in
+      while !at < length && (Char.is_alphanum input.[!at] || Char.equal input.[!at] '_') do incr at done;
+      let name = String.sub input ~pos:start ~len:(!at - start) in
+      if not (List.mem variable_names name ~equal:String.equal)
+      then invalid ("unsupported snippet variable " ^ name);
+      let default =
+        if not braced then None
+        else if !at >= length then invalid "unterminated variable"
+        else match input.[!at] with
+          | '}' -> incr at; None
+          | ':' -> Some (default_literal ())
+          | _ -> invalid "variable transformations are unsupported"
+      in
+      Variable (name, default)
+    in
+    let numbered_default () =
+      incr at;
+      let values = ref [] in
+      let text = Buffer.create 32 in
+      let flush () =
+        if Buffer.length text > 0 then (
+          values := Literal (Buffer.contents text) :: !values;
+          Buffer.clear text)
+      in
+      while !at < length && not (Char.equal input.[!at] '}') do
+        match input.[!at] with
+        | '\\' -> escaped text
+        | '$' ->
+          flush ();
+          incr at;
+          let braced = !at < length && Char.equal input.[!at] '{' in
+          if braced then incr at;
+          if !at >= length || not (Char.is_alpha input.[!at] || Char.equal input.[!at] '_')
+          then invalid "numbered defaults may contain only filename variables";
+          values := variable ~braced :: !values
+        | c -> Buffer.add_char text c; incr at
+      done;
+      if !at >= length then invalid "unterminated numbered default";
+      incr at;
+      flush ();
+      List.rev !values
     in
     while !at < length do
       match input.[!at] with
@@ -153,20 +205,7 @@ let parse input =
         let braced = !at < length && Char.equal input.[!at] '{' in
         if braced then incr at;
         if !at < length && (Char.is_alpha input.[!at] || Char.equal input.[!at] '_') then (
-          let start = !at in
-          while !at < length && (Char.is_alphanum input.[!at] || Char.equal input.[!at] '_') do incr at done;
-          let name = String.sub input ~pos:start ~len:(!at - start) in
-          if not (List.mem variable_names name ~equal:String.equal)
-          then invalid ("unsupported snippet variable " ^ name);
-          let default =
-            if not braced then None
-            else if !at >= length then invalid "unterminated variable"
-            else match input.[!at] with
-              | '}' -> incr at; None
-              | ':' -> Some (default_literal ())
-              | _ -> invalid "variable transformations are unsupported"
-          in
-          parts := Variable (name, default) :: !parts)
+          parts := variable ~braced :: !parts)
         else (
         let n = number () in
         let default =
@@ -176,7 +215,7 @@ let parse input =
             | '}' -> incr at; None
             | ':' ->
               if n = 0 then invalid "final cursor defaults are unsupported";
-               Some (default_literal ())
+               Some (numbered_default ())
              | '|' ->
                if n = 0 then invalid "final cursor choices are unsupported";
                incr at;
@@ -201,7 +240,8 @@ let parse input =
                (match Map.find !choices n with
                 | Some old when not (List.equal String.equal old values) -> invalid "conflicting linked choices"
                 | _ -> choices := Map.set !choices ~key:n ~data:values);
-               Some (List.hd_exn values)
+               let first = List.hd_exn values in
+               Some (if String.is_empty first then [] else [Literal first])
              | _ -> invalid "transformations are unsupported"
         in
         incr count;
@@ -211,7 +251,7 @@ let parse input =
           final_seen := true);
         Option.iter default ~f:(fun value ->
           match Map.find !defaults n with
-          | Some old when not (String.equal old value) -> invalid "conflicting linked defaults"
+          | Some old when not (List.equal equal_part old value) -> invalid "conflicting linked defaults"
           | _ -> defaults := Map.set !defaults ~key:n ~data:value);
          parts := Stop n :: !parts)
       | c -> Buffer.add_char literal c; incr at

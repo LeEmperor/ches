@@ -337,11 +337,32 @@ let%expect_test "actual LSP URI mapping preserves lexical Unicode resource varia
     return ())
 ;;
 
+let%expect_test "wire numbered defaults resolve literal paths before installation" =
+  List.iter ["", "prefix_untitled"; "rtl/猫.test.sv", "prefix_猫.test";
+             {|rtl/${2:raw}\%#猫.sv|}, {|prefix_${2:raw}\%#猫|}]
+    ~f:(fun (path, value) ->
+      let query = { (request path 1 1 1) with cursor = 0; fallback_start = 0; fallback_stop = 0 } in
+      let item insertion = `Assoc ["label", `String "default"; "insertTextFormat", `Int 2;
+        "insertText", `String insertion] in
+      let reply = Completion_wire.candidates ~encoding:Utf16 ~text:"" ~request:query ~source:"fake"
+        (`List [item "$1/${1:prefix_${TM_FILENAME_BASE:untitled}}$0!";
+                item "${1:${2:x}}"; item "${1:${TM_FILENAME_BASE:$TM_FILENAME}}";
+                item "${1:${TM_FILENAME_BASE}"; item "${1:${TM_FILENAME_BASE/a/b/}}"] ) in
+      let candidate = match reply.candidates with [c] -> c | _ -> failwith "numbered default candidates" in
+      let template = Option.value_exn candidate.snippet in
+      let expected = value ^ "/" ^ value ^ "!" in
+      assert (String.equal candidate.primary.text expected);
+      assert (String.equal (Ches_completion.Snippet.text template) expected);
+      assert (Ches_completion.Snippet.final_cursor template = String.length expected - 1));
+  [%expect {| |}];
+  return ()
+;;
+
 let%expect_test "fake LSP advertises snippets, inherits format2, skips unsupported syntax and preserves snippet on resolve" =
   H.with_root (fun root ->
     let%bind source, query, reply, _ = next_source root ["-snippets"] in
-    let linked, escaped, explicit, plain, variable, choice = match reply.candidates with
-      | [a; b; c; d; e; f] -> a, b, c, d, e, f | _ -> failwith "unexpected fake snippet candidates" in
+    let linked, escaped, explicit, plain, variable, choice, variable_default = match reply.candidates with
+      | [a; b; c; d; e; f; g] -> a, b, c, d, e, f, g | _ -> failwith "unexpected fake snippet candidates" in
     let snippet = Option.value_exn linked.snippet in
     assert (Ches_core.Text_edit.equal linked.primary { start = 1; stop = 9; text = "é + é!" });
     assert ([%equal: Ches_completion.Snippet.field list] (Ches_completion.Snippet.fields snippet)
@@ -363,6 +384,24 @@ let%expect_test "fake LSP advertises snippets, inherits format2, skips unsupport
     let selected = S.applied change ~revision:2 in
     assert (Option.is_some (S.selection selected));
     let base = Ches_core.Text_buffer.of_string "\nfoSuffix" |> Result.ok |> Option.value_exn in
+    (* Accept the resolved numbered default through the real planning/install
+       path, then replace its selected value and check both linked occurrences. *)
+    assert (String.equal variable_default.primary.text "prefix_a/prefix_a!");
+    let default_model, _ = Model.start ~token:query.token ~text:base ~cursor:3
+      ~words:(Model.Buffer_words.create base) ~limit:10 () |> Option.value_exn in
+    let default_model = Model.receive default_model { reply with candidates = [variable_default] } in
+    let default_plan = Model.plan default_model Next |> Option.value_exn in
+    let default_text = Ches_core.Text_edit.apply base (Model.edits default_plan) |> Or_error.ok_exn in
+    assert (String.equal (Ches_core.Text_buffer.to_string default_text) "\nprefix_a/prefix_a!");
+    let default_session = S.start (Option.value_exn variable_default.snippet)
+      ~base:1 ~revision:2 ~text:default_text |> Or_error.ok_exn in
+    assert (Option.equal Ches_completion.Snippet.equal_range (S.selection default_session)
+      (Some { start = 1; stop = 9 }));
+    let change = S.insert default_session ~revision:2 ~text:default_text "猫" |> Or_error.ok_exn in
+    let default_text = Ches_core.Text_edit.apply default_text [S.edits change] |> Or_error.ok_exn in
+    assert (String.equal (Ches_core.Text_buffer.to_string default_text) "\n猫/猫!");
+    let default_session = S.applied change ~revision:3 |> fun s -> S.navigate s Next in
+    assert (S.cursor default_session = String.length "\n猫/猫");
     let model, _ = Model.start ~token:query.token ~text:base ~cursor:3
       ~words:(Model.Buffer_words.create base) ~limit:10 () |> Option.value_exn in
     let model = Model.receive model { reply with candidates = [linked] } in

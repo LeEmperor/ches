@@ -25,8 +25,14 @@ choice, comma, pipe and backslash are escaped as `\,`, `\|`, `\\`.
 Variables are `$TM_FILENAME`, `${TM_FILENAME_BASE}`, `${TM_DIRECTORY:literal}`,
 and `TM_FILEPATH` in the same forms. Unknown variables are errors. Missing or
 unnamed paths use the literal fallback or empty text. Filename base removes only
-the final extension. Defaults cannot contain nested snippets; transforms remain
-unsupported.
+the final extension. Numbered defaults may combine literal text and these variable
+forms: `${1:${TM_FILENAME_BASE}}`, `${1:prefix_${TM_FILENAME_BASE:untitled}}`,
+or `${1:$TM_FILENAME}`. The parsed default retains its structure. Resolution
+populates every occurrence (including forward mirrors) before installation and
+selection, leaving the whole default editable as one linked numbered field.
+Repeated explicit definitions must have equal parsed structure, even if distinct
+definitions would render the same value for a particular path. Literal defaults
+and first choice options retain their existing equality/conflict behavior.
 
 `Model.start ?prefer_local_snippets ~token ~text ~cursor ~words ~limit ()`
 defaults to preferring local snippets over LSP suggestions. With `false`, LSP
@@ -38,11 +44,14 @@ The preference is retained throughout the model's provider rebuilds.
 expanded text; `final_cursor` is `$0` or expansion end. Supported syntax is `$1`,
 `${1}`, `${1:default}`, `${1|one,two|}`, `$0`, supported filename variables,
 and escaped `\\`, `\$`, `\}`. Forward mirrors inherit the first explicit default
-or choice list. Conflicting defaults/choice lists, nested defaults and
+or choice list. Conflicting defaults/choice lists, nested numbered fields and
 transformations are rejected deliberately. Parser and
 session expansion sizes and occurrence counts are bounded: 65,536 input bytes,
 1,048,576 expanded bytes, 4,096 explicit occurrences and nine-digit field numbers.
-There is no recursive parsing or expansion. Repeated `$0`, defaults on `$0`,
+Nesting is bounded to a numbered default containing a filename variable (two
+placeholder levels); a variable's optional fallback is literal text only. Nested
+numbered fields, choices, variable fallbacks containing variables, and transforms
+are rejected. There is no recursive expansion. Repeated `$0`, defaults on `$0`,
 unterminated placeholders and unsupported escapes are errors. Braces outside
 placeholders are literal text, so ordinary code bodies need no extra escaping.
 
@@ -58,6 +67,9 @@ contain empty or multiline options; choice text is literal and only `\,`, `\|`,
 and `\\` are recognized as escapes inside it. Indentation adds the prefix after
 each newline in every option, not just in the initial expanded choice. Expansion
 and retained choice text each have a 1 MiB budget, checked before allocation.
+Indentation is applied to resolved default segments exactly once; resolving an
+already indented template gives the same text and ranges as indenting after
+resolution, including newlines in filenames and fallback values.
 
 ## UI session workflow
 

@@ -308,6 +308,9 @@ let handle (packet : Jsonrpc.Packet.t) =
              item "fo-unknown-variable" "$UNKNOWN_VARIABLE";
             item "fo-transform" "${1/a/b/}";
              item "fo-choice" "$1/${1|a\nb,c\\,d\\|e\\\\|}$0!";
+             item "fo-variable-default" "$1/${1:prefix_${TM_FILENAME_BASE:untitled}}$0!";
+             item "fo-nested-default" "${1:${2:unsupported}}";
+             item "fo-recursive-fallback" "${1:${TM_FILENAME_BASE:${TM_FILENAME}}}";
             `Assoc ["label", `String "fo-overlap"; "textEditText", `String "${1:x}";
               "additionalTextEdits", `List [edit (position p.line 0) (position p.line 1) "bad"]]] ] in
       if !hold_completion then Queue.enqueue completion_replies (id, result)

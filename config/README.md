@@ -11,6 +11,7 @@ module Settings : sig
     ; completion_prefer_local_snippets : bool
     ; line_numbers : bool
     ; theme : string
+    ; snippets : Ches_completion.User_snippets.operation list
     }
   val default : t
   val validate : t -> t Core.Or_error.t
@@ -23,9 +24,10 @@ end
 ```
 
 Defaults, in record-field order: `true`, `false`, `1`, `true`, `false`,
-`"vim-classic"`. Validation requires a positive minimum prefix and a theme that
+`"vim-classic"`, `[]`. Validation requires a positive minimum prefix and a theme that
 is nonempty after trimming whitespace. The screen must check theme existence
-before applying the snapshot. `Settings` also derives `sexp` and `equal`.
+before applying the snapshot. It validates every snippet operation against the
+builtin catalog using `User_snippets.apply`. `Settings` also derives `sexp` and `equal`.
 
 ## User API
 
@@ -54,7 +56,54 @@ module Completion : sig
 end
 module View : sig val set_line_numbers : bool -> unit end
 module Theme : sig val set : string -> unit end
+module Snippets : sig
+  val add : id:string -> prefix:string -> ?scope:string list -> ?description:string -> string -> unit
+  val disable : id:string -> unit
+end
 ```
+
+Snippet declarations are ordered: the last operation for an ID wins, including
+overrides and disables of builtin IDs. Omitted or empty scope is global. Supported
+scopes are `systemverilog`, `verilog`, `ocaml`, and `.filename-extension` values
+without whitespace or slashes. Each fresh helper starts with no declarations.
+The helper records strings; the host validates IDs, prefixes, descriptions,
+scopes, and template syntax. An invalid operation (even one later overridden)
+rejects the complete snapshot with its index and ID; callers retain prior settings.
+Empty or whitespace-only IDs/prefixes are rejected. Text must be valid UTF-8 with
+no NUL or CR; template bodies also obey `Snippet.parse` limits (65536 bytes).
+
+Use OCaml quoted strings for multiline templates so template backslashes reach
+the parser unchanged. If the body contains literal `|}`, use a named delimiter:
+
+```ocaml
+let () =
+  Snippets.add ~id:"personal.example" ~prefix:"example"
+    ~description:"Multiline choice and literal delimiter"
+    {snippet|${1|first,second|}
+literal |} and escaped dollar \$; $0|snippet};
+  Snippets.disable ~id:"sv.aff"
+```
+
+The matching closing delimiter is `|snippet}`. In ordinary OCaml string literals,
+backslashes must instead be escaped for OCaml as well as for snippet syntax.
+
+Provider contract (`Ches_completion.User_snippets`):
+
+```ocaml
+type declaration =
+  { id : string; prefix : string; scopes : string list
+  ; description : string option; body : string }
+[@@deriving sexp, equal]
+type operation = Add of declaration | Disable of string
+[@@deriving sexp, equal]
+val apply : t -> operation list -> t Core.Or_error.t
+```
+
+`apply` preserves its immutable base, accepts at most 1000 ordered operations and
+1 MiB of declaration strings, and validates every operation before returning a
+catalog. Legacy `parse : string -> t Core.Or_error.t` remains available and still
+rejects duplicate JSON user IDs. Apply OCaml operations to the chosen legacy/base
+catalog to preserve legacy entries and give OCaml declarations precedence.
 
 Invalid prefix/theme setters raise `Invalid_argument`. Snapshots are validated
 again by the host. Other definitions in the embedded source are implementation
@@ -74,9 +123,16 @@ details, not supported user API.
 - Compiler diagnostics use an OCaml line directive for the original filename
   and line numbers. Argument vectors are passed directly, without a shell.
 - Source and result reads are each capped at **1 MiB**; nonregular files are
-  rejected. The helper bounds its own result to 1 MiB (theme payload at most
-  **524,224 bytes**, encoded as hex). The `CHES_SETTINGS_1` protocol has six fields
-  and strict framing. Host validation is mandatory after decoding.
+  rejected. The helper bounds its entire encoded result to 1 MiB before writing,
+  and accepts at most **1000 snippet operations**. `CHES_SETTINGS_2` uses newline
+  framing: magic; enabled; ghost; minimum prefix; prefer local; line numbers;
+  hex theme; decimal operation count; then ordered operations. A `disable` tag
+  is followed by hex ID. An `add` tag is followed by hex ID, hex prefix, decimal
+  scope count, that many hex scopes, `none` or `some` (the latter followed by hex
+  description), and hex body. Every field ends in a newline; strings use lowercase
+  hex, booleans are `true`/`false`, counts are canonical nonnegative decimals.
+  The decoder rejects unsupported versions, malformed encodings/tags/counts,
+  missing fields, and trailing data. Host validation is mandatory after decoding.
 - Stdout and stderr are drained independently, retaining at most **1 MiB each**.
   User printing cannot contaminate the dedicated `settings.result` file.
 - Compilation deadline: **10 seconds**. Execution deadline: **2 seconds**.
@@ -94,3 +150,13 @@ details, not supported user API.
 `compile_timeout` (seconds), and `runtime_timeout` (seconds) overrides. Tests use
 these to simulate absent compilers and deadlines without global environment
 changes. Run `dune runtest config/test -j 6`.
+
+Validate an actual configuration through the same compiler, helper, decoder, and
+host validators with:
+
+```sh
+dune exec -j 6 config/test/check_config.exe -- /absolute/path/to/config.ml
+```
+
+Success reports the operation count and exits zero; failures print diagnostics
+and exit nonzero. As with `Loader.load`, a missing file means valid defaults.

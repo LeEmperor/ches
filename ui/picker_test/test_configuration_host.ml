@@ -74,6 +74,105 @@ let controller () = Ches_app.Controller.create (Ches_core.Editor.create
   ~cell_width:Ches_screen.Cell_map.width Ches_core.Text_buffer.empty)
 ;;
 
+let%expect_test "compiled OCaml snippets: no-LSP startup, reload rollback, replacement, removal and late legacy" =
+  let root = Filename_unix.temp_dir "ches-ocaml-snippets-ui" "" in
+  let path = Filename.concat root "config.ml" in
+  let source body = "open Ches_config\nlet () = Snippets.add ~id:\"ui.snippet\" ~prefix:\"zconfig\" "
+    ^ body ^ "\n" in
+  let initial = source "{|START ${1:editable} = $1;\n  \"quoted\" \\\\path $0|}" in
+  Out_channel.write_all path ~data:initial;
+  Monitor.protect (fun () ->
+    let completed = ref 0 in
+    let configuration = Host.create ~load:(fun () ->
+      let%map result = Ches_config_runtime.Loader.load ~path () in
+      incr completed;
+      result) () in
+    let%bind startup_configuration = within (Host.startup configuration) in
+    ignore (Result.ok_or_failwith startup_configuration : Settings.t);
+    let gates = Queue.create () in
+    let snippets = Ches_ui.Snippet_host.For_testing.create ~load:(fun () ->
+      let gate = Ivar.create () in Queue.enqueue gates gate; Ivar.read gate) in
+    let controller = controller () in
+    let handle = Bonsai_term_test.create_handle ~initial_dimensions:{ width = 160; height = 30 }
+      (Ches_ui.Editor_view.app ~configuration ~snippets ~startup_configuration ~bare:true
+        controller ~exit:(fun () -> Effect.Ignore)) in
+    let key key = Bonsai_term_test.send_event handle (Key_press { key; mods = [] }) in
+    let type_text text = String.iter text ~f:(fun c -> key (ASCII c)) in
+    let view () =
+      Handle.recompute_view handle;
+      Bonsai_term_test.print_view (Bonsai_term_test.last_view handle);
+      [%expect.output] in
+    let wait predicate =
+      let rec loop () =
+        if predicate (view ()) then return () else
+        let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 2) in loop () in
+      within (loop ()) in
+    let expand ?literal expected =
+      type_text "izconfig";
+      assert (String.is_substring (view ()) ~substring:"[snippet]");
+      key Enter;
+      assert (String.is_substring (view ()) ~substring:expected);
+      Option.iter literal ~f:(fun literal ->
+        assert (String.is_substring (view ()) ~substring:literal));
+      key Escape;
+      type_text "ggdG";
+      ignore (view () : string) in
+    let reload source expected =
+      Out_channel.write_all path ~data:source;
+      let target = !completed + 1 in
+      type_text " ccReload configuration"; key Enter;
+      wait (fun output -> !completed >= target && String.is_substring output ~substring:expected) in
+    let%bind () = wait (fun _ -> not (Queue.is_empty gates)) in
+    expand ~literal:"\"quoted\" \\path" "START editable = editable;";
+    let%bind () = reload (source "{|CHANGED $0|}") "Configuration reloaded" in
+    expand "CHANGED";
+    let%bind () = reload (source "{|${UNKNOWN}|}") "Could not reload configuration:" in
+    expand "CHANGED";
+    let%bind () = reload "open Ches_config\nlet () = Snippets.disable ~id:\"ui.snippet\"\n"
+      "Configuration reloaded" in
+    let legacy = Ches_completion.User_snippets.parse
+      {|{"version":1,"snippets":[{"id":"ui.snippet","prefix":"zconfig","body":"LEGACY $0"}]}|}
+      |> Result.map_error ~f:Error.to_string_hum in
+    Ivar.fill_exn (Queue.dequeue_exn gates) legacy;
+    let%bind () = wait (fun output -> String.is_substring output ~substring:"Snippets reloaded") in
+    type_text "izconfig";
+    assert (not (String.is_substring (view ()) ~substring:"[snippet]"));
+    key Escape; type_text "dd";
+    let%bind () = reload "(* removed all declarations *)\n" "Configuration reloaded" in
+    expand "LEGACY";
+    assert (String.equal (In_channel.read_all path) "(* removed all declarations *)\n");
+    Out_channel.write_all path ~data:("open Ches_config\nlet () =\n"
+      ^ "  Completion.set_enabled false;\n"
+      ^ "  Snippets.disable ~id:\"sv.aff\";\n"
+      ^ "  Snippets.add ~id:\"invalid.startup\" ~prefix:\"bad\" \"${UNKNOWN}\"\n");
+    let%bind failed_startup = within (Ches_config_runtime.Loader.load ~path ()) in
+    assert (Result.is_error failed_startup);
+    assert (List.is_empty Settings.default.snippets);
+    let fallback_controller = Ches_app.Controller.create (Ches_core.Editor.create
+      ~path:"fallback.sv" ~cell_width:Ches_screen.Cell_map.width Ches_core.Text_buffer.empty) in
+    let fallback = Bonsai_term_test.create_handle ~initial_dimensions:{ width = 160; height = 30 }
+      (Ches_ui.Editor_view.app ~startup_configuration:failed_startup ~bare:true
+        fallback_controller ~exit:(fun () -> Effect.Ignore)) in
+    let fallback_view () =
+      Handle.recompute_view fallback;
+      Bonsai_term_test.print_view (Bonsai_term_test.last_view fallback);
+      [%expect.output] in
+    assert (String.is_substring (fallback_view ())
+      ~substring:"Configuration startup failed; using defaults");
+    String.iter "iaff" ~f:(fun c -> Bonsai_term_test.send_event fallback
+      (Key_press { key = ASCII c; mods = [] }));
+    assert (String.is_substring (fallback_view ()) ~substring:"[snippet]");
+    Ches_app.Controller.close fallback_controller;
+    Ches_ui.Snippet_host.stop snippets;
+    let%bind () = Host.shutdown configuration in
+    Ches_app.Controller.close controller;
+    ignore ([%expect.output] : string);
+    print_endline "compiled startup, rollback, replacement, removal, disable and late JSON passed";
+    [%expect {| compiled startup, rollback, replacement, removal, disable and late JSON passed |}];
+    return ())
+    ~finally:(fun () -> Core_unix.unlink path; Core_unix.rmdir root; return ())
+;;
+
 let%expect_test "real startup snapshot, frontend reload, failure, CLI override and session-only changes" =
   let root = Filename_unix.temp_dir "ches-configuration-ui" "" in
   let path = Filename.concat root "config.ml" in

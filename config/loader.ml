@@ -29,37 +29,80 @@ let read_bounded path =
 ;;
 
 let decode text =
-  match String.split text ~on:'\n' with
-  | [ "CHES_SETTINGS_1"; enabled; ghost; prefix; local; numbers; theme; "" ] ->
-    let boolean = function
-      | "true" -> true
-      | "false" -> false
-      | _ -> failwith "invalid boolean in settings result"
-    in
-    if String.length theme mod 2 <> 0 then failwith "invalid theme encoding";
+  if String.length text > limit then failwith "settings result exceeds 1 MiB";
+  let lines = ref (String.split text ~on:'\n') in
+  let remaining_lines = ref (List.length !lines) in
+  let next () = match !lines with
+    | line :: rest -> lines := rest; decr remaining_lines; line
+    | [] -> failwith "truncated settings result"
+  in
+  let boolean () = match next () with
+    | "true" -> true
+    | "false" -> false
+    | _ -> failwith "invalid boolean in settings result"
+  in
+  let number name ~max =
+    let value = next () in
+    if String.is_empty value
+       || not (String.for_all value ~f:Char.is_digit)
+       || (String.length value > 1 && Char.equal value.[0] '0')
+    then failwith ("invalid " ^ name ^ " in settings result");
+    match Int.of_string_opt value with
+    | Some n when n <= max -> n
+    | _ -> failwith ("invalid or excessive " ^ name ^ " in settings result")
+  in
+  let hex () =
+    let encoded = next () in
+    if String.length encoded mod 2 <> 0 then failwith "invalid string encoding";
     let hex_digit = function
       | '0' .. '9' as c -> Char.to_int c - Char.to_int '0'
       | 'a' .. 'f' as c -> Char.to_int c - Char.to_int 'a' + 10
-      | 'A' .. 'F' as c -> Char.to_int c - Char.to_int 'A' + 10
-      | _ -> failwith "invalid theme encoding"
+      | _ -> failwith "invalid string encoding"
     in
-    let theme = String.init (String.length theme / 2) ~f:(fun i ->
-      Char.of_int_exn ((hex_digit theme.[i * 2] * 16) + hex_digit theme.[i * 2 + 1])) in
-    let prefix = match Int.of_string_opt prefix with
-      | Some prefix -> prefix
-      | None -> failwith "invalid minimum prefix in settings result"
+    String.init (String.length encoded / 2) ~f:(fun i ->
+      Char.of_int_exn ((hex_digit encoded.[i * 2] * 16) + hex_digit encoded.[i * 2 + 1]))
+  in
+  if not (String.equal (next ()) "CHES_SETTINGS_2") then
+    failwith "malformed or unsupported settings result";
+  let completion_enabled = boolean () in
+  let completion_ghost_preview = boolean () in
+  let completion_min_prefix_chars = number "minimum prefix (must be positive)" ~max:Int.max_value in
+  let completion_prefer_local_snippets = boolean () in
+  let line_numbers = boolean () in
+  let theme = hex () in
+  let count = number "snippet count (maximum 1000)" ~max:1000 in
+  let read_list count read =
+    let rec loop remaining acc =
+      if remaining = 0 then List.rev acc
+      else let value = read () in loop (remaining - 1) (value :: acc)
     in
-    let settings : Settings.t =
-      { completion_enabled = boolean enabled
-      ; completion_ghost_preview = boolean ghost
-      ; completion_min_prefix_chars = prefix
-      ; completion_prefer_local_snippets = boolean local
-      ; line_numbers = boolean numbers
-      ; theme
-      }
-    in
-    Settings.validate settings |> Or_error.ok_exn
-  | _ -> failwith "malformed or unsupported settings result"
+    loop count []
+  in
+  let snippets = read_list count (fun () ->
+    let open Ches_completion.User_snippets in
+    match next () with
+    | "disable" -> Disable (hex ())
+    | "add" ->
+      let id = hex () in
+      let prefix = hex () in
+      (* Every scope requires at least its terminating newline. *)
+      let count = number "scope count" ~max:!remaining_lines in
+      let scopes = read_list count hex in
+      let description = match next () with
+        | "none" -> None
+        | "some" -> Some (hex ())
+        | _ -> failwith "invalid description tag in settings result"
+      in
+      let body = hex () in
+      Add { id; prefix; scopes; description; body }
+    | _ -> failwith "invalid snippet operation in settings result") in
+  (match !lines with
+   | [ "" ] -> ()
+   | _ -> failwith "malformed settings result framing");
+  Settings.validate
+    { completion_enabled; completion_ghost_preview; completion_min_prefix_chars
+    ; completion_prefer_local_snippets; line_numbers; theme; snippets }
+  |> Or_error.ok_exn
 ;;
 
 (* Drain continuously but retain at most 1 MiB per stream. User stdout never
@@ -180,4 +223,5 @@ let load ?path () = load_impl ?path ()
 
 module For_testing = struct
   let load = load_impl
+  let decode text = Or_error.try_with (fun () -> decode text)
 end

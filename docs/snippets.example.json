@@ -24,7 +24,7 @@
       "prefix": "mod",
       "scope": ["systemverilog"],
       "description": "Module declaration",
-      "body": ["module ${1:name} (", "    $0", ");", "endmodule"]
+      "body": ["module ${1:${TM_FILENAME_BASE:module_name}} (", "    $0", ");", "endmodule"]
     },
     {
       "id": "sv.inst",

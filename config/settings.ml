@@ -7,6 +7,7 @@ type t =
   ; completion_prefer_local_snippets : bool
   ; line_numbers : bool
   ; theme : string
+  ; snippets : Ches_completion.User_snippets.operation list
   }
 [@@deriving sexp, equal]
 
@@ -17,6 +18,7 @@ let default =
   ; completion_prefer_local_snippets = true
   ; line_numbers = false
   ; theme = "vim-classic"
+  ; snippets = []
   }
 ;;
 
@@ -25,5 +27,8 @@ let validate t =
   then Or_error.error_string "completion_min_prefix_chars must be positive"
   else if String.is_empty (String.strip t.theme)
   then Or_error.error_string "theme must be nonempty"
-  else Ok t
+  else
+    Or_error.map
+      (Ches_completion.User_snippets.apply Ches_completion.User_snippets.builtins t.snippets)
+      ~f:(fun _ -> t)
 ;;

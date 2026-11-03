@@ -779,15 +779,18 @@ Filename variables work in local and language-server snippets: `TM_FILENAME`,
 as `${TM_FILENAME_BASE:untitled}`. Paths are the current document's lexical editor
 paths; relative paths stay relative and a bare filename has directory `.`. Missing
 or unnamed paths use the fallback or empty text. Variables and defaults are not
-recursively expanded. Unknown variables, transformations, nested defaults, and
+recursively expanded. Unknown variables, transformations, nested numbered fields, and
 conflicting linked defaults/choices are rejected; malformed completions are skipped.
 Templates can come from the language server or the independent local catalog
 described below.
 
 For example, `module ${TM_FILENAME_BASE:untitled};\n    $0\nendmodule` uses the
-current filename without its final extension as the module name. The variable is
-inserted as literal text, not an editable numbered field. Nested expressions such
-as `${1:${TM_FILENAME_BASE}}` remain unsupported.
+current filename without its final extension as the module name. A standalone
+variable inserts literal text. For an editable filename-backed field, use
+`${1:${TM_FILENAME_BASE:untitled}}`: its resolved value is selected and edits mirror
+to `$1`. Numbered defaults may mix literal text and supported variables, for
+example `${1:prefix_${TM_FILENAME_BASE}}`. Nested numbered fields, nested choices,
+transforms, and recursive variable fallbacks remain unsupported.
 
 For a server-independent hands-on test, open the command palette from a file's
 Normal mode (`Space c c`) and select **Insert demo snippet**. This development
@@ -830,11 +833,21 @@ These starters are available immediately in `.sv` and `.svh` files:
 | --- | --- | --- |
 | `aff` | `sv.aff` | Clocked `always_ff` block with a `posedge`/`negedge` choice |
 | `acomb` | `sv.acomb` | `always_comb` block |
-| `mod` | `sv.mod` | Module declaration |
+| `mod` | `sv.mod` | Module declaration with an editable filename-backed name |
 | `inst` | `sv.inst` | Module instance with a linked port/signal field |
 | `genfor` | `sv.genfor` | Generate loop with linked loop-variable occurrences |
 
-To customize, create **`~/.config/ches/snippets.json`**. If `XDG_CONFIG_HOME` is an
+To customize, define templates with `Snippets.add` and `Snippets.disable` in
+**`config.ml`**, then choose **Reload configuration**. Settings and declarations
+are validated and applied together; any failure retains the last good state.
+See the [OCaml snippet API](configuration.md#snippets) and
+[editable examples](snippets.example.ml). Builtins remain available unless
+overridden or disabled by ID.
+
+#### Legacy JSON snippet collection
+
+The earlier JSON configuration remains supported as an optional base layer beneath
+OCaml declarations. To use it, create **`~/.config/ches/snippets.json`**. If `XDG_CONFIG_HOME` is an
 absolute nonempty path, Ches instead reads **`$XDG_CONFIG_HOME/ches/snippets.json`**.
 Ches does not create or overwrite this file. The editable
 [example collection](snippets.example.json) contains all five starters.
@@ -882,10 +895,11 @@ a global template:
   `{"id":"sv.aff","disabled":true}`. Do not include body/prefix fields on a
   disabled entry.
 
-The file loads asynchronously at startup. After editing it, choose **Reload
+The legacy file loads asynchronously at startup. After editing it, choose **Reload
 snippets** from the command palette. A malformed file or failed read reports an
 error and preserves the last good collection. A missing file uses the bundled
-starters. Reload replaces the catalog rather than accumulating entries; deleting
+starters as its base. Current OCaml declarations are reapplied after every legacy
+load, taking precedence. Reload replaces the base rather than accumulating entries; deleting
 an override restores its starter on the next successful reload. Files are limited
 to 1 MiB and 1000 user entries, and duplicate IDs/unknown fields are errors.
 

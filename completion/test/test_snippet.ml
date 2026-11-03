@@ -66,8 +66,7 @@ let%test_unit "choice escapes, forward mirrors, custom text and selected cycling
 let%test_unit "choice validation, repeated metadata and literal dollar choices" =
   List.iter ["${0|a,b|}"; "${1|a,b|}${1|a,c|}"; "${1:x}${1|a,b|}";
              "${1|a,b"; "${1|a\\x,b|}"; "${1|a\\";
-             "${TM_FILENAME/a/b/}"; "${TM_FILENAME:$TM_FILEPATH}";
-             "${1:${TM_FILENAME_BASE}}"] ~f:(fun s -> assert (Result.is_error (N.parse s)));
+              "${TM_FILENAME/a/b/}"; "${TM_FILENAME:$TM_FILEPATH}"] ~f:(fun s -> assert (Result.is_error (N.parse s)));
   [%test_eq: string] (N.text (parse "${1|$literal,b|}${1|$literal,b|}")) "$literal$literal";
   let session, text = start "${1||}$1$0" in
   let session, text = cycle session text 10 Next in
@@ -93,6 +92,82 @@ let%test_unit "filename variables resolve lexically, retain raw structure and re
   (match N.parse "$UNKNOWN" with
    | Ok _ -> assert false
    | Error e -> assert (String.is_substring (Error.to_string_hum e) ~substring:"unsupported snippet variable UNKNOWN"))
+;;
+
+let%test_unit "structured numbered defaults resolve before selection and mirrored Unicode edits" =
+  let raw = parse "$1/${1:前_${TM_FILENAME_BASE:無名}}/$1/${2:尾}$0!" in
+  [%test_eq: string] (N.text raw) "前_無名/前_無名/前_無名/尾!";
+  let template = N.resolve raw ~path:(Some "rtl/猫.test.sv") |> Or_error.ok_exn in
+  [%test_eq: string] (N.text template) "前_猫.test/前_猫.test/前_猫.test/尾!";
+  let text = buffer ("π:" ^ N.text template) in
+  let session = S.start template ~base:3 ~revision:10 ~text |> Or_error.ok_exn in
+  [%test_eq: N.range option] (S.selection session)
+    (Some (range 3 (3 + String.length "前_猫.test")));
+  let session, text = insert session text 10 "é🐹" in
+  [%test_eq: string] (B.to_string text) "π:é🐹/é🐹/é🐹/尾!";
+  let session, text = insert session text 11 "中" in
+  [%test_eq: string] (B.to_string text) "π:é🐹中/é🐹中/é🐹中/尾!";
+  let session = S.navigate (S.navigate session Next) Next in
+  assert (S.cursor session = B.length text - 1);
+  List.iter [None; Some ""] ~f:(fun path ->
+    [%test_eq: string] (N.text (N.resolve template ~path |> Or_error.ok_exn)) (N.text raw))
+;;
+
+let%test_unit "numbered variable forms, literal paths and structural default equality" =
+  [%test_eq: string] (N.text (parse "${1:${TM_FILENAME_BASE}}/$1$0!")) "/!";
+  let mixed = parse "${1:前_$TM_FILENAME:${TM_FILENAME_BASE:無名}_尾}/$1" in
+  [%test_eq: string] (N.text (N.resolve mixed ~path:(Some "rtl/猫.sv") |> Or_error.ok_exn))
+    "前_猫.sv:猫_尾/前_猫.sv:猫_尾";
+  let raw = parse "${1:$TM_FILENAME}/${2:${TM_DIRECTORY}}/${3:${TM_FILEPATH}}/${4:${TM_FILENAME_BASE}}" in
+  let path = {|dir/$1${2:raw}\%#猫.sv|} in
+  let resolved = N.resolve raw ~path:(Some path) |> Or_error.ok_exn in
+  [%test_eq: string] (N.text resolved)
+    (Filename.basename path ^ "/dir/" ^ path ^ "/" ^ {|$1${2:raw}\%#猫|});
+  [%test_eq: string] (N.text (parse {|${1:${TM_FILENAME_BASE:a\$b\}c\\d}}/$1|}))
+    "a$b}c\\d/a$b}c\\d";
+  List.iter ["${1:$TM_FILENAME_BASE}${1:${TM_FILENAME_BASE}}";
+             "${1:pre_${TM_FILENAME_BASE:x}}${1:pre_${TM_FILENAME_BASE:x}}";
+             "${1:}${1||}"; "${1:a}${1|a,b|}"]
+    ~f:(fun input -> assert (Result.is_ok (N.parse input)));
+  List.iter ["${1:${TM_FILENAME_BASE:x}}${1:x}";
+             "${1:${TM_FILENAME_BASE:x}}${1:${TM_FILENAME:x}}";
+             "${1:${TM_FILENAME_BASE:x}}${1:${TM_FILENAME_BASE:y}}";
+             "${1:pre_$TM_FILENAME}${1:other_$TM_FILENAME}";
+             "${1:${TM_FILENAME_BASE:a}}${1|a,b|}"]
+    ~f:(fun input -> assert (Result.is_error (N.parse input)))
+;;
+
+let%test_unit "numbered variable indentation commutes with resolution and preserves ranges" =
+  let raw = parse "$1/${1:前\n${TM_FILENAME_BASE:無\n名}\n尾}/$1$0!" in
+  let indent t = N.indent t ~prefix:"  " |> Or_error.ok_exn in
+  let resolve t = N.resolve t ~path:(Some "rtl/猫\n中.sv") |> Or_error.ok_exn in
+  let template = resolve (indent raw) in
+  assert (N.equal template (indent (resolve raw)));
+  [%test_eq: string] (N.text template)
+    "前\n  猫\n  中\n  尾/前\n  猫\n  中\n  尾/前\n  猫\n  中\n  尾!";
+  let text = buffer (N.text template) in
+  let session = S.start template ~base:0 ~revision:10 ~text |> Or_error.ok_exn in
+  let session, text = insert session text 10 "短\n値" in
+  [%test_eq: string] (B.to_string text) "短\n値/短\n値/短\n値!";
+  assert (S.cursor (S.navigate session Next) = B.length text - 1)
+;;
+
+let%test_unit "numbered variable nesting is bounded and malformed syntax rejects explicitly" =
+  List.iter ["${1:${2:x}}"; "${1:${2|a,b|}}"; "${1:${TM_FILENAME:$TM_FILEPATH}}";
+    "${1:${TM_FILENAME:${TM_FILENAME_BASE:x}}}"; "${1:${TM_FILENAME/a/b/}}";
+    "${1:${TM_FILENAME|a,b|}}"; "${1:${UNKNOWN}}"; "${0:${TM_FILENAME}}";
+    "${1:${TM_FILENAME}"; "${1:${TM_FILENAME:x}"; "${1:$}";
+    "${1:${TM_FILENAME:x\\q}}"; "${1:${TM_FILENAME:x\\";
+    "${1:${TM_FILENAME:x\\}}"; "${1:prefix\\q}"] ~f:(fun input ->
+      match N.parse input with
+      | Ok _ -> failwith ("unexpected valid snippet: " ^ input)
+      | Error e -> assert (not (String.is_empty (Error.to_string_hum e))));
+  let many = parse ("${1:prefix_${TM_FILEPATH}}" ^ String.concat (List.init 4095 ~f:(fun _ -> "$1"))) in
+  assert (Result.is_ok (N.resolve many ~path:(Some (String.make 249 'x'))));
+  assert (Result.is_error (N.resolve many ~path:(Some (String.make 250 'x'))));
+  let multiline = parse "${1:${TM_FILEPATH}}/$1" in
+  let indented = N.indent multiline ~prefix:(String.make 20_000 ' ') |> Or_error.ok_exn in
+  assert (Result.is_error (N.resolve indented ~path:(Some (String.make 100 '\n'))))
 ;;
 
 let%test_unit "indentation retains multiline choices and variables across resolution and sessions" =

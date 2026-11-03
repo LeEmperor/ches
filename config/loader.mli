@@ -9,6 +9,7 @@ val load : ?path:string -> unit -> (Settings.t, string) Result.t Async.Deferred.
 
 (** Local dependency injection for tests; never mutates the process environment. *)
 module For_testing : sig
+  val decode : string -> Settings.t Core.Or_error.t
   val load
     :  ?path:string
     -> ?getenv:(string -> string option)

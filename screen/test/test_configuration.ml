@@ -14,7 +14,7 @@ let reload t = press t " ccconfiguration.reload<CR>"
 let configured = { Settings.completion_enabled = false
   ; completion_ghost_preview = true; completion_min_prefix_chars = 3
   ; completion_prefer_local_snippets = false; line_numbers = true
-  ; theme = Theme.id (List.last_exn Theme.all) }
+  ; theme = Theme.id (List.last_exn Theme.all); snippets = [] }
 
 let%test_unit "startup application is explicit; session toggles and removed fields reset on reload" =
   let t = Helpers.ui "unsaved" in

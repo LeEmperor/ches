@@ -12,6 +12,18 @@ type entry =
 
 type t = entry String.Map.t
 
+type declaration =
+  { id : string
+  ; prefix : string
+  ; scopes : string list
+  ; description : string option
+  ; body : string
+  }
+[@@deriving sexp, equal]
+
+type operation = Add of declaration | Disable of string
+[@@deriving sexp, equal]
+
 let starter id prefix description body =
   { id; prefix; scopes = [ "systemverilog" ]; description = Some description
   ; template = Snippet.parse body |> Or_error.ok_exn }
@@ -23,7 +35,7 @@ let builtins =
   ; starter "sv.acomb" "acomb" "Combinational always block"
       "always_comb begin\n    $0\nend"
   ; starter "sv.mod" "mod" "Module declaration"
-      "module ${1:name} (\n    $0\n);\nendmodule"
+      "module ${1:${TM_FILENAME_BASE:module_name}} (\n    $0\n);\nendmodule"
   ; starter "sv.inst" "inst" "Module instance"
       "${1:module_name} ${2:instance_name} (\n    .${3:port}($3)$0\n);"
   ; starter "sv.genfor" "genfor" "Generate loop"
@@ -57,22 +69,27 @@ let required fields key =
   match find fields key with Some value -> value | None -> invalid ("missing " ^ key)
 ;;
 
+let validate_string name value =
+  match B.validate value with
+  | Ok () -> value
+  | Error error -> invalid (name ^ ": " ^ B.Invalid_text.to_string_hum error)
+;;
+
 let string name = function
-  | `String value ->
-    (match B.validate value with
-     | Ok () -> value
-     | Error error -> invalid (name ^ ": " ^ B.Invalid_text.to_string_hum error))
+  | `String value -> validate_string name value
   | _ -> invalid (name ^ " must be a string")
 ;;
 
-let nonempty name value =
-  let value = string name value in
+let nonempty_string name value =
+  let value = validate_string name value in
   if String.is_empty (String.strip value) then invalid (name ^ " must be nonempty");
   value
 ;;
 
-let scope value =
-  let value = nonempty "scope" value in
+let nonempty name value = nonempty_string name (string name value)
+
+let validate_scope value =
+  let value = nonempty_string "scope" value in
   if List.mem [ "systemverilog"; "verilog"; "ocaml" ] value ~equal:String.equal
      || (String.is_prefix value ~prefix:"." && String.length value > 1
          && not (String.exists value ~f:(fun c ->
@@ -80,6 +97,49 @@ let scope value =
   then value
   else invalid ("unsupported scope " ^ value
                 ^ "; use systemverilog, verilog, ocaml, or a .filename-extension")
+;;
+
+let scope value = validate_scope (string "scope" value)
+let validate_id id = nonempty_string "id" id
+
+let declaration_entry ({ id; prefix; scopes; description; body } : declaration) : entry =
+  let id = validate_id id in
+  let prefix = nonempty_string "prefix" prefix in
+  let scopes = List.map scopes ~f:validate_scope in
+  let description = Option.map description ~f:(validate_string "description") in
+  let template = match Snippet.parse body with
+    | Ok template -> template
+    | Error error -> invalid ("body: " ^ Error.to_string_hum error)
+  in
+  { id; prefix; scopes; description; template }
+;;
+
+let apply base operations =
+  try
+    if List.length operations > 1000 then invalid "snippets exceeds 1000 operations";
+    let bytes = ref 0 in
+    let count value =
+      if String.length value > 1_048_576 - !bytes then
+        invalid "snippet declarations exceed 1 MiB";
+      bytes := !bytes + String.length value
+    in
+    Ok (List.foldi operations ~init:base ~f:(fun index catalog operation ->
+      let id = match operation with Add declaration -> declaration.id | Disable id -> id in
+      try
+        count id;
+        ignore (validate_id id : string);
+        match operation with
+        | Disable id -> Map.remove catalog id
+        | Add declaration ->
+          count declaration.prefix;
+          List.iter declaration.scopes ~f:count;
+          Option.iter declaration.description ~f:count;
+          count declaration.body;
+          let entry = declaration_entry declaration in
+          Map.set catalog ~key:id ~data:entry
+      with Invalid_config message ->
+        invalid (sprintf "snippets[%d] (%s): %s" index id message)))
+  with Invalid_config message -> Or_error.error_string message
 ;;
 
 let parse input =
@@ -130,11 +190,8 @@ let parse input =
             | `List lines -> String.concat ~sep:"\n" (List.map lines ~f:(string "body line"))
             | _ -> invalid "body must be a string or array of strings"
           in
-          let template = match Snippet.parse body with
-            | Ok template -> template
-            | Error error -> invalid ("body: " ^ Error.to_string_hum error)
-          in
-          Map.set catalog ~key:id ~data:{ id; prefix; scopes; description; template })
+          let entry = declaration_entry { id; prefix; scopes; description; body } in
+          Map.set catalog ~key:id ~data:entry)
       with Invalid_config message -> invalid (!context ^ ": " ^ message)))
   with Invalid_config message -> Or_error.error_string message
 ;;
@@ -149,7 +206,7 @@ let matches_scope scope path =
   List.exists extensions ~f:(fun suffix -> String.is_suffix path ~suffix)
 ;;
 
-let candidates t ~path ~text ~cursor ~limit =
+let candidates (t : t) ~path ~text ~cursor ~limit =
   if limit <= 0 || not (B.is_boundary text cursor) then [] else
     let rec prefix_start at =
       match B.prev_boundary text at with
@@ -169,17 +226,17 @@ let candidates t ~path ~text ~cursor ~limit =
       in
       let indentation = B.slice text ~pos:line ~len:(whitespace_end line - line) in
       Map.data t
-      |> List.filter ~f:(fun entry ->
+      |> List.filter ~f:(fun (entry : entry) ->
         String.is_prefix entry.prefix ~prefix
         && (List.is_empty entry.scopes
             || Option.exists path ~f:(fun path -> List.exists entry.scopes ~f:(fun scope ->
               matches_scope scope path))))
-      |> List.sort ~compare:(fun a b ->
+      |> List.sort ~compare:(fun (a : entry) (b : entry) ->
         match String.compare a.prefix b.prefix with
         | 0 -> String.compare a.id b.id
         | comparison -> comparison)
       |> Sequence.of_list
-      |> Sequence.filter_map ~f:(fun entry ->
+      |> Sequence.filter_map ~f:(fun (entry : entry) ->
         match Or_error.bind (Snippet.resolve entry.template ~path)
                 ~f:(fun template -> Snippet.indent template ~prefix:indentation) with
         | Error _ -> None
