@@ -4,7 +4,7 @@ open Ches_theme
 let channels (r, g, b) = [ r; g; b ]
 
 let%test_unit "registry is total, valid, distinct, and normalized" =
-  assert (List.length Theme.all = 44);
+  assert (List.length Theme.all = 52);
   assert (String.equal (Theme.id Theme.default) "vim-classic");
   assert (not (List.contains_dup (List.map Theme.all ~f:Theme.id) ~compare:String.compare));
   List.iter Theme.all ~f:(fun theme ->
@@ -35,18 +35,26 @@ let%test_unit "light, dark, and intentional neutral monochrome palettes" =
       assert (r = g && g = b)))
 ;;
 
-let%test_unit "Vim black canvas and Solarized variants retain their identities" =
+let%test_unit "Vim, Solarized, and metallic palettes retain their registry identities" =
   List.iter
     [ "vim-classic", "Vim Classic", Theme.Kind.Dark
     ; "solarized-light", "Solarized Light", Light
     ; "linen-solar", "Linen Solar", Light
-    ; "sandstone-solar", "Sandstone Solar", Light ]
+    ; "sandstone-solar", "Sandstone Solar", Light
+    ; "silver", "Silver", Dark
+    ; "silver-frost", "Silver Frost", Light
+    ; "silver-tarnish", "Silver Tarnish", Dark
+    ; "gold", "Gold", Dark
+    ; "gold-antique", "Gold Antique", Dark
+    ; "gold-champagne", "Gold Champagne", Light
+    ; "platinum", "Platinum", Light
+    ; "iron", "Iron", Dark ]
     ~f:(fun (id, title, kind) ->
       let theme = Option.value_exn (Theme.find id) in
       assert (String.equal (Theme.title theme) title);
       assert (Theme.Kind.equal (Theme.kind theme) kind));
-  assert (List.count Theme.all ~f:(fun t -> Theme.Kind.equal (Theme.kind t) Dark) = 29);
-  assert (List.count Theme.all ~f:(fun t -> Theme.Kind.equal (Theme.kind t) Light) = 15);
+  assert (List.count Theme.all ~f:(fun t -> Theme.Kind.equal (Theme.kind t) Dark) = 34);
+  assert (List.count Theme.all ~f:(fun t -> Theme.Kind.equal (Theme.kind t) Light) = 18);
   let vim = Option.value_exn (Theme.find "vim-classic") in
   List.iter [ Theme.Role.Background; Backdrop; Current_line ] ~f:(fun role ->
     assert (Poly.equal (Theme.color vim role) (0, 0, 0)));

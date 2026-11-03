@@ -1903,12 +1903,25 @@ starts with the default layout.
 
 ### Colors and safe display
 
-Ches includes **44 themes: 29 dark and 15 light**. Crimson remains the default;
-Midnight, Ember, and Glacier retain their original colors. Other palettes are
+Ches includes **52 themes: 34 dark and 18 light**. Vim Classic is the default;
+Midnight, Crimson, Ember, and Glacier retain their original colors. Other palettes are
 curated designs or adaptations rather than exact ports of upstream themes. Examples
 include Abyss, Moss, Orchid, Cobalt Room, Paper, Porcelain, Terminal Amber,
 Terminal Green, and neutral monochrome Graphite, Newsprint, Silver Night, and
 Ivory Ink.
+
+The metallic family includes Copper and eight additional palettes:
+
+| Theme ID | Kind | Character |
+| --- | --- | --- |
+| `silver` | Dark | Cool slate with luminous silver-blue accents |
+| `silver-frost` | Light | Icy silver with crisp, deeper syntax colors |
+| `silver-tarnish` | Dark | Aged silver with a subtle green cast |
+| `gold` | Dark | Rich gold on a warm, dark ground |
+| `gold-antique` | Dark | Muted bronze and olive-gold |
+| `gold-champagne` | Light | Warm champagne with ochre accents |
+| `platinum` | Light | Refined cool neutrals with a faint lavender cast |
+| `iron` | Dark | Industrial charcoal with rust and steel-blue accents |
 
 For nostalgic Vim colors, **Vim Classic** (`vim-classic`) uses a pure-black
 document, backdrop, and current line with yellow keywords, pink strings/numbers,
