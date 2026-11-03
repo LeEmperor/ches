@@ -2,16 +2,6 @@ open! Core
 open Ches_core
 module B = Text_buffer
 
-type entry =
-  { id : string
-  ; prefix : string
-  ; scopes : string list
-  ; description : string option
-  ; template : Snippet.t
-  }
-
-type t = entry String.Map.t
-
 type declaration =
   { id : string
   ; prefix : string
@@ -21,11 +11,19 @@ type declaration =
   }
 [@@deriving sexp, equal]
 
+type origin = Bundled | Legacy_json | Ocaml [@@deriving sexp, equal]
+type item = { declaration : declaration; origin : origin }
+[@@deriving sexp, equal]
+
+type entry = { item : item; template : Snippet.t }
+type t = entry String.Map.t
+
 type operation = Add of declaration | Disable of string
 [@@deriving sexp, equal]
 
 let starter id prefix description body =
-  { id; prefix; scopes = [ "systemverilog" ]; description = Some description
+  { item = { declaration = { id; prefix; scopes = [ "systemverilog" ]; description = Some description; body }
+           ; origin = Bundled }
   ; template = Snippet.parse body |> Or_error.ok_exn }
 ;;
 
@@ -41,7 +39,7 @@ let builtins =
   ; starter "sv.genfor" "genfor" "Generate loop"
       "for (genvar ${1:i} = 0; $1 < ${2:COUNT}; $1++) begin : ${3:gen_block}\n    $0\nend"
   ]
-  |> List.map ~f:(fun entry -> entry.id, entry)
+  |> List.map ~f:(fun entry -> entry.item.declaration.id, entry)
   |> String.Map.of_alist_exn
 ;;
 
@@ -102,7 +100,7 @@ let validate_scope value =
 let scope value = validate_scope (string "scope" value)
 let validate_id id = nonempty_string "id" id
 
-let declaration_entry ({ id; prefix; scopes; description; body } : declaration) : entry =
+let declaration_entry ~origin ({ id; prefix; scopes; description; body } : declaration) : entry =
   let id = validate_id id in
   let prefix = nonempty_string "prefix" prefix in
   let scopes = List.map scopes ~f:validate_scope in
@@ -111,7 +109,7 @@ let declaration_entry ({ id; prefix; scopes; description; body } : declaration) 
     | Ok template -> template
     | Error error -> invalid ("body: " ^ Error.to_string_hum error)
   in
-  { id; prefix; scopes; description; template }
+  { item = { declaration = { id; prefix; scopes; description; body }; origin }; template }
 ;;
 
 let apply base operations =
@@ -135,7 +133,7 @@ let apply base operations =
           List.iter declaration.scopes ~f:count;
           Option.iter declaration.description ~f:count;
           count declaration.body;
-          let entry = declaration_entry declaration in
+           let entry = declaration_entry ~origin:Ocaml declaration in
           Map.set catalog ~key:id ~data:entry
       with Invalid_config message ->
         invalid (sprintf "snippets[%d] (%s): %s" index id message)))
@@ -190,7 +188,7 @@ let parse input =
             | `List lines -> String.concat ~sep:"\n" (List.map lines ~f:(string "body line"))
             | _ -> invalid "body must be a string or array of strings"
           in
-          let entry = declaration_entry { id; prefix; scopes; description; body } in
+           let entry = declaration_entry ~origin:Legacy_json { id; prefix; scopes; description; body } in
           Map.set catalog ~key:id ~data:entry)
       with Invalid_config message -> invalid (!context ^ ": " ^ message)))
   with Invalid_config message -> Or_error.error_string message
@@ -206,6 +204,53 @@ let matches_scope scope path =
   List.exists extensions ~f:(fun suffix -> String.is_suffix path ~suffix)
 ;;
 
+let applicable (declaration : declaration) ~path =
+  List.is_empty declaration.scopes
+  || Option.exists path ~f:(fun path ->
+    List.exists declaration.scopes ~f:(fun scope -> matches_scope scope path))
+;;
+
+let entries t ~path =
+  Map.data t
+  |> List.filter ~f:(fun entry -> applicable entry.item.declaration ~path)
+  |> List.sort ~compare:(fun a b ->
+    let a = a.item.declaration and b = b.item.declaration in
+    match String.compare a.prefix b.prefix with
+    | 0 -> String.compare a.id b.id
+    | comparison -> comparison)
+;;
+
+let available t ~path = List.map (entries t ~path) ~f:(fun entry -> entry.item)
+
+let candidate entry ~path ~text ~start ~cursor =
+  let line = B.line_start text (B.line_of_offset text start) in
+  let rec whitespace_end at =
+    if at < start && (match Uchar.to_scalar (B.uchar_at text at) with
+      | 32 | 9 -> true | _ -> false)
+    then whitespace_end (at + 1) else at
+  in
+  let indentation = B.slice text ~pos:line ~len:(whitespace_end line - line) in
+  let%map.Or_error snippet =
+    Or_error.bind (Snippet.resolve entry.template ~path)
+      ~f:(fun template -> Snippet.indent template ~prefix:indentation)
+  in
+  let declaration = entry.item.declaration in
+  { Model.Candidate.id = "user-snippet:" ^ declaration.id; source = Snippet
+  ; label = declaration.prefix; detail = declaration.description
+  ; filter_text = declaration.prefix; sort_text = declaration.prefix
+  ; primary = { Text_edit.start; stop = cursor; text = Snippet.text snippet }
+  ; additional = []; cursor = Snippet.final_cursor snippet; snippet = Some snippet }
+;;
+
+let instantiate t ~id ~path ~text ~cursor =
+  if not (B.is_boundary text cursor) then Or_error.error_string "Invalid snippet insertion cursor"
+  else match Map.find t id with
+  | None -> Or_error.errorf "Unknown snippet ID: %s" id
+  | Some entry when not (applicable entry.item.declaration ~path) ->
+    Or_error.errorf "Snippet %s is not applicable to this path" id
+  | Some entry -> candidate entry ~path ~text ~start:cursor ~cursor
+;;
+
 let candidates (t : t) ~path ~text ~cursor ~limit =
   if limit <= 0 || not (B.is_boundary text cursor) then [] else
     let rec prefix_start at =
@@ -218,36 +263,11 @@ let candidates (t : t) ~path ~text ~cursor ~limit =
     | None -> []
     | Some start ->
       let prefix = B.slice text ~pos:start ~len:(cursor - start) in
-      let line = B.line_start text (B.line_of_offset text start) in
-      let rec whitespace_end at =
-        if at < start && (match Uchar.to_scalar (B.uchar_at text at) with
-          | 32 | 9 -> true | _ -> false)
-        then whitespace_end (at + 1) else at
-      in
-      let indentation = B.slice text ~pos:line ~len:(whitespace_end line - line) in
-      Map.data t
-      |> List.filter ~f:(fun (entry : entry) ->
-        String.is_prefix entry.prefix ~prefix
-        && (List.is_empty entry.scopes
-            || Option.exists path ~f:(fun path -> List.exists entry.scopes ~f:(fun scope ->
-              matches_scope scope path))))
-      |> List.sort ~compare:(fun (a : entry) (b : entry) ->
-        match String.compare a.prefix b.prefix with
-        | 0 -> String.compare a.id b.id
-        | comparison -> comparison)
+       entries t ~path
+       |> List.filter ~f:(fun entry -> String.is_prefix entry.item.declaration.prefix ~prefix)
       |> Sequence.of_list
-      |> Sequence.filter_map ~f:(fun (entry : entry) ->
-        match Or_error.bind (Snippet.resolve entry.template ~path)
-                ~f:(fun template -> Snippet.indent template ~prefix:indentation) with
-        | Error _ -> None
-        | Ok snippet ->
-          let expanded = Snippet.text snippet in
-          Some { Model.Candidate.id = "user-snippet:" ^ entry.id; source = Snippet
-               ; label = entry.prefix; detail = entry.description
-               ; filter_text = entry.prefix; sort_text = entry.prefix
-               ; primary = { Text_edit.start; stop = cursor; text = expanded }
-               ; additional = []; cursor = Snippet.final_cursor snippet
-               ; snippet = Some snippet })
+       |> Sequence.filter_map ~f:(fun entry ->
+         candidate entry ~path ~text ~start ~cursor |> Result.ok)
       |> Fn.flip Sequence.take limit
       |> Sequence.to_list
 ;;

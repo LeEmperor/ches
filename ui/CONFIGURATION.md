@@ -14,6 +14,15 @@ inject `startup_configuration` (including an error) and a `Configuration_host`
 whose `load` function is local to that instance. `run` accepts the same overrides;
 without a preloaded result it awaits that host's loader.
 
+When building the initial app, the frontend resolves the Open configuration path
+once with `Loader.config_path ~getenv:Sys.getenv` and installs the path or a
+helpful missing-environment error using `Ui_state.with_configuration_path`. This
+also applies to initial UI states supplied by file/content picker hosts. Both
+`app` and `run` accept `configuration_path` for instance-local test injection.
+Resolution only inspects the environment; opening uses the screen's ordinary
+file-buffer workflow, preserving existing edits and leaving absent files unsaved.
+It does not invoke the configuration loader or write a configuration file.
+
 After a full transition, the frontend drains `take_config_reload_requests` and
 schedules host submission as an effect. A separate lifecycle pump delivers replies
 as configuration actions, invalidates the frame cache, and calls
@@ -32,3 +41,6 @@ and exit never write configuration. Snippet loading remains independent.
 `ui/picker_test/test_configuration_host.ml` exercises the real compiler-backed
 startup snapshot, injected scheduling, reload effects during edits, error handling,
 theme override, stop behavior and unchanged configuration source.
+`ui/picker_test/test_open_configuration.ml` drives the command palette against
+temporary loader-selected XDG/HOME paths, existing and missing files, modified
+buffer reuse, path errors, and explicit picker-host initial states.

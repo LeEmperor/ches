@@ -14,6 +14,111 @@ let candidates ?path ?(limit = 100) catalog value =
 let ids entries = List.map entries ~f:(fun entry -> entry.M.Candidate.id)
 let has entries id = List.mem (ids entries) ("user-snippet:" ^ id) ~equal:String.equal
 
+let%test_unit "discovery preserves effective raw declarations and inherited provenance" =
+  let base = parse
+      {|{"id":"sv.aff","prefix":"same","body":["${1:legacy}","$0"]},
+        {"id":"z","prefix":"same","body":"z"},
+        {"id":"ext","prefix":"ext","scope":[".foo"],"body":"x"}|} in
+  let declaration : U.declaration =
+    { id = "a"; prefix = "same"; scopes = []; description = Some "typed"; body = "$TM_FILENAME" } in
+  let catalog = U.apply base [Add declaration; Disable "sv.inst"] |> Or_error.ok_exn in
+  let all = U.available catalog ~path:(Some "x.sv") in
+  let find id = List.find_exn all ~f:(fun item -> String.equal item.U.declaration.id id) in
+  assert (U.equal_origin (find "sv.mod").origin Bundled);
+  assert (U.equal_origin (find "sv.aff").origin Legacy_json);
+  [%test_eq: string] (find "sv.aff").declaration.body "${1:legacy}\n$0";
+  assert (U.equal_item (find "a") { declaration; origin = Ocaml });
+  [%test_eq: string list]
+    (List.filter_map all ~f:(fun item ->
+       if String.equal item.U.declaration.prefix "same" then Some item.declaration.id else None))
+    ["a"; "sv.aff"; "z"];
+  assert (not (List.exists all ~f:(fun item -> String.equal item.U.declaration.id "sv.inst")));
+  [%test_eq: string list]
+    (U.available catalog ~path:None |> List.map ~f:(fun item -> item.U.declaration.id))
+    ["a"; "sv.aff"; "z"];
+  assert (List.exists (U.available catalog ~path:(Some "x.foo"))
+    ~f:(fun item -> String.equal item.U.declaration.id "ext"));
+  let replaced = U.apply base [Add { declaration with id = "sv.aff" }] |> Or_error.ok_exn in
+  let replacement = U.available replaced ~path:None
+    |> List.find_exn ~f:(fun item -> String.equal item.U.declaration.id "sv.aff") in
+  assert (U.equal_origin replacement.origin Ocaml);
+  assert (U.equal_origin
+    (U.available base ~path:None |> List.find_exn ~f:(fun item ->
+       String.equal item.U.declaration.id "sv.aff")).origin Legacy_json)
+;;
+
+let%test_unit "explicit insertion ignores prefix, resolves context and preserves linked fields" =
+  let catalog = parse
+      {json|{"id":"insert","prefix":"trigger","scope":["ocaml"],"body":"${1:${TM_FILENAME_BASE}}/$1\n${2|é,long|}$0"}|json} in
+  let base = text "prior\n\t  unrelatedTAIL" in
+  let cursor = String.length "prior\n\t  unrelated" in
+  let candidate = U.instantiate catalog ~id:"insert" ~path:(Some "dir/top.ml") ~text:base ~cursor
+    |> Or_error.ok_exn in
+  [%test_eq: int] candidate.primary.start cursor;
+  [%test_eq: int] candidate.primary.stop cursor;
+  [%test_eq: string] candidate.primary.text "top/top\n\t  é";
+  let installed = Text_edit.apply base [[candidate.primary]] |> Or_error.ok_exn in
+  [%test_eq: string] (B.to_string installed) "prior\n\t  unrelatedtop/top\n\t  éTAIL";
+  let module S = Snippet.Session in
+  let session = S.start (Option.value_exn candidate.snippet) ~base:cursor ~revision:1 ~text:installed
+    |> Or_error.ok_exn in
+  let change = S.insert session ~revision:1 ~text:installed "new" |> Or_error.ok_exn in
+  let edited = Text_edit.apply installed [S.edits change] |> Or_error.ok_exn in
+  [%test_eq: string] (B.to_string edited) "prior\n\t  unrelatednew/new\n\t  éTAIL";
+  let session = S.applied change ~revision:2 |> fun s -> S.navigate s Next in
+  [%test_eq: string list option] (S.choices session) (Some ["é"; "long"]);
+  assert (List.is_empty (U.candidates catalog ~path:(Some "top.ml") ~text:base ~cursor ~limit:10));
+  let matching = text "trigger" in
+  let explicit = U.instantiate catalog ~id:"insert" ~path:(Some "top.ml") ~text:matching ~cursor:7
+    |> Or_error.ok_exn in
+  [%test_eq: int] explicit.primary.start 7;
+  let automatic = U.candidates catalog ~path:(Some "top.ml") ~text:matching ~cursor:7 ~limit:10
+    |> List.hd_exn in
+  [%test_eq: int] automatic.primary.start 0
+;;
+
+let%test_unit "explicit insertion rejects missing disabled out-of-scope IDs and invalid cursors" =
+  let base = text "é" in
+  let insert catalog id path cursor = U.instantiate catalog ~id ~path ~text:base ~cursor in
+  List.iter [None; Some "x.ml"; Some "x.SV"] ~f:(fun path ->
+    assert (Result.is_error (insert U.builtins "sv.mod" path 2)));
+  List.iter [-1; 1; 3] ~f:(fun cursor ->
+    assert (Result.is_error (insert U.builtins "sv.mod" (Some "x.sv") cursor)));
+  assert (Result.is_error (insert U.builtins "absent" (Some "x.sv") 2));
+  let disabled = U.apply U.builtins [Disable "sv.mod"] |> Or_error.ok_exn in
+  assert (Result.is_error (insert disabled "sv.mod" (Some "x.sv") 2));
+  assert (Result.is_ok (insert U.builtins "sv.mod" (Some "x.sv") 2));
+  let global = parse {|{"id":"global","prefix":"g","body":"${TM_FILENAME:fallback}"}|} in
+  let c = insert global "global" None 0 |> Or_error.ok_exn in
+  [%test_eq: string] c.primary.text "fallback"
+;;
+
+let%test_unit "explicit candidate and linked edits form one ordinary editor undo transaction" =
+  let catalog = parse {|{"id":"linked","prefix":"trigger","body":"${1:name}/$1$0"}|} in
+  let original = "trigger" in
+  let editor = Editor.create ~cell_width:(fun _ -> 1) (text original) in
+  let editor = Editor.dispatch editor (Enter_insert Line_end) |> fst in
+  let base = String.length original in
+  let candidate = U.instantiate catalog ~id:"linked" ~path:None ~text:(Editor.text editor) ~cursor:base
+    |> Or_error.ok_exn in
+  let editor = Editor.apply_insert_edits editor ~expected_revision:(Editor.revision editor)
+      ~edits:[[candidate.primary]] ~cursor:(base + candidate.cursor) |> Or_error.ok_exn in
+  let module S = Snippet.Session in
+  let session = S.start (Option.value_exn candidate.snippet) ~base
+      ~revision:(Editor.revision editor) ~text:(Editor.text editor) |> Or_error.ok_exn in
+  let change = S.insert session ~revision:(Editor.revision editor) ~text:(Editor.text editor) "value"
+    |> Or_error.ok_exn in
+  let editor = Editor.apply_insert_edits editor ~expected_revision:(Editor.revision editor)
+      ~edits:[S.edits change] ~cursor:(S.cursor (S.applied change ~revision:(Editor.revision editor + 1)))
+    |> Or_error.ok_exn in
+  [%test_eq: string] (B.to_string (Editor.text editor)) "triggervalue/value";
+  let editor = Editor.dispatch editor Exit_insert |> fst in
+  let undone = Editor.dispatch editor Undo |> fst in
+  [%test_eq: string] (B.to_string (Editor.text undone)) original;
+  let redone = Editor.dispatch undone Redo |> fst in
+  [%test_eq: string] (B.to_string (Editor.text redone)) "triggervalue/value"
+;;
+
 let%test_unit "ordered typed operations preserve legacy base, last wins, and disable builtins" =
   let base = parse {|{"id":"legacy","prefix":"qlegacy","body":"legacy"}|} in
   let add id prefix body = U.Add { id; prefix; body; scopes = []; description = None } in

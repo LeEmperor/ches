@@ -82,6 +82,9 @@ module Input : sig
 end
 
 type t
+(** Frontend-resolved loader path (or its resolution error). Opening configuration
+    uses normal buffer ownership and never creates the file or parent directories. *)
+val with_configuration_path : t -> (string, string) Result.t -> t
 val take_word_index_request : t -> t * word_index_request option
 val receive_word_index : t -> word_index_request -> Ches_completion.Model.Buffer_words.t -> t
 
@@ -171,6 +174,9 @@ val terminal_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 val theme : t -> Ches_theme.Theme.t
 val theme_picker : t -> Theme_picker_tile.t option
 val theme_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+(** Explicit snippet discovery over a captured catalog and editor snapshot. *)
+val snippet_picker : t -> Snippet_picker_tile.t option
+val snippet_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 val file_picker_visible_stamp : t -> (int * int * int) option
 
 val create

@@ -53,6 +53,10 @@ val app
         (** Reload worker override. Creating an app never runs startup config. *)
    -> ?startup_configuration:Configuration_host.configuration
         (** Explicit preloaded startup result; errors apply defaults and notify. *)
+   -> ?configuration_path:(string, string) Result.t
+        (** Path/error for Open configuration. Defaults to the loader's XDG/HOME
+            resolution, once per app, without reading or executing configuration.
+            Also installed on explicit picker hosts' initial UI state. *)
    -> ?smear_enabled:bool
    -> ?zen:bool
    -> ?bare:bool
@@ -102,6 +106,7 @@ val draw_overlay : ?theme:Ches_theme.Theme.t -> ?font:(Ches_screen.Style.t -> Th
 val run
   :  ?configuration:Configuration_host.t
    -> ?startup_configuration:Configuration_host.configuration
+   -> ?configuration_path:(string, string) Result.t
    -> ?smear_enabled:bool (** Disabled by default; Space v s toggles at runtime. *)
    -> ?zen:bool (** Start in Zen; false by default. [bare] takes precedence. *)
    -> ?bare:bool (** Start in borderless document presentation. *)

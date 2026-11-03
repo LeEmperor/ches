@@ -122,7 +122,8 @@ let%test_unit "view-local commands augment globals only over the installed focus
   assert (List.length local > List.length globals);
   assert (not (List.mem local "development.insert-demo-snippet" ~equal:String.equal));
   assert (List.for_all globals ~f:(fun id ->
-    String.equal id "development.insert-demo-snippet" || List.mem local id ~equal:String.equal));
+     List.mem [ "development.insert-demo-snippet"; "snippets.insert" ] id ~equal:String.equal
+     || List.mem local id ~equal:String.equal));
   let all_globals = Ches_palette.Catalog.entries Ches_palette.Catalog.default
     |> List.map ~f:(fun entry -> Ches_palette.Catalog.Entry.id entry
       |> Ches_palette.Catalog.Id.to_string) in

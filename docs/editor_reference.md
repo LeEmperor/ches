@@ -821,6 +821,24 @@ completions retain the deferred-resolution behavior described above.
 
 #### Independent and user-defined snippets
 
+**Insert snippet** in the command palette (`Space c c`) opens a searchable picker
+from an editable file's Normal mode. It includes global templates and templates
+matching that file's scope, independently of LSP or automatic completion settings.
+Search by prefix, description, or ID. Tab/Ctrl-n and Shift-Tab/Ctrl-p select the
+next/previous result; Enter inserts and activates placeholders; Escape/Ctrl-c
+cancels without changing the document. At sufficient height, the preview shows
+the raw body, scope, ID, and effective origin (bundled, legacy JSON, or OCaml).
+
+Picker insertion is at the captured cursor, like `i`, and does not consume a
+preceding identifier. Filename variables and indentation use that insertion
+context. Editing fields and undo follow the same rules as accepted completion
+snippets. Stale buffers or catalog reloads cannot insert an outdated selection.
+
+Choose **Open configuration** to edit `config.ml` in Ches, save, then choose
+**Reload configuration** to apply your changes. Existing unsaved config buffers
+are reused; a missing file opens as an unsaved buffer without automatically
+creating directories or files.
+
 Local templates work without a language server, including with `--no-lsp`. They
 appear as `[snippet]` candidates alongside LSP and buffer suggestions, with local
 templates ranked first. Tab cycles expanded candidates; Enter activates fields.

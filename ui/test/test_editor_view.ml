@@ -13,7 +13,9 @@ let handle ?theme ?zen ?bare ?(width = 40) ?(height = 6) ?(document_only = true)
   let controller = Ches_app.Controller.create (Editor.create ~path:"f.txt" ~cell_width:Ches_screen.Cell_map.width text) in
   let exit () = Bonsai_term.Effect.print_s [%sexp "EXIT"] in
   let handle =
-    Bonsai_term_test.create_handle (Ches_ui.Editor_view.app ?theme ?zen ?bare controller ~exit)
+    Bonsai_term_test.create_handle (Ches_ui.Editor_view.app
+      ~configuration_path:(Error "No configuration path in this rendering fixture")
+      ?theme ?zen ?bare controller ~exit)
   in
   Bonsai_term_test.set_dimensions handle { width; height };
   (* These geometry scenarios predate the default-visible workspace companions.

@@ -13,6 +13,14 @@ type snippet_session =
   ; document : Controller.Document_id.t
   }
 
+type snippet_picker_snapshot =
+  { owner : Buffer_id.t option
+  ; document : Controller.Document_id.t
+  ; revision : int
+  ; cursor : int
+  ; mode : Mode.t
+  }
+
 type completion_session =
   { model : Completion.t
   ; token : Completion.Token.t
@@ -124,6 +132,7 @@ type toggle_pending =
 
 type t =
   { controller : Controller.t
+  ; configuration_path : (string, string) Result.t
   ; snippet : snippet_session option
   ; completion : completion_session option
   ; completion_acceptance : completion_acceptance option
@@ -186,6 +195,8 @@ type t =
   ; theme : Ches_theme.Theme.t
   ; theme_picker : Theme_picker_tile.t option
   ; theme_picker_return : View_id.t
+  ; snippet_picker : Snippet_picker_tile.t option
+  ; snippet_picker_snapshot : snippet_picker_snapshot option
   ; palette_origin : View_id.t option
   (** The registered view the palette was opened over: its local commands are listed
       first, and it is not left until the palette closes. *)
@@ -282,6 +293,7 @@ let create
     then Session.focus_directory session false else session in
   let controller = Option.value_exn (Session.active_controller session) in
   { controller
+  ; configuration_path = Error "Configuration path is unavailable"
   ; snippet = None
   ; completion = None
   ; completion_acceptance = None
@@ -329,6 +341,7 @@ let create
          @ [ Palette_tile.spec
             ; Terminal_tile.spec
             ; Theme_picker_tile.spec
+            ; Snippet_picker_tile.spec
            ; File_picker_tile.spec
            ; Line_picker_tile.spec
            ; Content_picker_tile.spec
@@ -362,6 +375,8 @@ let create
   ; theme = Option.value theme ~default:Ches_theme.Theme.default
   ; theme_picker = None
   ; theme_picker_return = document_id
+  ; snippet_picker = None
+  ; snippet_picker_snapshot = None
   ; palette_origin = None
   ; help = None
   ; confirm = None
@@ -399,6 +414,7 @@ let create
 ;;
 
 let controller t = t.controller
+let with_configuration_path t configuration_path = { t with configuration_path }
 let terminal_snapshot t = t.terminal_snapshot
 let terminal_inspection t = t.terminal_inspection
 let terminal_generation t = t.terminal_generation
@@ -446,6 +462,23 @@ let take_terminal_requests t =
 ;;
 let theme t = Option.value_map t.theme_picker ~f:Theme_picker_tile.preview ~default:t.theme
 let theme_picker t = t.theme_picker
+let snippet_picker t = t.snippet_picker
+
+let snippet_picker_current t =
+  Option.exists t.snippet_picker_snapshot ~f:(fun s ->
+    let editor = Controller.editor t.controller in
+    Option.equal Buffer_id.equal s.owner (Session.context_id t.session)
+    && Controller.Document_id.equal s.document (Controller.document_id t.controller)
+    && s.revision = Editor.revision editor
+    && s.cursor = Editor.cursor editor
+    && Mode.equal s.mode (Editor.mode editor))
+;;
+
+let dismiss_snippet_picker t =
+  if Option.is_none t.snippet_picker then t else
+  { t with snippet_picker = None; snippet_picker_snapshot = None
+    ; host = Host.return (Host.invalidate_paste t.host Snippet_picker_tile.id) }
+;;
 let session t = Session.replace_active t.session t.controller
 let has_document t = Option.is_some (Session.context_id t.session)
 
@@ -547,7 +580,7 @@ let apply_configuration ?theme_override t (settings : Ches_config_runtime.Settin
       let configuration_theme_override = Option.first_some theme_override t.configuration_theme_override in
       let theme = Option.value configuration_theme_override ~default:configured_theme in
       let line_numbers = if settings.line_numbers then Line_numbers.Absolute else Off in
-      let t = dismiss_completion t in
+      let t = dismiss_snippet_picker (dismiss_completion t) in
       let host = if Option.is_some t.theme_picker then
           Host.focus (Host.invalidate_paste t.host Theme_picker_tile.id) t.theme_picker_return
         else t.host in
@@ -566,6 +599,7 @@ let take_config_reload_requests t =
 ;;
 
 let reload_configuration t =
+  let t = dismiss_snippet_picker t in
   let generation = t.config_generation + 1 in
   { t with config_generation = generation; config_loading = true
     ; config_reload_requests = generation :: t.config_reload_requests }
@@ -573,6 +607,7 @@ let reload_configuration t =
 
 let receive_configuration t ~generation result =
   if generation <> t.config_generation || not t.config_loading then t else
+  let t = dismiss_snippet_picker t in
   let result = Result.bind result ~f:(apply_configuration t) in
   let t, severity, text = match result with
     | Ok t -> t, Ches_error.Error.Severity.Info, "Configuration reloaded"
@@ -587,7 +622,7 @@ let take_snippet_reload_requests t =
 ;;
 
 let reload_snippets t =
-  let t = dismiss_completion t in
+  let t = dismiss_snippet_picker (dismiss_completion t) in
   let generation = t.snippet_generation + 1 in
   { t with snippet_generation = generation; snippet_loading = true
   ; snippet_reload_requests = generation :: t.snippet_reload_requests }
@@ -599,7 +634,7 @@ let receive_snippets t ~generation result =
     Ches_completion.User_snippets.apply legacy_snippets t.configuration_snippets
     |> Result.map ~f:(fun user_snippets -> legacy_snippets, user_snippets)
     |> Result.map_error ~f:Error.to_string_hum) in
-  let t = dismiss_completion { t with snippet_loading = false } in
+  let t = dismiss_snippet_picker (dismiss_completion { t with snippet_loading = false }) in
   let t, severity, text = match result with
     | Ok (legacy_snippets, user_snippets) ->
       { t with legacy_snippets; user_snippets }, Ches_error.Error.Severity.Info, "Snippets reloaded"
@@ -715,6 +750,22 @@ let cycle_completion t direction =
   | _ -> dismiss_completion t
 ;;
 
+let activate_snippet t template ~base =
+  let editor = Controller.editor t.controller in
+  match Snippet.Session.start template ~base
+      ~revision:(Editor.revision editor) ~text:(Editor.text editor) with
+  | Error _ -> t
+  | Ok fields ->
+    match Controller.apply_insert_edits t.controller
+        ~expected_revision:(Editor.revision editor) ~edits:[]
+        ~cursor:(Snippet.Session.cursor fields) with
+    | Error _ -> t
+    | Ok controller ->
+      { t with controller; snippet = if Snippet.Session.finished fields then None else
+          Some { fields; owner = Session.context_id t.session
+               ; document = Controller.document_id controller } }
+;;
+
 (* Snippets never keep a deferred resolve continuation: imports known at Enter
    are finalized first, then the token is cancelled before fields become live. *)
 let accept_completion t =
@@ -727,18 +778,7 @@ let accept_completion t =
         | Some t ->
           let t = dismiss_completion t in
           let editor = Controller.editor t.controller in
-          (match Snippet.Session.start template ~base:(Editor.cursor editor - cursor)
-              ~revision:(Editor.revision editor) ~text:(Editor.text editor) with
-           | Error _ -> t
-           | Ok fields ->
-             (match Controller.apply_insert_edits t.controller
-                 ~expected_revision:(Editor.revision editor) ~edits:[]
-                 ~cursor:(Snippet.Session.cursor fields) with
-              | Error _ -> t
-              | Ok controller ->
-                { t with controller; snippet = if Snippet.Session.finished fields then None else
-                    Some { fields; owner = Session.context_id t.session
-                         ; document = Controller.document_id controller } })))
+           activate_snippet t template ~base:(Editor.cursor editor - cursor))
      | _ -> finalize_completion t)
   | _ -> finalize_completion t
 ;;
@@ -838,7 +878,7 @@ let receive_word_index t (r : word_index_request) words =
   | _ -> t
 ;;
 
-let demo_snippet_available t =
+let snippet_insertion_available t =
   let editor = Controller.editor t.controller in
   has_document t
   && Controller.Kind.equal (Controller.kind t.controller) File
@@ -848,7 +888,7 @@ let demo_snippet_available t =
 ;;
 
 let insert_demo_snippet t =
-  if not (demo_snippet_available t) then t else
+  if not (snippet_insertion_available t) then t else
   let controller, _, _ = Controller.dispatch (Controller.cancel_pending t.controller)
       [ Editor (Enter_insert Before_cursor) ] in
   let editor = Controller.editor controller in
@@ -1169,6 +1209,10 @@ let theme_picker_layout t ~width ~height =
   Option.bind t.theme_picker ~f:(fun _ -> palette_placement ~width ~height)
 ;;
 
+let snippet_picker_layout t ~width ~height =
+  Option.bind t.snippet_picker ~f:(fun _ -> palette_placement ~width ~height)
+;;
+
 let picker_placement ~width ~height =
   Floating.layout
     ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
@@ -1251,6 +1295,8 @@ let effective_floating floating t ~width ~height =
     Some (Terminal_tile.id, terminal_layout t ~width ~height)
   | None when Option.is_some t.theme_picker ->
     Some (Theme_picker_tile.id, theme_picker_layout t ~width ~height)
+  | None when Option.is_some t.snippet_picker ->
+    Some (Snippet_picker_tile.id, snippet_picker_layout t ~width ~height)
   | None ->
     (match t.content_picker with
      | Some _ -> Some (Content_picker_tile.id, content_picker_layout t ~width ~height)
@@ -1401,6 +1447,8 @@ let text_view t id = View_registry.text_view t.views id
 let cursor_intent t id ~(content : Geometry.Rect.t) : Ches_tile.Cursor.t option =
   if View_id.equal id Theme_picker_tile.id
   then Option.map t.theme_picker ~f:(Theme_picker_tile.cursor ~width:content.width)
+  else if View_id.equal id Snippet_picker_tile.id
+  then Option.map t.snippet_picker ~f:(Snippet_picker_tile.cursor ~width:content.width)
   else if View_id.equal id Palette_tile.id
   then Option.map t.palette ~f:(Palette_tile.cursor ~width:content.width)
   else if View_id.equal id File_picker_tile.id
@@ -1524,6 +1572,8 @@ let leave t id =
   then { t with views = View_registry.leave t.views id }
   else if View_id.equal id Theme_picker_tile.id
   then { t with theme_picker = None }
+  else if View_id.equal id Snippet_picker_tile.id
+  then { t with snippet_picker = None; snippet_picker_snapshot = None }
   else if View_id.equal id Palette_tile.id
   then (* Leaving closes the palette and discards its query; nothing runs. *)
     { t with palette = None; palette_origin = None }
@@ -1556,7 +1606,7 @@ let leave t id =
 let leave_ids t =
   View_registry.ids t.views
   @ [ Terminal_tile.id ]
-  @ [ Theme_picker_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
+  @ [ Snippet_picker_tile.id; Theme_picker_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
     ; Confirm_tile.id; Prompt_tile.id; Popup_tile.id ]
 ;;
 
@@ -1904,6 +1954,14 @@ let synchronize t ~width ~height =
     then leave t Theme_picker_tile.id
     else t
     else t in
+  let t = if Option.is_some t.snippet_picker then
+    if Option.is_none (snippet_picker_layout t ~width ~height)
+       || not (snippet_picker_current t)
+    then dismiss_snippet_picker t
+    else if not (View_id.equal (Host.focused t.host ~available:(fun _ -> true)) Snippet_picker_tile.id)
+    then leave t Snippet_picker_tile.id
+    else t
+    else t in
   let t =
     if Option.is_some t.content_picker && Option.is_none (content_picker_layout t ~width ~height)
     then close_content_picker t ~width ~height else t in
@@ -1959,6 +2017,8 @@ let synchronize t ~width ~height =
           ~f:(Palette_tile.fit ~rows:(minor_rows t ~width ~height Palette_tile.id))
     ; theme_picker = Option.map t.theme_picker
         ~f:(Theme_picker_tile.fit ~rows:(minor_rows t ~width ~height Theme_picker_tile.id))
+    ; snippet_picker = Option.map t.snippet_picker
+        ~f:(Snippet_picker_tile.fit ~rows:(minor_rows t ~width ~height Snippet_picker_tile.id))
     }
   in
   let after = List.map ids ~f:(text_view t) in
@@ -2075,6 +2135,7 @@ let adopt_session_state ?(keep_view_tab = false) ?(keep_focus = false) t session
       && Option.is_some (Session.input_directory t.session) && Option.is_some (side_layout t ~width ~height)
       && Option.is_none t.palette
       && Option.is_none t.theme_picker
+      && Option.is_none t.snippet_picker
       && Option.is_none t.file_picker && Option.is_none t.line_picker
       && Option.is_none t.content_picker && Option.is_none t.help
       && Option.is_none t.confirm && Option.is_none t.prompt && Option.is_none t.popup
@@ -2096,6 +2157,12 @@ let close_buffer_state ?keep_focus t ~width ~height id ~force =
 (* Leave an active view tab for the active file tab, returning focus there. *)
 let show_file_tab t =
   if Option.is_some (active_tab_view t) then return_to_document (file_tab t) else t
+;;
+
+let open_file_session t ~width ~height path =
+  let t = dismiss_snippet_picker (finalize_completion t) in
+  Or_error.map (Session.open_or_activate (session t) path) ~f:(fun (session, id) ->
+    adopt_session_state { (show_file_tab t) with snippet = None } session ~width ~height, id)
 ;;
 
 (* Activate view tab [id] and focus it, leaving the view focused before. *)
@@ -2242,6 +2309,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_smear
   | Toggle_completion | Toggle_completion_ghost
   | Insert_demo_snippet
+  | Insert_snippet | Open_configuration
   | Reload_snippets | Reload_configuration
   | Toggle_status
   | Toggle_hotkey_hints
@@ -2284,6 +2352,8 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
   | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
   | Insert_demo_snippet -> None
+  | Insert_snippet -> Host.notice t.host
+  | Open_configuration -> None
   | Reload_snippets | Reload_configuration -> None
   | Present_buffers presentation -> Some
       (match presentation with
@@ -2976,6 +3046,50 @@ let open_theme_picker t ~width ~height =
       ~rows:(minor_rows t ~width ~height Theme_picker_tile.id)) }
 ;;
 
+let open_snippet_picker t ~width ~height =
+  if not (snippet_insertion_available t)
+     || Option.is_some (active_tab_view t)
+     || not (View_id.equal (focused_view t ~width ~height) document_id)
+     || Option.is_none (palette_placement ~width ~height)
+  then { t with host = Host.with_notice t.host "Insert snippet unavailable in this view or allocation" }
+  else
+    let editor = Controller.editor t.controller in
+    let snapshot = { owner = Session.context_id t.session
+      ; document = Controller.document_id t.controller
+      ; revision = Editor.revision editor; cursor = Editor.cursor editor
+      ; mode = Editor.mode editor } in
+    let picker = Snippet_picker_tile.create
+        (Ches_completion.User_snippets.available t.user_snippets ~path:(Editor.path editor)) in
+    let t = List.fold (leave_ids t) ~init:t ~f:leave in
+    let t = { t with snippet_picker = Some picker; snippet_picker_snapshot = Some snapshot
+      ; controller = Controller.cancel_pending t.controller
+      ; host = Host.focus t.host Snippet_picker_tile.id } in
+    { t with snippet_picker = Some (Snippet_picker_tile.fit picker
+        ~rows:(minor_rows t ~width ~height Snippet_picker_tile.id)) }
+;;
+
+let accept_snippet_picker t (item : Ches_completion.User_snippets.item) =
+  if not (snippet_picker_current t) then dismiss_snippet_picker t else
+  let t = dismiss_snippet_picker t in
+  let controller, _, _ = Controller.dispatch (Controller.cancel_pending t.controller)
+      [ Editor (Enter_insert Before_cursor) ] in
+  let editor = Controller.editor controller in
+  let text = Editor.text editor and cursor = Editor.cursor editor in
+  match Ches_completion.User_snippets.instantiate t.user_snippets ~id:item.declaration.id
+      ~path:(Editor.path editor) ~text ~cursor with
+  | Error error -> pane_notice t ~source:Snippet_picker_tile.id (Error.to_string_hum error)
+  | Ok candidate ->
+    (* An explicit insertion has no completion prefix. Apply its zero-width edit
+       in the ordinary insert undo group, then share accepted-snippet activation. *)
+    match Controller.apply_insert_edits controller ~expected_revision:(Editor.revision editor)
+        ~edits:[[candidate.primary]] ~cursor:(cursor + candidate.cursor) with
+    | Error error -> pane_notice t ~source:Snippet_picker_tile.id (Error.to_string_hum error)
+    | Ok controller ->
+      let t = { t with controller = Controller.cancel_pending controller } in
+      Option.value_map candidate.snippet ~default:t ~f:(fun template ->
+        activate_snippet t template ~base:cursor)
+;;
+
 let open_palette t ~width ~height =
   let t = finalize_completion t in
   let notice text = { t with host = Host.with_notice t.host text } in
@@ -2999,9 +3113,9 @@ let open_palette t ~width ~height =
     let globals =
       Ches_palette.Catalog.entries Ches_palette.Catalog.default
       |> List.filter ~f:(fun entry ->
-        not (Keymap.Action.equal (Ches_palette.Catalog.Entry.action entry)
-          (View Insert_demo_snippet))
-        || (demo_snippet_available t && View_id.equal current document_id))
+        not (List.exists [ View_command.Insert_demo_snippet; Insert_snippet ] ~f:(fun command ->
+          Keymap.Action.equal (Ches_palette.Catalog.Entry.action entry) (View command)))
+        || (snippet_insertion_available t && View_id.equal current document_id))
       |> Ches_palette.Catalog.create |> Or_error.ok_exn
     in
     let catalog =
@@ -3283,6 +3397,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   let t = if View_command.equal view Reload_configuration then t else finalize_completion t in
   let t = if not (View_command.equal view Reload_configuration) && Option.is_some t.theme_picker
     then return_to_document t else t in
+  let t = dismiss_snippet_picker t in
   let t = match view with
     | Directory_major | Directory_side | Focus_directory | Toggle_directory -> leave_bare t
     | _ -> t in
@@ -3290,6 +3405,19 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Toggle_completion -> { t with completion_enabled = not t.completion_enabled }
   | Toggle_completion_ghost -> { t with completion_ghost_enabled = not t.completion_ghost_enabled }
   | Insert_demo_snippet -> insert_demo_snippet t
+  | Insert_snippet -> open_snippet_picker t ~width ~height
+  | Open_configuration ->
+    let failed text =
+      { t with host = Host.with_notice t.host text
+        ; controller = Controller.update_feedback t.controller
+            (Notify { source = "configuration"; scope = path t; severity = Error
+              ; text; history = true }) } in
+    (match t.configuration_path with
+     | Error error -> failed error
+     | Ok path ->
+       match open_file_session t ~width ~height path with
+       | Ok (t, _) -> t
+       | Error error -> failed (Error.to_string_hum error))
   | Reload_snippets -> reload_snippets t
   | Reload_configuration -> reload_configuration t
   | Toggle_terminal -> toggle_terminal t ~width ~height
@@ -3707,6 +3835,9 @@ let paste_capture t ~width ~height id text =
     | _ when View_id.equal id Theme_picker_tile.id ->
       { t with theme_picker = Option.map t.theme_picker ~f:(fun picker ->
           Theme_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text)) }
+    | _ when View_id.equal id Snippet_picker_tile.id ->
+      { t with snippet_picker = Option.map t.snippet_picker ~f:(fun picker ->
+          Snippet_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text)) }
     | _ when View_id.equal id Content_picker_tile.id ->
       Option.iter t.content_picker ~f:(fun picker ->
         Content_picker_tile.update picker ~rows:(minor_rows t ~width ~height id) (Paste text));
@@ -3817,6 +3948,23 @@ let feed_palette t ~width ~height palette key =
 
 let route t ~width ~height key =
   match Host.capturing t.host ~available:(available t ~width ~height) with
+  | Some id when View_id.equal id Snippet_picker_tile.id ->
+    let host, decision = Host.key t.host key
+      ~lookup:(Keymap.lookup (Controller.keymap t.controller))
+      ~content:Snippet_picker_tile.interpret ~escape:None ~hint:Palette_tile.hint in
+    let t = { t with host } in
+    (match decision, t.snippet_picker with
+     | Return, _ -> dismiss_snippet_picker t, Controller.Status.Running
+     | Content (Event event), Some picker ->
+       { t with snippet_picker = Some (Snippet_picker_tile.update picker
+           ~rows:(minor_rows t ~width ~height id) event) }, Running
+     | Content Accept, Some picker ->
+       (match Snippet_picker_tile.selected picker with
+        | None -> { t with host = Host.with_notice t.host "No matching snippet" }, Running
+        | Some item -> accept_snippet_picker t item, Running)
+     | Workspace command, _ -> apply_view_command (dismiss_snippet_picker t) ~width ~height command, Running
+     | Notice text, _ -> { t with host = Host.with_notice t.host text }, Running
+     | _ -> t, Running)
   | Some id when View_id.equal id Theme_picker_tile.id ->
     let host, decision = Host.key t.host key
       ~lookup:(Keymap.lookup (Controller.keymap t.controller))
@@ -4581,9 +4729,8 @@ let with_notice ?(source = "file picker") t text =
 ;;
 
 let open_file t ~width ~height path =
-  let t = finalize_completion t in
-  Or_error.map (Session.open_or_activate (session t) path) ~f:(fun (session, id) ->
-    adopt_session (show_file_tab t) session ~width ~height, id)
+  Or_error.map (open_file_session t ~width ~height path) ~f:(fun (t, id) ->
+    release_held t ~width ~height, id)
 ;;
 let activate_buffer t ~width ~height id =
   let t = finalize_completion t in

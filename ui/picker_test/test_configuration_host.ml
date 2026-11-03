@@ -94,7 +94,7 @@ let%expect_test "compiled OCaml snippets: no-LSP startup, reload rollback, repla
       let gate = Ivar.create () in Queue.enqueue gates gate; Ivar.read gate) in
     let controller = controller () in
     let handle = Bonsai_term_test.create_handle ~initial_dimensions:{ width = 160; height = 30 }
-      (Ches_ui.Editor_view.app ~configuration ~snippets ~startup_configuration ~bare:true
+      (Ches_ui.Editor_view.app ~configuration_path:(Ok path) ~configuration ~snippets ~startup_configuration ~bare:true
         controller ~exit:(fun () -> Effect.Ignore)) in
     let key key = Bonsai_term_test.send_event handle (Key_press { key; mods = [] }) in
     let type_text text = String.iter text ~f:(fun c -> key (ASCII c)) in
@@ -151,7 +151,7 @@ let%expect_test "compiled OCaml snippets: no-LSP startup, reload rollback, repla
     let fallback_controller = Ches_app.Controller.create (Ches_core.Editor.create
       ~path:"fallback.sv" ~cell_width:Ches_screen.Cell_map.width Ches_core.Text_buffer.empty) in
     let fallback = Bonsai_term_test.create_handle ~initial_dimensions:{ width = 160; height = 30 }
-      (Ches_ui.Editor_view.app ~startup_configuration:failed_startup ~bare:true
+      (Ches_ui.Editor_view.app ~configuration_path:(Ok path) ~startup_configuration:failed_startup ~bare:true
         fallback_controller ~exit:(fun () -> Effect.Ignore)) in
     let fallback_view () =
       Handle.recompute_view fallback;
@@ -190,7 +190,7 @@ let%expect_test "real startup snapshot, frontend reload, failure, CLI override a
     let make ?theme ?startup_configuration () =
       let controller = controller () in
       let handle = Bonsai_term_test.create_handle ~initial_dimensions:{ width = 160; height = 30 }
-        (Ches_ui.Editor_view.app ~configuration ?startup_configuration ?theme ~bare:true controller
+        (Ches_ui.Editor_view.app ~configuration_path:(Ok path) ~configuration ?startup_configuration ?theme ~bare:true controller
           ~exit:(fun () -> Effect.Ignore)) in
       handle, controller in
     let handle, controller = make ~startup_configuration () in

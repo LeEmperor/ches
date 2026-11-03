@@ -12,6 +12,13 @@ Create `~/.config/ches/config.ml`. If `XDG_CONFIG_HOME` is an absolute nonempty 
 use `$XDG_CONFIG_HOME/ches/config.ml` instead. Ches does not create the file for you.
 An absent configuration uses the defaults and needs no compiler.
 
+From the command palette (`Space c c`), choose **Open configuration** to open this
+exact path in Ches. Existing unsaved config buffers are reused. If the file does
+not exist, it opens as an unsaved buffer; the command does not create files or
+directories or execute configuration. Save normally, then use **Reload
+configuration** to apply it. If the parent directory is absent, create it before
+saving.
+
 ```ocaml
 open Ches_config
 
@@ -145,6 +152,12 @@ Snippets.disable ~id
 
 See [snippets.example.ml](snippets.example.ml) for copyable templates and
 [snippet controls](editor_reference.md#snippet-placeholders) for supported syntax.
+
+To discover templates without remembering prefixes, choose **Insert snippet**
+from the palette in a file's Normal mode. Search by prefix, description, or ID;
+the preview identifies the effective declaration's origin (bundled, legacy JSON,
+or OCaml), scope, and raw body when space permits. Enter inserts the selected
+template at the cursor and activates its fields. Escape cancels without editing.
 
 ### Legacy JSON compatibility
 

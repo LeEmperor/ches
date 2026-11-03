@@ -403,6 +403,11 @@ let default =
         ~keywords:[ "suggestions"; "autocomplete" ] Toggle_completion
     ; view ~id:"completion.ghost" ~title:"Toggle completion ghost preview"
         ~keywords:[ "suggestions"; "inline"; "suffix" ] Toggle_completion_ghost
+    ; view ~id:"configuration.open" ~title:"Open configuration"
+        ~keywords:[ "settings"; "config.ml"; "preferences" ] Open_configuration
+    ; view ~id:"snippets.insert" ~title:"Insert snippet"
+        ~description:"Search applicable templates and insert at the cursor"
+        ~keywords:[ "templates"; "placeholders"; "expand" ] Insert_snippet
     ; view ~id:"configuration.reload" ~title:"Reload configuration"
         ~description:"Apply a fresh defaults-based configuration snapshot"
         ~keywords:[ "settings"; "config.ml"; "preferences" ] Reload_configuration

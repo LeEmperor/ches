@@ -52,6 +52,8 @@ type t =
   | Toggle_completion
   | Toggle_completion_ghost
   | Insert_demo_snippet
+  | Insert_snippet
+  | Open_configuration
   | Reload_snippets
   | Reload_configuration (** Queue an asynchronous configuration reload. *)
   | Toggle_terminal

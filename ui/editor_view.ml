@@ -92,7 +92,7 @@ let apply_startup_configuration ?theme_override ui result =
       ("Configuration startup failed; using defaults: " ^ error)
 ;;
 
-let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration ?configuration_path ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
@@ -134,6 +134,11 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
           (List.map (String.to_list " vz") ~f:(fun c ->
              Ui_state.Input.Key (Ches_input.Key.char c))))
       else ui in
+  let configuration_path = Option.value_or_thunk configuration_path ~default:(fun () ->
+    match Ches_config_runtime.Loader.config_path ~getenv:Sys.getenv with
+    | Some path -> Ok path
+    | None -> Error "Cannot locate configuration: set an absolute XDG_CONFIG_HOME or a non-empty HOME") in
+  let initial_ui = Ui_state.with_configuration_path initial_ui configuration_path in
   let initial_ui = Option.value_map startup_configuration ~default:initial_ui
     ~f:(apply_startup_configuration ?theme_override:theme initial_ui) in
   let current_ui = ref initial_ui in
@@ -543,14 +548,14 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
   ~view, ~handler
 ;;
 
-let app ?terminal ?snippets ?configuration ?startup_configuration ?smear_enabled ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
+let app ?terminal ?snippets ?configuration ?startup_configuration ?configuration_path ?smear_enabled ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
   ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph) =
   let terminal = Option.value_or_thunk terminal ~default:Terminal_host.create in
-  app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration ?smear_enabled ~zen ?bare ?theme ?buffer_presentation
+  app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration ?configuration_path ?smear_enabled ~zen ?bare ?theme ?buffer_presentation
     ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions graph
 ;;
 
-let run ?configuration ?startup_configuration ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
+let run ?configuration ?startup_configuration ?configuration_path ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?font ?buffer_presentation ?report ?source ?vcs controller =
   let configuration = Option.value_or_thunk configuration ~default:(fun () -> Configuration_host.create ()) in
   let configuration_at_shutdown = ref (Some configuration) in
   Async.Shutdown.at_shutdown (fun () ->
@@ -586,7 +591,7 @@ let run ?configuration ?startup_configuration ?(smear_enabled = false) ?(zen = f
        ~dispose:true
        ~mouse:No_mouse_events
        ~bpaste:true
-        (app_with_terminal ~terminal ~configuration ~startup_configuration ~smear_enabled ~zen ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
+        (app_with_terminal ~terminal ~configuration ~startup_configuration ?configuration_path ~smear_enabled ~zen ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font controller))
     ~f:(fun result ->
       Configuration_host.stop configuration;
       Option.iter source ~f:Ches_source.Source.stop;

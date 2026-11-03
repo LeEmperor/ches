@@ -12,6 +12,25 @@ type declaration =
   }
 [@@deriving sexp, equal]
 
+type origin = Bundled | Legacy_json | Ocaml [@@deriving sexp, equal]
+
+type item = { declaration : declaration; origin : origin }
+[@@deriving sexp, equal]
+
+(** Effective, applicable declarations sorted lexically by prefix, then ID.
+    Bodies are the original templates, before variable/indentation expansion. *)
+val available : t -> path:string option -> item list
+
+(** Resolve an applicable ID in this catalog snapshot and insert at a valid UTF-8
+    cursor boundary. The primary edit is always zero-width, even after a prefix. *)
+val instantiate
+  :  t
+  -> id:string
+  -> path:string option
+  -> text:Ches_core.Text_buffer.t
+  -> cursor:int
+  -> Model.Candidate.t Or_error.t
+
 type operation = Add of declaration | Disable of string
 [@@deriving sexp, equal]
 

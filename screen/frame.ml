@@ -60,6 +60,14 @@ let floating_layer ?allocation ?floating ui ~width ~height =
           ; content = Theme_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
               picker ~width:content.width ~rows:content.height
           ; cursor = Some (Theme_picker_tile.cursor picker ~width:content.width) }))
+    | None when Option.is_some (Ui_state.snippet_picker ui) ->
+      Option.bind (Ui_state.snippet_picker_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.snippet_picker ui) ~f:(fun picker ->
+          let content = layout.content in
+          { Floating_layer.id = Snippet_picker_tile.id; layout
+          ; content = Snippet_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+              picker ~width:content.width ~rows:content.height
+          ; cursor = Some (Snippet_picker_tile.cursor picker ~width:content.width) }))
     | None when Option.is_some (Ui_state.content_picker ui) ->
       Option.bind (Ui_state.content_picker_layout ui ~width ~height) ~f:(fun layout ->
         Option.map (Ui_state.content_picker ui) ~f:(fun picker ->
@@ -161,6 +169,7 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
     | Some layer -> Some (layer.id, Some layer.layout)
      | None when Option.is_some allocation ->
           Some ((if Option.is_some (Ui_state.theme_picker ui) then Theme_picker_tile.id
+            else if Option.is_some (Ui_state.snippet_picker ui) then Snippet_picker_tile.id
             else if Option.is_some (Ui_state.content_picker ui) then Content_picker_tile.id
            else if Option.is_some (Ui_state.line_picker ui) then Line_picker_tile.id
           else if Option.is_some (Ui_state.file_picker ui) then File_picker_tile.id
