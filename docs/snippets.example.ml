@@ -27,6 +27,7 @@ $0|snippet};
     ~id:"sv.aff"
     ~prefix:"aff"
     ~scope:[ "systemverilog" ]
+    ~collection:"sv.design"
     ~description:"Clocked always block"
     {snippet|always_ff @(${1|posedge,negedge|} ${2:clk}) begin
     $0
@@ -36,6 +37,7 @@ end|snippet};
     ~id:"sv.mod"
     ~prefix:"mod"
     ~scope:[ "systemverilog" ]
+    ~collection:"sv.design"
     ~description:"Module named after this file"
     {snippet|module ${1:${TM_FILENAME_BASE:module_name}} (
     $0

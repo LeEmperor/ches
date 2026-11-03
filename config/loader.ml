@@ -62,8 +62,10 @@ let decode text =
     String.init (String.length encoded / 2) ~f:(fun i ->
       Char.of_int_exn ((hex_digit encoded.[i * 2] * 16) + hex_digit encoded.[i * 2 + 1]))
   in
-  if not (String.equal (next ()) "CHES_SETTINGS_2") then
-    failwith "malformed or unsupported settings result";
+  let version = match next () with
+    | "CHES_SETTINGS_2" -> 2
+    | "CHES_SETTINGS_3" -> 3
+    | _ -> failwith "malformed or unsupported settings result" in
   let completion_enabled = boolean () in
   let completion_ghost_preview = boolean () in
   let completion_min_prefix_chars = number "minimum prefix (must be positive)" ~max:Int.max_value in
@@ -82,19 +84,27 @@ let decode text =
     let open Ches_completion.User_snippets in
     match next () with
     | "disable" -> Disable (hex ())
+    | "collection" when version >= 3 ->
+      let collection = hex () in
+      let enabled = boolean () in
+      Set_collection_enabled { collection; enabled }
     | "add" ->
       let id = hex () in
       let prefix = hex () in
       (* Every scope requires at least its terminating newline. *)
       let count = number "scope count" ~max:!remaining_lines in
       let scopes = read_list count hex in
+      let collection = if version < 3 then None else match next () with
+        | "none" -> None
+        | "some" -> Some (hex ())
+        | _ -> failwith "invalid collection tag in settings result" in
       let description = match next () with
         | "none" -> None
         | "some" -> Some (hex ())
         | _ -> failwith "invalid description tag in settings result"
       in
       let body = hex () in
-      Add { id; prefix; scopes; description; body }
+      Add { id; prefix; scopes; collection; description; body }
     | _ -> failwith "invalid snippet operation in settings result") in
   (match !lines with
    | [ "" ] -> ()

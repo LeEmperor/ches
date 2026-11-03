@@ -19,7 +19,7 @@ let results t =
     let d = item.U.declaration in
     let field text weight = { Fuzzy.Field.tag = (); text; weight } in
     item, [ field d.prefix 100; field (Option.value d.description ~default:"") 90
-          ; field d.id 80 ])
+          ; field d.id 80; field (Option.value d.collection ~default:"") 85 ])
   |> Fuzzy.rank ~query:t.query
 ;;
 
@@ -87,17 +87,22 @@ let render ?(hotkey_hints = false) ?notice t ~width ~rows : Tile_shell.Content.t
         let d = result.Fuzzy.Match.item.U.declaration in
         let selected = i + t.view.top = t.view.index in
         let description = Option.value_map d.description ~default:"" ~f:(fun s -> " — " ^ s) in
+        let collection = Option.value_map d.collection ~default:"" ~f:(fun s -> " [" ^ s ^ "]") in
         Tile_text.row (if selected then Pending else Status)
-          ((if selected then "> " else "  ") ^ d.prefix ^ description) ~width)
+          ((if selected then "> " else "  ") ^ d.prefix ^ collection ^ description) ~width)
   in
   let preview = match selected t with
     | Some item when preview_rows rows > 0 ->
       let d = item.U.declaration in
       let scope = if List.is_empty d.scopes then "global" else String.concat ~sep:", " d.scopes in
-      Tile_text.row Status ("ID: " ^ d.id) ~width
-      :: Tile_text.row Status ("Scope: " ^ scope ^ " | Origin: " ^ origin item.origin) ~width
-      :: (String.split_lines d.body |> Fn.flip List.take (preview_rows rows - 2)
-           |> List.map ~f:(fun line -> preview_row line ~width))
+      let metadata =
+        [ Tile_text.row Status ("ID: " ^ d.id) ~width
+        ; Tile_text.row Status ("Scope: " ^ scope ^ " | Origin: " ^ origin item.origin) ~width ]
+        @ (Option.to_list d.collection |> List.map ~f:(fun collection ->
+          Tile_text.row Status ("Collection: " ^ collection) ~width)) in
+      metadata @ (String.split_lines d.body
+        |> Fn.flip List.take (preview_rows rows - List.length metadata)
+        |> List.map ~f:(fun line -> preview_row line ~width))
     | _ -> []
   in
   let body = if rows <= 0 then [] else

@@ -6,6 +6,8 @@
 
 - [OCaml configuration](configuration.md): startup settings, session-only changes,
   reload behavior, and an editable example.
+- [Snippet collections](snippets.md): SV, OCaml, and Hardcaml templates, triggers,
+  collection controls, and dependencies.
 - [Editor reference](editor_reference.md): startup defaults, complete keybindings,
   editing semantics, workspace controls, Git, diagnostics, and Tile Terms.
 - [Directory workspace](directory_workspace.md): file tabs, directory navigation,
@@ -40,7 +42,7 @@ user-facing behavior, start with the guides above.
 - [Picker performance and backend comparison](picker_performance_recommendation.md)
 - [AI integration design](ai_integration_design.md)
 - [Implementation plans](plans/README.md)
-- [Deferred workspace work](backlog/README.md)
+- [Backlog](backlog/README.md): snippet collections/catalog and deferred workspace work.
 - [Archived implementation plans](archive/)
 
 Detailed plans and handoffs are grouped under [`plans/`](plans/README.md):

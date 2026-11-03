@@ -931,10 +931,10 @@ completions retain the deferred-resolution behavior described above.
 **Insert snippet** in the command palette (`Space c c`) opens a searchable picker
 from an editable file's Normal mode. It includes global templates and templates
 matching that file's scope, independently of LSP or automatic completion settings.
-Search by prefix, description, or ID. Tab/Ctrl-n and Shift-Tab/Ctrl-p select the
+Search by prefix, description, ID, or collection. Tab/Ctrl-n and Shift-Tab/Ctrl-p select the
 next/previous result; Enter inserts and activates placeholders; Escape/Ctrl-c
 cancels without changing the document. At sufficient height, the preview shows
-the raw body, scope, ID, and effective origin (bundled, legacy JSON, or OCaml).
+the raw body, scope, collection, ID, and effective origin (bundled, legacy JSON, or OCaml).
 
 Picker insertion is at the captured cursor, like `i`, and does not consume a
 preceding identifier. Filename variables and indentation use that insertion
@@ -952,7 +952,7 @@ templates ranked first. Tab cycles expanded candidates; Enter activates fields.
 Automatic matching starts after one character; Ctrl-n also works with automatic
 completion disabled or an empty prefix.
 
-These starters are available immediately in `.sv` and `.svh` files:
+The original starters remain available in `.sv` and `.svh` files:
 
 | Prefix | ID | Template |
 | --- | --- | --- |
@@ -961,6 +961,14 @@ These starters are available immediately in `.sv` and `.svh` files:
 | `mod` | `sv.mod` | Module declaration with an editable filename-backed name |
 | `inst` | `sv.inst` | Module instance with a linked port/signal field |
 | `genfor` | `sv.genfor` | Generate loop with linked loop-variable occurrences |
+
+The full catalog has **93 templates in seven collections**: SV design and
+verification; core OCaml, testing, and Jane Street conventions; and Hardcaml
+design and verification. Hardcaml uses the same file types as OCaml. All
+collections are enabled by default and can be toggled in `config.ml`, for example
+`Snippets.set_collection_enabled ~collection:"hardcaml.verification" false`.
+See [snippet collections](snippets.md) for triggers, configuration, timing/reset
+semantics, and library dependencies. Collection names are searchable in the picker.
 
 To customize, define templates with `Snippets.add` and `Snippets.disable` in
 **`config.ml`**, then choose **Reload configuration**. Settings and declarations

@@ -57,8 +57,9 @@ end
 module View : sig val set_line_numbers : bool -> unit end
 module Theme : sig val set : string -> unit end
 module Snippets : sig
-  val add : id:string -> prefix:string -> ?scope:string list -> ?description:string -> string -> unit
+  val add : id:string -> prefix:string -> ?scope:string list -> ?collection:string -> ?description:string -> string -> unit
   val disable : id:string -> unit
+  val set_collection_enabled : collection:string -> bool -> unit
 end
 ```
 
@@ -66,6 +67,12 @@ Snippet declarations are ordered: the last operation for an ID wins, including
 overrides and disables of builtin IDs. Omitted or empty scope is global. Supported
 scopes are `systemverilog`, `verilog`, `ocaml`, and `.filename-extension` values
 without whitespace or slashes. Each fresh helper starts with no declarations.
+Collection names consist of nonempty dot-separated ASCII alphanumeric, `_`, or
+`-` segments. Membership is optional and independent of scope and origin. All
+collections default to enabled; parent toggles match dotted descendants and the
+last matching toggle wins. Toggles preserve definitions for later re-enabling;
+individual disables remove definitions. Untagged declarations are unaffected by
+collection toggles. An override uses its own membership, not the old declaration's.
 The helper records strings; the host validates IDs, prefixes, descriptions,
 scopes, and template syntax. An invalid operation (even one later overridden)
 rejects the complete snapshot with its index and ID; callers retain prior settings.
@@ -92,9 +99,10 @@ Provider contract (`Ches_completion.User_snippets`):
 ```ocaml
 type declaration =
   { id : string; prefix : string; scopes : string list
-  ; description : string option; body : string }
+  ; collection : string option; description : string option; body : string }
 [@@deriving sexp, equal]
 type operation = Add of declaration | Disable of string
+  | Set_collection_enabled of { collection : string; enabled : bool }
 [@@deriving sexp, equal]
 val apply : t -> operation list -> t Core.Or_error.t
 ```
@@ -124,12 +132,15 @@ details, not supported user API.
   and line numbers. Argument vectors are passed directly, without a shell.
 - Source and result reads are each capped at **1 MiB**; nonregular files are
   rejected. The helper bounds its entire encoded result to 1 MiB before writing,
-  and accepts at most **1000 snippet operations**. `CHES_SETTINGS_2` uses newline
+   and accepts at most **1000 snippet operations**. `CHES_SETTINGS_3` uses newline
   framing: magic; enabled; ghost; minimum prefix; prefer local; line numbers;
   hex theme; decimal operation count; then ordered operations. A `disable` tag
   is followed by hex ID. An `add` tag is followed by hex ID, hex prefix, decimal
-  scope count, that many hex scopes, `none` or `some` (the latter followed by hex
-  description), and hex body. Every field ends in a newline; strings use lowercase
+   scope count, that many hex scopes, optional collection and description (each
+   encoded as `none` or `some` followed by its hex value), and hex body. A
+   `collection` operation tag is followed by hex collection name and enabled
+   boolean. Version-2 decoding remains supported: adds have no collection field,
+   and collection operations are unavailable. Every field ends in a newline; strings use lowercase
   hex, booleans are `true`/`false`, counts are canonical nonnegative decimals.
   The decoder rejects unsupported versions, malformed encodings/tags/counts,
   missing fields, and trailing data. Host validation is mandatory after decoding.

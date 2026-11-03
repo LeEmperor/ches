@@ -18,11 +18,39 @@ let create ?(path = "discovery.ml") initial =
   Ui_state.apply_configuration (Helpers.ui ~path initial)
     { Settings.default with completion_enabled = false
       ; snippets = [ U.Add { id = "test.discovery"; prefix = "unique_prefix"
-          ; description = Some "café linked assignment"; scopes = []
+          ; description = Some "café linked assignment"; scopes = []; collection = None
           ; body = "assign ${1:signal} = $1; ${2:value}$0" }
         ; U.Add { id = "test.scoped"; prefix = "sv_only"; description = None
-          ; scopes = [ "systemverilog" ]; body = "sv $0" } ] }
+          ; scopes = [ "systemverilog" ]; collection = None; body = "sv $0" } ] }
   |> Result.ok_or_failwith
+;;
+
+let%test_unit "configuration toggles survive late legacy load and restore picker insertion" =
+  let toggle enabled = U.Set_collection_enabled { collection = "personal"; enabled } in
+  let settings enabled = { Settings.default with snippets = [toggle enabled] } in
+  let initial = Ui_state.apply_configuration (Helpers.ui ~path:"collections.txt" "keep")
+      (settings false) |> Result.ok_or_failwith in
+  let legacy = U.parse {|{"version":1,"snippets":[
+    {"id":"personal.template","prefix":"zzcollection","collection":"personal.tools","body":"added $0"},
+    {"id":"untagged","prefix":"zzcustom","body":"custom $0"}]}|} |> Or_error.ok_exn in
+  let initial = Ui_state.receive_snippets initial ~generation:1 (Ok legacy) in
+  let automatic = press initial "izzcollection" in
+  assert (List.is_empty (Ui_state.completion_candidates automatic));
+  let hidden = run (open_picker initial) (Helpers.paste "personal.tools") in
+  assert (Option.is_none (Snippet_picker_tile.selected (picker hidden)));
+  let untagged = run (open_picker initial) (Helpers.paste "zzcustom") in
+  assert (String.equal (selected untagged).declaration.id "untagged");
+  let restored = Ui_state.apply_configuration hidden (settings true) |> Result.ok_or_failwith in
+  assert (Option.is_none (Ui_state.snippet_picker restored));
+  let discovered = run (open_picker restored) (Helpers.paste "personal.tools") in
+  assert (String.equal (selected discovered).declaration.id "personal.template");
+  assert (String.is_substring (Frame.render discovered ~width ~height |> Frame.to_string)
+    ~substring:"personal.tools");
+  let inserted = press discovered "<CR>" in
+  assert (String.equal (text inserted) "added keep");
+  let removed = Ui_state.apply_configuration initial Settings.default |> Result.ok_or_failwith in
+  let discovered = run (open_picker removed) (Helpers.paste "personal.tools") in
+  assert (String.equal (selected discovered).declaration.id "personal.template")
 ;;
 
 let%test_unit "explicit insertion ignores prefix, retains suffix, activates fields and one undo group without LSP or auto completion" =
@@ -57,7 +85,9 @@ let%test_unit "picker scope, empty query result, cancellation, frame cursor and 
   let opened = open_picker initial in
   let frame = Frame.render opened ~width ~height |> Frame.to_string in
   assert (String.is_substring frame ~substring:"Insert snippet");
-  assert (String.is_substring frame ~substring:"unique_prefix");
+  let filtered = run opened (Helpers.paste "unique_prefix") in
+  assert (String.is_substring (Frame.render filtered ~width ~height |> Frame.to_string)
+    ~substring:"unique_prefix");
   assert (not (String.is_substring frame ~substring:"sv_only"));
   let unmatched = press opened "no_such_template_xyz<CR>" in
   assert (Option.is_some (Ui_state.snippet_picker unmatched));
@@ -102,7 +132,7 @@ let%test_unit "middle-prefix insertion resolves filename and indentation with ex
   let initial = Ui_state.apply_configuration (Helpers.ui ~path:"dir/top.ml" "\t  triggerTAIL")
       { Settings.default with completion_enabled = false
         ; snippets = [ U.Add { id = "context"; prefix = "trigger"; description = None
-            ; scopes = []; body = "${1:${TM_FILENAME_BASE}}/$1\n${2:é}${0}!" } ] }
+            ; scopes = []; collection = None; body = "${1:${TM_FILENAME_BASE}}/$1\n${2:é}${0}!" } ] }
     |> Result.ok_or_failwith |> fun t -> press t "7l" in
   let base = String.length "\t  trig" in
   assert (Editor.cursor (editor initial) = base);

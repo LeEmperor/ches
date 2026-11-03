@@ -1,12 +1,13 @@
 open! Core
 
-(** Immutable catalog, including bundled starters and user overrides. *)
+(** Immutable catalog, including bundled collections and user overrides. *)
 type t
 
 type declaration =
   { id : string
   ; prefix : string
   ; scopes : string list
+  ; collection : string option
   ; description : string option
   ; body : string
   }
@@ -17,11 +18,11 @@ type origin = Bundled | Legacy_json | Ocaml [@@deriving sexp, equal]
 type item = { declaration : declaration; origin : origin }
 [@@deriving sexp, equal]
 
-(** Effective, applicable declarations sorted lexically by prefix, then ID.
+(** Enabled, applicable declarations sorted lexically by prefix, then ID.
     Bodies are the original templates, before variable/indentation expansion. *)
 val available : t -> path:string option -> item list
 
-(** Resolve an applicable ID in this catalog snapshot and insert at a valid UTF-8
+(** Resolve an enabled, applicable ID in this catalog snapshot and insert at a valid UTF-8
     cursor boundary. The primary edit is always zero-width, even after a prefix. *)
 val instantiate
   :  t
@@ -31,7 +32,13 @@ val instantiate
   -> cursor:int
   -> Model.Candidate.t Or_error.t
 
+(** Collections default to enabled; untagged declarations are always enabled.
+    A toggle matches the named collection and its dotted descendants. The last
+    matching toggle wins, including across successive [apply] calls. Toggles keep
+    templates intact; [Disable] deletes an individual ID. Collection names contain
+    nonempty dot-separated ASCII alphanumeric, underscore or hyphen segments. *)
 type operation = Add of declaration | Disable of string
+  | Set_collection_enabled of { collection : string; enabled : bool }
 [@@deriving sexp, equal]
 
 (** Apply ordered, last-wins overrides to an immutable base. Every operation is

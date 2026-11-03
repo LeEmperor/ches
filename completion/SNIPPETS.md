@@ -5,6 +5,21 @@ are the source-facing API. A candidate carries `snippet : Snippet.t option`;
 its `primary.text` must equal `Snippet.text` when present. Buffer words use `None`.
 Malformed/unsupported snippets should be skipped by providers.
 
+## Bundled catalog and collections
+
+`Snippet_definition` describes raw bundled templates; `Sv_snippets.all` and
+`Ocaml_snippets.all` provide the seven collections documented in the
+[user guide](../docs/snippets.md). `User_snippets` validates/parses these into an
+immutable catalog with independent stable IDs, optional collection membership,
+and provenance. Templates are not split into separate OCaml/Hardcaml file types.
+
+`Set_collection_enabled { collection; enabled }` retains templates and applies
+to the named collection and dotted descendants. The last matching toggle wins;
+all collections start enabled and untagged entries are unaffected. `Disable id`
+removes an individual definition instead. `available`, `candidates`, and
+`instantiate` all enforce collection availability and path scope. An override
+supplies its own membership. Picker search/display includes collection identity.
+
 ## Rich syntax API (provider and interaction integration)
 
 `Snippet.resolve : t -> path:string option -> t Or_error.t` resolves supported

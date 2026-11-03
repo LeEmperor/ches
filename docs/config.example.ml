@@ -11,5 +11,10 @@ let () =
   View.set_line_numbers false;
   Theme.set "vim-classic"
 
-(* Snippets.add and Snippets.disable can follow here; see snippets.example.ml.
+(* All snippet collections are enabled by default. For example:
+   let () =
+     Snippets.set_collection_enabled ~collection:"hardcaml" false;
+     Snippets.set_collection_enabled ~collection:"hardcaml.design" true
+
+   Snippets.add and Snippets.disable can follow here; see snippets.example.ml.
    Reload configuration validates settings and snippets together. *)

@@ -6,6 +6,7 @@ type declaration =
   { id : string
   ; prefix : string
   ; scopes : string list
+  ; collection : string option
   ; description : string option
   ; body : string
   }
@@ -16,32 +17,11 @@ type item = { declaration : declaration; origin : origin }
 [@@deriving sexp, equal]
 
 type entry = { item : item; template : Snippet.t }
-type t = entry String.Map.t
+type t = { templates : entry String.Map.t; toggles : (string * bool) list }
 
 type operation = Add of declaration | Disable of string
+  | Set_collection_enabled of { collection : string; enabled : bool }
 [@@deriving sexp, equal]
-
-let starter id prefix description body =
-  { item = { declaration = { id; prefix; scopes = [ "systemverilog" ]; description = Some description; body }
-           ; origin = Bundled }
-  ; template = Snippet.parse body |> Or_error.ok_exn }
-;;
-
-let builtins =
-  [ starter "sv.aff" "aff" "Clocked always block"
-      "always_ff @(${1|posedge,negedge|} ${2:clk}) begin\n    $0\nend"
-  ; starter "sv.acomb" "acomb" "Combinational always block"
-      "always_comb begin\n    $0\nend"
-  ; starter "sv.mod" "mod" "Module declaration"
-      "module ${1:${TM_FILENAME_BASE:module_name}} (\n    $0\n);\nendmodule"
-  ; starter "sv.inst" "inst" "Module instance"
-      "${1:module_name} ${2:instance_name} (\n    .${3:port}($3)$0\n);"
-  ; starter "sv.genfor" "genfor" "Generate loop"
-      "for (genvar ${1:i} = 0; $1 < ${2:COUNT}; $1++) begin : ${3:gen_block}\n    $0\nend"
-  ]
-  |> List.map ~f:(fun entry -> entry.item.declaration.id, entry)
-  |> String.Map.of_alist_exn
-;;
 
 exception Invalid_config of string
 let invalid message = raise (Invalid_config message)
@@ -100,16 +80,49 @@ let validate_scope value =
 let scope value = validate_scope (string "scope" value)
 let validate_id id = nonempty_string "id" id
 
-let declaration_entry ~origin ({ id; prefix; scopes; description; body } : declaration) : entry =
+let validate_collection value =
+  let value = nonempty_string "collection" value in
+  let valid_segment segment =
+    not (String.is_empty segment)
+    && String.for_all segment ~f:(fun c ->
+      Char.is_alpha c || Char.is_digit c || Char.equal c '_' || Char.equal c '-')
+  in
+  if not (List.for_all (String.split value ~on:'.') ~f:valid_segment)
+  then invalid "collection must be a dotted name of nonempty ASCII alphanumeric, _ or - segments";
+  value
+;;
+
+let declaration_entry ~origin ({ id; prefix; scopes; collection; description; body } : declaration) : entry =
   let id = validate_id id in
   let prefix = nonempty_string "prefix" prefix in
   let scopes = List.map scopes ~f:validate_scope in
+  let collection = Option.map collection ~f:validate_collection in
   let description = Option.map description ~f:(validate_string "description") in
   let template = match Snippet.parse body with
     | Ok template -> template
     | Error error -> invalid ("body: " ^ Error.to_string_hum error)
   in
-  { item = { declaration = { id; prefix; scopes; description; body }; origin }; template }
+  { item = { declaration = { id; prefix; scopes; collection; description; body }; origin }; template }
+;;
+
+let builtins =
+  let templates = Sv_snippets.all @ Ocaml_snippets.all
+    |> List.map ~f:(fun (d : Snippet_definition.t) ->
+      d.id, declaration_entry ~origin:Bundled
+        { id = d.id; prefix = d.prefix; scopes = d.scopes
+        ; collection = Some d.collection; description = Some d.description; body = d.body })
+    |> String.Map.of_alist_exn in
+  { templates; toggles = [] }
+;;
+
+let collection_enabled t (d : declaration) =
+  match d.collection with
+  | None -> true
+  | Some name ->
+    List.find_map t.toggles ~f:(fun (collection, enabled) ->
+      if String.equal name collection || String.is_prefix name ~prefix:(collection ^ ".")
+      then Some enabled else None)
+    |> Option.value ~default:true
 ;;
 
 let apply base operations =
@@ -122,19 +135,24 @@ let apply base operations =
       bytes := !bytes + String.length value
     in
     Ok (List.foldi operations ~init:base ~f:(fun index catalog operation ->
-      let id = match operation with Add declaration -> declaration.id | Disable id -> id in
+      let id = match operation with Add declaration -> declaration.id | Disable id -> id
+        | Set_collection_enabled { collection; _ } -> collection in
       try
         count id;
         ignore (validate_id id : string);
         match operation with
-        | Disable id -> Map.remove catalog id
+        | Set_collection_enabled { collection; enabled } ->
+          let collection = validate_collection collection in
+          { catalog with toggles = (collection, enabled) :: catalog.toggles }
+        | Disable id -> { catalog with templates = Map.remove catalog.templates id }
         | Add declaration ->
           count declaration.prefix;
           List.iter declaration.scopes ~f:count;
+          Option.iter declaration.collection ~f:count;
           Option.iter declaration.description ~f:count;
           count declaration.body;
-           let entry = declaration_entry ~origin:Ocaml declaration in
-          Map.set catalog ~key:id ~data:entry
+          let entry = declaration_entry ~origin:Ocaml declaration in
+          { catalog with templates = Map.set catalog.templates ~key:id ~data:entry }
       with Invalid_config message ->
         invalid (sprintf "snippets[%d] (%s): %s" index id message)))
   with Invalid_config message -> Or_error.error_string message
@@ -173,9 +191,9 @@ let parse input =
         in
         if disabled then (
           check_fields fields [ "id"; "disabled" ];
-          Map.remove catalog id)
+          { catalog with templates = Map.remove catalog.templates id })
         else (
-          check_fields fields [ "id"; "prefix"; "scope"; "description"; "body"; "disabled" ];
+          check_fields fields [ "id"; "prefix"; "scope"; "collection"; "description"; "body"; "disabled" ];
           let prefix = nonempty "prefix" (required fields "prefix") in
           let scopes = match find fields "scope" with
             | None -> []
@@ -183,13 +201,14 @@ let parse input =
             | Some _ -> invalid "scope must be an array"
           in
           let description = Option.map (find fields "description") ~f:(string "description") in
+          let collection = Option.map (find fields "collection") ~f:(string "collection") in
           let body = match required fields "body" with
             | `String body -> body
             | `List lines -> String.concat ~sep:"\n" (List.map lines ~f:(string "body line"))
             | _ -> invalid "body must be a string or array of strings"
           in
-           let entry = declaration_entry ~origin:Legacy_json { id; prefix; scopes; description; body } in
-          Map.set catalog ~key:id ~data:entry)
+          let entry = declaration_entry ~origin:Legacy_json { id; prefix; scopes; collection; description; body } in
+          { catalog with templates = Map.set catalog.templates ~key:id ~data:entry })
       with Invalid_config message -> invalid (!context ^ ": " ^ message)))
   with Invalid_config message -> Or_error.error_string message
 ;;
@@ -211,8 +230,9 @@ let applicable (declaration : declaration) ~path =
 ;;
 
 let entries t ~path =
-  Map.data t
-  |> List.filter ~f:(fun entry -> applicable entry.item.declaration ~path)
+  Map.data t.templates
+  |> List.filter ~f:(fun entry -> collection_enabled t entry.item.declaration
+    && applicable entry.item.declaration ~path)
   |> List.sort ~compare:(fun a b ->
     let a = a.item.declaration and b = b.item.declaration in
     match String.compare a.prefix b.prefix with
@@ -244,8 +264,10 @@ let candidate entry ~path ~text ~start ~cursor =
 
 let instantiate t ~id ~path ~text ~cursor =
   if not (B.is_boundary text cursor) then Or_error.error_string "Invalid snippet insertion cursor"
-  else match Map.find t id with
+  else match Map.find t.templates id with
   | None -> Or_error.errorf "Unknown snippet ID: %s" id
+  | Some entry when not (collection_enabled t entry.item.declaration) ->
+    Or_error.errorf "Snippet %s belongs to a disabled collection" id
   | Some entry when not (applicable entry.item.declaration ~path) ->
     Or_error.errorf "Snippet %s is not applicable to this path" id
   | Some entry -> candidate entry ~path ~text ~start:cursor ~cursor

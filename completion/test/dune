@@ -1,6 +1,6 @@
 (library
  (name ches_completion_test)
- (modules test_model test_buffer_words test_snippet test_user_snippets)
+ (modules test_model test_buffer_words test_snippet test_user_snippets test_sv_catalog test_ocaml_catalog)
  (libraries core ches_core ches_completion)
  (inline_tests)
  (preprocess (pps ppx_jane)))

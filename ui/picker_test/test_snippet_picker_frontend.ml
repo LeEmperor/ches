@@ -13,6 +13,7 @@ let%expect_test "palette discovers and inserts configured snippets without LSP o
             { id = "frontend.discovery"
             ; prefix = "not_the_preceding_text"
             ; scopes = []
+            ; collection = None
             ; description = Some "unique frontend discovery"
             ; body = "PICKED ${1:first} = $1; $0"
             }

@@ -31,19 +31,23 @@ module Snippets = struct
     { id : string
     ; prefix : string
     ; scopes : string list
+    ; collection : string option
     ; description : string option
     ; body : string
     }
   type operation = Add of declaration | Disable of string
+    | Set_collection_enabled of { collection : string; enabled : bool }
   let operations = ref []
   let count = ref 0
   let record operation =
     if !count >= 1000 then invalid_arg "snippets exceeds 1000 operations";
     incr count;
     operations := operation :: !operations
-  let add ~id ~prefix ?(scope = []) ?description body =
-    record (Add { id; prefix; scopes = scope; description; body })
+  let add ~id ~prefix ?(scope = []) ?collection ?description body =
+    record (Add { id; prefix; scopes = scope; collection; description; body })
   let disable ~id = record (Disable id)
+  let set_collection_enabled ~collection enabled =
+    record (Set_collection_enabled { collection; enabled })
 end
 
 let write_result path =
@@ -74,7 +78,7 @@ let write_result path =
   let number n = line (string_of_int n) in
   let operations = List.rev !(Snippets.operations) in
   if List.length operations > 1000 then invalid_arg "snippets exceeds 1000 operations";
-  line "CHES_SETTINGS_2";
+  line "CHES_SETTINGS_3";
   List.iter (fun value -> line (string_of_bool value)) [!enabled; !ghost_preview];
   number !min_prefix_chars;
   List.iter (fun value -> line (string_of_bool value)) [!prefer_local_snippets; !line_numbers];
@@ -82,12 +86,17 @@ let write_result path =
   number (List.length operations);
   List.iter (function
     | Snippets.Disable id -> line "disable"; hex id
+    | Snippets.Set_collection_enabled { collection; enabled } ->
+      line "collection"; hex collection; line (string_of_bool enabled)
     | Snippets.Add declaration ->
       line "add";
       hex declaration.id;
       hex declaration.prefix;
       number (List.length declaration.scopes);
       List.iter hex declaration.scopes;
+      (match declaration.collection with
+       | None -> line "none"
+       | Some value -> line "some"; hex value);
       (match declaration.description with
        | None -> line "none"
        | Some value -> line "some"; hex value);
