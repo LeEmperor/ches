@@ -179,6 +179,8 @@ val snippet_picker : t -> Snippet_picker_tile.t option
 val snippet_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 (** Language-query floats retain the originating document identity. *)
 val hover : t -> Hover_tile.t option
+val signature_help : t -> Signature_overlay.t option
+val signature_help_enabled : t -> bool
 val destinations : t -> Destination_picker_tile.t option
 val instances : t -> Instance_picker_tile.t option
 val active_instance_label : t -> string option

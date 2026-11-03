@@ -69,6 +69,7 @@ let%test_unit "configuration changes, disables, removals and invalid whole snaps
   assert (String.equal (expansion t) "second ");
   List.iter [Error "compile failed";
     Ok { Settings.completion_enabled = false;
+      signature_help_enabled = false;
       completion_ghost_preview = true; completion_min_prefix_chars = 3;
       completion_prefer_local_snippets = false; line_numbers = true;
       theme = Ches_theme.Theme.id (List.last_exn Ches_theme.Theme.all);

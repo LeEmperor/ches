@@ -56,7 +56,7 @@ let start ~create () =
             | Some (_, source, _) -> Source.send source request
             | None -> emit (Ches_error.Source_event.Query_result { token = q.token;
                 cursor = q.cursor; kind = q.kind; source = "source";
-                result = Failed "No language server attached to this document" }))
+                result = Ches_error.Language_query.unavailable q.kind "No language server attached to this document" }))
          | Cancel_query token ->
            Option.iter (Hashtbl.find drivers token.resource) ~f:(fun (_, source, _) -> Source.send source request)
         | Ches_error.Source_request.Document_opened { resource; generation } -> open_document resource generation

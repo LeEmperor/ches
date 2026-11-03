@@ -40,6 +40,9 @@ module Placement = struct
 end
 
 type t =
+  | Signature_help
+  | Toggle_signature_help
+  | Switch_companion
   | Hover
   | Go_to_declaration
   | Go_to_definition
@@ -136,6 +139,7 @@ let scale t ~count =
   | Adjust_status_size cells -> Some (Adjust_status_size (cells * count))
   | Adjust_directory_size cells -> Some (Adjust_directory_size (cells * count))
   | Toggle_directory
+  | Signature_help | Toggle_signature_help | Switch_companion
   | Hover | Go_to_declaration | Go_to_definition | Find_references
   | Select_active_instance | Go_to_instantiation | Jump_back | Jump_forward
   | Toggle_completion | Toggle_completion_ghost

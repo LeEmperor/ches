@@ -27,6 +27,7 @@ let () =
   Completion.set_ghost_preview false;
   Completion.set_min_prefix_chars 1;
   Completion.set_prefer_local_snippets true;
+  Signature_help.set_enabled true;
   View.set_line_numbers false;
   Theme.set "vim-classic"
 ```
@@ -55,6 +56,7 @@ let () =
 | `Completion.set_ghost_preview` | `false` | Preview a simple selected completion suffix |
 | `Completion.set_min_prefix_chars` | `1` | Positive number of identifier characters needed for automatic completion |
 | `Completion.set_prefer_local_snippets` | `true` | Rank local snippet candidates ahead of LSP candidates |
+| `Signature_help.set_enabled` | `true` | Automatically show server-provided call signatures while typing |
 | `View.set_line_numbers` | `false` | Show absolute line numbers; applies across presentation profiles |
 | `Theme.set` | `"vim-classic"` | Select a built-in theme by ID |
 
@@ -77,7 +79,7 @@ only the running session. To make a setting permanent, edit `config.ml`.
 Select **Reload configuration** in the command palette (`Space c c`) to:
 
 1. Construct fresh supported defaults.
-2. Compile and execute your current configuration.
+2. Compile if needed and execute your current configuration.
 3. Validate all settings, including the theme and snippet declarations.
 4. Apply settings and the snippet catalog together.
 
@@ -95,8 +97,21 @@ after opening the editor. Compiler errors reference the original filename and li
 `ocamlc` must be on `PATH` when `config.ml` exists. Ches embeds the small
 Stdlib-only `Ches_config` API and compiles it with your file into a temporary helper.
 No installed Ches development libraries, Dune invocation, or PPX dependencies are
-needed. Every startup and explicit reload compiles afresh; there is no compiled
-configuration cache yet.
+needed. Ches caches compiled helpers, but executes the program on **every startup
+and explicit reload**. Environment-dependent settings and file reads remain fresh;
+evaluated settings and session toggles are never persisted.
+
+The compiled cache lives at `$XDG_CACHE_HOME/ches/config` for an absolute nonempty
+XDG path, otherwise `$HOME/.cache/ches/config`. Changes to source text/path, the
+embedded API/protocol, compiler/toolchain, or relevant compile environment invalidate
+the entry. Corrupt/missing entries are rebuilt before execution. Unavailable cache
+storage falls back to temporary compilation. Removing this cache merely forces
+recompilation on the next load; it does not remove preferences or snippets.
+
+The cache retains up to 16 entries / 64 MiB on a best-effort basis. Configurations
+using dependency-affecting `OCAMLPARAM` flags, such as external preprocessors,
+compile ephemerally rather than risking stale dependencies. A runtime error is
+reported without retrying your code, avoiding duplicate execution of its effects.
 
 Startup waits for configuration before mounting the interactive UI. Reloading is
 asynchronous; editing continues, and obsolete results cannot overwrite a newer

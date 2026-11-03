@@ -230,6 +230,10 @@ type session =
   ; mutable encoding : Convert.encoding
   ; mutable initialized : bool
   ; mutable query_caps : Query.kind list
+  ; mutable signature_help : bool
+  ; mutable signature_triggers : string list
+  ; mutable signature_retriggers : string list
+  ; mutable companions : bool
   ; mutable commands : string list
   ; mutable symbols : bool
   ; mutable context_revision : int
@@ -375,7 +379,7 @@ let report_stop t session ~reason =
     cancel_completions session;
     List.iter (Hashtbl.data session.queries) ~f:(fun (q, _, _) ->
       t.emit (Query_result { token = q.token; cursor = q.cursor; kind = q.kind;
-        source = t.config.source; result = Failed ("Language server stopped: " ^ reason) }));
+         source = t.config.source; result = Query.unavailable q.kind ("Language server stopped: " ^ reason) }));
     cancel_queries session;
     clear_retained session;
     t.session <- None;
@@ -599,7 +603,7 @@ let query t (q : Query.request) =
   let file = canonical token.resource in
   let emit result = t.emit (Query_result { token; cursor = q.cursor; kind = q.kind;
     source = t.config.source; result }) in
-  let fail message = emit (Failed message) in
+   let fail message = emit (Query.unavailable q.kind message) in
   match t.session with
   | None -> fail "Language server is unavailable or starting"
   | Some session when not session.initialized || session.closed -> fail "Language server is not running"
@@ -608,24 +612,42 @@ let query t (q : Query.request) =
     | Some document when String.equal document.resource token.resource
         && document.revision = token.revision
         && [%equal: int option] document.owner (Some token.generation) ->
-      cancel_query session file;
+       cancel_query session file;
+       let signature_context = Signature_wire.context ~triggers:session.signature_triggers
+         ~retriggers:session.signature_retriggers q.kind in
+       if (match q.kind with Signature_help { automatic = true; _ } ->
+         not session.signature_help || Option.is_none signature_context | _ -> false)
+       then emit (Signature_result None)
+       else
       (match Completion_wire.position session.encoding document.text q.cursor with
        | None -> fail "Invalid language query cursor"
        | Some position ->
          flush_document t session file;
          if not (Option.exists (Hashtbl.find session.opened file) ~f:(fun sent -> sent.version = document.version))
          then fail "Language server cannot synchronize this document"
-          else if Hashtbl.length session.queries >= 32 || Hashtbl.length session.pending >= 32 then fail "Too many pending language queries"
+           (* Completion and resolve have independent bounded lanes. Include late
+              mutation acknowledgements in this lane's budget, not those requests. *)
+           else if Hashtbl.length session.queries >= 32
+             || Hashtbl.length session.pending - Hashtbl.length session.completions
+                - Hashtbl.length session.resolves >= 32
+           then fail "Too many pending language queries"
           else if (match q.kind with Instances | Instantiation | Activate_instance _ -> true | _ -> false)
           then instance_query t session document q position ~emit
          else
            let methods = match q.kind with
              | Hover -> [Query.Hover] | Declaration -> [Declaration; Definition]
               | Definition -> [Definition; Declaration] | References -> [References]
-              | Instances | Instantiation | Activate_instance _ -> [] in
+               | Signature_help _ | Companion_files -> [q.kind]
+               | Instances | Instantiation | Activate_instance _ -> [] in
+            let supported = function
+              | Query.Signature_help _ -> session.signature_help
+              | Companion_files -> session.companions
+              | kind -> List.mem session.query_caps kind ~equal:Query.equal_kind in
            let encoding = match session.encoding with
              | Utf8 -> Query.Utf8 | Utf16 -> Utf16 | Utf32 -> Utf32 in
-           let valid () = current t session && not t.stopped && not session.closed
+            let context_revision = session.context_revision in
+            let valid () = current t session && not t.stopped && not session.closed
+              && context_revision = session.context_revision
              && Option.exists (Hashtbl.find t.documents file) ~f:(fun now ->
                phys_equal now.recent document.recent && now.revision = token.revision
                && [%equal: int option] now.owner document.owner) in
@@ -633,7 +655,7 @@ let query t (q : Query.request) =
            let rec attempt methods tried =
              match methods with
              | [] -> if tried then emit (Locations []) else fail "Language server does not support this query"
-             | kind :: rest when not (List.mem session.query_caps kind ~equal:Query.equal_kind) -> attempt rest tried
+              | kind :: rest when not (supported kind) -> attempt rest tried
              | kind :: rest ->
                let id = session.next_id in
                session.next_id <- id + 1;
@@ -653,19 +675,28 @@ let query t (q : Query.request) =
                           can actually be tried. Exhaustion must not turn a server
                           failure into a successful empty navigation result. *)
                        if not (Query.equal_kind kind Hover) && fallback
-                          && List.exists rest ~f:(fun kind -> List.mem session.query_caps kind ~equal:Query.equal_kind)
+                           && List.exists rest ~f:supported
                        then attempt rest true else fail error.message
-                     | Ok json -> (match Navigation_wire.decode encoding kind json with
+                      | Ok json -> (match (match kind with
+                        | Signature_help _ -> Signature_wire.decode json
+                        | Companion_files -> Signature_wire.companions json
+                        | _ -> Navigation_wire.decode encoding kind json) with
                        | Ok (Locations []) when not (List.is_empty rest) -> attempt rest true
                        | Ok result -> emit result | Error message -> fail message))
                  | _ -> ());
                let method_ = match kind with Hover -> "textDocument/hover"
                   | Declaration -> "textDocument/declaration" | Definition -> "textDocument/definition"
-                  | References -> "textDocument/references" | _ -> assert false in
+                   | References -> "textDocument/references"
+                   | Signature_help _ -> "textDocument/signatureHelp"
+                   | Companion_files -> "ocamllsp/switchImplIntf" | _ -> assert false in
                send session (Request (Jsonrpc.Request.create ~id:(`Int id) ~method_
-                  ~params:(`Assoc (["textDocument", `Assoc ["uri", `String (Lsp.Uri.to_string document.uri)];
-                    "position", Types.Position.yojson_of_t position]
-                    @ (if Query.equal_kind kind References then ["context", `Assoc ["includeDeclaration", `Bool true]] else []))) ()))
+                   ~params:(if Query.equal_kind kind Companion_files then `List [`String (Lsp.Uri.to_string document.uri)]
+                     else `Assoc (["textDocument", `Assoc ["uri", `String (Lsp.Uri.to_string document.uri)];
+                     "position", Types.Position.yojson_of_t position]
+                     @ (match kind with
+                       | References -> ["context", `Assoc ["includeDeclaration", `Bool true]]
+                       | Signature_help _ -> Option.to_list (Option.map signature_context ~f:(fun c -> "context", c))
+                       | _ -> []))) ()))
            in
            attempt methods false)
     | _ -> fail "Language query document snapshot is stale or unattached"
@@ -964,7 +995,13 @@ let initialize t session =
         (Types.ClientCapabilities.create
             ~general:(Types.GeneralClientCapabilities.create ~positionEncodings:[ UTF8; UTF16; UTF32 ] ())
            ~textDocument:
-               (Types.TextDocumentClientCapabilities.create
+                (Types.TextDocumentClientCapabilities.create
+                    ~signatureHelp:(Types.SignatureHelpClientCapabilities.create
+                      ~dynamicRegistration:false ~contextSupport:true
+                      ~signatureInformation:(Types.SignatureHelpClientCapabilities.create_signatureInformation
+                        ~documentationFormat:[Markdown; PlainText]
+                        ~parameterInformation:(Types.SignatureHelpClientCapabilities.create_parameterInformation
+                          ~labelOffsetSupport:true ()) ~activeParameterSupport:true ()) ())
                    ~hover:(Types.HoverClientCapabilities.create ~dynamicRegistration:false
                      ~contentFormat:[Markdown; PlainText] ())
                    ~declaration:(Types.DeclarationClientCapabilities.create ~dynamicRegistration:false ~linkSupport:true ())
@@ -1000,7 +1037,15 @@ let initialize t session =
        | Error error ->
          fail t session ~reason:(sprintf "initialize failed: %s" error.message)
        | Ok json ->
-         let caps = Option.value (Completion_wire.field json "capabilities") ~default:`Null in
+          let caps = Option.value (Completion_wire.field json "capabilities") ~default:`Null in
+          session.signature_help <- (match Completion_wire.field caps "signatureHelpProvider" with
+            | Some (`Assoc options) ->
+              let provider = `Assoc options in
+              session.signature_triggers <- Signature_wire.strings provider "triggerCharacters";
+              session.signature_retriggers <- Signature_wire.strings provider "retriggerCharacters";
+              true
+            | _ -> false);
+          session.companions <- Signature_wire.companion_capability caps;
           session.commands <- (match Completion_wire.field caps "executeCommandProvider" with
             | Some provider -> (match Completion_wire.field provider "commands" with
               | Some (`List xs) -> List.filter_map xs ~f:(function `String s -> Some s | _ -> None)
@@ -1023,7 +1068,7 @@ let initialize t session =
                ~default:[] ~f:(fun options -> Option.value options.triggerCharacters ~default:[]);
              (match result.capabilities.positionEncoding with
                 | Some (Other _) -> session.completion <- false; session.query_caps <- [];
-                  session.symbols <- false; session.commands <- [] | _ -> ());
+                   session.symbols <- false; session.commands <- []; session.signature_help <- false | _ -> ());
             session.sync_kind <- (match result.capabilities.textDocumentSync with
               | Some (`TextDocumentSyncKind kind) -> kind
               | Some (`TextDocumentSyncOptions options) -> Option.value options.change ~default:None
@@ -1146,7 +1191,11 @@ let start_session t =
            { process
            ; next_id = 1
             ; pending = Int.Table.create ()
-             ; query_caps = []
+              ; query_caps = []
+              ; signature_help = false
+              ; signature_triggers = []
+              ; signature_retriggers = []
+              ; companions = false
              ; commands = []
              ; symbols = false
              ; context_revision = 0
@@ -1409,7 +1458,7 @@ let start_workspace ?(config_for_path = Config.for_path) ~cell_width () =
            (match Hashtbl.find resources q.token.resource with
             | Some (_, driver) -> driver.handle request
             | None -> emit (Query_result { token = q.token; cursor = q.cursor; kind = q.kind;
-                source = "lsp"; result = Failed "No language server attached to this document" }))
+                source = "lsp"; result = Query.unavailable q.kind "No language server attached to this document" }))
          | Cancel_query token ->
            Option.iter (Hashtbl.find resources token.resource) ~f:(fun (_, driver) -> driver.handle request)
          | Document_changed { resource; _ } | Document_saved { resource; _ } ->

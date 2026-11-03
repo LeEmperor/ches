@@ -129,6 +129,7 @@ let default =
   create
     [ move [ 'h' ] Left
     ; [ Key.char 'K' ], View Hover
+    ; [ Ctrl 'k' ], View Signature_help
     ; [ Key.char 'g'; Key.char 'd' ], View Go_to_declaration
     ; [ Key.char 'g'; Key.char 'D' ], View Go_to_definition
     ; [ Key.char 'g'; Key.char 'r' ], View Find_references

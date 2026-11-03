@@ -72,6 +72,9 @@ let completion_replies = Queue.create ()
 let navigation = ref "none"
 let navigation_result = ref "normal"
 let hold_query = ref false
+let signatures = ref false
+let companions = ref false
+let query_payload_log = ref ""
 
 let log method_ =
   if not (String.is_empty !log_file) then
@@ -200,6 +203,13 @@ let server_request id method_ params =
 ;;
 
 let handle (packet : Jsonrpc.Packet.t) =
+  (if not (String.is_empty !query_payload_log) then
+    let json = match packet with
+      | Request r -> Some (Jsonrpc.Request.yojson_of_t r)
+      | Notification n -> Some (Jsonrpc.Notification.yojson_of_t n)
+      | _ -> None in
+    Option.iter json ~f:(fun json -> Out_channel.with_file !query_payload_log ~append:true ~f:(fun out ->
+      Out_channel.output_string out (Yojson.Safe.to_string json ^ "\n"))));
   (match packet with
    | Notification n when not (String.is_empty !payload_log) ->
      Out_channel.with_file !payload_log ~append:true ~f:(fun out ->
@@ -213,7 +223,14 @@ let handle (packet : Jsonrpc.Packet.t) =
    | Request { id; method_ = "initialize"; params; _ } ->
      let field json key = match json with `Assoc fields ->
        List.Assoc.find_exn fields key ~equal:String.equal | _ -> failwith "initialize object" in
-     let capabilities = field (Option.value_exn params) "capabilities" in
+      let capabilities = field (Option.value_exn params) "capabilities" in
+      if !signatures then (
+        let sh = field (field capabilities "textDocument") "signatureHelp" in
+        assert (Poly.equal (field sh "contextSupport") (`Bool true));
+        let si = field sh "signatureInformation" in
+        assert (Poly.equal (field si "documentationFormat") (`List [`String "markdown"; `String "plaintext"]));
+        assert (Poly.equal (field si "activeParameterSupport") (`Bool true));
+        assert (Poly.equal (field (field si "parameterInformation") "labelOffsetSupport") (`Bool true)));
      let item = field (field (field capabilities "textDocument") "completion") "completionItem" in
        assert (Poly.equal (field item "snippetSupport") (`Bool true));
       if !next_completion then (
@@ -273,14 +290,44 @@ let handle (packet : Jsonrpc.Packet.t) =
              | "disabled" -> ["hoverProvider", `Bool false; "declarationProvider", `Bool false;
                  "definitionProvider", `Bool false]
              | _ -> [] in
-           key, `Assoc (providers @ fields)))
+            let providers = providers
+              @ (if !signatures then ["signatureHelpProvider", `Assoc [
+                  "triggerCharacters", `List (List.map [" "; "~"; "?"; ":"; "("] ~f:(fun s -> `String s));
+                  "retriggerCharacters", `List [`String ","]]] else [])
+              @ (if !companions then ["experimental", `Assoc ["ocamllsp", `Assoc ["handleSwitchImplIntf", `Bool true]]] else []) in
+            key, `Assoc (providers @ fields)))
          | _ -> assert false in
        send
         (Response
            (Jsonrpc.Response.ok
               id
                result)))
-    | Request { id; method_ = "textDocument/documentSymbol"; _ } ->
+     | Request { id; method_ = "textDocument/signatureHelp"; params = Some params } ->
+       assert !signatures;
+       let field json name = match json with `Assoc xs -> List.Assoc.find_exn xs name ~equal:String.equal
+         | _ -> failwith "object expected" in
+       let uri = field (field params "textDocument") "uri" |> Lsp.Uri.t_of_yojson in
+       let _, _, text = Hashtbl.find_exn documents (Lsp.Uri.to_path uri) in
+       assert (offset text (Types.Position.t_of_yojson (field params "position")) = String.length text);
+       let result = `Assoc ["signatures", `List [`Assoc [
+         "label", `String "f 😀 x"; "parameters", `List [
+           `Assoc ["label", `List [`Int 2; `Int 4]];
+           `Assoc ["label", `String "x"]]; "activeParameter", `Int 1]];
+         "activeParameter", `Int 0] in
+       if String.equal !navigation_result "signature-error" then
+         send (Response (Jsonrpc.Response.error id
+           (Jsonrpc.Response.Error.make ~code:InternalError ~message:"signature failure" ())))
+       else if String.equal !navigation_result "signature-malformed" then
+         send (Response (Jsonrpc.Response.ok id (`Assoc ["signatures", `Bool false])))
+       else if !hold_query then Queue.enqueue completion_replies (id, result)
+       else send (Response (Jsonrpc.Response.ok id result))
+     | Request { id; method_ = "ocamllsp/switchImplIntf"; params = Some params } ->
+       assert !companions;
+       let uri = match params with `List [`String uri] -> uri | _ -> failwith "URI array expected" in
+       let result = `List [`String uri; `String "file:///missing/companion%20%23.mli"] in
+       if !hold_query then Queue.enqueue completion_replies (id, result)
+       else send (Response (Jsonrpc.Response.ok id result))
+     | Request { id; method_ = "textDocument/documentSymbol"; _ } ->
       let p n = `Assoc ["line", `Int 0; "character", `Int n] in
       let r a b = `Assoc ["start", p a; "end", p b] in
       send (Response (Jsonrpc.Response.ok id (`List [
@@ -526,7 +573,10 @@ let () =
          ; "-snippets", Set snippets, ""
          ; "-navigation", Set_string navigation, ""
          ; "-navigation-result", Set_string navigation_result, ""
-         ; "-hold-query", Set hold_query, ""
+          ; "-hold-query", Set hold_query, ""
+          ; "-signatures", Set signatures, ""
+          ; "-companions", Set companions, ""
+          ; "-query-payload-log", Set_string query_payload_log, ""
     ]
     ignore
      "fake_lsp";

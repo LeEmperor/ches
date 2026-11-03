@@ -21,7 +21,7 @@ let main () =
     let path = Filename.concat root "user's config ; $(no shell).ml" in
     let marker = Filename.concat root "private directory" in
     let write source = Out_channel.write_all path ~data:source in
-    let load source = write source; Loader.load ~path () in
+    let load source = write source; Loader.For_testing.load ~path () in
     let remember = sprintf "let () = let c = open_out %S in output_string c (Sys.getcwd ()); close_out c\n" marker in
     let check_clean () =
       let private_dir = In_channel.read_all marker in
@@ -36,6 +36,8 @@ let main () =
         (Loader.config_path ~getenv:(env [ "XDG_CONFIG_HOME", xdg; "HOME", "/home/test" ]))
         (Some "/home/test/.config/ches/config.ml")) "HOME fallback");
     check (Option.is_none (Loader.config_path ~getenv:(env []))) "no location";
+    check (Option.is_none (Loader.config_path ~getenv:(env ["HOME", "relative"])))
+      "relative HOME must not resolve configuration against cwd";
     let%bind missing = Loader.load ~path () in
     check (Settings.equal (ok missing) Settings.default) "missing defaults";
     let%bind absent_env = Loader.For_testing.load ~getenv:(env []) () in
@@ -45,13 +47,14 @@ let () =
   let words = String.split_on_char ',' "hello,world" in
   if List.length words = 2 then Completion.set_enabled false;
   Completion.set_ghost_preview true;
+  Signature_help.set_enabled false;
   Completion.set_min_prefix_chars (List.fold_left (+) 0 [1; 2]);
   Completion.set_prefer_local_snippets false;
   View.set_line_numbers true;
   Theme.set (String.concat "-" ["custom"; "theme"])
 |}) in
     let expected : Settings.t =
-      { completion_enabled = false; completion_ghost_preview = true
+      { completion_enabled = false; signature_help_enabled = false; completion_ghost_preview = true
       ; completion_min_prefix_chars = 3; completion_prefer_local_snippets = false
       ; line_numbers = true; theme = "custom-theme"; snippets = [] } in
     check (Settings.equal (ok result) expected) "real Stdlib configuration";
@@ -155,10 +158,21 @@ let () = Snippets.add ~id:"invalid.first" ~prefix:"q" "${UNKNOWN}";
     check (List.equal U.equal_operation legacy.snippets
       [U.Add { id = "a"; prefix = "b"; scopes = []; collection = None; description = None; body = "c" }])
       "legacy v2 add did not default to untagged";
-    let protocol3 = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" in
+    check legacy.signature_help_enabled "legacy signature default";
+    let protocol3 = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" ^ "true\n" in
     List.iter ["1\ncollection\n612e\nfalse\n"; "1\ncollection\n61\ninvalid\n";
-               "1\nadd\n61\n62\n0\ninvalid\nnone\n63\n"] ~f:(fun suffix ->
-      check (Result.is_error (Loader.For_testing.decode (protocol3 ^ suffix))) "malformed v3 accepted");
+                "1\nadd\n61\n62\n0\ninvalid\nnone\n63\n"] ~f:(fun suffix ->
+       check (Result.is_error (Loader.For_testing.decode (protocol3 ^ suffix))) "malformed v3 accepted");
+    List.iter ["true"; "false"] ~f:(fun signature ->
+      let prefix = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" in
+      let decoded = Loader.For_testing.decode (prefix ^ signature ^ "\n0\n") |> Or_error.ok_exn in
+      check (Bool.equal decoded.signature_help_enabled (String.equal signature "true"))
+        "v3 signature field decoded incorrectly");
+    let prefix3 = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" in
+    List.iter [""; "0\n"; "TRUE\n0\n"; "1\n0\n"; "true"; "true\n0";
+               "false\n0\nextra\n"; "true\n01\n"] ~f:(fun suffix ->
+      check (Result.is_error (Loader.For_testing.decode (prefix3 ^ suffix)))
+        "malformed v3 signature/framing accepted");
     let%bind result = load "open Ches_config\nlet () = Completion.set_min_prefix_chars 0" in
     check (contains (error result) "must be positive") "prefix validation";
     let%bind result = load "open Ches_config\nlet () = Theme.set \"  \"" in

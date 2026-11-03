@@ -302,9 +302,12 @@ let%expect_test "menu stays bounded on tiny panes and above a bottom-line cursor
 ;;
 
 let%expect_test "source dispatch flushes the snapshot first, cancels superseded work, and triggers punctuation" =
+  let completion_requests requests = List.filter requests ~f:(function
+    | Ches_error.Source_request.Query _ | Cancel_query _ -> false
+    | _ -> true) in
   let t = press (attached "") "ia" in
   let t, requests = Ui_state.take_source_requests t in
-  let req = match requests with
+  let req = match completion_requests requests with
     | [ Document_opened opened; Document_changed changed; Complete req ] ->
       assert (String.equal opened.resource req.token.resource);
       assert (opened.generation = req.token.generation);
@@ -313,7 +316,7 @@ let%expect_test "source dispatch flushes the snapshot first, cancels superseded 
     | _ -> failwith "Completion must follow its captured document snapshot" in
   let t = press t "p" in
   let t, requests = Ui_state.take_source_requests t in
-  assert (match requests with
+  assert (match completion_requests requests with
     | [ Document_changed changed; Cancel_completion old; Complete fresh ] ->
       changed.revision = fresh.token.revision && M.Token.equal old req.token
     | _ -> false);

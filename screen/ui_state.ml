@@ -59,6 +59,13 @@ type completion_acceptance =
   ; deadline : Time_ns.t
   }
 
+type signature_session =
+  { origin : navigation_origin
+  ; mode : Mode.t
+  ; help : Signature_overlay.t option
+  ; active : bool
+  }
+
 type completion_words =
   { document : Controller.Document_id.t
   ; words : Completion.Buffer_words.t
@@ -154,6 +161,9 @@ type t =
   { controller : Controller.t
   ; navigation : navigation_origin option
   ; navigation_serial : int
+  ; signature : signature_session option
+  ; signature_serial : int
+  ; signature_help_enabled : bool
   ; hover : Hover_tile.t option
   ; destinations : Destination_picker_tile.t option
   ; instances : Instance_picker_tile.t option
@@ -326,6 +336,9 @@ let create
   { controller
   ; navigation = None
   ; navigation_serial = 0
+  ; signature = None
+  ; signature_serial = 0
+  ; signature_help_enabled = true
   ; hover = None
   ; destinations = None
   ; instances = None
@@ -583,6 +596,51 @@ let dismiss_navigation t =
     ; destination_versions = String.Map.empty; host; source_commands }
 ;;
 
+let dismiss_signature t =
+  match t.signature with
+  | None -> t
+  | Some s ->
+    let token = s.origin.request.token in
+    let queued = List.exists t.source_commands ~f:(function
+      | Query request -> Completion.Token.equal request.token token
+      | _ -> false) in
+    let commands = List.filter t.source_commands ~f:(function
+      | Query request -> not (Completion.Token.equal request.token token)
+      | _ -> true) in
+    { t with signature = None; source_commands =
+        if queued then commands else Cancel_query token :: commands }
+;;
+
+let signature_available t =
+  let editor = Controller.editor t.controller in
+  (Mode.equal (Editor.mode editor) Normal || Mode.equal (Editor.mode editor) Insert)
+  && List.is_empty (Editor.block_insert_points editor)
+  && Controller.Kind.equal (Controller.kind t.controller) File
+  && View_id.equal (Host.focused t.host ~available:(fun _ -> true)) document_id
+  && Option.is_none t.palette && Option.is_none t.popup && Option.is_none t.help
+  && Option.is_none t.snippet && Option.is_none t.snippet_picker
+  && not (Host.pasting t.host) && not t.terminal_visible
+  && Option.is_none t.terminal_paste
+;;
+
+let signature_current t (s : signature_session) =
+  let editor = Controller.editor t.controller in
+  let origin = s.origin in
+  signature_available t
+  && Option.equal Buffer_id.equal origin.owner (Session.context_id t.session)
+  && Controller.Document_id.equal origin.document (Controller.document_id t.controller)
+  && Editor.revision editor = origin.request.token.revision
+  && Editor.cursor editor = origin.request.cursor
+  && Mode.equal (Editor.mode editor) s.mode
+  && Option.equal Int.equal
+       (Option.bind origin.owner ~f:(Session.source_generation t.session))
+       (Some origin.request.token.generation)
+;;
+
+let signature_help_enabled t = t.signature_help_enabled
+let signature_help t = Option.bind t.signature ~f:(fun s ->
+  if signature_current t s then s.help else None)
+
 let snippet_picker_current t =
   Option.exists t.snippet_picker_snapshot ~f:(fun s ->
     let editor = Controller.editor t.controller in
@@ -699,11 +757,12 @@ let apply_configuration ?theme_override t (settings : Ches_config_runtime.Settin
       let configuration_theme_override = Option.first_some theme_override t.configuration_theme_override in
       let theme = Option.value configuration_theme_override ~default:configured_theme in
       let line_numbers = if settings.line_numbers then Line_numbers.Absolute else Off in
-      let t = dismiss_snippet_picker (dismiss_completion t) in
+      let t = dismiss_signature (dismiss_snippet_picker (dismiss_completion t)) in
       let host = if Option.is_some t.theme_picker then
           Host.focus (Host.invalidate_paste t.host Theme_picker_tile.id) t.theme_picker_return
         else t.host in
       Ok { t with completion_enabled = settings.completion_enabled
+        ; signature_help_enabled = settings.signature_help_enabled
         ; completion_ghost_enabled = settings.completion_ghost_preview
         ; completion_min_prefix_chars = settings.completion_min_prefix_chars
         ; completion_prefer_local_snippets = settings.completion_prefer_local_snippets
@@ -718,7 +777,7 @@ let take_config_reload_requests t =
 ;;
 
 let reload_configuration t =
-  let t = dismiss_snippet_picker t in
+  let t = dismiss_signature (dismiss_snippet_picker t) in
   let generation = t.config_generation + 1 in
   { t with config_generation = generation; config_loading = true
     ; config_reload_requests = generation :: t.config_reload_requests }
@@ -2081,6 +2140,9 @@ let withdraw_ask t ~width ~height =
 (* Fit each minor view's state to its viewport and source. When the source changes
    the text of open details, say so: the view never retargets a selection silently. *)
 let synchronize t ~width ~height =
+  let t = match t.signature with
+    | Some s when not (signature_current t s) -> dismiss_signature t
+    | _ -> t in
   (* A major view tab retains the session's file context; focus on the report is
      deliberately not used to decide which file's attachment to inspect. *)
   let file = Option.bind (Session.context_id t.session) ~f:(fun id ->
@@ -2462,6 +2524,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
     { prefs with line_numbers = Line_numbers.toggle_relative prefs.line_numbers }
   | Reset -> Geometry.Prefs.default
   | Inspect_problems
+  | Signature_help | Toggle_signature_help | Switch_companion
   | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward
   | Find_references | Select_active_instance | Go_to_instantiation
   | Show_language_servers
@@ -2528,8 +2591,11 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   in
   let signed n = if n = 0 then "0" else sprintf "%+d" n in
   match view with
+  | Signature_help | Switch_companion
   | Hover | Go_to_declaration | Go_to_definition | Jump_back | Jump_forward
   | Find_references | Select_active_instance | Go_to_instantiation -> None
+  | Toggle_signature_help -> Some (if t.signature_help_enabled
+      then "Automatic signature help enabled" else "Automatic signature help disabled")
   | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
   | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
   | Insert_demo_snippet -> None
@@ -3265,6 +3331,8 @@ let reveal_navigation t ~width ~height ~path ~offset =
 let jump_target t ~width ~height (target : Query.target) =
   let origin = current_location t in
   let offset editor =
+    if Option.exists t.navigation ~f:(fun origin -> Query.equal_kind origin.request.kind Companion_files)
+    then Ok (Editor.cursor editor) else
     let text = Text_buffer.to_string (Editor.text editor) in
     let range (range : Query.range) =
       match Query.offset target.encoding ~text range.start, Query.offset target.encoding ~text range.stop with
@@ -3301,7 +3369,7 @@ let traverse_navigation t ~width ~height ~forward =
 ;;
 
 let start_navigation t ~width ~height kind =
-  let t = dismiss_navigation t in
+  let t = dismiss_signature (dismiss_navigation t) in
   let editor = Controller.editor t.controller in
   if not (snippet_insertion_available t)
      || not (View_id.equal (focused_view t ~width ~height) document_id)
@@ -3324,6 +3392,32 @@ let start_navigation t ~width ~height kind =
       ; source_commands = Query request :: t.source_commands }
 ;;
 
+let start_signature t ~automatic ~character ~retrigger =
+  let t = dismiss_signature t in
+  let editor = Controller.editor t.controller in
+  if not (signature_available t) then t
+  else match Editor.path editor with
+  | None -> if automatic then t else navigation_notice t "Signature help requires a named document"
+  | Some _ when not t.source_attached ->
+    if automatic then t else navigation_notice t "Language source unavailable"
+  | Some path ->
+    let t = dismiss_navigation t in
+    let serial = t.signature_serial + 1 in
+    let owner = Session.context_id t.session in
+    let generation = Option.bind owner ~f:(Session.source_generation t.session)
+      |> Option.value ~default:0 in
+    (* Disjoint serial domain also protects against replies from Normal navigation. *)
+    let token = { Completion.Token.resource = Session.normalize t.session path
+      ; generation; revision = Editor.revision editor; request = -serial } in
+    let request = { Query.token; cursor = Editor.cursor editor
+      ; kind = Signature_help { automatic; character; retrigger } } in
+    { t with signature_serial = serial
+      ; controller = if automatic then t.controller else Controller.cancel_pending t.controller
+      ; signature = Some { origin = { request; owner; document = Controller.document_id t.controller }
+          ; mode = Editor.mode editor; help = None; active = retrigger }
+      ; source_commands = Query request :: t.source_commands }
+;;
+
 let source_serves t source resource =
   match t.servers with
   (* Direct/unmanaged sources have no inventory; retain conservative invalidation
@@ -3335,6 +3429,8 @@ let source_serves t source resource =
 ;;
 
 let invalidate_source t source =
+  let t = if Option.exists t.signature ~f:(fun s ->
+    source_serves t source s.origin.request.token.resource) then dismiss_signature t else t in
   let completion = Option.first_some t.completion
     (Option.map t.completion_acceptance ~f:(fun pending -> pending.session)) in
   let t = if Option.exists completion ~f:(fun c -> source_serves t source c.token.resource)
@@ -3349,6 +3445,20 @@ let invalidate_source t source =
 ;;
 
 let receive_navigation t (reply : Query.reply) =
+  match reply.kind with
+  | Signature_help { automatic; _ } ->
+    (match t.signature with
+     | Some s when signature_current t s
+         && Completion.Token.equal s.origin.request.token reply.token
+         && s.origin.request.cursor = reply.cursor
+         && Query.equal_kind s.origin.request.kind reply.kind ->
+       (match reply.result with
+        | Signature_result (Some help) when not (List.is_empty help.signatures) ->
+          { t with signature = Some { s with help = Some (Signature_overlay.create help); active = true } }
+        | Failed text when not automatic -> navigation_notice (dismiss_signature t) text
+        | _ -> dismiss_signature t)
+     | _ -> t)
+  | _ ->
   (* Mutation is connection-wide even if its originating cursor has moved. *)
   let t = match reply.result with
     | Instance_activated _ when source_serves t reply.source
@@ -3373,7 +3483,30 @@ let receive_navigation t (reply : Query.reply) =
      | Locations [] -> navigation_notice (dismiss_navigation t)
          (match reply.kind with References -> "No references found"
           | Instantiation -> "No instantiation location (top-level or unavailable)"
-          | _ -> "No destinations found")
+           | _ -> "No destinations found")
+     | Signature_result _ -> t
+     | Companions paths ->
+       let paths = List.dedup_and_sort paths ~compare:String.compare in
+       (match paths with
+        | [] -> navigation_notice (dismiss_navigation t) "No existing counterpart files"
+        | [path] ->
+          let offset editor = Ok (Editor.cursor editor) in
+          let origin = current_location t in
+          (match reveal_navigation t ~width ~height ~path ~offset with
+           | Error error -> navigation_notice (dismiss_navigation t) (Error.to_string_hum error)
+           | Ok t ->
+             (match origin, current_location t with
+              | Some origin, Some destination ->
+                { t with jump_history = Jump_history.record t.jump_history ~origin ~destination }
+              | _ -> t))
+        | paths ->
+          let position = { Query.line = 0; character = 0 } in
+          let range = { Query.start = position; stop = position } in
+          let targets = List.map paths ~f:(fun path ->
+            { Query.path; range; selection = range; encoding = Utf8 }) in
+          { t with destinations = Some (Destination_picker_tile.with_title
+              (Destination_picker_tile.create targets) "Choose counterpart")
+            ; host = Host.focus t.host Destination_picker_tile.id })
      | Locations [target] when not (Query.equal_kind reply.kind References) -> jump_target t ~width ~height target
      | Instance_activated activated ->
        let context = Option.filter t.instance_origin ~f:(fun context ->
@@ -3780,6 +3913,11 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     | Directory_major | Directory_side | Focus_directory | Toggle_directory -> leave_bare t
     | _ -> t in
   match view with
+  | Signature_help -> start_signature t ~automatic:false ~character:None ~retrigger:false
+  | Toggle_signature_help ->
+    let t = dismiss_signature t in
+    { t with signature_help_enabled = not t.signature_help_enabled }
+  | Switch_companion -> start_navigation t ~width ~height Query.Companion_files
   | Hover -> start_navigation t ~width ~height Query.Hover
   | Go_to_declaration -> start_navigation t ~width ~height Query.Declaration
   | Go_to_definition -> start_navigation t ~width ~height Query.Definition
@@ -3877,10 +4015,10 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Run_view_command { view; command } -> run_view_command t ~width ~height view command
   | Request_view { view; request } -> request_view t ~width ~height view request
   | Restart_source when t.source_attached ->
-    let t = dismiss_completion (dismiss_navigation { t with active_instance = None; context_revisions = String.Map.empty }) in
+    let t = dismiss_signature (dismiss_completion (dismiss_navigation { t with active_instance = None; context_revisions = String.Map.empty })) in
     { t with source_commands = Restart :: t.source_commands }
   | Kill_source when t.source_attached ->
-    let t = dismiss_completion (dismiss_navigation { t with active_instance = None; context_revisions = String.Map.empty }) in
+    let t = dismiss_signature (dismiss_completion (dismiss_navigation { t with active_instance = None; context_revisions = String.Map.empty })) in
     { t with source_commands = Kill :: t.source_commands }
   | Restart_source | Kill_source -> t
   | Show_language_servers ->
@@ -4094,6 +4232,17 @@ let feed t ~width ~height (input : Keymap.Input.t) =
     | _ -> t in
   let accepting = not (List.is_empty (completion_candidates t)) in
   match input with
+  | Key (Ctrl 'k') when signature_available t
+      && Mode.equal (Editor.mode (Controller.editor t.controller)) Insert ->
+    start_signature t ~automatic:false ~character:None ~retrigger:false, Controller.Status.Running
+  | Key (Ctrl ('g' | 'b' as key)) when
+      Mode.equal (Editor.mode (Controller.editor t.controller)) Insert
+      && Option.is_some (signature_help t) ->
+    { t with controller = Controller.cancel_pending t.controller
+      ; signature = Option.map t.signature ~f:(fun s ->
+        { s with help = Option.map s.help ~f:(fun help ->
+            Signature_overlay.cycle help (if Char.equal key 'g' then 1 else -1)) }) },
+    Controller.Status.Running
   | Key (Ctrl 'n') when Mode.equal (Editor.mode (Controller.editor t.controller)) Insert ->
     start_completion ~manual:true (finalize_completion t), Controller.Status.Running
   | Key (Tab | Shift_tab as key) when Option.is_some t.snippet ->
@@ -4391,7 +4540,7 @@ let route t ~width ~height key =
         | Some origin, Some target when navigation_current t origin ->
           let version = Map.find t.destination_versions (Session.normalize t.session target.path) in
           let current = match version with
-            | None -> false
+            | None -> Query.equal_kind origin.request.kind Companion_files
             | Some (On_disk None) -> false
             | Some (On_disk (Some version)) ->
               Option.is_none (Session.find_resource (session t) target.path)
@@ -4831,6 +4980,9 @@ let toggle_step text c =
 
 let rec apply t ~width ~height (input : Input.t) =
   let t = match input with
+    | Key (Escape | Ctrl 'c') | Key_at { key = (Escape | Ctrl 'c'); _ } | Paste_start -> dismiss_signature t
+    | _ -> t in
+  let t = match input with
     | Key (Escape | Ctrl 'c') | Key_at { key = (Escape | Ctrl 'c'); _ }
         when Option.is_some t.navigation && Option.is_none t.hover && Option.is_none t.destinations
           && Option.is_none t.instances ->
@@ -4848,6 +5000,9 @@ let rec apply t ~width ~height (input : Input.t) =
   then t, Controller.Status.Exit
   else (
      let next, status = apply_running t ~width ~height input in
+      let next = match next.signature with
+        | Some s when not (signature_current next s) -> dismiss_signature next
+        | _ -> next in
      let next = match next.snippet with
        | Some s when not (snippet_current next s)
            || not (View_id.equal (focused_view next ~width ~height) document_id) ->
@@ -5087,6 +5242,33 @@ and timed_toggle t ~width ~height ~at ~c ~key
         timed_toggle t ~width ~height ~at ~c ~key ~literal
 
 and apply_regular t ~width ~height (input : Input.t) =
+  let before = Controller.editor t.controller in
+  let owner = Session.context_id t.session in
+  let eligible = signature_available t && Mode.equal (Editor.mode before) Insert in
+  let retrigger = Option.exists t.signature ~f:(fun s -> s.active && signature_current t s) in
+  let next, status = apply_regular_inner t ~width ~height input in
+  let after = Controller.editor next.controller in
+  let edited = Editor.revision before <> Editor.revision after
+    && Controller.Document_id.equal (Controller.document_id t.controller) (Controller.document_id next.controller)
+    && Option.equal Buffer_id.equal owner (Session.context_id next.session) in
+  let next = if edited then dismiss_signature next else next in
+  let next = if edited && eligible && next.signature_help_enabled && signature_available next
+      && Mode.equal (Editor.mode after) Insert
+      && (match input with Key _ -> true | _ -> false)
+    then
+      let character =
+        let old_text = Editor.text before and text = Editor.text after in
+        let cursor = Editor.cursor after in
+        if Text_buffer.length text <= Text_buffer.length old_text || cursor <= 0
+           || (match input with Key (Char _ | Enter | Tab) -> false | _ -> true)
+        then None else
+        Option.map (Text_buffer.prev_boundary text cursor) ~f:(fun start ->
+          Text_buffer.slice text ~pos:start ~len:(cursor - start)) in
+      start_signature next ~automatic:true ~character ~retrigger
+    else next in
+  next, status
+
+and apply_regular_inner t ~width ~height (input : Input.t) =
   let t = match input with Paste_start -> finalize_completion t | _ -> t in
   (* Start from what is on screen: the stored scroll may predate a resize. *)
   let t = match input with

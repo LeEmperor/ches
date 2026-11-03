@@ -8,6 +8,7 @@ let () =
   Completion.set_ghost_preview false;
   Completion.set_min_prefix_chars 1;
   Completion.set_prefer_local_snippets true;
+  Signature_help.set_enabled true;
   View.set_line_numbers false;
   Theme.set "vim-classic"
 

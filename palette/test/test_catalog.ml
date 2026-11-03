@@ -75,6 +75,9 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
     {|
     file.save                      Save buffer                            Space w
     language-servers.inspect       Language servers
+    signature.help                 Signature help
+    signature.toggle               Toggle automatic signature help
+    navigation.companion           Switch interface/implementation
     navigation.hover               Hover
     navigation.declaration         Go to declaration
     navigation.definition          Go to definition
@@ -283,15 +286,18 @@ let%expect_test "empty query lists available commands in catalog order" =
     {|
     file.save                      Save buffer
     language-servers.inspect       Language servers
-    navigation.hover               Hover
-    navigation.declaration         Go to declaration
+    signature.help                 Signature help
+    signature.toggle               Toggle automatic signature help
     |}]
 ;;
 
 let%expect_test "unavailable commands are not listed" =
   search ~context:{ mode = Insert } "";
   search ~context:{ mode = Insert } "save";
-  [%expect {| |}];
+  [%expect {|
+    signature.help                 Signature help
+    signature.toggle               Toggle automatic signature help
+    |}];
   let catalog =
     Catalog.create
       [ Catalog.Entry.create ~id:"a.normal" ~title:"Normal only" (Editor Undo)

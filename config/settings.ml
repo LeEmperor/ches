@@ -2,6 +2,7 @@ open Core
 
 type t =
   { completion_enabled : bool
+  ; signature_help_enabled : bool
   ; completion_ghost_preview : bool
   ; completion_min_prefix_chars : int
   ; completion_prefer_local_snippets : bool
@@ -13,6 +14,7 @@ type t =
 
 let default =
   { completion_enabled = true
+  ; signature_help_enabled = true
   ; completion_ghost_preview = false
   ; completion_min_prefix_chars = 1
   ; completion_prefer_local_snippets = true

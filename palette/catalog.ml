@@ -85,6 +85,12 @@ let default =
     ; view ~id:"language-servers.inspect" ~title:"Language servers"
         ~description:"Live managed servers and attachments for the current file"
         ~keywords:[ "lsp"; "attached"; "clients"; "status"; "server" ] Show_language_servers
+    ; Entry.create ~id:"signature.help" ~title:"Signature help"
+        ~available:(fun _ -> true) (View Signature_help)
+    ; Entry.create ~id:"signature.toggle" ~title:"Toggle automatic signature help"
+        ~available:(fun _ -> true) (View Toggle_signature_help)
+    ; view ~id:"navigation.companion" ~title:"Switch interface/implementation"
+        ~keywords:[ "counterpart"; "ocaml"; "lsp" ] Switch_companion
     ; view ~id:"navigation.hover" ~title:"Hover" ~keywords:[ "symbol"; "documentation"; "lsp" ] Hover
     ; view ~id:"navigation.declaration" ~title:"Go to declaration" Go_to_declaration
     ; view ~id:"navigation.definition" ~title:"Go to definition" Go_to_definition

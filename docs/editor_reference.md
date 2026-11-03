@@ -233,6 +233,7 @@ Backend details and focused checks are in [`terminal/README.md`](../terminal/REA
 | Normal (file) | `K` | Hover: show server-provided type/documentation information |
 | Normal (file) | `gd` / `gD` | Go to declaration/interface / definition/source, with capability-aware fallback |
 | Normal (file) | `gr` | Find references, including declarations, in a searchable result picker |
+| Normal/Insert (file) | `Ctrl-k` | Manually request signature help; automatic help is independently configurable |
 | Normal (file) | `Ctrl-o` / `Ctrl-i` | Jump back / forward through symbol-navigation history |
 | Normal (file) | `Tab` | Jump forward alias for terminals that encode Ctrl-i as Tab |
 | Normal | `:e!` then `Enter` | Discard buffer changes and force-reload the file |
@@ -784,6 +785,50 @@ still included both 8-bit and 32-bit type variants. Ches displays what the serve
 returns; active selection does not guarantee that this version narrows every
 hover to a single width. Standard references worked in the same probe, and
 ocamllsp returned the declaration and both uses of a test value.
+
+### Signature help
+
+Signature help displays call information supplied by the attached language server,
+with the current argument highlighted when the server identifies it. Automatic
+help is enabled by default and follows the server's advertised trigger characters.
+The installed ocamllsp advertises space, `~`, `?`, `:`, and `(`; Ches does not
+infer calls from punctuation or parse language semantics itself.
+
+- **Ctrl-k** in a file's Normal or Insert mode, or palette **Signature help**,
+  requests help manually, even with automatic help disabled.
+- **Toggle automatic signature help** changes the current session setting.
+  Use `Signature_help.set_enabled false` in `config.ml` for a persistent preference.
+- While help is visible in Insert mode, **Ctrl-g** selects the next overload and
+  **Ctrl-b** the previous. Tab and Ctrl-e/Ctrl-y retain completion/snippet behavior.
+
+The overlay does not take focus or move the cursor. It shows bounded signature and
+documentation text, active-argument highlighting, and overload controls. It prefers
+above the cursor while completion appears below; in constrained space completion
+has priority. Movement, mode/focus changes, Escape, paste, snippet activation,
+configuration reload and server/context changes dismiss stale help. Automatic
+requests are suppressed while snippets, block insert, pastes, terminals or popups
+own input. Unsupported automatic requests remain silent; manual requests explain
+unavailability.
+
+**Current server support:** the installed OCaml server returned signature help in
+the live probe. The installed Slang version and inspected Slang source advertise
+no signature-help provider, so this feature currently provides no SystemVerilog
+function/task signatures. Hover (`K`) remains available there.
+
+### Switch OCaml interface/implementation
+
+Choose **Switch interface/implementation** from the command palette to request
+the current file's counterpart through ocamllsp. This switches companion files;
+unlike `gd`/`gD`, it does not locate the symbol under the cursor.
+
+A single existing counterpart opens directly. Multiple returned paths open a
+**Choose counterpart** picker. Retained dirty buffers and their cursor positions
+are reused; new files start at their ordinary initial position. Successful switches
+enter Ctrl-o/Ctrl-i jump history. Missing/unreadable counterparts report an error
+without creating a file or moving the current cursor. The server can return a
+suggested filename that does not exist, so absence is a normal possible outcome.
+Unsupported servers, including Slang, receive a notice; Ches does not guess
+filename extensions.
 
 ### Code completion
 

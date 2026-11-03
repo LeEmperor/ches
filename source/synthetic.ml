@@ -160,7 +160,7 @@ let begin_session state =
 let handle state (request : Ches_error.Source_request.t) =
   match request with
   | Query q -> state.emit (Query_result { token = q.token; cursor = q.cursor;
-      kind = q.kind; source; result = Failed "Synthetic source does not support language queries" })
+      kind = q.kind; source; result = Ches_error.Language_query.unavailable q.kind "Synthetic source does not support language queries" })
   | Cancel_query _ -> ()
   | Complete _ | Cancel_completion _ | Resolve_completion _ -> ()
   | Inspect -> state.emit (Servers [])
@@ -241,7 +241,7 @@ module Script = struct
       { handle = (function
           | Ches_error.Source_request.Query q ->
             emit (Query_result { token = q.token; cursor = q.cursor; kind = q.kind;
-              source = "script"; result = Failed "Scripted source does not support language queries" })
+              source = "script"; result = Ches_error.Language_query.unavailable q.kind "Scripted source does not support language queries" })
           | _ -> ())
       ; stop = (fun () -> stopped := true) })
   ;;

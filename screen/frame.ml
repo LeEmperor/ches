@@ -669,7 +669,8 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
         |> Option.map ~f:fst) ~default:0 in
       let below = viewport.y + viewport.height - anchor.y - 1 in
       let above = anchor.y - viewport.y in
-      let down = below >= Int.min 8 (List.length candidates) || below >= above in
+      let down = Option.is_some (Ui_state.signature_help ui)
+        || below >= Int.min 8 (List.length candidates) || below >= above in
       let available = if down then below else above in
       let doc_count = Int.min (List.length documentation) (Int.max 0 (available - 1)) in
       let count = Int.min 8 (Int.min (List.length candidates) (available - doc_count)) in
@@ -730,7 +731,28 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
             (content @ [ Span.blank style (cols - Span.total_width content) ]))
     | _ -> rows
   in
-  fun animation ->
+   let rows = match cursor, floating, Ui_state.signature_help ui with
+     | Some anchor, None, Some help when document_cursor ->
+       let content = Signature_overlay.rows help in
+       let above = anchor.y - viewport.y in
+       let below = viewport.y + viewport.height - anchor.y - 1 in
+       (* Completion owns the lower side while signatures own the upper side.
+          At the top edge, completion has priority; neither overlay covers the cursor. *)
+       let down = above = 0 && List.is_empty (Ui_state.completion_candidates ui) in
+       let available = if down then below else above in
+       let content = List.take content available in
+       let cols = Int.min viewport.width (Int.min 78
+         (1 + List.fold content ~init:0 ~f:(fun n row -> Int.max n (Span.total_width row)))) in
+       let x = Int.max viewport.x (Int.min anchor.x (viewport.x + viewport.width - cols)) in
+       let y = if down then anchor.y + 1 else anchor.y - List.length content in
+       List.mapi rows ~f:(fun line row -> match List.nth content (line - y) with
+         | None -> row
+         | Some spans ->
+           let spans = Span.take spans ~n:(Int.max 0 (cols - 1)) in
+           Span.overlay row ~x ~width:cols
+             (spans @ [Span.blank Status (cols - Span.total_width spans)]))
+     | _ -> rows in
+   fun animation ->
     let smear =
       (if Ui_state.bare ui || not document_cursor then [] else Animation.cells animation ~width ~height)
       |> List.filter ~f:(fun (x, y) ->

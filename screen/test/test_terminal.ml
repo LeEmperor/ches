@@ -230,7 +230,7 @@ let%test_unit "lazy session; exact content geometry; hide preserves shell and sn
 
 let%test_unit "full fidelity keys bypass editor including Escape and Ctrl-backslash" =
   let t = open_terminal (Helpers.ui "unchanged") |> take |> fst in
-  let events = [ key Escape; ctrl 'c'; key Tab; key Up
+  let events = [ key Escape; ctrl 'c'; ctrl 'k'; key Tab; key Up
     ; key ~modifiers:{ M.no_modifiers with alt = true; shift = true } (Function 4)
     ; key (Char (Uchar.of_scalar_exn 0x1f642)); ctrl '\\'; key Left ] in
   let t = run t events in

@@ -49,6 +49,9 @@ module Placement : sig
 end
 
 type t =
+  | Signature_help
+  | Toggle_signature_help
+  | Switch_companion
   | Hover
   | Go_to_declaration
   | Go_to_definition

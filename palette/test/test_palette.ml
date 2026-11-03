@@ -38,9 +38,9 @@ let%expect_test "opening lists available commands and selects the first" =
     query: ""
     > file.save
       language-servers.inspect
-      navigation.hover
-      navigation.declaration
-      ... 95 more
+      signature.help
+      signature.toggle
+      ... 98 more
     |}]
 ;;
 
@@ -146,7 +146,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 98 more
+      ... 101 more
     |}]
 ;;
 

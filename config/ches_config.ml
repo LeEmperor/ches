@@ -1,6 +1,10 @@
 (* This exact Stdlib-only source is embedded in the editor and compiled alongside
    each user configuration. It has no dependency on an installed Ches library. *)
 let enabled = ref true
+let signature_help_enabled = ref true
+module Signature_help = struct
+  let set_enabled value = signature_help_enabled := value
+end
 let ghost_preview = ref false
 let min_prefix_chars = ref 1
 let prefer_local_snippets = ref true
@@ -83,6 +87,7 @@ let write_result path =
   number !min_prefix_chars;
   List.iter (fun value -> line (string_of_bool value)) [!prefer_local_snippets; !line_numbers];
   hex !theme;
+  line (string_of_bool !signature_help_enabled);
   number (List.length operations);
   List.iter (function
     | Snippets.Disable id -> line "disable"; hex id

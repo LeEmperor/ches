@@ -184,7 +184,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     query: ""
     > file.save
       language-servers.inspect
-      navigation.hover
+      signature.help
     |}];
   band t;
   [%expect
@@ -193,7 +193,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     ││ >                                                                          ││|
     ││ > Save buffer                                                      Space w ││|
     ││   Language servers                                               Space l i ││|
-    ╰╰─ 1/99 ─────────────────────────────────────────────────────────────────────╯╯|
+    ╰╰─ 1/102 ────────────────────────────────────────────────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;
@@ -330,7 +330,7 @@ let%expect_test "Escape cancels: nothing runs, search and problems are untouched
     query: ""
     > file.save
       language-servers.inspect
-      navigation.hover
+      signature.help
     |}]
 ;;
 
@@ -429,7 +429,7 @@ let%expect_test "resizing keeps the query and selected command" =
     ││ > tile                                       ││|
     ││   Move document tile left by 2 columns       ││|
     ││   Move document tile right by 2 columns      ││|
-    ╰╰─ 4/25 ───────────────────────────────────────╯╯|
+    ╰╰─ 4/26 ───────────────────────────────────────╯╯|
     cursor: 9,2 Bar
     |}]
 ;;

@@ -9,7 +9,7 @@ let config_path ~getenv =
     Some (Filename.concat root "ches/config.ml")
   | _ ->
     Option.bind (getenv "HOME") ~f:(fun home ->
-      if String.is_empty home then None
+      if String.is_empty home || Filename.is_relative home then None
       else Some (Filename.concat home ".config/ches/config.ml"))
 ;;
 
@@ -72,6 +72,7 @@ let decode text =
   let completion_prefer_local_snippets = boolean () in
   let line_numbers = boolean () in
   let theme = hex () in
+  let signature_help_enabled = if version >= 3 then boolean () else true in
   let count = number "snippet count (maximum 1000)" ~max:1000 in
   let read_list count read =
     let rec loop remaining acc =
@@ -110,7 +111,7 @@ let decode text =
    | [ "" ] -> ()
    | _ -> failwith "malformed settings result framing");
   Settings.validate
-    { completion_enabled; completion_ghost_preview; completion_min_prefix_chars
+    { completion_enabled; signature_help_enabled; completion_ghost_preview; completion_min_prefix_chars
     ; completion_prefer_local_snippets; line_numbers; theme; snippets }
   |> Or_error.ok_exn
 ;;
@@ -130,8 +131,8 @@ let drain reader =
   loop ()
 ;;
 
-let run ~cwd ~prog ~args ~timeout =
-  let%bind created = Process.create ~prog ~args ~working_dir:cwd
+let run ?(env = `Extend []) ?(on_stdout = fun _ -> ()) ~cwd ~prog ~args ~timeout () =
+  let%bind created = Process.create ~env ~prog ~args ~working_dir:cwd
     ~setpgid:Core_unix.Pgid.new_process_group ~buf_len:8192 () in
   match created with
   | Error error -> return (Error (Error.to_string_hum error))
@@ -166,6 +167,7 @@ let run ~cwd ~prog ~args ~timeout =
       (Deferred.both stdout stderr) in
     let%bind () = Deferred.all_unit
       [ Reader.close (Process.stdout process); Reader.close (Process.stderr process) ] in
+    (match output with `Result (Ok out, _) -> on_stdout out | _ -> ());
     let diagnostics = match output with
       | `Result (out, err) ->
         Result.ok err |> Option.value ~default:(Result.ok out |> Option.value ~default:"")
@@ -190,7 +192,28 @@ let remove_directory root =
   remove root
 ;;
 
-let load_impl ?path ?(getenv = Sys.getenv) ?(compiler = "ocamlc")
+let writer_source = "let () = Ches_config.write_result Sys.argv.(1)\n"
+let compile_args = [ "-o"; "config.exe"; "ches_config.ml"; "user_config.ml"; "result_writer.ml" ]
+let compile_variables =
+  [ "OCAMLPARAM"; "OCAMLLIB"; "CAMLLIB"; "CAML_LD_LIBRARY_PATH"
+  ; "OCAML_FLEXLINK"; "OCAMLTOP_INCLUDE_PATH"; "PATH" ]
+
+(* OCAMLPARAM can introduce preprocessors, extra objects or include directories.
+   Their transitive inputs are not represented by the standalone helper key.
+   Only diagnostic-only parameters are safe to reuse without inspecting them. *)
+let cacheable_environment environment =
+  match List.Assoc.find environment "OCAMLPARAM" ~equal:String.equal |> Option.join with
+  | None -> true
+  | Some value ->
+    String.split value ~on:',' |> List.for_all ~f:(fun field ->
+      String.equal field "_" || String.is_empty field ||
+      match String.lsplit2 field ~on:'=' with
+      | Some (name, _) -> List.mem ["w"; "warn-error"; "color"; "error-style"] name ~equal:String.equal
+      | None -> false)
+;;
+
+let load_impl ?path ?cache_dir ?(api_source = Api_source.source)
+    ?(getenv = Sys.getenv) ?(compiler = "ocamlc")
     ?(compile_timeout = 10.) ?(runtime_timeout = 2.) () =
   let path = match path with Some _ -> path | None -> config_path ~getenv in
   match path with
@@ -209,18 +232,73 @@ let load_impl ?path ?(getenv = Sys.getenv) ?(compiler = "ocamlc")
         Monitor.protect ~finally:(fun () -> In_thread.run (fun () -> remove_directory root))
           (fun () ->
             let file name = Filename.concat root name in
-            let%bind () = In_thread.run (fun () ->
-              Out_channel.write_all (file "ches_config.ml") ~data:Api_source.source;
-              Out_channel.write_all (file "user_config.ml")
-                ~data:(sprintf "# 1 %S\n%s\n" path source);
-              Out_channel.write_all (file "result_writer.ml")
-                ~data:(sprintf "let () = Ches_config.write_result %S\n" (file "settings.result"))) in
-            let%bind compiled = run ~cwd:root ~prog:compiler ~timeout:compile_timeout
-              ~args:[ "-o"; "config.exe"; "ches_config.ml"; "user_config.ml"; "result_writer.ml" ] in
+            let%bind compiler = In_thread.run (fun () -> Compiled_cache.resolve ~getenv compiler) in
+            let environment = List.map compile_variables ~f:(fun name -> name, getenv name) in
+            let env = `Override environment in
+            let%bind cache = match cache_dir with
+              | None -> return None
+              | Some _ when not (cacheable_environment environment) -> return None
+              | Some dir ->
+                let%bind identity = In_thread.run (fun () ->
+                  try
+                    Compiled_cache.prepare dir;
+                    Some (compiler, Compiled_cache.identity compiler)
+                  with _ -> None) in
+                (match identity with
+                 | None -> return None
+                 | Some (compiler, identity) ->
+                   let config = ref "" in
+                   let%bind checked = run ~env ~cwd:root ~prog:compiler ~args:["-config"]
+                     ~timeout:compile_timeout ~on_stdout:(fun text -> config := text) () in
+                   (match checked with
+                    | Error _ -> return None
+                    | Ok () -> In_thread.run (fun () ->
+                      try
+                        let library = String.split_lines !config |> List.find_map ~f:(fun line ->
+                          String.chop_prefix line ~prefix:"standard_library: ") |> Option.value_exn in
+                        let interfaces = Compiled_cache.names library
+                          |> List.filter ~f:(String.is_suffix ~suffix:".cmi")
+                          |> List.sort ~compare:String.compare in
+                        let bytes = ref 0L in
+                        let library_identity = List.map ("stdlib.cma" :: "std_exit.cmo" :: interfaces)
+                          ~f:(fun name ->
+                            let path = Filename.concat library name in
+                            bytes := Int64.(!bytes + (Core_unix.stat path).st_size);
+                            if Int64.(!bytes > of_int Compiled_cache.max_bytes) then
+                              failwith "compiler library fingerprint budget";
+                            Compiled_cache.identity path) in
+                        let key = Sexp.to_string ([%sexp
+                          (source : string), (path : string), (api_source : string),
+                          (writer_source : string), (compile_args : string list),
+                          (identity : string), (!config : string), (library_identity : string list),
+                          (environment : (string * string option) list)])
+                          |> Compiled_cache.digest in
+                        Some (dir, key, compiler, identity)
+                      with _ -> None))) in
+            let%bind restored = In_thread.run (fun () ->
+              match cache with
+              | None -> false
+              | Some (dir, key, _, _) -> Compiled_cache.restore ~dir ~key ~target:(file "config.exe")) in
+            let%bind compiled = if restored then return (Ok ()) else (
+              let%bind () = In_thread.run (fun () ->
+                Out_channel.write_all (file "ches_config.ml") ~data:api_source;
+                Out_channel.write_all (file "user_config.ml")
+                  ~data:(sprintf "# 1 %S\n%s\n" path source);
+                Out_channel.write_all (file "result_writer.ml") ~data:writer_source) in
+              let%bind compiled = run ~env ~cwd:root ~prog:compiler ~timeout:compile_timeout
+                ~args:compile_args () in
+              let%map () = In_thread.run (fun () -> match compiled, cache with
+                | Ok (), Some (dir, key, compiler, identity) ->
+                  (* A compiler replaced during compilation must not populate the old key. *)
+                  (try if String.equal identity (Compiled_cache.identity compiler) then
+                     Compiled_cache.publish ~dir ~key ~program:(file "config.exe") with _ -> ())
+                | _ -> ()) in
+              compiled) in
             match compiled with
             | Error error -> return (Error error)
             | Ok () ->
-              let%bind executed = run ~cwd:root ~prog:(file "config.exe") ~args:[] ~timeout:runtime_timeout in
+              let%bind executed = run ~env ~cwd:root ~prog:(file "config.exe")
+                ~args:[file "settings.result"] ~timeout:runtime_timeout () in
               match executed with
               | Error error -> return (Error error)
               | Ok () -> In_thread.run (fun () ->
@@ -229,9 +307,10 @@ let load_impl ?path ?(getenv = Sys.getenv) ?(compiler = "ocamlc")
       return (match result with Ok result -> result | Error exn -> Error (Exn.to_string exn))
 ;;
 
-let load ?path () = load_impl ?path ()
+let load ?path () = load_impl ?path ?cache_dir:(Compiled_cache.location ~getenv:Sys.getenv) ()
 
 module For_testing = struct
   let load = load_impl
+  let cache_path = Compiled_cache.location
   let decode text = Or_error.try_with (fun () -> decode text)
 end

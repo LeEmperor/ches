@@ -6,6 +6,7 @@ Editor library: `Ches_config_runtime` (`core`/`async` internally). Public entry 
 module Settings : sig
   type t =
     { completion_enabled : bool
+    ; signature_help_enabled : bool
     ; completion_ghost_preview : bool
     ; completion_min_prefix_chars : int
     ; completion_prefer_local_snippets : bool
@@ -23,7 +24,7 @@ module Loader : sig
 end
 ```
 
-Defaults, in record-field order: `true`, `false`, `1`, `true`, `false`,
+Defaults, in record-field order: `true`, `true`, `false`, `1`, `true`, `false`,
 `"vim-classic"`, `[]`. Validation requires a positive minimum prefix and a theme that
 is nonempty after trimming whitespace. The screen must check theme existence
 before applying the snapshot. It validates every snippet operation against the
@@ -41,6 +42,7 @@ let () =
   Completion.set_ghost_preview false;
   Completion.set_min_prefix_chars 1;
   Completion.set_prefer_local_snippets true;
+  Signature_help.set_enabled true;
   View.set_line_numbers false;
   Theme.set "vim-classic"
 ```
@@ -55,6 +57,7 @@ module Completion : sig
   val set_prefer_local_snippets : bool -> unit
 end
 module View : sig val set_line_numbers : bool -> unit end
+module Signature_help : sig val set_enabled : bool -> unit end
 module Theme : sig val set : string -> unit end
 module Snippets : sig
   val add : id:string -> prefix:string -> ?scope:string list -> ?collection:string -> ?description:string -> string -> unit
@@ -123,24 +126,26 @@ details, not supported user API.
   `$HOME/.config/ches/config.ml`. With no usable location or a missing file,
   return defaults. Other read, compile, execution, protocol, and validation errors
   return a diagnostic string. Explicit `~path` bypasses environment resolution.
-- Every explicit load compiles afresh: there is **no cache**. The Dune-generated
-  `Api_source` embeds the exact `ches_config.ml` source, then the loader writes
-  that source, the user source, and a result writer into a private `0700` temp
-  directory. `ocamlc` is resolved from `PATH`. No installed Ches `.cmi`, Dune,
-  editor dependency, or PPX is needed to execute a user's configuration.
+- Every explicit load **executes** a fresh standalone program. Compiled helpers,
+  never settings/results, are cached (details below). On a miss, the Dune-generated
+  `Api_source` supplies the exact `ches_config.ml` source; it, the user source,
+  and a result writer are compiled in a private `0700` temp directory. `ocamlc`
+  is resolved from `PATH`. No installed Ches `.cmi`, Dune, editor dependency,
+  or PPX is needed to execute a user's configuration.
 - Compiler diagnostics use an OCaml line directive for the original filename
   and line numbers. Argument vectors are passed directly, without a shell.
 - Source and result reads are each capped at **1 MiB**; nonregular files are
   rejected. The helper bounds its entire encoded result to 1 MiB before writing,
    and accepts at most **1000 snippet operations**. `CHES_SETTINGS_3` uses newline
   framing: magic; enabled; ghost; minimum prefix; prefer local; line numbers;
-  hex theme; decimal operation count; then ordered operations. A `disable` tag
+  hex theme; signature-help enabled; decimal operation count; then ordered operations. A `disable` tag
   is followed by hex ID. An `add` tag is followed by hex ID, hex prefix, decimal
    scope count, that many hex scopes, optional collection and description (each
    encoded as `none` or `some` followed by its hex value), and hex body. A
    `collection` operation tag is followed by hex collection name and enabled
    boolean. Version-2 decoding remains supported: adds have no collection field,
-   and collection operations are unavailable. Every field ends in a newline; strings use lowercase
+    collection operations are unavailable, and signature help defaults to true.
+    Every field ends in a newline; strings use lowercase
   hex, booleans are `true`/`false`, counts are canonical nonnegative decimals.
   The decoder rejects unsupported versions, malformed encodings/tags/counts,
   missing fields, and trailing data. Host validation is mandatory after decoding.
@@ -157,10 +162,62 @@ details, not supported user API.
 - This is executable user code, **not a sandbox**: filesystem access, process
   creation, memory use, and writes made by user code are not resource-limited.
 
-`Loader.For_testing.load` additionally accepts local `getenv`, `compiler`,
-`compile_timeout` (seconds), and `runtime_timeout` (seconds) overrides. Tests use
-these to simulate absent compilers and deadlines without global environment
-changes. Run `dune runtest config/test -j 6`.
+## Compiled-helper cache
+
+Production uses a nonempty absolute `$XDG_CACHE_HOME/ches/config`, otherwise an
+absolute `$HOME/.cache/ches/config`. Without either location, or when the cache
+cannot be created, read, or written, loading falls back to temporary compilation.
+The final cache directory must be owned by the current user and private (`0700`).
+Entries use the `ches-<key>` namespace. Nonblocking directory locks serialize
+publication/pruning against readers; lock contention can fall back to compilation
+instead of waiting on the input path. Only recognized entries containing the two
+owned regular files are removed; unrelated names, extra contents and linked files
+are preserved. Fingerprints, copies, metadata/header reads and directory scans are
+bounded.
+No user configuration file or evaluated preferences are written by the loader.
+
+The key includes exact user bytes and original source path (including line
+directives/`__FILE__` semantics), embedded API, writer/protocol, compiler arguments,
+resolved compiler invocation path, symlink target, device/inode/stat data and full
+compiler-content fingerprint. The compiler's bounded, supervised `-config` output
+provides version, library location, bytecode magic and platform details; Stdlib
+archive, exit object and interfaces are fingerprinted too. `OCAMLPARAM`, `OCAMLLIB`,
+`CAMLLIB`, `CAML_LD_LIBRARY_PATH`, `OCAML_FLEXLINK`, `OCAMLTOP_INCLUDE_PATH`, and
+`PATH` participate in identity. Compile variables are passed explicitly to child
+processes from the locally injected environment. Other runtime environment and
+file reads remain fresh on every execution.
+
+Dependency-affecting `OCAMLPARAM` flags, including preprocessors, disable cache reuse
+for that load and compile ephemerally rather than treating external dependencies as
+unchanged. Runtime environment and reads are still evaluated afresh.
+
+Each entry contains only `program` (`0700`) and `metadata` (`0600`). Metadata
+records the key and program checksum plus the bytecode interpreter's resolved
+identity/content fingerprint. Before execution, the loader checks regular-file
+type, executable availability, size, checksum, metadata and interpreter identity,
+and copies the program into the fresh private execution directory. The result
+writer takes its result filename from a **runtime argument**, so no expired
+compilation directory is baked into the result path. Relative user accesses still
+resolve in the private execution cwd. Pruning or another publisher cannot replace
+the private executable being run.
+
+Publication stages a complete entry in a private sibling directory and renames it
+into place. Concurrent misses may compile independently; they never overwrite a
+running helper. Best-effort pruning retains at most **16 entries / 64 MiB of
+entry data**, newest first, and touches only recognized key directories inside this
+cache. Missing, corrupt, or incompatible artifacts trigger compilation **before
+user execution**. Runtime failure, timeout, invalid protocol or invalid settings
+returns an error without retrying user code; callers retain their active snapshot.
+The cache is an optimization for trusted executable config, not a security boundary.
+
+`Loader.For_testing.load` accepts local `getenv`, `compiler`, `api_source`,
+`compile_timeout` (seconds), `runtime_timeout` (seconds), and `cache_dir` overrides.
+Its cache is **disabled by default**, so existing tests never use the real user
+cache. Supplying `~cache_dir` opts into an isolated cache. Environment overrides
+do not mutate the process environment. Run `dune runtest config/test -j 6`.
+The cache test prints a lightweight cold/warm timing comparison using a counting
+compiler wrapper and fresh executions, alongside invalidation/failure/concurrency
+checks; timings depend on compiler size and filesystem cache warmth.
 
 Validate an actual configuration through the same compiler, helper, decoder, and
 host validators with:

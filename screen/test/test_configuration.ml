@@ -12,6 +12,7 @@ let apply ?theme_override t settings =
   Ui_state.apply_configuration ?theme_override t settings |> Result.ok_or_failwith
 let reload t = press t " ccconfiguration.reload<CR>"
 let configured = { Settings.completion_enabled = false
+  ; signature_help_enabled = false
   ; completion_ghost_preview = true; completion_min_prefix_chars = 3
   ; completion_prefer_local_snippets = false; line_numbers = true
   ; theme = Theme.id (List.last_exn Theme.all); snippets = [] }
