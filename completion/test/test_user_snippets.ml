@@ -14,6 +14,32 @@ let candidates ?path ?(limit = 100) catalog value =
 let ids entries = List.map entries ~f:(fun entry -> entry.M.Candidate.id)
 let has entries id = List.mem (ids entries) ("user-snippet:" ^ id) ~equal:String.equal
 
+let%test_unit "catalog variables resolve per request before indentation and choice edits stay linked" =
+  let catalog = parse
+      {json|{"id":"context","prefix":"ctx","body":"$TM_FILENAME/$TM_FILENAME_BASE/$TM_DIRECTORY/${TM_FILEPATH:unnamed}\n$1/${1|é\nx,long\ny|}$0!"}|json} in
+  let c = candidates ~path:"../rtl/top.test.sv" catalog "  ctx" |> List.hd_exn in
+  [%test_eq: string] c.primary.text
+    "top.test.sv/top.test/../rtl/../rtl/top.test.sv\n  é\n  x/é\n  x!";
+  let installed = Text_edit.apply (text "  ctx") [[c.primary]] |> Or_error.ok_exn in
+  let module S = Snippet.Session in
+  let template = Option.value_exn c.snippet in
+  let session = S.start template ~base:2 ~revision:1 ~text:installed |> Or_error.ok_exn in
+  [%test_eq: string list option] (S.choices session) (Some ["é\n  x"; "long\n  y"]);
+  let change = S.cycle_choice session Next ~revision:1 ~text:installed |> Or_error.ok_exn in
+  let edited = Text_edit.apply installed [S.edits change] |> Or_error.ok_exn in
+  [%test_eq: string] (B.to_string edited)
+    "  top.test.sv/top.test/../rtl/../rtl/top.test.sv\n  long\n  y/long\n  y!";
+  let session = S.applied change ~revision:2 in
+  assert (Option.is_some (S.selection session));
+  let change = S.insert session ~revision:2 ~text:edited "custom" |> Or_error.ok_exn in
+  let edited = Text_edit.apply edited [S.edits change] |> Or_error.ok_exn in
+  assert (String.is_suffix (B.to_string edited) ~suffix:"\n  custom/custom!");
+  let unnamed = candidates catalog "ctx" |> List.hd_exn in
+  assert (String.is_prefix unnamed.primary.text ~prefix:"///unnamed\n");
+  let other = candidates ~path:"second.ml" catalog "ctx" |> List.hd_exn in
+  assert (String.is_prefix other.primary.text ~prefix:"second.ml/second/./second.ml\n")
+;;
+
 let%test_unit "bundled SV starters parse, scope, labels and candidate contract" =
   List.iter [ "x.sv"; "x.svh" ] ~f:(fun path ->
     let all = candidates ~path U.builtins "" in
@@ -78,7 +104,9 @@ let%test_unit "strict malformed configs identify entry and id without changing o
     ; {|{"id":"oops","prefix":"x","scope":["python"],"body":"x"}|}, ".filename-extension"
     ; {|{"id":"oops","prefix":"x","scope":["."],"body":"x"}|}, "unsupported scope"
     ; {|{"id":"oops","prefix":"x","body":"${VARIABLE}"}|}, "body"
-    ; {json|{"id":"oops","prefix":"x","body":"${1|a,b|}"}|json}, "body"
+    ; {json|{"id":"oops","prefix":"x","body":"${1|a,b}"}|json}, "body"
+    ; {json|{"id":"oops","prefix":"x","body":"${TM_FILENAME:unterminated"}|json}, "body"
+    ; {json|{"id":"oops","prefix":"x","body":"${TM_FILENAME:$0}"}|json}, "body"
     ; {|{"id":"oops","prefix":"x","body":"x","typo":true}|}, "unknown field"
     ; {|{"id":"oops","disabled":"true"}|}, "disabled"
     ; {|{"id":"oops","disabled":true,"prefix":"x"}|}, "unknown field"

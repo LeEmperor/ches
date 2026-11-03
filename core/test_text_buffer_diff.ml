@@ -22,13 +22,21 @@ let%test_unit "bounded metadata forward/reverse, identity-only, fallback Unicode
     List.iter [ a; b; c; d; e ] ~f:(fun after -> check before after));
   [%test_eq: (int * int * int) option] (B.changed_range ~before:b ~after:c)
     (Some (0, 0, 4));
+  assert (match B.recent_changed_range ~before:b ~after:c with
+    | `Changed (0, 0, 4) -> true | _ -> false);
+  assert (match B.recent_changed_range ~before:c ~after:b with
+    | `Changed (0, 4, 0) -> true | _ -> false);
   let metadata = B.with_identities e ~scope:"rows" [ 0, "one" ] in
   assert (Option.is_none (B.changed_range ~before:e ~after:metadata));
   let old = text "aé🐹z" and fresh = text "aê🐻z" in
+  assert (match B.recent_changed_range ~before:old ~after:fresh with
+    | `Unknown -> true | _ -> false);
   check old fresh;
   check fresh old;
   let long = List.fold (List.init 80 ~f:Fn.id) ~init:a ~f:(fun t i ->
     replace t ~pos:(if i % 2 = 0 then 0 else B.length t) ~len:0 "é ") in
+  assert (match B.recent_changed_range ~before:a ~after:long with
+    | `Unknown -> true | _ -> false);
   check a long;
   check long a;
   let branch = replace a ~pos:0 ~len:2 "中" in

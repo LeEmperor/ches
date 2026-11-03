@@ -83,6 +83,12 @@ val length : t -> int
     Returned [(start, old_stop, new_stop)] uses offsets in the respective texts. *)
 val changed_range : before:t -> after:t -> (int * int * int) option
 
+(** Bounded edit-history lookup only; [Unknown] never compares snapshot bytes.
+    [Changed] has the same range semantics as [changed_range]. *)
+val recent_changed_range
+  : before:t -> after:t
+  -> [ `Unchanged | `Changed of int * int * int | `Unknown ]
+
 (** {2 Editing} *)
 
 (** Replace a boundary-aligned range, with delete-then-insert identity semantics.

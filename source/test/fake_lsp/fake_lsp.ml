@@ -304,9 +304,10 @@ let handle (packet : Jsonrpc.Packet.t) =
             `Assoc ["label", `String "fo-plain"; "insertTextFormat", `Int 1;
               "textEditText", `String "$1 literal"];
             item "fo-malformed" "${1:missing";
-            item "fo-variable" "$TM_FILENAME";
+             item "fo-variable" "$TM_FILENAME/${TM_FILENAME_BASE}/${TM_DIRECTORY}/$TM_FILEPATH";
+             item "fo-unknown-variable" "$UNKNOWN_VARIABLE";
             item "fo-transform" "${1/a/b/}";
-            item "fo-choice" "${1|a,b|}";
+             item "fo-choice" "$1/${1|a\nb,c\\,d\\|e\\\\|}$0!";
             `Assoc ["label", `String "fo-overlap"; "textEditText", `String "${1:x}";
               "additionalTextEdits", `List [edit (position p.line 0) (position p.line 1) "bad"]]] ] in
       if !hold_completion then Queue.enqueue completion_replies (id, result)

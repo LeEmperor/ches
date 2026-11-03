@@ -342,7 +342,7 @@ let offset_of_column t ~line column =
     (line_layout t ~width:scalar_width line) column
 ;;
 
-let changed_range ~before ~after =
+let recent_changed_range ~before ~after =
   let recent ancestor descendant =
     let rec find changes acc =
       match changes with
@@ -361,13 +361,20 @@ let changed_range ~before ~after =
             Int.max new_stop (pos + removed) + inserted - removed))
       |> Option.value_exn)
   in
-  if phys_equal before.stamp after.stamp || phys_equal before.text after.text then None
+  if phys_equal before.stamp after.stamp || phys_equal before.text after.text then `Unchanged
   else match recent before after with
-  | Some range -> Some range
+  | Some range -> `Changed range
   | None ->
     match recent after before with
-    | Some (start, new_stop, old_stop) -> Some (start, old_stop, new_stop)
-    | None ->
+    | Some (start, new_stop, old_stop) -> `Changed (start, old_stop, new_stop)
+    | None -> `Unknown
+;;
+
+let changed_range ~before ~after =
+  match recent_changed_range ~before ~after with
+  | `Unchanged -> None
+  | `Changed range -> Some range
+  | `Unknown ->
       let old_len = length before and new_len = length after in
       let bound = Int.min old_len new_len in
       let rec prefix at =

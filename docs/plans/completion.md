@@ -113,8 +113,8 @@ Measured initial index creation was about 31–50 ms for 1 MiB and 124–214 ms 
 4 MiB; local index updates averaged 5–6 microseconds on the implementation host.
 These exclude existing text-copy costs and are not latency guarantees. See
 [`completion/BUFFER_WORDS.md`](../../completion/BUFFER_WORDS.md) for storage costs,
-worst cases, and the reproducible benchmark. Background initial indexing remains
-a possible performance follow-up.
+worst cases, and the reproducible benchmark. Background initial indexing is now
+implemented in [the completion polish phase](completion_polish.md).
 
 Final second-phase checks passed: `dune build -j 12 @all`, `dune runtest -j 12`,
 and `git diff --check`. Existing edit-allocation tests now account explicitly for

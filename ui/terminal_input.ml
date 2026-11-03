@@ -23,6 +23,10 @@ let key (key : Event.Key.t) (mods : Event.Modifier.t list) : Key.t option =
      the command palette deletes a word with it. *)
   | Backspace, [ Ctrl ] -> Some (Ctrl 'h')
   | Delete, [] -> Some Delete
+  | Arrow `Left, [] -> Some Left
+  | Arrow `Right, [] -> Some Right
+  | Home, [] -> Some Home
+  | End, [] -> Some End
   | Escape, [] -> Some Escape
   | _ -> None
 ;;

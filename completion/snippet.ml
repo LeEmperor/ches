@@ -5,7 +5,13 @@ module B = Text_buffer
 type range = { start : int; stop : int } [@@deriving sexp_of, equal, compare]
 type field = { number : int; ranges : range list } [@@deriving sexp_of, equal, compare]
 type occurrence = { number : int; range : range } [@@deriving sexp_of, equal]
-type t = { expanded : string; occurrences : occurrence list }
+type part = Literal of string | Stop of int | Variable of string * string option
+[@@deriving sexp_of, equal]
+type t =
+  { expanded : string; occurrences : occurrence list
+  ; parts : part list; defaults : string Int.Map.t
+  ; raw_choices : string list Int.Map.t; choices : string list Int.Map.t
+  ; prefixes : string list; path : string option }
 [@@deriving sexp_of, equal]
 
 let max_input = 65_536
@@ -32,7 +38,63 @@ let final_cursor t = final_offset t.occurrences ~default:(String.length t.expand
 exception Invalid_snippet of string
 let invalid message = raise (Invalid_snippet message)
 
-type part = Literal of string | Stop of int
+let variable_names = [ "TM_FILENAME"; "TM_FILENAME_BASE"; "TM_DIRECTORY"; "TM_FILEPATH" ]
+
+let variable_value name path =
+  Option.map (Option.filter path ~f:(fun p -> not (String.is_empty p))) ~f:(fun path ->
+    match name with
+    | "TM_FILEPATH" -> path
+    | "TM_DIRECTORY" -> Filename.dirname path
+    | "TM_FILENAME" -> Filename.basename path
+    | _ ->
+      let filename = Filename.basename path in
+      match String.rsplit2 filename ~on:'.' with
+      | Some (base, _) -> base
+      | None -> filename)
+;;
+
+let add_indent value prefix =
+  let newlines = String.count value ~f:(Char.equal '\n') in
+  if String.length value > max_output
+     || (newlines > 0 && String.length prefix > (max_output - String.length value) / newlines)
+  then invalid "indented snippet exceeds output limit";
+  String.concat ~sep:("\n" ^ prefix) (String.split value ~on:'\n')
+;;
+
+let expand t ~path =
+  try
+    Option.iter path ~f:(fun path ->
+      match B.validate path with Ok () -> () | Error _ -> invalid "invalid UTF-8 snippet path");
+    let output = Buffer.create 128 in
+    let occurrences = ref [] in
+    let indent s = List.fold t.prefixes ~init:s ~f:add_indent in
+    let append s =
+      let s = indent s in
+      if String.length s > max_output - Buffer.length output
+      then invalid "snippet expansion exceeds 1048576 bytes";
+      Buffer.add_string output s
+    in
+    List.iter t.parts ~f:(function
+      | Literal s -> append s
+      | Variable (name, default) ->
+        append (Option.first_some (variable_value name path) default |> Option.value ~default:"")
+      | Stop number ->
+        let start = Buffer.length output in
+        if number <> 0 then append (Option.value (Map.find t.defaults number) ~default:"");
+        occurrences := { number; range = { start; stop = Buffer.length output } } :: !occurrences);
+    let choice_bytes = ref 0 in
+    let choices = Map.map t.raw_choices ~f:(List.map ~f:(fun value ->
+      let value = indent value in
+      choice_bytes := !choice_bytes + String.length value;
+      if !choice_bytes > max_output then invalid "snippet choices exceed output limit";
+      value)) in
+    let path = if List.exists t.parts ~f:(function Variable _ -> true | _ -> false)
+      then path else None in
+    Ok { t with expanded = Buffer.contents output; occurrences = List.rev !occurrences; choices; path }
+  with Invalid_snippet message -> Or_error.error_string message
+;;
+
+let resolve = expand
 
 let parse input =
   try
@@ -44,6 +106,7 @@ let parse input =
     let at = ref 0 in
     let count = ref 0 in
     let defaults = ref Int.Map.empty in
+    let choices = ref Int.Map.empty in
     let parts = ref [] in
     let literal = Buffer.create 128 in
     let flush () =
@@ -63,11 +126,24 @@ let parse input =
     let number () =
       let start = !at in
       while !at < length && Char.is_digit input.[!at] do incr at done;
-      if !at = start then invalid "variables and non-numbered tabstops are unsupported";
+      if !at = start then invalid "expected numbered tabstop";
       if !at - start > 9 then invalid "tabstop number too large";
       Int.of_string (String.sub input ~pos:start ~len:(!at - start))
     in
     let final_seen = ref false in
+    let default_literal () =
+      incr at;
+      let value = Buffer.create 32 in
+      while !at < length && not (Char.equal input.[!at] '}') do
+        match input.[!at] with
+        | '\\' -> escaped value
+        | '$' -> invalid "nested defaults and variables are unsupported"
+        | c -> Buffer.add_char value c; incr at
+      done;
+      if !at >= length then invalid "unterminated default";
+      incr at;
+      Buffer.contents value
+    in
     while !at < length do
       match input.[!at] with
       | '\\' -> escaped literal
@@ -76,6 +152,22 @@ let parse input =
         incr at;
         let braced = !at < length && Char.equal input.[!at] '{' in
         if braced then incr at;
+        if !at < length && (Char.is_alpha input.[!at] || Char.equal input.[!at] '_') then (
+          let start = !at in
+          while !at < length && (Char.is_alphanum input.[!at] || Char.equal input.[!at] '_') do incr at done;
+          let name = String.sub input ~pos:start ~len:(!at - start) in
+          if not (List.mem variable_names name ~equal:String.equal)
+          then invalid ("unsupported snippet variable " ^ name);
+          let default =
+            if not braced then None
+            else if !at >= length then invalid "unterminated variable"
+            else match input.[!at] with
+              | '}' -> incr at; None
+              | ':' -> Some (default_literal ())
+              | _ -> invalid "variable transformations are unsupported"
+          in
+          parts := Variable (name, default) :: !parts)
+        else (
         let n = number () in
         let default =
           if not braced then None
@@ -84,18 +176,33 @@ let parse input =
             | '}' -> incr at; None
             | ':' ->
               if n = 0 then invalid "final cursor defaults are unsupported";
-              incr at;
-              let value = Buffer.create 32 in
-              while !at < length && not (Char.equal input.[!at] '}') do
-                match input.[!at] with
-                | '\\' -> escaped value
-                | '$' -> invalid "nested numbered defaults and variables are unsupported"
-                | c -> Buffer.add_char value c; incr at
-              done;
-              if !at >= length then invalid "unterminated default";
-              incr at;
-              Some (Buffer.contents value)
-            | _ -> invalid "choices and transformations are unsupported"
+               Some (default_literal ())
+             | '|' ->
+               if n = 0 then invalid "final cursor choices are unsupported";
+               incr at;
+               let values = ref [] in
+               let value = Buffer.create 32 in
+               let push () = values := Buffer.contents value :: !values; Buffer.clear value in
+               while !at < length && not (Char.equal input.[!at] '|') do
+                 match input.[!at] with
+                 | ',' -> push (); incr at
+                 | '\\' ->
+                   incr at;
+                   if !at >= length || not (List.mem [ ','; '|'; '\\' ] input.[!at] ~equal:Char.equal)
+                   then invalid "unsupported choice escape";
+                   Buffer.add_char value input.[!at]; incr at
+                 | c -> Buffer.add_char value c; incr at
+               done;
+               if !at + 1 >= length || not (Char.equal input.[!at + 1] '}')
+               then invalid "unterminated choice";
+               at := !at + 2;
+               push ();
+               let values = List.rev !values in
+               (match Map.find !choices n with
+                | Some old when not (List.equal String.equal old values) -> invalid "conflicting linked choices"
+                | _ -> choices := Map.set !choices ~key:n ~data:values);
+               Some (List.hd_exn values)
+             | _ -> invalid "transformations are unsupported"
         in
         incr count;
         if !count > max_ranges then invalid "too many snippet ranges";
@@ -106,65 +213,22 @@ let parse input =
           match Map.find !defaults n with
           | Some old when not (String.equal old value) -> invalid "conflicting linked defaults"
           | _ -> defaults := Map.set !defaults ~key:n ~data:value);
-        parts := Stop n :: !parts
+         parts := Stop n :: !parts)
       | c -> Buffer.add_char literal c; incr at
     done;
     flush ();
-    let output = Buffer.create length in
-    let occurrences = ref [] in
-    let append s =
-      if String.length s > max_output - Buffer.length output
-      then invalid "snippet expansion exceeds 1048576 bytes";
-      Buffer.add_string output s
-    in
-    List.iter (List.rev !parts) ~f:(function
-      | Literal s -> append s
-      | Stop number ->
-        let start = Buffer.length output in
-        if number <> 0 then append (Option.value (Map.find !defaults number) ~default:"");
-        occurrences := { number; range = { start; stop = Buffer.length output } } :: !occurrences);
-    Ok { expanded = Buffer.contents output; occurrences = List.rev !occurrences }
+    expand { expanded = ""; occurrences = []; parts = List.rev !parts
+           ; defaults = !defaults; raw_choices = !choices; choices = !choices; prefixes = []; path = None } ~path:None
   with Invalid_snippet message -> Or_error.error_string message
 ;;
 
 let indent t ~prefix =
-  try
-  if String.is_empty prefix then Ok t else
-    let output = Buffer.create (String.length t.expanded) in
-    let add_string value =
-      if String.length value > max_input - Buffer.length output
-      then invalid "indented snippet input exceeds 65536 bytes";
-      Buffer.add_string output value
-    in
-    let add_char c =
-      if Buffer.length output >= max_input
-      then invalid "indented snippet input exceeds 65536 bytes";
-      Buffer.add_char output c
-    in
-    let escaped ?(default = false) value =
-      String.iter value ~f:(fun c ->
-        if Char.equal c '\\' || Char.equal c '$' || (default && Char.equal c '}')
-        then add_char '\\';
-        add_char c;
-        if Char.equal c '\n' then add_string prefix)
-    in
-    let at = ref 0 in
-    let seen = ref Int.Set.empty in
-    List.iter t.occurrences ~f:(fun o ->
-      escaped (String.sub t.expanded ~pos:!at ~len:(o.range.start - !at));
-      if o.number = 0 then add_string "${0}"
-      else if Set.mem !seen o.number then
-        add_string ("${" ^ Int.to_string o.number ^ "}")
-      else (
-        seen := Set.add !seen o.number;
-        add_string ("${" ^ Int.to_string o.number ^ ":");
-        escaped ~default:true (String.sub t.expanded ~pos:o.range.start
-                   ~len:(o.range.stop - o.range.start));
-        add_char '}');
-      at := o.range.stop);
-    escaped (String.drop_prefix t.expanded !at);
-    parse (Buffer.contents output)
-  with Invalid_snippet message -> Or_error.error_string message
+  if String.length prefix >= max_input then Or_error.error_string "indentation exceeds input limit"
+  else match B.validate prefix with
+  | Error _ -> Or_error.error_string "invalid UTF-8 indentation"
+  | Ok () ->
+    if String.is_empty prefix then Ok t
+    else expand { t with prefixes = t.prefixes @ [prefix] } ~path:t.path
 ;;
 
 module Session = struct
@@ -179,6 +243,8 @@ module Session = struct
     ; caret : int
     ; revision : int
     ; snapshot : B.t
+    ; choices : string list Int.Map.t
+    ; choice_indices : int Int.Map.t
     }
   [@@deriving sexp_of]
   type direction = Next | Previous [@@deriving sexp_of, equal]
@@ -190,6 +256,7 @@ module Session = struct
       List.find (fields t) ~f:(fun field -> field.number = number))
   ;;
   let selection t = t.selected
+  let choices t = Option.bind t.active_number ~f:(Map.find t.choices)
   let cursor t = t.caret
   let finished t = Option.is_none t.active_number
   let matches t ~revision ~text =
@@ -216,7 +283,8 @@ module Session = struct
         { o with range = { start = base + o.range.start; stop = base + o.range.stop } })
       in
       let t = { base; length; occurrences; active_number = None; active_index = 0; selected = None
-              ; caret = base; revision; snapshot = text } in
+              ; caret = base; revision; snapshot = text; choices = template.choices
+              ; choice_indices = Int.Map.empty } in
       Ok (match List.hd (fields t) with None -> finish t | Some field -> select t field)
   ;;
   let navigate t direction =
@@ -293,11 +361,33 @@ module Session = struct
             let tracked = List.filter occurrences ~f:(fun o -> o.number = number)
               |> Fn.flip List.nth_exn t.active_index in
             let caret = tracked.range.start + start - range.start + String.length replacement in
-            { edits; next = { t with length; occurrences; caret; selected = None; snapshot } }
+            { edits; next = { t with length; occurrences; caret; selected = None; snapshot
+                                   ; choice_indices = Map.remove t.choice_indices number } }
   ;;
   let insert t ~revision ~text replacement =
     let range = Option.value t.selected ~default:{ start = t.caret; stop = t.caret } in
     replace t ~revision ~text ~start:range.start ~stop:range.stop ~replacement
+  ;;
+  let cycle_choice t direction ~revision ~text =
+    let open Or_error.Let_syntax in
+    if not (matches t ~revision ~text) then Or_error.error_string "stale snippet session"
+    else match choices t, active_range t with
+    | Some values, Some range ->
+      let current = B.slice text ~pos:range.start ~len:(range.stop - range.start) in
+      let number = Option.value_exn t.active_number in
+      let index = Option.first_some (Map.find t.choice_indices number)
+        (List.findi values ~f:(fun _ value -> String.equal value current) |> Option.map ~f:fst) in
+      let count = List.length values in
+      let index = match direction, index with
+        | Next, None -> 0 | Previous, None -> count - 1
+        | Next, Some i -> (i + 1) mod count
+        | Previous, Some i -> (i + count - 1) mod count in
+      let%map change = replace t ~revision ~text ~start:range.start ~stop:range.stop
+        ~replacement:(List.nth_exn values index) in
+      let selected = active_range change.next in
+      { change with next = { change.next with selected
+        ; choice_indices = Map.set change.next.choice_indices ~key:number ~data:index } }
+    | _ -> Or_error.error_string "active snippet field has no choices"
   ;;
   let edits change = change.edits
   let cursor_after change = change.next.caret

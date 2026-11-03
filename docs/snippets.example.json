@@ -7,7 +7,7 @@
       "scope": ["systemverilog"],
       "description": "Clocked always block",
       "body": [
-        "always_ff @(posedge ${1:clk}) begin",
+        "always_ff @(${1|posedge,negedge|} ${2:clk}) begin",
         "    $0",
         "end"
       ]

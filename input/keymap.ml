@@ -305,6 +305,10 @@ let feed_insert_key t (key : Key.t) =
       match key with
       | Escape -> [ Exit_insert ]
       | Delete -> [ Delete_forward ]
+      | Left -> [ Move { motion = Left; count = None } ]
+      | Right -> [ Move { motion = Right; count = None } ]
+      | Home -> [ Move { motion = Line_start; count = None } ]
+      | End -> [ Move { motion = Line_end; count = None } ]
       | Backspace | Ctrl 'h' ->
         (match t.config.tab with
          | Literal_tab -> [ Delete_backward ]

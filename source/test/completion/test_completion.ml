@@ -289,11 +289,59 @@ let%expect_test "snippet normalization parses insertion only and validates extra
   return ()
 ;;
 
+let%expect_test "wire variables use raw request paths and skip unknown or recursive variables" =
+  List.iter ["", "fallback///"; "rtl/../é.test.sv", "é.test.sv/é.test/rtl/../rtl/../é.test.sv"]
+    ~f:(fun (path, expected) ->
+      let query = { (request path 1 1 1) with cursor = 0; fallback_start = 0; fallback_stop = 0 } in
+      let item insertion = `Assoc ["label", `String "context"; "insertTextFormat", `Int 2;
+        "insertText", `String insertion] in
+      let reply = Completion_wire.candidates ~encoding:Utf16 ~text:"" ~request:query ~source:"fake"
+        (`List [item "${TM_FILENAME:fallback}/${TM_FILENAME_BASE}/$TM_DIRECTORY/$TM_FILEPATH$0";
+                item "$UNKNOWN"; item "${TM_FILENAME:${TM_FILEPATH}}";
+                item "${TM_FILENAME/a/b/}"]) in
+      assert (List.length reply.candidates = 1);
+      let candidate = List.hd_exn reply.candidates in
+      assert (String.equal candidate.primary.text expected);
+      let template = Option.value_exn candidate.snippet in
+      assert (Ches_completion.Snippet.final_cursor template = String.length expected));
+  [%expect {| |}];
+  return ()
+;;
+
+let%expect_test "actual LSP URI mapping preserves lexical Unicode resource variables" =
+  H.with_root (fun root ->
+    let source = Lsp_client.start ~config:(H.config ~args:["-next-completion"; "-snippets"] ())
+        ~cell_width:H.cell_width ~root () in
+    let name = "目 %23#é.test.ml" in
+    let absolute = root ^ "/./" ^ name in
+    let parents = String.split (Core_unix.getcwd ()) ~on:'/'
+        |> List.filter ~f:(fun part -> not (String.is_empty part))
+        |> List.map ~f:(fun _ -> "..") in
+    let resource = String.concat ~sep:"/" (parents @ [String.drop_prefix absolute 1]) in
+    Source.send source (Document_opened { resource; generation = 7 });
+    Source.send source (Document_changed { resource; revision = 1; text = "\nfoSuffix" });
+    let%bind () = H.until ~quiet:true source ~root ~f:(H.is_diagnostics ~revision:1) in
+    let query = next_query resource in
+    Source.send source (Complete query);
+    let rec receive () =
+      match%bind Clock_ns.with_timeout (Time_ns.Span.of_int_sec 10) (Source.next_batch source) with
+      | `Timeout -> failwith "resource snippet timeout"
+      | `Result events -> match replies events with [] -> receive () | reply :: _ -> return reply in
+    let%bind reply = receive () in
+    assert (Model.Token.equal reply.token query.token);
+    let expected = name ^ "/目 %23#é.test/" ^ Filename.dirname resource ^ "/" ^ resource in
+    assert (List.exists reply.candidates ~f:(fun candidate ->
+      String.equal candidate.primary.text expected && Option.is_some candidate.snippet));
+    Source.stop source;
+    [%expect {| |}];
+    return ())
+;;
+
 let%expect_test "fake LSP advertises snippets, inherits format2, skips unsupported syntax and preserves snippet on resolve" =
   H.with_root (fun root ->
     let%bind source, query, reply, _ = next_source root ["-snippets"] in
-    let linked, escaped, explicit, plain = match reply.candidates with
-      | [a; b; c; d] -> a, b, c, d | _ -> failwith "unexpected fake snippet candidates" in
+    let linked, escaped, explicit, plain, variable, choice = match reply.candidates with
+      | [a; b; c; d; e; f] -> a, b, c, d, e, f | _ -> failwith "unexpected fake snippet candidates" in
     let snippet = Option.value_exn linked.snippet in
     assert (Ches_core.Text_edit.equal linked.primary { start = 1; stop = 9; text = "é + é!" });
     assert ([%equal: Ches_completion.Snippet.field list] (Ches_completion.Snippet.fields snippet)
@@ -302,6 +350,18 @@ let%expect_test "fake LSP advertises snippets, inherits format2, skips unsupport
     assert (String.equal escaped.primary.text "$literal } \\ x" && Option.is_some escaped.snippet);
     assert (Ches_core.Text_edit.equal explicit.primary { start = 1; stop = 3; text = "okok" });
     assert (String.equal plain.primary.text "$1 literal" && Option.is_none plain.snippet);
+    assert (String.equal variable.primary.text ("a.ml/a/" ^ root ^ "/" ^ query.token.resource));
+    let choice_template = Option.value_exn choice.snippet in
+    assert (String.equal choice.primary.text "a\nb/a\nb!");
+    let choice_text = Ches_core.Text_buffer.of_string choice.primary.text |> Result.ok |> Option.value_exn in
+    let module S = Ches_completion.Snippet.Session in
+    let choice_session = S.start choice_template ~base:0 ~revision:1 ~text:choice_text |> Or_error.ok_exn in
+    assert (Option.equal (List.equal String.equal) (S.choices choice_session) (Some ["a\nb"; "c,d|e\\"]));
+    let change = S.cycle_choice choice_session Next ~revision:1 ~text:choice_text |> Or_error.ok_exn in
+    let changed = Ches_core.Text_edit.apply choice_text [S.edits change] |> Or_error.ok_exn in
+    assert (String.equal (Ches_core.Text_buffer.to_string changed) "c,d|e\\/c,d|e\\!");
+    let selected = S.applied change ~revision:2 in
+    assert (Option.is_some (S.selection selected));
     let base = Ches_core.Text_buffer.of_string "\nfoSuffix" |> Result.ok |> Option.value_exn in
     let model, _ = Model.start ~token:query.token ~text:base ~cursor:3
       ~words:(Model.Buffer_words.create base) ~limit:10 () |> Option.value_exn in

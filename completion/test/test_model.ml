@@ -23,6 +23,23 @@ let apply t base revision p =
 ;;
 let string = Text_buffer.to_string
 
+let%test_unit "missing words permit immediate providers; eventual words are exact and freeze" =
+  let base = text "f foobar" in
+  let t, request = Ches_completion.Model.start ~token ~text:base ~cursor:1 ~limit:100 ()
+      |> Option.value_exn in
+  assert (List.is_empty (candidates t));
+  let t = reply t [candidate "lsp" ~start:0 ~stop:1 "far"] in
+  assert (List.length (candidates t) = 1);
+  let words = Buffer_words.create base in
+  assert (phys_equal t (receive_words t { request with cursor = 2 } words));
+  assert (phys_equal t (receive_words t
+    { request with token = { token with revision = 1 } } words));
+  let loaded = receive_words t request words in
+  assert (List.length (candidates loaded) = 2);
+  let installed, _ = apply t base 1 (Option.value_exn (plan t Next)) in
+  assert (phys_equal installed (receive_words installed request words))
+;;
+
 let%test_unit "local snippet preference reverses source priority and survives provider rebuilds" =
   let base = text "f foobar" in
   let template = Ches_completion.Snippet.parse "${1:foo}$0" |> Or_error.ok_exn in
@@ -213,7 +230,7 @@ let%test_unit "whole-buffer words, UTF prefix, lexical order regardless of proxi
   let items = Buffer_words.candidates (Buffer_words.create base) ~text:base
       ~cursor:(Text_buffer.length base) ~limit:100 in
   assert (List.equal String.equal (List.map items ~f:(fun c -> c.Candidate.label))
-    [ String.make 70000 'a'; "alpha" ]);
+    [ "alpha" ]);
   assert (Option.is_none (Ches_completion.Model.start ~token ~text:base ~cursor:5000
       ~words:(Buffer_words.create base) ~limit:100 ()))
 ;;

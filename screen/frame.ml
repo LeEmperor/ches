@@ -637,7 +637,26 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
       let available = if down then below else above in
       let doc_count = Int.min (List.length documentation) (Int.max 0 (available - 1)) in
       let count = Int.min 8 (Int.min (List.length candidates) (available - doc_count)) in
-      if count <= 0 then rows else
+      if count <= 0 then (
+        match Ui_state.snippet_choices ui with
+        | None | Some [] -> rows
+        | Some choices when List.is_empty candidates ->
+          (* Bound alternatives before allocating/decoding spans, as for the
+             completion menu. A valid choice list can contain thousands of empty
+             options even though its retained text fits the snippet budget. *)
+          let hint = " Ctrl-e/y: " ^ String.concat ~sep:" | "
+              (List.map (List.take choices 8) ~f:bounded) in
+          let content = Span.of_text hint ~style:Hint ~special:Hint in
+          let cols = Int.min viewport.width (Span.total_width content + 1) in
+          let y = if below > 0 then anchor.y + 1 else anchor.y - 1 in
+          if cols <= 1 || y < viewport.y || y >= viewport.y + viewport.height then rows else
+          let x = Int.max viewport.x (Int.min anchor.x (viewport.x + viewport.width - cols)) in
+          let content = Span.take content ~n:(cols - 1) in
+          List.mapi rows ~f:(fun line row -> if line <> y then row else
+            Span.overlay row ~x ~width:cols
+              (content @ [ Span.blank Hint (cols - Span.total_width content) ]))
+        | Some _ -> rows)
+      else
       let first = Int.max 0 (index - count + 1) in
       let visible = List.take (List.drop candidates first) count in
       let labels = List.map visible ~f:(fun c ->

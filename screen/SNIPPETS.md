@@ -52,6 +52,20 @@ character deletion are mirrored in one Controller insert-edit batch and remain
 in the current insert undo group. Tab and Shift-Tab select numbered fields; Tab
 after the last field places the cursor at `$0` and ends the session.
 
+Choice fields show a compact, nonfocus hint beside the caret with alternatives and
+`Ctrl-e/y`: Ctrl-e cycles forward, Ctrl-y backward. Typing replaces the selected
+choice with custom text; cycling and edits update all mirrors in the insert undo
+group. Rendering takes at most eight alternatives, each byte-bounded before span
+decoding. The hint is clipped by display cells with one trailing padding cell and
+is hidden whenever a completion menu is present. Cycling still visits every option.
+
+Left/Right and Home/End use ordinary Insert cursor commands (Home/End target the
+actual current line). Movement clears the selected default without changing text
+or closing the snippet's insert undo group. The snippet survives only when the
+destination is inside or at an endpoint of any active occurrence in the same text/revision;
+otherwise the ordinary move completes and the snippet is cancelled. Ordinary
+Insert movement outside snippets retains its normal undo boundaries.
+
 Keys pass through the insert keymap, preserving its `jk` escape behavior. The
 terminal-toggle recognizer still buffers and replays literal prefix keys through
 the same path. Field navigation clears pending keymap escape state.

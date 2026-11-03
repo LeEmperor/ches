@@ -8,6 +8,10 @@ type t =
   | Shift_tab
   | Backspace
   | Delete
+  | Left
+  | Right
+  | Home
+  | End
   | Escape
 [@@deriving sexp_of, equal]
 
@@ -19,7 +23,7 @@ let digit = function
     if code >= Char.to_int '0' && code <= Char.to_int '9'
     then Some (code - Char.to_int '0')
     else None
-  | Ctrl _ | Enter | Tab | Shift_tab | Backspace | Delete | Escape -> None
+  | Ctrl _ | Enter | Tab | Shift_tab | Backspace | Delete | Escape | Left | Right | Home | End -> None
 ;;
 
 let is_control u =
@@ -37,6 +41,10 @@ let to_string_hum = function
   | Shift_tab -> "Shift-Tab"
   | Backspace -> "Backspace"
   | Delete -> "Delete"
+  | Left -> "Left"
+  | Right -> "Right"
+  | Home -> "Home"
+  | End -> "End"
   | Escape -> "Escape"
 ;;
 
@@ -45,5 +53,5 @@ let text = function
   | Char u -> Some (Uchar.Utf8.to_string u)
   | Enter -> Some "\n"
   | Tab -> Some "\t"
-  | Ctrl _ | Shift_tab | Backspace | Delete | Escape -> None
+  | Ctrl _ | Shift_tab | Backspace | Delete | Escape | Left | Right | Home | End -> None
 ;;

@@ -41,6 +41,10 @@ and asynchronous initial word indexing remain follow-up work.
 
 ## Status
 
+Choices, filename variables, safe field movement, and asynchronous word indexing
+have since been implemented in [the completion polish phase](completion_polish.md).
+The following records the original snippet implementation scope.
+
 Implemented and validated. Parser/session APIs live in
 [`completion/snippet.mli`](../../completion/snippet.mli), with integration notes in
 [`completion/SNIPPETS.md`](../../completion/SNIPPETS.md) and

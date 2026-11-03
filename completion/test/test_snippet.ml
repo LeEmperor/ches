@@ -27,6 +27,153 @@ let insert session text revision value =
 ;;
 let active_range session = (S.active session |> Option.value_exn).ranges |> List.hd_exn
 
+let cycle session text revision direction =
+  S.cycle_choice session direction ~revision ~text |> Or_error.ok_exn
+  |> fun change -> apply change text (revision + 1)
+;;
+
+let%test_unit "choice escapes, forward mirrors, custom text and selected cycling" =
+  let session, text = start ~prefix:"π:" {snippet|$1/${1|é,a\,b,c\|d,e\\f,|}/${2:x}$0!|snippet} in
+  [%test_eq: string list option] (S.choices session) (Some ["é"; "a,b"; "c|d"; "e\\f"; ""]);
+  [%test_eq: string] (B.to_string text) "π:é/é/x!";
+  let session, text = cycle session text 10 Previous in
+  [%test_eq: string] (B.to_string text) "π://x!";
+  [%test_eq: N.range option] (S.selection session) (S.active_range session);
+  let session, text = insert session text 11 "custom" in
+  [%test_eq: string] (B.to_string text) "π:custom/custom/x!";
+  let session, text = cycle session text 12 Next in
+  [%test_eq: string] (B.to_string text) "π:é/é/x!";
+  let session, text = insert session text 13 "other" in
+  let session, text = cycle session text 14 Previous in
+  [%test_eq: string] (B.to_string text) "π://x!";
+  let session, text = cycle session text 15 Next in
+  let second = (S.active session |> Option.value_exn).ranges |> List.last_exn in
+  let session = S.set_cursor session second.start |> Or_error.ok_exn in
+  let session, text = cycle session text 16 Next in
+  [%test_eq: string] (B.to_string text) "π:a,b/a,b/x!";
+  [%test_eq: N.range option] (S.selection session) (S.active_range session);
+  assert (S.cursor session = String.length "π:a,b/a,b");
+  let other = S.navigate session Next in
+  assert (Option.is_none (S.choices other));
+  assert (Result.is_error (S.cycle_choice other Next ~revision:17 ~text));
+  let back = S.navigate other Previous in
+  assert (Option.is_some (S.choices back));
+  assert (S.cursor (S.navigate other Next) = B.length text - 1);
+  assert (Result.is_error (S.cycle_choice session Next ~revision:16 ~text));
+  assert (Result.is_error (S.cycle_choice session Next ~revision:17 ~text:(buffer "different")))
+;;
+
+let%test_unit "choice validation, repeated metadata and literal dollar choices" =
+  List.iter ["${0|a,b|}"; "${1|a,b|}${1|a,c|}"; "${1:x}${1|a,b|}";
+             "${1|a,b"; "${1|a\\x,b|}"; "${1|a\\";
+             "${TM_FILENAME/a/b/}"; "${TM_FILENAME:$TM_FILEPATH}";
+             "${1:${TM_FILENAME_BASE}}"] ~f:(fun s -> assert (Result.is_error (N.parse s)));
+  [%test_eq: string] (N.text (parse "${1|$literal,b|}${1|$literal,b|}")) "$literal$literal";
+  let session, text = start "${1||}$1$0" in
+  let session, text = cycle session text 10 Next in
+  assert (B.length text = 0 && Option.is_some (S.selection session))
+;;
+
+let%test_unit "filename variables resolve lexically, retain raw structure and relocate UTF8 fields" =
+  let template = parse "$TM_FILENAME|${TM_FILENAME_BASE}|$TM_DIRECTORY|${TM_FILEPATH:missing}|${1:猫}$0!" in
+  [%test_eq: string] (N.text template) "|||missing|猫!";
+  let resolved = N.resolve template ~path:(Some "../dir/é.test.sv") |> Or_error.ok_exn in
+  [%test_eq: string] (N.text resolved) "é.test.sv|é.test|../dir|../dir/é.test.sv|猫!";
+  let last = List.hd_exn (N.fields resolved) |> fun (f : N.field) -> List.hd_exn f.ranges in
+  assert (last.start = String.length "é.test.sv|é.test|../dir|../dir/é.test.sv|");
+  assert (N.final_cursor resolved = last.stop);
+  let rerendered = N.resolve resolved ~path:(Some "rtl/top.v") |> Or_error.ok_exn in
+  [%test_eq: string] (N.text rerendered) "top.v|top|rtl|rtl/top.v|猫!";
+  List.iter [None; Some ""] ~f:(fun path ->
+    [%test_eq: string] (N.text (N.resolve resolved ~path |> Or_error.ok_exn)) "|||missing|猫!");
+  let defaults = parse {|${TM_FILENAME:a\$b\}c\\d}|} in
+  [%test_eq: string] (N.text defaults) "a$b}c\\d";
+  let relative = N.resolve template ~path:(Some "top") |> Or_error.ok_exn in
+  [%test_eq: string] (N.text relative) "top|top|.|top|猫!";
+  (match N.parse "$UNKNOWN" with
+   | Ok _ -> assert false
+   | Error e -> assert (String.is_substring (Error.to_string_hum e) ~substring:"unsupported snippet variable UNKNOWN"))
+;;
+
+let%test_unit "indentation retains multiline choices and variables across resolution and sessions" =
+  let raw = parse "$TM_FILENAME\n$1/${1|a\nb,c\nd|}$0!" in
+  let indented = N.indent raw ~prefix:"  " |> Or_error.ok_exn in
+  let template = N.resolve indented ~path:(Some "rtl/中.sv") |> Or_error.ok_exn in
+  [%test_eq: string] (N.text template) "中.sv\n  a\n  b/a\n  b!";
+  let text = buffer ("前" ^ N.text template) in
+  let session = S.start template ~base:3 ~revision:10 ~text |> Or_error.ok_exn in
+  [%test_eq: string list option] (S.choices session) (Some ["a\n  b"; "c\n  d"]);
+  let session, text = cycle session text 10 Next in
+  [%test_eq: string] (B.to_string text) "前中.sv\n  c\n  d/c\n  d!";
+  let session, text = insert session text 11 "short" in
+  [%test_eq: string] (B.to_string text) "前中.sv\n  short/short!";
+  let session, text = cycle session text 12 Previous in
+  [%test_eq: string] (B.to_string text) "前中.sv\n  c\n  d/c\n  d!";
+  assert (S.cursor (S.navigate session Next) = B.length text - 1)
+;;
+
+let%test_unit "duplicate choices advance and alternate option expansion remains bounded" =
+  let session, text = start "${1|a,a,b|}" in
+  let session, text = cycle session text 10 Next in
+  [%test_eq: string] (B.to_string text) "a";
+  let session, text = cycle session text 11 Next in
+  [%test_eq: string] (B.to_string text) "b";
+  let _, text = cycle session text 12 Next in
+  [%test_eq: string] (B.to_string text) "a";
+  let session, text = start ("${1|," ^ String.make 512 'x' ^ "|}"
+    ^ String.concat (List.init 2200 ~f:(fun _ -> "$1"))) in
+  assert (Result.is_error (S.cycle_choice session Next ~revision:10 ~text));
+  let many_lines = parse ("${1|x," ^ String.make 100 '\n' ^ "|}") in
+  assert (Result.is_error (N.indent many_lines ~prefix:(String.make 20_000 ' ')));
+  let variable = parse "$TM_FILEPATH$1$0" in
+  assert (Result.is_error (N.resolve variable ~path:(Some (String.make 1_048_577 'x'))));
+  assert (Result.is_error (N.resolve variable ~path:(Some "bad\255")))
+;;
+
+let%test_unit "resolution and indentation commute while installed ranges stay frozen" =
+  let raw = parse "${TM_FILEPATH:fallback\nname}\n$1/${1|猫\nx,é\ny|}$0!" in
+  let resolve t path = N.resolve t ~path:(Some path) |> Or_error.ok_exn in
+  let indent t = N.indent t ~prefix:"  " |> Or_error.ok_exn in
+  let template = resolve (indent raw) "../目\n録/é.sv" in
+  let equivalent = indent (resolve raw "../目\n録/é.sv") in
+  [%test_eq: string] (N.text template) (N.text equivalent);
+  [%test_eq: N.field list] (N.fields template) (N.fields equivalent);
+  let text = buffer ("前" ^ N.text template ^ "尾") in
+  let session = S.start template ~base:3 ~revision:10 ~text |> Or_error.ok_exn in
+  let before = S.fields session in
+  ignore (resolve template "different.sv" : N.t);
+  [%test_eq: N.field list] (S.fields session) before;
+  let session, text = cycle session text 10 Next in
+  [%test_eq: string] (B.to_string text) "前../目\n  録/é.sv\n  é\n  y/é\n  y!尾";
+  assert (S.cursor (S.navigate session Next) = B.length text - String.length "!尾")
+;;
+
+let%test_unit "choice empty mirrors preserve coincident field and final-marker ordering" =
+  let session, text = start "$2$1$0${1|,猫|}$2!" in
+  let session, text = cycle session text 10 Next in
+  [%test_eq: string] (B.to_string text) "猫猫!";
+  [%test_eq: N.field list] (S.fields session)
+    [field 1 [range 0 3; range 3 6]; field 2 [range 0 0; range 6 6]];
+  let session, text = cycle session text 11 Next in
+  [%test_eq: string] (B.to_string text) "!";
+  [%test_eq: N.range option] (S.selection session) (Some (range 0 0));
+  let session, text = insert session text 12 "x" in
+  [%test_eq: string] (B.to_string text) "xx!";
+  let session = S.navigate session Next in
+  let session, text = insert session text 13 "é" in
+  [%test_eq: string] (B.to_string text) "éxxé!";
+  assert (S.cursor (S.navigate session Next) = String.length "éx")
+;;
+
+let%test_unit "malformed supported variable defaults reject even before path resolution" =
+  List.iter ["${TM_FILENAME"; "${TM_FILENAME:"; "${TM_FILENAME:unterminated";
+    "${TM_FILENAME:trailing\\"; "${TM_FILENAME:bad\\x}";
+    "${TM_FILENAME:$0}"; "${TM_FILENAME:${1:x}}";
+    "${TM_FILENAME|a,b|}"; "${TM_FILENAME_BASE/no/yes/}";
+    "${0:}"; "${0||}"] ~f:(fun input ->
+      assert (Result.is_error (N.parse input)))
+;;
+
 let%test_unit "plain text, escapes, empty defaults and implicit final cursor" =
   let t = parse {|a\$1 \\ \} ${1:} $1 ${2} $3|} in
   [%test_eq: string] (N.text t) "a$1 \\ }    ";
@@ -59,7 +206,7 @@ let%test_unit "forward references share defaults with all occurrences, navigatio
 let%test_unit "malformed, unsupported, invalid text and nested defaults reject explicitly" =
   List.iter
     [ "$"; "${"; "${1"; "${1:"; "${1:abc"; "abc\\"; "\\x"
-    ; "$NAME"; "${NAME}"; "${NAME:default}"; "${1|one,two|}"; "${1/a/b/}"
+    ; "$NAME"; "${NAME}"; "${NAME:default}"; "${1|one,two}"; "${1/a/b/}"
     ; "${1:${2:inner}}"; "${1:$2}"; "${1:${1}}"; "${1:${0}}"
     ; "${1:x}${1:y}"; "$0$0"; "${0:no}"; "$1234567890"
     ; "\255"; "\000"; "\r"; "\r\n"

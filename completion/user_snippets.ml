@@ -19,7 +19,7 @@ let starter id prefix description body =
 
 let builtins =
   [ starter "sv.aff" "aff" "Clocked always block"
-      "always_ff @(posedge ${1:clk}) begin\n    $0\nend"
+      "always_ff @(${1|posedge,negedge|} ${2:clk}) begin\n    $0\nend"
   ; starter "sv.acomb" "acomb" "Combinational always block"
       "always_comb begin\n    $0\nend"
   ; starter "sv.mod" "mod" "Module declaration"
@@ -180,7 +180,8 @@ let candidates t ~path ~text ~cursor ~limit =
         | comparison -> comparison)
       |> Sequence.of_list
       |> Sequence.filter_map ~f:(fun entry ->
-        match Snippet.indent entry.template ~prefix:indentation with
+        match Or_error.bind (Snippet.resolve entry.template ~path)
+                ~f:(fun template -> Snippet.indent template ~prefix:indentation) with
         | Error _ -> None
         | Ok snippet ->
           let expanded = Snippet.text snippet in

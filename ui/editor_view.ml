@@ -139,6 +139,7 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
   let current_ui = ref initial_ui in
   let configuration = Option.value_or_thunk configuration ~default:(fun () -> Configuration_host.create ()) in
   let snippets = Option.value_or_thunk snippets ~default:Snippet_host.create in
+  let word_index = Word_index_host.create () in
   let render_cache = Frame.Cache.create () in
   let last_drawn_theme = ref None in
   let synchronized_dimensions = ref None in
@@ -213,6 +214,9 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
          | Inactive -> clear_preview (); model
          | Active ({ Dimensions.width; height }, write_to_tty) ->
             let model = match action with
+              | `Words (request, words) ->
+                Frame.Cache.invalidate render_cache;
+                Ui_state.receive_word_index model request words
               | `Snippets (generation, result) ->
                 Frame.Cache.invalidate render_cache;
                 Ui_state.receive_snippets model ~generation result
@@ -223,7 +227,7 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
             (* Capture belongs to the model at this transition, not the last
                displayed handler: several events can arrive before a redraw. *)
             let inputs = match action with
-              | `Snippets _ | `Configuration _ -> []
+              | `Words _ | `Snippets _ | `Configuration _ -> []
               | `Inputs inputs -> inputs
               | `Event (event, at) ->
                 Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event
@@ -285,6 +289,9 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
           active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
           let model, clipboard = Ui_state.take_clipboard model in
           let model, snippet_requests = Ui_state.take_snippet_reload_requests model in
+          let model, word_request = Ui_state.take_word_index_request model in
+          Bonsai.Apply_action_context.schedule_event context
+            (Effect.of_thunk (fun () -> Word_index_host.follow word_index word_request));
           if not (List.is_empty snippet_requests) then
             Bonsai.Apply_action_context.schedule_event context
               (Effect.of_thunk (fun () -> Snippet_host.submit snippets snippet_requests));
@@ -353,6 +360,7 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
                Bonsai.Apply_action_context.inject context (`Inputs events)));
           (match status with
            | Exit when was_running ->
+              Word_index_host.stop word_index;
               Snippet_host.stop snippets;
               Configuration_host.stop configuration;
               Terminal_host.stop terminal;
@@ -372,6 +380,16 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
       graph
   in
   let inject = let%arr inject_action in fun inputs -> inject_action (`Inputs inputs) in
+  Bonsai.Edge.lifecycle
+    ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Word_index_host.stop word_index)))
+    ~on_activate:(let%arr inject_action in
+      let rec pump () =
+        let%bind.Effect reply = Effect.of_deferred_thunk (fun () -> Word_index_host.next word_index) in
+        match reply with
+        | None -> Effect.Ignore
+        | Some reply -> let%bind.Effect () = inject_action (`Words reply) in pump ()
+      in pump ())
+    graph;
   Bonsai.Edge.lifecycle
     ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Snippet_host.stop snippets)))
     ~on_activate:(let%arr inject_action in

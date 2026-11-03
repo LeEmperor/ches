@@ -1,4 +1,29 @@
 open! Core
+
+let%test_unit "yielded builder splits identifiers and UTF-8 safely; branched updates agree" =
+  let module B = Ches_core.Text_buffer in
+  let module W = Ches_completion.Model.Buffer_words in
+  let text s = B.of_string s |> Result.ok |> Option.value_exn in
+  let build ?before text =
+    let builder = W.Builder.create ?before text in
+    let rec loop () =
+      let result, visited = W.For_testing.measure (fun () -> W.Builder.step builder ~budget:7) in
+      assert (visited <= 10);
+      match result with
+      | None -> loop () | Some words -> words in
+    loop () in
+  let samples = ["f foo foo foobar élan élève"; "f food football 🐹 élan";
+    "f " ^ String.make 40000 'z' ^ " final"; "f "; ""] in
+  List.iter samples ~f:(fun initial ->
+    let base = text initial in
+    let before = build base in
+    List.iter samples ~f:(fun changed ->
+      let after = text changed in
+      let actual = build ~before after and expected = W.create after in
+      let candidates words = W.candidates words ~text:after ~cursor:0 ~limit:100 in
+      assert (List.equal Ches_completion.Model.Candidate.equal
+        (candidates actual) (candidates expected))))
+;;
 open Ches_core
 open Ches_completion.Model
 module B = Text_buffer
@@ -20,6 +45,36 @@ let fresh_agrees words t cursors =
       assert (List.equal Candidate.equal
         (W.candidates words ~text:t ~cursor ~limit)
         (W.candidates fresh ~text:t ~cursor ~limit))))
+;;
+
+let%test_unit "bounded warm updates use history rather than recompare a large unchanged file" =
+  let base = text ("al " ^ String.make 1000000 ' ' ^ "alpha alpine") in
+  let initial = W.create base in
+  let after = replace base ~pos:1 ~len:0 "p" in
+  let result, scanned = W.For_testing.measure (fun () -> W.update_bounded initial after ~budget:256) in
+  let result = Option.value_exn result in
+  assert (scanned < 32);
+  fresh_agrees result after [0; 3];
+  let reverted = W.update_bounded result base ~budget:256 |> Option.value_exn in
+  fresh_agrees reverted base [0; 2];
+  (* An unrelated snapshot must still yield, even if its bytes are identical. *)
+  assert (Option.is_none (W.update_bounded initial
+    (text (String.map (B.to_string base) ~f:Fn.id)) ~budget:256))
+;;
+
+let%test_unit "long common-prefix keys charge tree work to the step budget" =
+  let common = String.make 4000 'a' in
+  let source = text (String.concat ~sep:" "
+      (List.init 30 ~f:(fun i -> common ^ sprintf "%03d" i))) in
+  let builder = W.Builder.create source in
+  let first, scanned = W.For_testing.measure (fun () -> W.Builder.step builder ~budget:16384) in
+  assert (Option.is_none first);
+  (* Token-byte accounting alone consumes four keys here. Tree/copy accounting
+     must yield after fewer, despite the unspent scalar-byte allowance. *)
+  assert (scanned < 3 * 4004);
+  let rec finish () = match W.Builder.step builder ~budget:16384 with
+    | None -> finish () | Some words -> words in
+  fresh_agrees (finish ()) source [0; B.length source]
 ;;
 
 let%test_unit "empty prefix is bounded and lexical, excludes only the sole current occurrence" =
@@ -174,7 +229,11 @@ let%test_unit "deterministic random Unicode replacements agree with full rebuild
     let inserted = pieces.(Random.State.int random (Array.length pieces)) in
     let next = replace !current ~pos:points.(a) ~len:(points.(b) - points.(a)) inserted in
     (* Some updates intentionally span several edits. *)
-    if i % 3 = 0 then index := W.update !index next;
+    if i % 3 = 0 then (
+      let builder = W.Builder.create ~before:!index next in
+      let rec finish () = match W.Builder.step builder ~budget:17 with
+        | None -> finish () | Some words -> words in
+      index := finish ());
     current := next;
     if i % 3 = 0 then fresh_agrees !index !current (boundaries !current)
   done;

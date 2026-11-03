@@ -142,7 +142,8 @@ let decode ~encoding ~text ~(request : Model.Request.t) ~source json =
       | Some json -> primary_edit encoding text request json in
     let%bind primary, snippet = match int_field item "insertTextFormat" with
       | Some 2 ->
-        Option.map (Snippet.parse primary.text |> Result.ok) ~f:(fun snippet ->
+        Option.map (Or_error.bind (Snippet.parse primary.text)
+          ~f:(fun snippet -> Snippet.resolve snippet ~path:(Some request.token.resource)) |> Result.ok) ~f:(fun snippet ->
           { primary with text = Snippet.text snippet }, Some snippet)
       | _ -> Some (primary, None) in
     let%bind additional = match field item "additionalTextEdits" with

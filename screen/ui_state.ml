@@ -34,6 +34,15 @@ type completion_acceptance =
 type completion_words =
   { document : Controller.Document_id.t
   ; words : Completion.Buffer_words.t
+  ; serial : int
+  }
+
+type word_index_request =
+  { owner : Buffer_id.t option
+  ; document : Controller.Document_id.t
+  ; text : Text_buffer.t
+  ; request : Completion.Request.t
+  ; before : Completion.Buffer_words.t option
   }
 
 module Message = struct
@@ -124,6 +133,7 @@ type t =
   ; snippet_reload_requests : int list
   ; snippet_loading : bool
   ; completion_words : completion_words Buffer_id.Map.t
+  ; word_index_request : word_index_request option
   ; completion_enabled : bool
   ; completion_ghost_enabled : bool
   ; completion_min_prefix_chars : int
@@ -277,6 +287,7 @@ let create
   ; snippet_reload_requests = [1]
   ; snippet_loading = true
   ; completion_words = Buffer_id.Map.empty
+  ; word_index_request = None
   ; completion_enabled = true
   ; completion_ghost_enabled = false
   ; completion_min_prefix_chars = 1
@@ -450,6 +461,11 @@ let snippet_ranges t =
     Option.value_map (Snippet.Session.active s.fields) ~default:[] ~f:(fun field -> field.ranges))
 ;;
 
+let snippet_choices t =
+  Option.bind t.snippet ~f:(fun s ->
+    if snippet_current t s then Snippet.Session.choices s.fields else None)
+;;
+
 let completion_current t (c : completion_session) =
   let editor = Controller.editor t.controller in
   Option.equal Buffer_id.equal c.owner (Session.context_id t.session)
@@ -500,7 +516,7 @@ let dismiss_completion t =
       | Complete request -> not (Completion.Token.equal request.token c.token)
       | Resolve_completion request -> not (Completion.Token.equal request.token c.token)
       | _ -> true) in
-    { t with completion = None; completion_acceptance = None
+    { t with completion = None; completion_acceptance = None; word_index_request = None
     ; source_commands = if t.source_attached && not queued then Cancel_completion c.token :: source_commands
         else source_commands }
 ;;
@@ -735,13 +751,17 @@ let start_completion ?(manual = false) t =
   let words = Option.bind owner ~f:(Map.find t.completion_words)
     |> Option.filter ~f:(fun cached -> Controller.Document_id.equal cached.document document)
     |> Option.map ~f:(fun cached -> cached.words) in
+  let before = words in
   let words = match words with
-    | None -> Completion.Buffer_words.create text
-    | Some words -> Completion.Buffer_words.update words text in
+    | None when Text_buffer.length text <= 16384 ->
+      Completion.Buffer_words.Builder.step (Completion.Buffer_words.Builder.create text) ~budget:16384
+    | None -> None
+    | Some words -> Completion.Buffer_words.update_bounded words text ~budget:16384 in
   let t = Option.value_map owner ~default:t ~f:(fun id ->
-    { t with completion_words = Map.set t.completion_words ~key:id ~data:{ document; words } }) in
+    Option.value_map words ~default:t ~f:(fun words ->
+      { t with completion_words = Map.set t.completion_words ~key:id ~data:{ document; words; serial } })) in
   match Completion.start ~prefer_local_snippets:t.completion_prefer_local_snippets ~token ~text ~cursor:(Editor.cursor editor)
-      ~words ~limit:100 () with
+      ?words ~limit:100 () with
   | None -> t
   | Some (model, request) ->
     let snippets = Ches_completion.User_snippets.candidates t.user_snippets
@@ -765,11 +785,42 @@ let start_completion ?(manual = false) t =
         { request with trigger = Character preceding }
       else request in
     { t with completion_serial = serial
+    ; word_index_request = (if Option.is_some words then None else
+        Some { owner; document; text; request; before })
     ; completion = Some { model; token; owner; document = Controller.document_id t.controller; installed = false
         ; metadata = String.Map.empty; resolving = None; base = text; base_cursor = Editor.cursor editor
         ; prefer_local_snippets = t.completion_prefer_local_snippets }
     ; source_commands = if t.source_attached && not (String.is_empty token.resource)
         then Complete request :: t.source_commands else t.source_commands }
+;;
+
+let take_word_index_request t =
+  let request = match t.completion, t.word_index_request with
+    | Some c, Some r when Completion.Token.equal c.token r.request.token
+        && not c.installed -> Some r
+    | _ -> None in
+  { t with word_index_request = request }, request
+;;
+
+let receive_word_index t (r : word_index_request) words =
+  let controller = Option.bind r.owner ~f:(Session.find (session t)) in
+  if t.exited || not (Option.exists controller ~f:(fun controller ->
+      Controller.Document_id.equal r.document (Controller.document_id controller))) then t else
+  let t = Option.value_map r.owner ~default:t ~f:(fun id ->
+    if Option.exists (Map.find t.completion_words id) ~f:(fun cached ->
+        Controller.Document_id.equal cached.document r.document && cached.serial > r.request.token.request)
+    then t else
+      { t with completion_words = Map.set t.completion_words ~key:id
+          ~data:{ document = r.document; words; serial = r.request.token.request } }) in
+  match t.completion with
+  | Some c when completion_current t c && not c.installed
+      && Controller.Document_id.equal c.document r.document
+      && Option.equal Buffer_id.equal c.owner r.owner
+      && Completion.Token.equal c.token r.request.token
+      && c.base_cursor = r.request.cursor && phys_equal c.base r.text ->
+    { t with word_index_request = None
+    ; completion = Some { c with model = Completion.receive_words c.model r.request words } }
+  | _ -> t
 ;;
 
 let demo_snippet_available t =
@@ -1942,7 +1993,11 @@ let geometry t ~width ~height =
    nor focus moves. *)
 let adopt_session_state ?(keep_view_tab = false) ?(keep_focus = false) t session ~width ~height =
   let t = if Session.same_file_lifetimes t.session session then t else
-    { t with completion_words = Map.filter_keys t.completion_words ~f:(Session.has_buffer session) } in
+    { t with completion_words = Map.filteri t.completion_words ~f:(fun ~key ~data ->
+        Option.exists (Session.find session key) ~f:(fun controller ->
+          Controller.Document_id.equal data.document (Controller.document_id controller)))
+    ; word_index_request = Option.filter t.word_index_request ~f:(fun r ->
+        Option.exists r.owner ~f:(Session.has_buffer session)) } in
   (* Session-owned navigation (notably [Toggle_directory]) may consume its view
      command before it reaches the screen. An explicitly focused browser must
      become visible, including when its retained placement is a side pane. *)
@@ -3415,10 +3470,37 @@ let finish_step t ~width ~height ~controller ~views ~keymap_notice =
     }
 ;;
 
+let apply_snippet_change t (s : snippet_session) change =
+  let revision = Editor.revision (Controller.editor t.controller) in
+  Option.bind (Or_error.ok change) ~f:(fun change ->
+    Option.map (Controller.apply_insert_edits t.controller ~expected_revision:revision
+      ~edits:[ Snippet.Session.edits change ] ~cursor:(Snippet.Session.cursor_after change)
+      |> Or_error.ok) ~f:(fun controller ->
+        let fields = Snippet.Session.applied change
+            ~revision:(Editor.revision (Controller.editor controller)) in
+        { t with controller; snippet = Some { s with fields } }))
+;;
+
 let snippet_command t command =
   Option.bind t.snippet ~f:(fun s ->
     let editor = Controller.editor t.controller in
     let text = Editor.text editor and revision = Editor.revision editor in
+    match command with
+    | Command.Move _ ->
+      let controller, _, _ = Controller.dispatch t.controller [ Keymap.Action.Editor command ] in
+      let after = Controller.editor controller in
+      if Editor.revision after <> revision
+         || not (Snippet.Session.matches s.fields ~revision:(Editor.revision after) ~text:(Editor.text after))
+      then None
+      else Option.bind (Snippet.Session.set_cursor s.fields (Editor.cursor after) |> Or_error.ok)
+          ~f:(fun fields ->
+            (* Ordinary movement commits Insert history. Use its destination,
+               but keep the original transaction while editing linked fields. *)
+            Option.map (Controller.apply_insert_edits t.controller
+              ~expected_revision:revision ~edits:[] ~cursor:(Editor.cursor after)
+              |> Or_error.ok) ~f:(fun controller ->
+                { t with controller; snippet = Some { s with fields } }))
+    | _ ->
     let change = match command with
       | Command.Insert_text inserted -> Snippet.Session.insert s.fields ~revision ~text inserted
       | Delete_backward | Delete_soft_tab_backward _ | Delete_forward ->
@@ -3440,13 +3522,7 @@ let snippet_command t command =
          | Some range -> Snippet.Session.replace s.fields ~revision ~text
              ~start:range.start ~stop:range.stop ~replacement:"")
       | _ -> Or_error.error_string "Command leaves snippet" in
-    Option.bind (Or_error.ok change) ~f:(fun change ->
-      Option.map (Controller.apply_insert_edits t.controller ~expected_revision:revision
-        ~edits:[ Snippet.Session.edits change ] ~cursor:(Snippet.Session.cursor_after change)
-        |> Or_error.ok) ~f:(fun controller ->
-          let fields = Snippet.Session.applied change
-              ~revision:(Editor.revision (Controller.editor controller)) in
-          { t with controller; snippet = Some { s with fields } })))
+    apply_snippet_change t s change)
 ;;
 
 let feed_snippet t ~width ~height input =
@@ -3491,6 +3567,14 @@ let feed t ~width ~height (input : Keymap.Input.t) =
     start_completion ~manual:true (finalize_completion t), Controller.Status.Running
   | Key (Tab | Shift_tab as key) when Option.is_some t.snippet ->
     navigate_snippet t (if Key.equal key Tab then Next else Previous), Controller.Status.Running
+  | Key (Ctrl ('e' | 'y' as key)) when
+      Option.exists t.snippet ~f:(fun s -> Option.is_some (Snippet.Session.choices s.fields)) ->
+    let t = { t with controller = Controller.cancel_pending t.controller } in
+    let s = Option.value_exn t.snippet in
+    let editor = Controller.editor t.controller in
+    let change = Snippet.Session.cycle_choice s.fields (if Char.equal key 'e' then Next else Previous)
+        ~revision:(Editor.revision editor) ~text:(Editor.text editor) in
+    Option.value (apply_snippet_change t s change) ~default:{ t with snippet = None }, Controller.Status.Running
   | Key _ when Option.is_some t.snippet -> feed_snippet t ~width ~height input
   | Key (Tab | Shift_tab as key) when accepting ->
     cycle_completion t (if Key.equal key Tab then Next else Previous), Controller.Status.Running
@@ -4201,7 +4285,11 @@ and apply_running t ~width ~height (input : Input.t) : t * Controller.Status.t =
       | Shift_tab -> M.Tab, { M.no_modifiers with shift = true }
       | Escape -> M.Escape, M.no_modifiers
       | Backspace -> M.Backspace, M.no_modifiers
-      | Delete -> M.Delete, M.no_modifiers in
+      | Delete -> M.Delete, M.no_modifiers
+      | Left -> M.Left, M.no_modifiers
+      | Right -> M.Right, M.no_modifiers
+      | Home -> M.Home, M.no_modifiers
+      | End -> M.End, M.no_modifiers in
     apply_running t ~width ~height (Terminal_key_at { key = { code; modifiers }; at })
   | Content_picker_accept request ->
     let position = ref None in

@@ -64,6 +64,7 @@ module Buffer_words = struct
   let scan text ~start ~stop ~delta words =
     Option.iter !(For_testing.active) ~f:(fun bytes -> bytes := !bytes + stop - start);
     let add words start stop =
+      if stop - start > 4096 then words else
       let key = B.slice text ~pos:start ~len:(stop - start) in
       Map.change words key ~f:(fun count ->
         let count = Option.value count ~default:0 + delta in
@@ -117,13 +118,119 @@ module Buffer_words = struct
         { text; words }
   ;;
 
+  module Builder = struct
+    type phase = Prefix of int | Suffix of int * int | Left of int * int * int
+      | Old_right of int * int * int | New_right of int * int * int
+      | Scan of B.t * int * int * int * int option * (int * int) option
+      | Done
+    type index = t
+    type t = { text : B.t; before : index option; mutable words : int String.Map.t
+             ; mutable phase : phase }
+    let create ?before text =
+      { text; before; words = Option.value_map before ~default:String.Map.empty ~f:(fun t -> t.words)
+      ; phase = match before with
+        | None -> Scan (text, 0, B.length text, 1, None, None)
+        | Some old when phys_equal old.text text -> Done
+        | Some old ->
+          match B.recent_changed_range ~before:old.text ~after:text with
+          | `Unchanged -> Done
+          | `Changed (start, a, b) -> Left (start, a, b)
+          | `Unknown -> Prefix 0 }
+    ;;
+    let step t ~budget =
+      let remaining = ref (Int.max 0 budget) in
+      let visited = ref 0 in
+      let consume n = remaining := !remaining - n; visited := !visited + n in
+      let old () = (Option.value_exn t.before).text in
+      let advance text at =
+        let next = Option.value_exn (B.next_boundary text at) in
+        consume (next - at); next in
+      let byte text at = (B.to_string text).[at] in
+      while !remaining > 0 && (match t.phase with Done -> false | _ -> true) do
+        match t.phase with
+        | Done -> ()
+        | Prefix at ->
+          let before = old () in
+          if at < Int.min (B.length before) (B.length t.text)
+             && Char.equal (byte before at) (byte t.text at) then (
+            consume 1; t.phase <- Prefix (at + 1))
+          else if at = B.length before && at = B.length t.text then t.phase <- Done
+          else if not (B.is_boundary before at && B.is_boundary t.text at) then (
+            consume 1;
+            (* The mismatch is inside one UTF-8 scalar. Start at its lead byte. *)
+            let start = ref (at - 1) in
+            while not (B.is_boundary before !start && B.is_boundary t.text !start) do decr start done;
+            t.phase <- Suffix (!start, 0))
+          else t.phase <- Suffix (at, 0)
+        | Suffix (start, n) ->
+          let before = old () in
+          if n < Int.min (B.length before) (B.length t.text) - start
+             && Char.equal (byte before (B.length before - n - 1))
+                  (byte t.text (B.length t.text - n - 1)) then (
+            consume 1; t.phase <- Suffix (start, n + 1))
+          else (
+            let n = ref n in
+            while not (B.is_boundary before (B.length before - !n)
+                       && B.is_boundary t.text (B.length t.text - !n)) do decr n done;
+            t.phase <- Left (start, B.length before - !n, B.length t.text - !n))
+        | Left (start, a, b) ->
+          (match B.prev_boundary (old ()) start with
+           | Some previous when identifier (old ()) previous ->
+              consume (start - previous); t.phase <- Left (previous, a, b)
+           | _ -> t.phase <- Old_right (start, a, b))
+        | Old_right (start, a, b) ->
+          if identifier (old ()) a then t.phase <- Old_right (start, advance (old ()) a, b)
+          else t.phase <- New_right (start, a, b)
+        | New_right (start, a, b) ->
+          if identifier t.text b then t.phase <- New_right (start, a, advance t.text b)
+          else t.phase <- Scan (old (), start, a, -1, None, Some (start, b))
+        | Scan (text, at, stop, delta, word, next) ->
+          let add finish =
+            Option.iter word ~f:(fun start ->
+              (* Pathological identifiers must not turn a bounded step into a
+                 multi-megabyte substring allocation / tree comparison. *)
+              if finish - start <= 4096 then (
+                (* A balanced tree operation can compare a long common prefix
+                   at every level. Charge that work, not just tokenization.
+                   One atomic operation may exceed the remaining budget. *)
+                let levels = 2 * Int.ceil_log2 (Map.length t.words + 2) + 1 in
+                remaining := !remaining - ((finish - start + 1) * levels);
+                let key = B.slice text ~pos:start ~len:(finish - start) in
+                t.words <- Map.change t.words key ~f:(fun count ->
+                  let n = Option.value count ~default:0 + delta in
+                  if n <= 0 then None else Some n))) in
+          if at >= stop then (
+            add at;
+            t.phase <- match next with None -> Done
+              | Some (start, stop) -> Scan (t.text, start, stop, 1, None, None))
+          else if identifier text at then
+            t.phase <- Scan (text, advance text at, stop, delta,
+              Some (Option.value word ~default:at), next)
+          else (
+            add at;
+            t.phase <- Scan (text, advance text at, stop, delta, None, next))
+      done;
+      Option.iter !(For_testing.active) ~f:(fun bytes -> bytes := !bytes + !visited);
+      match t.phase with Done -> Some { text = t.text; words = t.words } | _ -> None
+    ;;
+  end
+
+  let update_bounded t text ~budget =
+    Builder.step (Builder.create ~before:t text) ~budget
+  ;;
+
   let candidates t ~text ~cursor ~limit =
     if limit <= 0 || not (phys_equal text t.text) then [] else
       match prefix_start text cursor with
       | None -> []
       | Some start ->
         let prefix = B.slice text ~pos:start ~len:(cursor - start) in
-        let current = B.slice text ~pos:start ~len:(word_stop text cursor - start) in
+        let rec bounded_stop at =
+          if at - start > 4096 || not (identifier text at) then at else
+            bounded_stop (Option.value_exn (B.next_boundary text at)) in
+        let stop = bounded_stop cursor in
+        let current = if stop - start > 4096 then "" else
+            B.slice text ~pos:start ~len:(stop - start) in
         Map.to_sequence t.words ~keys_greater_or_equal_to:prefix
         |> Sequence.take_while ~f:(fun (word, _) -> String.is_prefix word ~prefix)
         |> Sequence.filter ~f:(fun (word, count) ->
@@ -161,10 +268,11 @@ let matches t ~revision ~cursor =
   not t.finalized && revision = t.expected_revision && cursor = t.expected_cursor
 ;;
 
-let start ?(prefer_local_snippets = true) ~token ~text ~cursor ~words ~limit () =
+let start ?(prefer_local_snippets = true) ~token ~text ~cursor ?words ~limit () =
   if limit <= 0 then None else
     Option.map (prefix_start text cursor) ~f:(fun start ->
-      let buffer = Buffer_words.candidates words ~text ~cursor ~limit in
+      let buffer = Option.value_map words ~default:[] ~f:(fun words ->
+        Buffer_words.candidates words ~text ~cursor ~limit) in
       { token; base = text; prefix = B.slice text ~pos:start ~len:(cursor - start)
       ; initial_cursor = cursor; expected_revision = token.revision
       ; expected_cursor = cursor; limit; buffer; providers = []; items = buffer
@@ -188,6 +296,32 @@ let equivalent (a : Candidate.t) (b : Candidate.t) =
   && Option.equal Snippet.equal a.snippet b.snippet
 ;;
 
+let rebuild t ~providers ~buffer =
+    let lsp = List.sort providers ~compare:(fun (a, _) (b, _) -> String.compare a b)
+      |> List.concat_map ~f:snd
+      |> List.stable_sort ~compare:(fun a b ->
+        let local c = Candidate.equal_source c.Candidate.source Snippet in
+        let source = if t.prefer_local_snippets then Bool.compare (local b) (local a)
+          else Bool.compare (local a) (local b) in
+        let template = Bool.compare (Option.is_none a.Candidate.snippet)
+            (Option.is_none b.Candidate.snippet) in
+        if source <> 0 then source else
+        if template <> 0 then template else String.compare a.sort_text b.sort_text)
+    in
+    let items = List.fold (lsp @ buffer) ~init:[] ~f:(fun acc item ->
+      if List.exists acc ~f:(equivalent item) then acc else item :: acc)
+      |> List.rev |> Fn.flip List.take t.limit
+    in
+    let selected_index = match selected t with
+      | None -> 0
+      | Some old ->
+        List.findi items ~f:(fun _ c ->
+          Candidate.equal_source old.source c.source && String.equal old.id c.id)
+        |> Option.value_map ~default:0 ~f:fst
+    in
+    { t with buffer; providers; items; selected_index; stamp = ref () }
+;;
+
 let receive t (reply : Reply.t) =
   if not (Token.equal t.token reply.token) || Option.is_some t.installed || t.finalized
   then t
@@ -200,29 +334,16 @@ let receive t (reply : Reply.t) =
         && valid_candidate t.base c)
     in
     let providers = List.Assoc.add t.providers ~equal:String.equal reply.source contribution in
-    let lsp = List.sort providers ~compare:(fun (a, _) (b, _) -> String.compare a b)
-      |> List.concat_map ~f:snd
-      |> List.stable_sort ~compare:(fun a b ->
-        let local c = Candidate.equal_source c.Candidate.source Snippet in
-        let source = if t.prefer_local_snippets then Bool.compare (local b) (local a)
-          else Bool.compare (local a) (local b) in
-        let template = Bool.compare (Option.is_none a.Candidate.snippet)
-            (Option.is_none b.Candidate.snippet) in
-        if source <> 0 then source else
-        if template <> 0 then template else String.compare a.sort_text b.sort_text)
-    in
-    let items = List.fold (lsp @ t.buffer) ~init:[] ~f:(fun acc item ->
-      if List.exists acc ~f:(equivalent item) then acc else item :: acc)
-      |> List.rev |> Fn.flip List.take t.limit
-    in
-    let selected_index = match selected t with
-      | None -> 0
-      | Some old ->
-        List.findi items ~f:(fun _ c ->
-          Candidate.equal_source old.source c.source && String.equal old.id c.id)
-        |> Option.value_map ~default:0 ~f:fst
-    in
-    { t with providers; items; selected_index; stamp = ref () }
+    rebuild t ~providers ~buffer:t.buffer
+;;
+
+let receive_words t (request : Request.t) words =
+  if not (Token.equal t.token request.token) || request.cursor <> t.initial_cursor
+     || not (phys_equal words.Buffer_words.text t.base)
+     || Option.is_some t.installed || t.finalized then t
+  else
+    let buffer = Buffer_words.candidates words ~text:t.base ~cursor:t.initial_cursor ~limit:t.limit in
+    rebuild t ~providers:t.providers ~buffer
 ;;
 
 let make_plan t index candidate kind =

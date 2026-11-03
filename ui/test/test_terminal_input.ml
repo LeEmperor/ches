@@ -85,6 +85,26 @@ let%test_unit "terminal capture retains paste boundaries and ignores mouse" =
         (Sexp.to_string [%sexp (Terminal_input.inputs ~terminal:true event : Ches_screen.Ui_state.Input.t list)])))
 ;;
 
+let%test_unit "frontend normalizes Insert navigation without synthesizing paste text" =
+  let module U = Ches_screen.Ui_state in
+  let module E = Ches_core.Editor in
+  let text = Ches_core.Text_buffer.of_string "界é\nnext" |> Result.ok |> Option.value_exn in
+  let controller = Ches_app.Controller.create (E.create ~cell_width:Ches_screen.Cell_map.width text) in
+  let feed ui event = fst (U.apply_all ui ~width:80 ~height:10 (Terminal_input.inputs event)) in
+  let ui = U.create ~bare:true controller |> fun ui -> feed ui (key (ASCII 'i')) in
+  let ui = List.fold [key End; key (Arrow `Left); key (ASCII 'X'); key Home; key (Arrow `Right)]
+      ~init:ui ~f:feed in
+  let editor = Ches_app.Controller.editor (U.controller ui) in
+  assert (String.equal (Ches_core.Text_buffer.to_string (E.text editor)) "界Xé\nnext");
+  assert (E.cursor editor = 3);
+  List.iter [ Event.Key.Arrow `Left, Ches_input.Key.Left; Arrow `Right, Right; Home, Home; End, End ]
+    ~f:(fun (native, normalized) ->
+      assert (Option.is_none (Ches_input.Key.text normalized));
+      match Terminal_input.inputs (key native) with
+      | [Key actual] -> assert (Ches_input.Key.equal actual normalized)
+      | _ -> assert false)
+;;
+
 let%expect_test "terminal events become normalized keys" =
   List.iter
     [ key (ASCII 'a')
@@ -129,7 +149,7 @@ let%expect_test "terminal events become normalized keys" =
     ((Key_press (key (ASCII x)) (mods (Meta))) ->
      ((Key Escape) (Key (Char U+0078))))
     ((Key_press (key (Arrow Up)) (mods (Meta))) -> ((Key Escape)))
-    ((Key_press (key (Arrow Left))) -> ())
+    ((Key_press (key (Arrow Left))) -> ((Key Left)))
     ((Key_press (key (Function 1))) -> ())
     ((Paste Start) -> (Paste_start))
     ((Paste End) -> (Paste_end))

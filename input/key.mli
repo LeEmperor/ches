@@ -12,7 +12,9 @@
      - Ctrl plus an ASCII letter is [Ctrl] of the {i lowercase} letter, whether or not
        Shift was held: Ctrl-R is [Ctrl 'r'].
      - Shift-Tab is [Shift_tab], distinct from the text-producing [Tab].
-    - Keys with no constructor here (arrows, function keys, Meta combinations, ...)
+    - Unmodified Left/Right/Home/End become [Left]/[Right]/[Home]/[End].
+      In Insert these move the caret without inserting text; Home/End use the current line.
+    - Keys with no constructor here (Up/Down, function keys, ...)
       are dropped by the adapter. They therefore neither run commands nor cancel a
       pending sequence.
 
@@ -28,6 +30,10 @@ type t =
   | Shift_tab (** Shift-Tab, distinct from text-producing Tab. *)
   | Backspace
   | Delete
+  | Left
+  | Right
+  | Home
+  | End
   | Escape
 [@@deriving sexp_of, equal]
 

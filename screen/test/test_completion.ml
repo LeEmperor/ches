@@ -132,6 +132,99 @@ let reply t (request : M.Request.t) candidates =
   run t [ Source (Completion { token = request.token; source = "test"; candidates; incomplete = false }) ]
 ;;
 
+let finish_words (r : Ui_state.word_index_request) =
+  let builder = M.Buffer_words.Builder.create ?before:r.before r.text in
+  let rec loop () = match M.Buffer_words.Builder.step builder ~budget:16384 with
+    | None -> loop () | Some words -> words in
+  loop ()
+;;
+
+let pump_words t =
+  match snd (Ui_state.take_word_index_request t) with
+  | None -> t
+  | Some r -> Ui_state.receive_word_index t r (finish_words r)
+;;
+
+let%expect_test "cold large words are deferred, providers immediate, eventual no-server menu and stale guards" =
+  let large = "\nalpha alpine\n" ^ String.concat (List.init 20000 ~f:(fun _ -> "padding\n")) in
+  let snippets = press (ui ~path:"module.sv" large) "iaff" in
+  assert (Option.is_some (snd (Ui_state.take_word_index_request snippets)));
+  assert (List.exists (Ui_state.completion_candidates snippets) ~f:(fun c ->
+    M.Candidate.equal_source c.source Snippet));
+  let t, bytes = M.Buffer_words.For_testing.measure (fun () -> press (ui large) "ial") in
+  assert (bytes = 0 && not (has_menu t));
+  let _, pending = Ui_state.take_word_index_request t in
+  let pending = Option.value_exn pending in
+  let words = finish_words pending in
+  let ready = Ui_state.receive_word_index t pending words in
+  assert (List.mem (labels ready) "alpha" ~equal:String.equal);
+  let newer = press t "p" in
+  assert (not (has_menu (Ui_state.receive_word_index newer pending words)));
+  let dismissed = press t "<Esc>" in
+  assert (not (has_menu (Ui_state.receive_word_index dismissed pending words)));
+  let closed, did_close = Ui_state.close_current dismissed ~width:80 ~height:24 ~force:true in
+  assert did_close;
+  assert (phys_equal closed (Ui_state.receive_word_index closed pending words));
+  let server, req = request (press (attached large) "ial") in
+  let _, pending = Ui_state.take_word_index_request server in
+  let pending = Option.value_exn pending in
+  let server = reply server req [candidate req "algebra"] in
+  assert (List.equal String.equal (labels server) ["algebra"]);
+  let installed = press server "<Tab>" in
+  let frozen = Ui_state.receive_word_index installed pending (finish_words pending) in
+  assert (List.equal String.equal (labels frozen) ["algebra"]);
+  print_endline "deferred words, immediate LSP, eventual words and guards passed";
+  [%expect {| deferred words, immediate LSP, eventual words and guards passed |}]
+;;
+
+let%expect_test "word delivery preserves source selection and warm typing does bounded local work" =
+  let large = "\nalpha alpine\n" ^ String.make 1000000 ' ' in
+  let t, req = request (press (attached large) "ial") in
+  let pending = snd (Ui_state.take_word_index_request t) |> Option.value_exn in
+  let t = reply t req [candidate req "alpine"] in
+  let t = Ui_state.receive_word_index t pending (finish_words pending) in
+  assert (List.equal String.equal (labels t) ["alpine"; "alpha"]);
+  assert (Option.is_none (snd (Ui_state.take_word_index_request t)));
+  let installed = press t "<Tab>" in
+  assert (String.is_prefix (text installed) ~prefix:"alpine\n");
+  let t, visited = M.Buffer_words.For_testing.measure (fun () -> press t "p") in
+  assert (visited < 256);
+  assert (List.mem (labels t) "alpha" ~equal:String.equal);
+  assert (Option.is_none (snd (Ui_state.take_word_index_request t)));
+  [%expect {| |}]
+;;
+
+let%expect_test "late base delivery cannot replace a newer cached snapshot" =
+  let t = press (ui ("\nalpha alpine\n" ^ String.make 100000 ' ')) "ial" in
+  let old = snd (Ui_state.take_word_index_request t) |> Option.value_exn in
+  let t = press t "p" in
+  let fresh = snd (Ui_state.take_word_index_request t) |> Option.value_exn in
+  let t = Ui_state.receive_word_index t fresh (finish_words fresh) in
+  let t = Ui_state.receive_word_index t old (finish_words old) in
+  let t, visited = M.Buffer_words.For_testing.measure (fun () -> press t "<C-n>") in
+  assert (visited = 0);
+  assert (List.mem (labels t) "alpha" ~equal:String.equal);
+  [%expect {| |}]
+;;
+
+let%expect_test "closing a buffer prunes the completed index without a host round trip" =
+  let weak = Stdlib.Weak.create 1 in
+  let build_and_close () =
+    let t = press (ui ("\nalpha alpine\n" ^ String.make 100000 ' ')) "ial" in
+    let pending = snd (Ui_state.take_word_index_request t) |> Option.value_exn in
+    let words = finish_words pending in
+    Stdlib.Weak.set weak 0 (Some words);
+    let t = Ui_state.receive_word_index t pending words |> fun t -> press t "<Esc>" in
+    let closed, did_close = Ui_state.close_current t ~width:80 ~height:24 ~force:true in
+    assert did_close;
+    closed in
+  let closed = build_and_close () in
+  Stdlib.Gc.full_major ();
+  assert (not (Stdlib.Weak.check weak 0));
+  assert (Option.is_none (snd (Ui_state.take_word_index_request closed)));
+  [%expect {| |}]
+;;
+
 let%expect_test "LSP Insert replies are immediate; stale replies ignored; installed order frozen" =
   let t, old = request (press (attached "") "ial") in
   let t = reply t old [ candidate old "alpha" ] in
@@ -462,10 +555,11 @@ let%expect_test "menu identifies providers and safely renders signature metadata
 
 let%expect_test "whole-buffer index updates and survives buffer switches without leaking words" =
   let initial = "\n" ^ String.make 70000 ' ' ^ "\nzephyr zeta" in
-  let t = press (ui initial) "ize" in
+  let t = press (ui initial) "ize" |> pump_words in
   assert (List.mem (labels t) "zephyr" ~equal:String.equal);
   let t, scanned = M.Buffer_words.For_testing.measure (fun () -> press t "p<C-h>") in
-  assert (scanned < 128);
+  assert (scanned <= 2 * 16384);
+  let t = pump_words t in
   let original = Session.active_id (Ui_state.session t) |> Option.value_exn in
   let t = press t "<CR>!<Esc>" in
   let t, _ = Ui_state.open_file t ~width:40 ~height:8 "/__ches_completion_cache_other__.ml"
@@ -475,7 +569,8 @@ let%expect_test "whole-buffer index updates and survives buffer switches without
   let t, scanned = M.Buffer_words.For_testing.measure (fun () ->
     let t = Ui_state.activate_buffer t ~width:40 ~height:8 original |> Or_error.ok_exn in
     press t "0ize") in
-  assert (scanned < 256);
+  assert (scanned <= 2 * 16384);
+  let t = pump_words t in
   assert (has_menu t);
   let t = press t "<Esc>" in
   let t, closed = Ui_state.close_current t ~width:40 ~height:8 ~force:true in
@@ -744,6 +839,91 @@ let%expect_test "snippet Unicode replacement and subsequent edits mirror atomica
   [%expect {| |}]
 ;;
 
+let%test_unit "snippet movement clears defaults, respects Unicode, endpoints and outside cancellation" =
+  let make syntax = fst (snippet_menu syntax) |> fun t -> press t "<CR>" in
+  let t = make "(${1:界é})/$1" in
+  let revision = Editor.revision (editor t) in
+  let t = press t "<Left>" in
+  assert (Editor.cursor (editor t) = 4 && active t);
+  assert (Editor.revision (editor t) = revision);
+  let t = press t "X" in
+  assert (String.equal (text t) "(界Xé)/界Xé" && active t);
+  let t = press t "<Right><Right>" in
+  assert (not (active t) && Editor.cursor (editor t) = String.length "(界Xé)");
+  let t = make "${1:界é}/$1" |> fun t -> press t "<Home>X" in
+  assert (String.equal (text t) "X界é/X界é" && active t);
+  let t = press t "<End>!" in
+  assert (String.equal (text t) "X界é!/X界é!" && active t);
+  let t = make "prefix ${1:界é}\nsuffix" |> fun t -> press t "<Home>" in
+  assert (Editor.cursor (editor t) = 0 && not (active t));
+  let t = make "${1:界é}\nsuffix" |> fun t -> press t "<End>X" in
+  assert (String.equal (text t) "界éX\nsuffix" && active t)
+;;
+
+let%test_unit "choice cycling, custom mirrored edits, field keys and undo" =
+  let t = fst (snippet_menu "${1|界,é,edge|}/$1/${2:next}$0") |> fun t -> press t "<CR>" in
+  assert ([%equal: string list option] (Ui_state.snippet_choices t) (Some ["界"; "é"; "edge"]));
+  let t = press t "<C-e>" in
+  assert (String.equal (text t) "é/é/next" && active t);
+  let t = press t "<C-y>" in
+  assert (String.equal (text t) "界/界/next");
+  let t = press t "<Tab><S-Tab>custom" in
+  assert (String.equal (text t) "custom/custom/next" && active t);
+  let t = press t "<C-e>" in
+  assert (active t && not (String.is_substring (text t) ~substring:"custom"));
+  let final = text t in
+  let t = press t "<Esc>u" in
+  assert (String.equal (text t) "" && not (active t));
+  assert (String.equal (text (press t "<C-r>")) final)
+;;
+
+let%test_unit "Insert navigation without snippets uses current line and Unicode boundaries" =
+  let t = press (ui "界é\nnext") "i<End><Left>X<Home>Y" in
+  assert (String.equal (text t) "Y界Xé\nnext");
+  assert (Mode.equal (Editor.mode (editor t)) Insert && not (active t))
+;;
+
+let%test_unit "movement inside snippet retains the insertion undo group" =
+  let t = fst (snippet_menu "(${1:界é})/$1$0") |> fun t -> press t "<CR>" in
+  let t = press t "X<Left>Y<Right>Z" in
+  assert (String.equal (text t) "(YXZ)/YXZ" && active t);
+  let final = text t in
+  let t = press t "<Esc>u" in
+  assert (String.equal (text t) "" && not (active t));
+  let t = press t "<C-r>" in
+  assert (String.equal (text t) final && not (active t))
+;;
+
+let%test_unit "ordinary Insert movement retains ordinary undo boundaries" =
+  let t = press (ui "界é") "iX<Right>Y<Esc>u" in
+  assert (String.equal (text t) "X界é" && not (active t));
+  let t = press t "u" in
+  assert (String.equal (text t) "界é");
+  let t = press t "<C-r><C-r>" in
+  assert (String.equal (text t) "X界Yé" && not (active t))
+;;
+
+let%test_unit "navigation replays held terminal shortcuts before moving and clears escape state" =
+  let make () = fst (snippet_menu "(${1:default})/$1/${2:next}")
+      |> fun t -> press t "<CR>" in
+  let at ms = Time_ns.add Time_ns.epoch (Time_ns.Span.of_ms ms) in
+  let timed t keys = run t (List.mapi keys ~f:(fun i key ->
+    Ui_state.Input.Key_at { key; at = at (Float.of_int (i * 10)) })) in
+  let t = timed (make ()) [Ches_input.Key.char '7'; Ches_input.Key.char ' '; Left] in
+  assert (String.equal (text t) "(7 )/7 /next" && active t);
+  assert (Editor.cursor (editor t) = 2 && not (Ui_state.toggle_key_pending t));
+  let t = press t "X" in
+  assert (String.equal (text t) "(7X )/7X /next" && active t);
+  let t = timed (make ()) [Ches_input.Key.char ' '; Tab] in
+  assert (String.equal (text t) "( )/ /next" && active t);
+  assert (not (Ui_state.toggle_key_pending t));
+  let t = press t "X" in
+  assert (String.equal (text t) "( )/ /X");
+  let t = press (make ()) "j<Left>k" in
+  assert (String.equal (text t) "(kj)/kj/next" && active t);
+  assert (Mode.equal (Editor.mode (editor t)) Insert)
+;;
+
 let%expect_test "snippet numbered navigation reselects defaults, Shift-Tab, and final cursor exits" =
   let t, _ = snippet_menu "${2:two}/${1:one}/$1$0!" in
   let t = press t "<CR>X<Tab>Y" in
@@ -857,6 +1037,51 @@ let%expect_test "resolved imports known before snippet Enter relocate the expans
   let t = press t "<CR>界" in
   assert (String.equal (text t) "import\n\n界/界" && active t);
   [%expect {| |}]
+;;
+
+let%test_unit "choice hint is clipped by cells, nonfocus, and follows active fields" =
+  let t = fst (snippet_menu "${1|界,é,edge|}/$1/${2:next}") |> fun t -> press t "<CR>" in
+  List.iter [4; 18; 40; 80] ~f:(fun width ->
+    let frame = Frame.render t ~width ~height:8 in
+    List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width)));
+  let render t = Frame.render t ~width:80 ~height:8 |> Frame.to_string in
+  let frame = Frame.render t ~width:80 ~height:8 in
+  assert (String.is_substring (render t) ~substring:"Ctrl-e/y: 界 | é | edge");
+  assert (Option.exists frame.cursor ~f:(fun cursor -> Frame.Cursor.equal_shape cursor.shape Bar));
+  assert (not (has_menu t));
+  assert (not (String.is_substring (render (press t "<Tab>")) ~substring:"Ctrl-e/y"));
+  assert (not (String.is_substring (render (press t "<C-n>")) ~substring:"Ctrl-e/y"))
+;;
+
+let%test_unit "choice hint bounds alternatives before span rendering" =
+  let syntax = "${1|a,b,c,d,e,f,g,h,NINTH," ^ String.make 30000 ',' ^ "|}" in
+  let t = fst (snippet_menu syntax) |> fun t -> press t "<CR>" in
+  let frame = Frame.render t ~width:120 ~height:8 in
+  assert (active t);
+  let rendered = Frame.to_string frame in
+  assert (String.is_substring rendered ~substring:"Ctrl-e/y: a | b | c | d | e | f | g | h");
+  assert (not (String.is_substring rendered ~substring:"NINTH"));
+  List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = 120))
+;;
+
+let%test_unit "choice interactions preserve timed escape, prefix replay and paste routes" =
+  let make () = fst (snippet_menu "${1|界,é|}/$1") |> fun t -> press t "<CR>" in
+  let at ms = Time_ns.add Time_ns.epoch (Time_ns.Span.of_ms ms) in
+  let t = run (make ()) [ Key_at { key = Ches_input.Key.char 'j'; at = at 0. }
+                       ; Key_at { key = Ctrl 'e'; at = at 10. }
+                       ; Key_at { key = Ches_input.Key.char 'k'; at = at 20. } ] in
+  assert (String.equal (text t) "k/k" && active t && Mode.equal (Editor.mode (editor t)) Insert);
+  let t = run (make ()) [ Key_at { key = Ches_input.Key.char 'j'; at = at 0. }
+                       ; Key_at { key = Ches_input.Key.char 'k'; at = at 10. } ] in
+  assert (String.equal (text t) "/" && not (active t));
+  let t = run (make ()) [ Key_at { key = Ches_input.Key.char ' '; at = at 0. }
+                       ; Key_at { key = Ctrl 'e'; at = at 10. }
+                       ; Toggle_tick (at 300.) ] in
+  assert (String.equal (text t) "界/界" && active t);
+  let t = run (make ()) (paste "jk") in
+  assert (String.equal (text t) "界jk/界" && not (active t));
+  let t = press (make ()) " /" in
+  assert (Ui_state.terminal_visible t && not (active t))
 ;;
 
 let%expect_test "snippet active-field rendering preserves Unicode cells, mirrors and empty fields" =

@@ -10,7 +10,8 @@ val builtins : t
     Input is bounded to 1 MiB and 1000 user entries. *)
 val parse : string -> t Or_error.t
 
-(** Prefix-only replacement, with contextual indentation and parsed placeholders.
+(** Prefix-only replacement, resolving filename variables against the raw lexical
+    [path] before contextual indentation, preserving choices and linked fields.
     Missing paths match global snippets only. *)
 val candidates
   :  t

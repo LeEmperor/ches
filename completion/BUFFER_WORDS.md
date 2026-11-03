@@ -1,5 +1,12 @@
 # Whole-buffer word cache
 
+Interactive completion uses the yielded `Buffer_words.Builder` and
+`ui/word_index_host.ml`; see [`screen/WORD_INDEX.md`](../screen/WORD_INDEX.md)
+for lifecycle, limits, and first-query/scheduler measurements. `Model.start`
+accepts missing words, and `Model.receive_words` merges the eventual exact-request
+result before installation. The synchronous APIs below remain available for
+batch callers and benchmarks; the screen never uses unbounded `update`.
+
 The host keeps one `Model.Buffer_words.t` per live buffer:
 
 ```ocaml
@@ -44,8 +51,9 @@ identity-only changes. Updating the identical snapshot returns the same index.
 ## Limits and worst cases
 
 - The existing 4096-byte typed-prefix limit remains. Candidate count is bounded
-  by the caller's limit (the screen uses 100). Word lengths and vocabulary size
-  have no arbitrary cutoff; storage grows with the distinct vocabulary.
+  by the caller's limit (the screen uses 100). Word lengths
+  are capped at 4096 bytes; longer identifiers are omitted. Vocabulary size
+  remains unbounded; storage grows with the distinct vocabulary.
 - An edit inside a very long identifier rescans that complete identifier. A
   query within an identifier inspects its suffix to identify the current word.
 - Multiple skipped edits use a conservative contiguous enclosing interval, so
@@ -54,7 +62,10 @@ identity-only changes. Updating the identical snapshot returns the same index.
   to an O(document bytes) common-prefix/suffix comparison. Only the resulting
   affected interval is tokenized. Independently loaded identical text reuses the
   word map after comparison.
-- Initial creation is synchronous. Also, `Text_buffer` still deliberately copies
+- Legacy `create` is synchronous; interactive creation yields by a 16 KiB work
+  budget that includes key copying/map work (small buffers first try one bounded
+  synchronous step).
+  `Text_buffer` still deliberately copies
   its flat document string when editing; the index removes additional whole-file
   scanning, not that existing edit-copy cost.
 

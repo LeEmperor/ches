@@ -721,9 +721,12 @@ Open the command palette (`Space c c`) and search for:
 These toggles last for the current editor session. Buffer matches are case-sensitive
 and lexically ordered; LSP candidates use server sorting and precede buffer-only
 matches. Buffer-word indexing covers the entire document and is cached per live
-buffer; ordinary edits update only affected words. The initial index build is
-synchronous and may briefly pause on multi-megabyte files. The combined list is
-limited to 100 candidates, and typed-prefix scanning is limited to 4096 bytes.
+buffer; ordinary edits update only affected words. Large initial builds and updates
+run in bounded, yielded chunks outside input transitions. Snippet and LSP results
+remain available while word suggestions load, and word results cannot alter a
+candidate list already being cycled. Small buffers can finish in one bounded input
+step. The combined list is limited to 100 candidates. Typed-prefix scanning is
+limited to 4096 bytes, and buffer identifiers longer than 4096 bytes are omitted.
 
 LSP requests synchronize the document first and discard obsolete replies.
 Insert/replace edits use the replace range; supported completion-list defaults
@@ -747,6 +750,9 @@ occurrences.
 | Typing | Replace the selected default, then edit the field; linked occurrences update together |
 | `Tab` | Select the next numbered field; after the last, move to the final cursor position and finish |
 | `Shift-Tab` | Select the previous field; at the first, reselect it |
+| `Ctrl-e` / `Ctrl-y` | Cycle the active field's choices forward/backward, with wraparound |
+| `Left` / `Right` | Move within a field without losing linked updates; leaving it ends the snippet |
+| `Home` / `End` | Move to the current line's start/end; retain the snippet only when still within an active occurrence |
 | `Escape` | Retain expanded text, end the snippet, and return to Normal mode |
 | `Ctrl-n` | End the snippet and explicitly request completion |
 
@@ -756,11 +762,32 @@ updates both occurrences, and Tab moves to the position after the semicolon.
 
 Supported syntax includes `$1`, `${1}`, `${1:default}`, linked occurrences, `$0`
 for the final cursor, and escaped backslashes, dollar signs, and closing braces.
-When `$0` is absent, the final cursor is at the end of the expansion. Variables,
-choices, transformations, nested defaults, and conflicting defaults are not yet
-supported; completions using unsupported or malformed snippets are skipped.
+When `$0` is absent, the final cursor is at the end of the expansion. Choice fields
+such as `${1|posedge,negedge|}` initially select the first option and retain linked
+occurrences. Within choices, escape comma, pipe, and backslash as `\,`, `\|`, and
+`\\`; options can be empty or multiline.
+
+A compact hint shows available choices while the field is active. Cycling keeps
+the chosen value selected, so typing replaces it with custom text. After custom
+text, Ctrl-e chooses the first option and Ctrl-y the last. For a quick hands-on
+test in a SystemVerilog file, accept the bundled `aff` snippet with Enter, press
+Ctrl-e to change `posedge` to `negedge`, then Tab to edit `clk`.
+
+Filename variables work in local and language-server snippets: `TM_FILENAME`,
+`TM_FILENAME_BASE` (only the final extension removed), `TM_DIRECTORY`, and
+`TM_FILEPATH`. Use `$TM_FILENAME`, `${TM_FILENAME}`, or a literal fallback such
+as `${TM_FILENAME_BASE:untitled}`. Paths are the current document's lexical editor
+paths; relative paths stay relative and a bare filename has directory `.`. Missing
+or unnamed paths use the fallback or empty text. Variables and defaults are not
+recursively expanded. Unknown variables, transformations, nested defaults, and
+conflicting linked defaults/choices are rejected; malformed completions are skipped.
 Templates can come from the language server or the independent local catalog
 described below.
+
+For example, `module ${TM_FILENAME_BASE:untitled};\n    $0\nendmodule` uses the
+current filename without its final extension as the module name. The variable is
+inserted as literal text, not an editable numbered field. Nested expressions such
+as `${1:${TM_FILENAME_BASE}}` remain unsupported.
 
 For a server-independent hands-on test, open the command palette from a file's
 Normal mode (`Space c c`) and select **Insert demo snippet**. This development
@@ -777,10 +804,12 @@ expansion and field edits together. The action is included in the regular build,
 needs no LSP, and works with automatic completion disabled. It is available in
 file Normal mode, not directory/read-only views or block insertion.
 
-Automatic completion is suppressed while editing snippet fields. Paste, newline,
-movement, buffer/focus changes, and edits crossing a field boundary end the snippet
-before normal handling. Expansion and linked edits join the current Insert undo
-transaction; undo/redo does not reactivate a cancelled session.
+Automatic completion is suppressed while editing snippet fields. Safe Left/Right/
+Home/End movement clears the default selection and retains mirroring within the
+active field's occurrences, including their endpoints. Movement outside those
+ranges, paste, newline, buffer/focus changes, and edits crossing a field boundary
+end the snippet before normal handling. Expansion, internal movement and linked
+edits retain the Insert undo group; undo/redo does not reactivate a cancelled session.
 
 Snippet acceptance uses additional edits already known at Enter and cancels pending
 resolve before activating fields. Late-resolved imports are therefore omitted for
@@ -799,7 +828,7 @@ These starters are available immediately in `.sv` and `.svh` files:
 
 | Prefix | ID | Template |
 | --- | --- | --- |
-| `aff` | `sv.aff` | Clocked `always_ff` block |
+| `aff` | `sv.aff` | Clocked `always_ff` block with a `posedge`/`negedge` choice |
 | `acomb` | `sv.acomb` | `always_comb` block |
 | `mod` | `sv.mod` | Module declaration |
 | `inst` | `sv.inst` | Module instance with a linked port/signal field |

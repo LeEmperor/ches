@@ -11,7 +11,11 @@ let keys s : Keymap.Input.t list =
     ; "<Tab>", Tab
     ; "<S-Tab>", Shift_tab
     ; "<BS>", Backspace
-    ; "<Del>", Delete
+     ; "<Del>", Delete
+     ; "<Left>", Left
+     ; "<Right>", Right
+     ; "<Home>", Home
+     ; "<End>", End
     ]
     @ List.init 26 ~f:(fun i ->
       let c = Char.of_int_exn (Char.to_int 'a' + i) in

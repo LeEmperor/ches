@@ -1,5 +1,12 @@
 (library
  (name ches_ui_picker_test)
+ (modules (:standard \ bench_word_index))
  (libraries core core_unix core_unix.filename_unix core_unix.sys_unix async bonsai bonsai_term bonsai_term_test bonsai_test ches_config_runtime ches_app ches_core ches_completion ches_tile ches_screen ches_ui ches_file_picker ches_file_picker_host ches_line_picker ches_content_picker ches_content_search ches_content_picker_host)
  (inline_tests (flags (:standard -source-tree-root .)))
- (preprocess (pps ppx_jane bonsai.ppx_bonsai)))
+  (preprocess (pps ppx_jane bonsai.ppx_bonsai)))
+
+(executable
+ (name bench_word_index)
+ (modules bench_word_index)
+ (libraries core async ches_core ches_input ches_app ches_screen ches_completion ches_ui)
+ (preprocess (pps ppx_jane)))

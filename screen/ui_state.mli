@@ -13,6 +13,13 @@
     remains non-focusable. *)
 
 open! Core
+type word_index_request =
+  { owner : Ches_app.Buffer_id.t option
+  ; document : Ches_app.Controller.Document_id.t
+  ; text : Ches_core.Text_buffer.t
+  ; request : Ches_completion.Model.Request.t
+  ; before : Ches_completion.Model.Buffer_words.t option
+  }
 open Ches_input
 
 module Message : sig
@@ -75,6 +82,8 @@ module Input : sig
 end
 
 type t
+val take_word_index_request : t -> t * word_index_request option
+val receive_word_index : t -> word_index_request -> Ches_completion.Model.Buffer_words.t -> t
 
 (** Pure atomic application; validates the snapshot/theme before any changes.
     [theme_override] persists across reloads. Explicit [create ~theme] is also
@@ -97,6 +106,7 @@ val completion_ghost : t -> Ches_completion.Model.ghost option
 
 (** Absolute byte ranges of the active field, including linked occurrences. *)
 val snippet_ranges : t -> Ches_completion.Snippet.range list
+val snippet_choices : t -> string list option
 
 (** Pure asynchronous catalog boundary. Creation queues generation 1; draining
     clears requests. Only the latest requested generation can replace last-good

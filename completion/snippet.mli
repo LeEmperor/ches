@@ -7,15 +7,22 @@ type t [@@deriving sexp_of, equal]
 
 (** UTF-8 byte offsets, relative to expanded text. Numbered fields are sorted;
     zero is the final cursor, implicitly at the end when absent. Defaults on a
-    later occurrence also populate earlier mirrors. Nested numbered defaults,
-    variables, choices and transforms are rejected. *)
+    later occurrence also populate earlier mirrors. Nested defaults
+    and transforms are rejected. Supported filename variables remain resolvable
+    after parsing; choices use their first option as the default. *)
 val parse : string -> t Or_error.t
+(** Resolve TM_FILENAME, TM_FILENAME_BASE, TM_DIRECTORY and TM_FILEPATH against
+    a lexical editor path, with no I/O. None/empty paths use literal defaults or
+    empty text. [parse] retains unresolved variables and initially uses defaults;
+    [resolve] may be called again for another path. Unknown variables are errors
+    at parse time. No recursive defaults or transforms. *)
+val resolve : t -> path:string option -> t Or_error.t
 val text : t -> string
 val fields : t -> field list
 val final_cursor : t -> int
 
 (** Add [prefix] after every expanded newline, including newlines introduced by
-    linked defaults. Reparse the indented template to retain accurate ranges. *)
+    linked defaults. Retains variables, choices and accurate ranges. *)
 val indent : t -> prefix:string -> t Or_error.t
 
 module Session : sig
@@ -33,6 +40,10 @@ module Session : sig
   (** The occurrence containing the tracked caret; initially the first mirror. *)
   val active_range : t -> range option
   val selection : t -> range option
+  val choices : t -> string list option
+  (** Wrap through choices, or choose first/last after custom text. Apply using
+      [edits]/[applied]; the tracked occurrence remains selected afterwards. *)
+  val cycle_choice : t -> direction -> revision:int -> text:Text_buffer.t -> change Or_error.t
   val cursor : t -> int
   val finished : t -> bool
   val matches : t -> revision:int -> text:Text_buffer.t -> bool
@@ -60,6 +71,6 @@ module Session : sig
   val edits : change -> Text_edit.t list
   val cursor_after : change -> int
   (** Call only after successful application of [edits], with the actual revision.
-      The returned session has the resulting text and collapsed caret. *)
+      The returned session has the resulting text and selection/caret. *)
   val applied : change -> revision:int -> t
 end
