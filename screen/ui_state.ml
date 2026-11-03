@@ -167,6 +167,10 @@ type toggle_pending =
 
 type t =
   { controller : Controller.t
+  ; harness_requests : Ches_harness.Protocol.work list
+  ; harness_busy : bool
+  ; harness_root : string option
+  ; waveform : Waveform_tile.t option
   ; navigation : navigation_origin option
   ; navigation_serial : int
   ; signature : signature_session option
@@ -351,6 +355,7 @@ let create
   ; signature = None
   ; signature_serial = 0
   ; signature_help_enabled = true
+  ; harness_requests = []; harness_busy = false; harness_root = None; waveform = None
   ; hover = None
   ; destinations = None
   ; instances = None
@@ -409,7 +414,8 @@ let create
          ; Ches_tile.Spec.companion status_id ~title:"Status"
          ]
          @ View_registry.specs views
-         @ [ Palette_tile.spec
+          @ [ Palette_tile.spec
+             ; Waveform_tile.spec
             ; Hover_tile.spec
             ; Destination_picker_tile.spec
             ; Instance_picker_tile.spec
@@ -540,6 +546,8 @@ let theme t =
 let theme_picker t = t.theme_picker
 let snippet_picker t = t.snippet_picker
 let hover t = t.hover
+let waveform t = t.waveform
+let take_harness_requests t = { t with harness_requests = [] }, List.rev t.harness_requests
 let destinations t = t.destinations
 let instances t = t.instances
 
@@ -1529,6 +1537,13 @@ let snippet_picker_layout t ~width ~height =
 let hover_layout t ~width ~height =
   Option.bind t.hover ~f:(fun _ -> palette_placement ~width ~height)
 ;;
+let waveform_layout t ~width ~height =
+  Option.bind t.waveform ~f:(fun _ ->
+    Floating.layout ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
+      ~preferred:{ width = Int.max 60 (width - 4); height = Int.max 10 (height - 4) }
+      ~minimum:{ width = 20; height = 6 }
+      ~policy:{ Tile_shell.Policy.minor with min_content_height = 4 })
+;;
 let destinations_layout t ~width ~height =
   Option.bind t.destinations ~f:(fun _ -> palette_placement ~width ~height)
 ;;
@@ -1614,6 +1629,7 @@ let prompt_layout t ~width ~height =
 let effective_floating floating t ~width ~height =
   match floating with
   | Some _ -> floating
+  | None when Option.is_some t.waveform -> Some (Waveform_tile.id, waveform_layout t ~width ~height)
   | None when Option.is_some t.hover -> Some (Hover_tile.id, hover_layout t ~width ~height)
   | None when Option.is_some t.destinations -> Some (Destination_picker_tile.id, destinations_layout t ~width ~height)
   | None when Option.is_some t.instances -> Some (Instance_picker_tile.id, instances_layout t ~width ~height)
@@ -1900,6 +1916,8 @@ let leave t id =
     ; terminal_paste = Option.map t.terminal_paste ~f:(fun (_, _, _) -> [], 0, false) }
   else if View_registry.installed t.views id
   then { t with views = View_registry.leave t.views id }
+  else if View_id.equal id Waveform_tile.id
+  then { t with waveform = None }
   else if View_id.equal id Theme_picker_tile.id
   then { t with theme_picker = None }
   else if View_id.equal id Snippet_picker_tile.id
@@ -1938,7 +1956,7 @@ let leave t id =
 (* Every view with state to leave: the registered views, then the floats. *)
 let leave_ids t =
   View_registry.ids t.views
-  @ [ Terminal_tile.id; Hover_tile.id; Destination_picker_tile.id; Instance_picker_tile.id ]
+  @ [ Waveform_tile.id; Terminal_tile.id; Hover_tile.id; Destination_picker_tile.id; Instance_picker_tile.id ]
   @ [ Snippet_picker_tile.id; Theme_picker_tile.id; Palette_tile.id; File_picker_tile.id; Line_picker_tile.id; Content_picker_tile.id; Help_tile.id
     ; Confirm_tile.id; Prompt_tile.id; Popup_tile.id ]
 ;;
@@ -4136,6 +4154,17 @@ let apply_view_command t ~width ~height (view : View_command.t) =
     { t with split = Workspace.Major_split.adjust t.split points; rows = None }
   | Close_split -> close_split t ~width ~height
   | Run_view_command { view; command } -> run_view_command t ~width ~height view command
+  | Request_view { view; request } when String.equal (View_id.to_string view) "quick-harness" ->
+    if t.harness_busy then { t with host = Host.with_notice t.host "Quick-Harness is already busy" }
+    else
+      let location = Option.value_or_thunk (path t) ~default:(fun () ->
+        Option.value t.harness_root ~default:(Session.startup_directory (session t))) in
+      let dirty = Session.buffers (session t) |> List.filter_map ~f:(fun (_, controller) ->
+        let editor = Controller.editor controller in
+        if Editor.is_dirty editor then Editor.path editor else None) in
+      { t with harness_busy = true
+        ; harness_requests = { action = request; location; dirty } :: t.harness_requests
+        ; host = Host.with_notice t.host "Quick-Harness working..." }
   | Request_view { view; request } -> request_view t ~width ~height view request
   | Restart_source when t.source_attached ->
     let t = dismiss_signature (dismiss_completion (dismiss_navigation { t with active_instance = None; context_revisions = String.Map.empty })) in
@@ -4635,6 +4664,15 @@ let route t ~width ~height key =
      | Workspace command, _ -> apply_view_command (dismiss_navigation t) ~width ~height command, Running
      | Notice text, _ -> { t with host = Host.with_notice t.host text }, Running
      | _ -> t, Running)
+  | Some id when View_id.equal id Waveform_tile.id ->
+    (match key, t.waveform with
+     | Escape, _ -> { t with waveform = None; host = Host.return t.host }, Controller.Status.Running
+     | key, _ when Ches_input.Key.equal key (Ches_input.Key.char 'q') ->
+       { t with waveform = None; host = Host.return t.host }, Running
+     | key, Some wave ->
+       { t with waveform = Some (Waveform_tile.key wave key
+           ~width:(minor_width t ~width ~height id) ~rows:(minor_rows t ~width ~height id)) }, Running
+     | _, None -> { t with host = Host.return t.host }, Running)
   | Some id when View_id.equal id Hover_tile.id ->
     let host, decision = Host.key t.host key
       ~lookup:(Keymap.lookup (Controller.keymap t.controller))
@@ -5542,6 +5580,34 @@ let with_notice ?(source = "file picker") t text =
 let open_file t ~width ~height path =
   Or_error.map (open_file_session t ~width ~height path) ~f:(fun (t, id) ->
     release_held t ~width ~height, id)
+;;
+let receive_harness t ~width ~height ~request result =
+  let t = { t with harness_busy = false } in
+  match result with
+  | Error error -> with_notice ~source:"Quick-Harness" t error
+  | Ok (Ches_harness.Protocol.Created { root; entry }, _) ->
+    (match open_file t ~width ~height entry with
+     | Error error -> with_notice ~source:"Quick-Harness" t (Error.to_string_hum error)
+     | Ok (t, _) -> { t with harness_root = Some root
+         ; host = Host.with_notice t.host ("Created scratch: " ^ root) })
+  | Ok (Finished run, wave) ->
+    let t = { t with harness_root = Some run.project_root } in
+    let summary = sprintf "Quick-Harness %s: %s (exit %d). Log: %s"
+      run.run_id run.status run.exit_code run.log_path in
+    let t = { t with host = Host.with_notice t.host summary
+      ; controller = Controller.update_feedback t.controller
+          (Notify { source = "Quick-Harness"; scope = Some run.project_root
+            ; severity = (if run.exit_code = 0 then Info else Error); text = summary; history = true }) } in
+    if String.equal request "log" then
+      (match open_file t ~width ~height run.log_path with
+       | Ok (t, _) -> t | Error error -> with_notice t (Error.to_string_hum error))
+    else match wave with
+      | Some (Ok wave) ->
+        let t = return_to_document t |> dismiss_navigation in
+        { t with waveform = Some (Waveform_tile.create wave run (Option.value_exn run.waveform))
+          ; host = Host.focus t.host Waveform_tile.id }
+      | Some (Error error) -> with_notice ~source:"Quick-Harness" t (summary ^ " | VCD: " ^ error)
+      | None -> { t with host = Host.with_notice t.host (summary ^ " | No waveform artifact") }
 ;;
 let activate_buffer t ~width ~height id =
   let t = finalize_completion t in

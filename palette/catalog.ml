@@ -82,7 +82,25 @@ let default =
   and vcs = View_id.of_string "vcs" in
   create
      [ editor ~id:"file.save" ~title:"Save buffer" ~keywords:[ "write"; "w"; "file"; "directory"; "apply"; "permanent delete" ] Save
-    ; view ~id:"language-servers.inspect" ~title:"Language servers"
+     ; view ~id:"harness.new-sv" ~title:"Quick-Harness: New SV scratch"
+         ~keywords:["scratch"; "systemverilog"; "qh"]
+         (Request_view { view = View_id.of_string "quick-harness"; request = "new-sv" })
+     ; view ~id:"harness.new-hardcaml" ~title:"Quick-Harness: New Hardcaml scratch"
+         ~keywords:["scratch"; "ocaml"; "qh"]
+         (Request_view { view = View_id.of_string "quick-harness"; request = "new-hardcaml" })
+     ; view ~id:"harness.new-ocaml" ~title:"Quick-Harness: New OCaml scratch"
+         ~keywords:["scratch"; "qh"]
+         (Request_view { view = View_id.of_string "quick-harness"; request = "new-ocaml" })
+     ; view ~id:"harness.run" ~title:"Quick-Harness: Run harness"
+         ~keywords:["simulate"; "build"; "qh"]
+         (Request_view { view = View_id.of_string "quick-harness"; request = "run" })
+     ; view ~id:"harness.waveform" ~title:"Quick-Harness: Open latest waveform"
+         ~keywords:["waves"; "vcd"; "qh"]
+         (Request_view { view = View_id.of_string "quick-harness"; request = "latest" })
+     ; view ~id:"harness.log" ~title:"Quick-Harness: Open latest run log"
+         ~keywords:["errors"; "qh"]
+         (Request_view { view = View_id.of_string "quick-harness"; request = "log" })
+     ; view ~id:"language-servers.inspect" ~title:"Language servers"
         ~description:"Live managed servers and attachments for the current file"
         ~keywords:[ "lsp"; "attached"; "clients"; "status"; "server" ] Show_language_servers
     ; Entry.create ~id:"signature.help" ~title:"Signature help"

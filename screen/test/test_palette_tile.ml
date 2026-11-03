@@ -183,8 +183,8 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     palette
     query: ""
     > file.save
-      language-servers.inspect
-      signature.help
+      harness.new-sv
+      harness.new-hardcaml
     |}];
   band t;
   [%expect
@@ -192,8 +192,8 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     │╭─ Commands ─────────────────────────────────────────────────────────────────╮│|
     ││ >                                                                          ││|
     ││ > Save buffer                                                      Space w ││|
-    ││   Language servers                                               Space l i ││|
-    ╰╰─ 1/102 ────────────────────────────────────────────────────────────────────╯╯|
+    ││   Quick-Harness: New SV scratch                                            ││|
+    ╰╰─ 1/108 ────────────────────────────────────────────────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;
@@ -329,8 +329,8 @@ let%expect_test "Escape cancels: nothing runs, search and problems are untouched
   [%expect {|
     query: ""
     > file.save
-      language-servers.inspect
-      signature.help
+      harness.new-sv
+      harness.new-hardcaml
     |}]
 ;;
 

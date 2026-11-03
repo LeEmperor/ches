@@ -182,6 +182,13 @@ val snippet_picker : t -> Snippet_picker_tile.t option
 val snippet_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 (** Language-query floats retain the originating document identity. *)
 val hover : t -> Hover_tile.t option
+val waveform : t -> Waveform_tile.t option
+val waveform_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
+val take_harness_requests : t -> t * Ches_harness.Protocol.work list
+val receive_harness
+  : t -> width:int -> height:int -> request:string
+  -> (Ches_harness.Protocol.reply * (Ches_harness.Vcd.t, string) Result.t option, string) Result.t
+  -> t
 val signature_help : t -> Signature_overlay.t option
 val signature_help_enabled : t -> bool
 val destinations : t -> Destination_picker_tile.t option

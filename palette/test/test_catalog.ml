@@ -74,6 +74,12 @@ let%expect_test "the default catalog, with shortcuts derived from bindings" =
   [%expect
     {|
     file.save                      Save buffer                            Space w
+    harness.new-sv                 Quick-Harness: New SV scratch
+    harness.new-hardcaml           Quick-Harness: New Hardcaml scratch
+    harness.new-ocaml              Quick-Harness: New OCaml scratch
+    harness.run                    Quick-Harness: Run harness
+    harness.waveform               Quick-Harness: Open latest waveform
+    harness.log                    Quick-Harness: Open latest run log
     language-servers.inspect       Language servers
     signature.help                 Signature help
     signature.toggle               Toggle automatic signature help
@@ -243,6 +249,7 @@ let%expect_test "realistic queries" =
     {|
     app.quit                       [Quit]
     app.quit-discarding-changes    [Quit], discarding unsaved changes
+    harness.waveform               [Qui]ck-Harness: Open la[t]est waveform
     |}];
   search "widen";
   [%expect {| view.widen-tile-10             [Widen] document tile by 10 columns |}];
@@ -269,7 +276,7 @@ let%expect_test "conflict commands are found by either name of a side" =
     conflict.keep-lower            Conflict: keep lower ([theirs])
     head:
     conflict.keep-upper            Conflict: keep upper (ours)
-    views.to-band                  Move focused view to t[he] bottom b[a]n[d]
+    harness.new-hardcaml           Quick-[H]arn[e]ss: New H[a]r[d]caml scratch
     ancestor:
     conflict.keep-base             Conflict: keep base
     next conflict:
@@ -285,9 +292,9 @@ let%expect_test "empty query lists available commands in catalog order" =
   [%expect
     {|
     file.save                      Save buffer
-    language-servers.inspect       Language servers
-    signature.help                 Signature help
-    signature.toggle               Toggle automatic signature help
+    harness.new-sv                 Quick-Harness: New SV scratch
+    harness.new-hardcaml           Quick-Harness: New Hardcaml scratch
+    harness.new-ocaml              Quick-Harness: New OCaml scratch
     |}]
 ;;
 

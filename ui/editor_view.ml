@@ -97,6 +97,7 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
   let production_runtime = Ches_file_picker_host.Runtime.create () in
+  let harness = Harness_host.create () in
   let content_runtime = Option.value_map content_picker
     ~default:(Ches_content_picker_host.Runtime.create ())
     ~f:(fun host -> host.Content_picker_host.runtime) in
@@ -238,12 +239,15 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
                  Ui_state.receive_configuration model ~generation result
                | `Navigation_preview snapshot ->
                  Frame.Cache.invalidate render_cache;
-                 Ui_state.receive_navigation_preview model snapshot
+                  Ui_state.receive_navigation_preview model snapshot
+               | `Harness (request, result) ->
+                 Frame.Cache.invalidate render_cache;
+                 Ui_state.receive_harness model ~width ~height ~request result
               | `Inputs _ | `Event _ -> model in
             (* Capture belongs to the model at this transition, not the last
                displayed handler: several events can arrive before a redraw. *)
             let inputs = match action with
-               | `Words _ | `Snippets _ | `Configuration _ | `Navigation_preview _ -> []
+                | `Words _ | `Snippets _ | `Configuration _ | `Navigation_preview _ | `Harness _ -> []
               | `Inputs inputs -> inputs
               | `Event (event, at) ->
                 Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event
@@ -317,7 +321,12 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
           active_file_session := Option.map (Ui_state.file_picker model) ~f:File_picker_tile.session;
           active_line_session := Option.map (Ui_state.line_picker model) ~f:Line_picker_tile.session;
           active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
-          let model, clipboard = Ui_state.take_clipboard model in
+           let model, clipboard = Ui_state.take_clipboard model in
+           let model, harness_requests = Ui_state.take_harness_requests model in
+           List.iter harness_requests ~f:(fun work ->
+             Bonsai.Apply_action_context.schedule_event context
+               (let%bind.Effect result = Effect.of_deferred_thunk (fun () -> Harness_host.execute harness work) in
+                Bonsai.Apply_action_context.inject context (`Harness (work.action, result))));
           let model, snippet_requests = Ui_state.take_snippet_reload_requests model in
           let model, word_request = Ui_state.take_word_index_request model in
           Bonsai.Apply_action_context.schedule_event context
@@ -389,7 +398,8 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
                (* Obsolete turns still wake replacements, without doing their work. *)
                Bonsai.Apply_action_context.inject context (`Inputs events)));
           (match status with
-            | Exit when was_running ->
+             | Exit when was_running ->
+               Harness_host.stop harness;
                Navigation_preview_host.stop navigation_preview;
               Word_index_host.stop word_index;
               Snippet_host.stop snippets;
@@ -411,6 +421,8 @@ let app_with_terminal ~terminal ?snippets ?configuration ?startup_configuration 
       graph
   in
   let inject = let%arr inject_action in fun inputs -> inject_action (`Inputs inputs) in
+  Bonsai.Edge.lifecycle
+    ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Harness_host.stop harness))) graph;
   Bonsai.Edge.lifecycle
     ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Word_index_host.stop word_index)))
     ~on_activate:(let%arr inject_action in

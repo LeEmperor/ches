@@ -1,0 +1,4 @@
+(library
+ (name ches_harness)
+ (libraries core yojson)
+ (preprocess (pps ppx_jane)))

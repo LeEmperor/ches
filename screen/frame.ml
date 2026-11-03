@@ -42,6 +42,12 @@ let floating_layer ?allocation ?floating ui ~width ~height =
     match floating with
     | Some _ -> floating
     | None when Option.is_some allocation -> None
+    | None when Option.is_some (Ui_state.waveform ui) ->
+      Option.bind (Ui_state.waveform_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.waveform ui) ~f:(fun wave ->
+          { Floating_layer.id = Waveform_tile.id; layout
+          ; content = Waveform_tile.render wave ~width:layout.content.width ~rows:layout.content.height
+          ; cursor = None }))
     | None when Option.is_some (Ui_state.hover ui) ->
       Option.bind (Ui_state.hover_layout ui ~width ~height) ~f:(fun layout ->
         Option.map (Ui_state.hover ui) ~f:(fun hover ->
@@ -192,7 +198,8 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
     match floating with
     | Some layer -> Some (layer.id, Some layer.layout)
      | None when Option.is_some allocation ->
-          Some ((if Option.is_some (Ui_state.hover ui) then Hover_tile.id
+          Some ((if Option.is_some (Ui_state.waveform ui) then Waveform_tile.id
+             else if Option.is_some (Ui_state.hover ui) then Hover_tile.id
              else if Option.is_some (Ui_state.destinations ui) then Destination_picker_tile.id
              else if Option.is_some (Ui_state.instances ui) then Instance_picker_tile.id
              else if Option.is_some (Ui_state.theme_picker ui) then Theme_picker_tile.id

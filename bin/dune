@@ -10,3 +10,8 @@
  (alias runtest)
  (deps test_configuration_cli.py)
  (action (run python3 %{dep:test_configuration_cli.py} %{exe:ches.exe})))
+
+(rule
+ (alias runtest)
+ (deps test_harness_cli.py)
+ (action (run python3 %{dep:test_harness_cli.py} %{exe:ches.exe})))

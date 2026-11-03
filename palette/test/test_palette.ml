@@ -37,10 +37,10 @@ let%expect_test "opening lists available commands and selects the first" =
     {|
     query: ""
     > file.save
-      language-servers.inspect
-      signature.help
-      signature.toggle
-      ... 98 more
+      harness.new-sv
+      harness.new-hardcaml
+      harness.new-ocaml
+      ... 104 more
     |}]
 ;;
 
@@ -62,7 +62,13 @@ let%expect_test "typing filters; ordinary letters such as j and k are query text
 ;;
 
 let%expect_test "next and previous stop at the ends" =
-  let palette = type_ (create ()) "quit" in
+  (* Keep a fixed two-result fixture: additions to the default catalog may also
+     fuzzy-match "quit" (for example "Quick-Harness ... latest"). *)
+  let catalog = Catalog.entries Catalog.default
+    |> List.filter ~f:(fun entry -> String.is_prefix
+      (Catalog.Entry.id entry |> Catalog.Id.to_string) ~prefix:"app.quit")
+    |> Catalog.create |> Or_error.ok_exn in
+  let palette = type_ (create ~catalog ()) "quit" in
   show palette;
   [%expect
     {|
@@ -146,7 +152,7 @@ let%expect_test "no matches: no selection, navigation and accept do nothing" =
     {|
     query: ""
     > file.save
-      ... 101 more
+      ... 107 more
     |}]
 ;;
 
