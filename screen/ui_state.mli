@@ -88,6 +88,13 @@ val completion_ghost : t -> Ches_completion.Model.ghost option
 (** Absolute byte ranges of the active field, including linked occurrences. *)
 val snippet_ranges : t -> Ches_completion.Snippet.range list
 
+(** Pure asynchronous catalog boundary. Creation queues generation 1; draining
+    clears requests. Only the latest requested generation can replace last-good
+    snippets or report feedback. The UI worker owns all disk access; see
+    USER_SNIPPETS.md. Missing files should return [Ok User_snippets.builtins]. *)
+val take_snippet_reload_requests : t -> t * int list
+val receive_snippets : t -> generation:int -> (Ches_completion.User_snippets.t, string) Result.t -> t
+
 (** Numbered persistent shells share one transient float. The selected ID defaults
     to 1; [Space /] toggles it. [N Space /] selects N, opening it when hidden or
     switching directly from a different visible session, and hides it when already

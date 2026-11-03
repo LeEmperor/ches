@@ -1,4 +1,4 @@
 (library
  (name ches_completion)
- (libraries core ches_core)
+ (libraries core ches_core yojson)
  (preprocess (pps ppx_jane)))

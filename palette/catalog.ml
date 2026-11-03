@@ -399,10 +399,13 @@ let default =
     ; view ~id:"terminal.shrink" ~title:"Shrink Tile Term" ~description:"Decrease the selected Tile Term's preferred size." ~keywords:[ "shell"; "size" ] (Adjust_terminal_size (-1))
      ; view ~id:"terminal.reset-size" ~title:"Reset Tile Term size" ~description:"Restore the selected Tile Term's default size." ~keywords:[ "shell"; "default" ] Reset_terminal_size
     ; view ~id:"completion.toggle" ~title:"Toggle automatic completion"
-        ~description:"Buffer words and language-server suggestions (enabled by default)"
+        ~description:"Buffer words, snippets and language-server suggestions (enabled by default)"
         ~keywords:[ "suggestions"; "autocomplete" ] Toggle_completion
     ; view ~id:"completion.ghost" ~title:"Toggle completion ghost preview"
         ~keywords:[ "suggestions"; "inline"; "suffix" ] Toggle_completion_ghost
+    ; view ~id:"snippets.reload" ~title:"Reload snippets"
+        ~description:"Reload user snippets from snippets.json"
+        ~keywords:[ "templates"; "configuration"; "completion" ] Reload_snippets
     ; view ~id:"development.insert-demo-snippet" ~title:"Insert demo snippet"
         ~description:"Development utility: linked snippet fields in the current file (no server required)"
         ~keywords:[ "development"; "test"; "placeholders"; "linked fields" ] Insert_demo_snippet

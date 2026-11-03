@@ -754,7 +754,8 @@ for the final cursor, and escaped backslashes, dollar signs, and closing braces.
 When `$0` is absent, the final cursor is at the end of the expansion. Variables,
 choices, transformations, nested defaults, and conflicting defaults are not yet
 supported; completions using unsupported or malformed snippets are skipped.
-Templates come from the language server; there is no built-in/user template catalog.
+Templates can come from the language server or the independent local catalog
+described below.
 
 For a server-independent hands-on test, open the command palette from a file's
 Normal mode (`Space c c`) and select **Insert demo snippet**. This development
@@ -780,6 +781,79 @@ Snippet acceptance uses additional edits already known at Enter and cancels pend
 resolve before activating fields. Late-resolved imports are therefore omitted for
 that acceptance, rather than shifting fields after editing has begun. Plain
 completions retain the deferred-resolution behavior described above.
+
+#### Independent and user-defined snippets
+
+Local templates work without a language server, including with `--no-lsp`. They
+appear as `[snippet]` candidates alongside LSP and buffer suggestions, with local
+templates ranked first. Tab cycles expanded candidates; Enter activates fields.
+Automatic matching starts after one character; Ctrl-n also works with automatic
+completion disabled or an empty prefix.
+
+These starters are available immediately in `.sv` and `.svh` files:
+
+| Prefix | ID | Template |
+| --- | --- | --- |
+| `aff` | `sv.aff` | Clocked `always_ff` block |
+| `acomb` | `sv.acomb` | `always_comb` block |
+| `mod` | `sv.mod` | Module declaration |
+| `inst` | `sv.inst` | Module instance with a linked port/signal field |
+| `genfor` | `sv.genfor` | Generate loop with linked loop-variable occurrences |
+
+To customize, create **`~/.config/ches/snippets.json`**. If `XDG_CONFIG_HOME` is an
+absolute nonempty path, Ches instead reads **`$XDG_CONFIG_HOME/ches/snippets.json`**.
+Ches does not create or overwrite this file. The editable
+[example collection](snippets.example.json) contains all five starters.
+
+For example, this replaces the bundled `aff` with a falling-edge variant and adds
+a global template:
+
+```json
+{
+  "version": 1,
+  "snippets": [
+    {
+      "id": "sv.aff",
+      "prefix": "aff",
+      "scope": ["systemverilog"],
+      "description": "Falling-edge always block",
+      "body": [
+        "always_ff @(negedge ${1:clk}) begin",
+        "    $0",
+        "end"
+      ]
+    },
+    {
+      "id": "personal.todo",
+      "prefix": "todo",
+      "description": "TODO comment",
+      "body": "// TODO: ${1:description}$0"
+    }
+  ]
+}
+```
+
+- `id` identifies a template. A user entry overrides a bundled entry with the same
+  ID; other bundled entries remain available.
+- `prefix` is the case-sensitive completion trigger; `description` is optional.
+- `scope` is an array: `systemverilog` (`.sv`, `.svh`), `verilog` (`.v`, `.vh`),
+  `ocaml` (`.ml`, `.mli`), or explicit extensions such as `.py`. Omitted or empty
+  scope makes the snippet global.
+- `body` accepts a string or an array of lines, using the supported placeholder
+  syntax above. JSON string escaping applies in addition to snippet escaping.
+- Subsequent lines inherit the insertion line's leading whitespace, while keeping
+  the template's relative indentation. Placeholders and mirrors are relocated
+  accordingly. Only the typed prefix is replaced.
+- To disable a starter, use an entry such as
+  `{"id":"sv.aff","disabled":true}`. Do not include body/prefix fields on a
+  disabled entry.
+
+The file loads asynchronously at startup. After editing it, choose **Reload
+snippets** from the command palette. A malformed file or failed read reports an
+error and preserves the last good collection. A missing file uses the bundled
+starters. Reload replaces the catalog rather than accumulating entries; deleting
+an override restores its starter on the next successful reload. Files are limited
+to 1 MiB and 1000 user entries, and duplicate IDs/unknown fields are errors.
 
 ### Synthetic checker (live diagnostic source)
 

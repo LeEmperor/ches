@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "snippets": [
+    {
+      "id": "sv.aff",
+      "prefix": "aff",
+      "scope": ["systemverilog"],
+      "description": "Clocked always block",
+      "body": [
+        "always_ff @(posedge ${1:clk}) begin",
+        "    $0",
+        "end"
+      ]
+    },
+    {
+      "id": "sv.acomb",
+      "prefix": "acomb",
+      "scope": ["systemverilog"],
+      "description": "Combinational always block",
+      "body": ["always_comb begin", "    $0", "end"]
+    },
+    {
+      "id": "sv.mod",
+      "prefix": "mod",
+      "scope": ["systemverilog"],
+      "description": "Module declaration",
+      "body": ["module ${1:name} (", "    $0", ");", "endmodule"]
+    },
+    {
+      "id": "sv.inst",
+      "prefix": "inst",
+      "scope": ["systemverilog"],
+      "description": "Module instance",
+      "body": ["${1:module_name} ${2:instance_name} (", "    .${3:port}($3)$0", ");"]
+    },
+    {
+      "id": "sv.genfor",
+      "prefix": "genfor",
+      "scope": ["systemverilog"],
+      "description": "Generate loop",
+      "body": [
+        "for (genvar ${1:i} = 0; $1 < ${2:COUNT}; $1++) begin : ${3:gen_block}",
+        "    $0",
+        "end"
+      ]
+    }
+  ]
+}

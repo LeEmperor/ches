@@ -80,7 +80,7 @@ module Content_picker_host = struct
     }
 end
 
-let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
+let app_with_terminal ~terminal ?snippets ?(smear_enabled = false) ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph)
   =
   (* Scope belongs to this editor instance, not the currently active tab. Directory
      startup and unnamed documents use the session's explicit startup directory. *)
@@ -123,6 +123,7 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?t
              Ui_state.Input.Key (Ches_input.Key.char c))))
       else ui in
   let current_ui = ref initial_ui in
+  let snippets = Option.value_or_thunk snippets ~default:Snippet_host.create in
   let render_cache = Frame.Cache.create () in
   let last_drawn_theme = ref None in
   let synchronized_dimensions = ref None in
@@ -196,9 +197,15 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?t
         match input with
          | Inactive -> clear_preview (); model
          | Active ({ Dimensions.width; height }, write_to_tty) ->
+            let model = match action with
+              | `Snippets (generation, result) ->
+                Frame.Cache.invalidate render_cache;
+                Ui_state.receive_snippets model ~generation result
+              | `Inputs _ | `Event _ -> model in
             (* Capture belongs to the model at this transition, not the last
                displayed handler: several events can arrive before a redraw. *)
             let inputs = match action with
+              | `Snippets _ -> []
               | `Inputs inputs -> inputs
               | `Event (event, at) ->
                 Terminal_input.inputs ~terminal:(Ui_state.terminal_capturing model) event
@@ -259,6 +266,10 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?t
           active_line_session := Option.map (Ui_state.line_picker model) ~f:Line_picker_tile.session;
           active_content_session := Option.map (Ui_state.content_picker model) ~f:Content_picker_tile.session;
           let model, clipboard = Ui_state.take_clipboard model in
+          let model, snippet_requests = Ui_state.take_snippet_reload_requests model in
+          if not (List.is_empty snippet_requests) then
+            Bonsai.Apply_action_context.schedule_event context
+              (Effect.of_thunk (fun () -> Snippet_host.submit snippets snippet_requests));
           let model, terminal_requests = Ui_state.take_terminal_session_requests model in
           if not (List.is_empty terminal_requests) then
             Bonsai.Apply_action_context.schedule_event context
@@ -320,6 +331,7 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?t
                Bonsai.Apply_action_context.inject context (`Inputs events)));
           (match status with
            | Exit when was_running ->
+              Snippet_host.stop snippets;
               Terminal_host.stop terminal;
               Async.don't_wait_for (Terminal_host.shutdown terminal);
               Option.iter source ~f:Ches_source.Source.stop;
@@ -337,6 +349,19 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?t
       graph
   in
   let inject = let%arr inject_action in fun inputs -> inject_action (`Inputs inputs) in
+  Bonsai.Edge.lifecycle
+    ~on_deactivate:(Bonsai.return (Effect.of_thunk (fun () -> Snippet_host.stop snippets)))
+    ~on_activate:(let%arr inject_action in
+      let rec pump () =
+        let%bind.Effect reply = Effect.of_deferred_thunk (fun () -> Snippet_host.next snippets) in
+        match reply with
+        | None -> Effect.Ignore
+        | Some reply ->
+          let%bind.Effect () = inject_action (`Snippets reply) in
+          pump ()
+      in
+      pump ())
+    graph;
   Bonsai.Edge.lifecycle ~on_activate:(let%arr inject in inject [])
     ~on_deactivate:(Bonsai.return
       (Effect.of_thunk (fun () ->
@@ -464,10 +489,10 @@ let app_with_terminal ~terminal ?(smear_enabled = false) ?(zen = false) ?bare ?t
   ~view, ~handler
 ;;
 
-let app ?terminal ?smear_enabled ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
+let app ?terminal ?snippets ?smear_enabled ?(zen = false) ?bare ?theme ?buffer_presentation ?report ?source ?vcs ?font
   ?file_picker ?content_picker controller ~exit ~dimensions (local_ graph) =
   let terminal = Option.value_or_thunk terminal ~default:Terminal_host.create in
-  app_with_terminal ~terminal ?smear_enabled ~zen ?bare ?theme ?buffer_presentation
+  app_with_terminal ~terminal ?snippets ?smear_enabled ~zen ?bare ?theme ?buffer_presentation
     ?report ?source ?vcs ?font ?file_picker ?content_picker controller ~exit ~dimensions graph
 ;;
 

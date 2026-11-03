@@ -118,6 +118,10 @@ type t =
   ; completion : completion_session option
   ; completion_acceptance : completion_acceptance option
   ; completion_serial : int
+  ; user_snippets : Ches_completion.User_snippets.t
+  ; snippet_generation : int
+  ; snippet_reload_requests : int list
+  ; snippet_loading : bool
   ; completion_words : completion_words Buffer_id.Map.t
   ; completion_enabled : bool
   ; completion_ghost_enabled : bool
@@ -261,6 +265,10 @@ let create
   ; completion = None
   ; completion_acceptance = None
   ; completion_serial = 0
+  ; user_snippets = Ches_completion.User_snippets.builtins
+  ; snippet_generation = 1
+  ; snippet_reload_requests = [1]
+  ; snippet_loading = true
   ; completion_words = Buffer_id.Map.empty
   ; completion_enabled = true
   ; completion_ghost_enabled = false
@@ -447,11 +455,17 @@ let completion_selected t =
     if completion_current t c then Completion.selected c.model else None)
 ;;
 
+let completion_metadata c (candidate : Completion.Candidate.t) =
+  match candidate.source with
+  | Buffer | Snippet -> None
+  | Lsp _ -> Map.find c.metadata candidate.id
+;;
+
 let completion_info t =
   Option.bind t.completion ~f:(fun c ->
     if not (completion_current t c) then None else
     Option.bind (Completion.selected c.model) ~f:(fun candidate ->
-      Map.find c.metadata candidate.id))
+      completion_metadata c candidate))
 ;;
 
 let completion_ghost t =
@@ -485,11 +499,32 @@ let expire_completion_acceptance t ~at =
   | _ -> t
 ;;
 
+let take_snippet_reload_requests t =
+  { t with snippet_reload_requests = [] }, List.rev t.snippet_reload_requests
+;;
+
+let reload_snippets t =
+  let t = dismiss_completion t in
+  let generation = t.snippet_generation + 1 in
+  { t with snippet_generation = generation; snippet_loading = true
+  ; snippet_reload_requests = generation :: t.snippet_reload_requests }
+;;
+
+let receive_snippets t ~generation result =
+  if generation <> t.snippet_generation || not t.snippet_loading then t else
+  let t = dismiss_completion { t with snippet_loading = false } in
+  let t, severity, text = match result with
+    | Ok user_snippets -> { t with user_snippets }, Ches_error.Error.Severity.Info, "Snippets reloaded"
+    | Error error -> t, Ches_error.Error.Severity.Error, "Could not reload snippets: " ^ error in
+  { t with controller = Controller.update_feedback t.controller
+      (Notify { source = "snippets"; scope = None; severity; text; history = true }) }
+;;
+
 let resolve_completion t =
   match t.completion with
   | Some c when completion_current t c && t.source_attached ->
     (match Completion.selected c.model with
-     | Some candidate ->
+     | Some candidate when (match candidate.source with Lsp _ -> true | Buffer | Snippet -> false) ->
         let revision = Editor.revision (Controller.editor t.controller) in
         let identity = candidate.id, revision in
         (* A result for a deselected item can be dropped. Forget the marker on
@@ -498,7 +533,7 @@ let resolve_completion t =
         let c = if Option.equal [%equal: string * int] c.resolving (Some identity)
           then c else { c with resolving = None } in
         let t = { t with completion = Some c } in
-       (match Map.find c.metadata candidate.id with
+       (match completion_metadata c candidate with
         | Some info when info.resolvable && Option.is_none info.additional
             && not (Option.equal [%equal: string * int] c.resolving (Some identity)) ->
           let source_commands = List.filter t.source_commands ~f:(function
@@ -508,7 +543,7 @@ let resolve_completion t =
           ; source_commands = Resolve_completion { token = c.token; candidate_id = candidate.id; revision }
               :: source_commands }
         | _ -> t)
-     | None -> { t with completion = Some { c with resolving = None } })
+     | _ -> { t with completion = Some { c with resolving = None } })
   | _ -> t
 ;;
 
@@ -531,13 +566,13 @@ let install_completion t c plan =
    normal atomic finalization/rebase. Never interpret base offsets as live ones. *)
 let resolved_finalize c ~revision =
   Option.bind (Completion.selected c.model) ~f:(fun selected ->
-    Option.bind (Map.find c.metadata selected.id) ~f:(fun info ->
+    Option.bind (completion_metadata c selected) ~f:(fun info ->
       Option.bind info.additional ~f:(fun additional ->
         let selected = { selected with additional } in
         Option.bind (Completion.start ~token:c.token ~text:c.base ~cursor:c.base_cursor
           ~words:(Completion.Buffer_words.create Text_buffer.empty) ~limit:1)
           ~f:(fun (model, _) ->
-            let source = match selected.source with Buffer -> "" | Lsp source -> source in
+            let source = match selected.source with Buffer | Snippet -> "" | Lsp source -> source in
             let model = Completion.receive model
               { token = c.token; source; candidates = [ selected ]; incomplete = false } in
             Option.bind (Completion.plan model Next) ~f:(fun plan ->
@@ -548,10 +583,10 @@ let try_final_completion t c =
   if not c.installed || not (completion_current t c) then None else
   let revision = Editor.revision (Controller.editor t.controller) in
   let additional = Option.value_map (Completion.selected c.model) ~default:[] ~f:(fun selected ->
-    Option.bind (Map.find c.metadata selected.id) ~f:(fun info -> info.additional)
+    Option.bind (completion_metadata c selected) ~f:(fun info -> info.additional)
     |> Option.value ~default:selected.additional) in
   let resolved = Option.exists (Completion.selected c.model) ~f:(fun selected ->
-    Option.exists (Map.find c.metadata selected.id) ~f:(fun info -> Option.is_some info.additional)) in
+    Option.exists (completion_metadata c selected) ~f:(fun info -> Option.is_some info.additional)) in
   let plan = if resolved then resolved_finalize c ~revision else Completion.finalize c.model in
   match plan with
   | None -> if List.is_empty additional then Some t else None
@@ -572,7 +607,7 @@ let finalize_completion t =
   match t.completion with
   | Some c when completion_current t c && c.installed
       && Option.exists (Completion.selected c.model) ~f:(fun selected ->
-        List.is_empty selected.additional && Option.exists (Map.find c.metadata selected.id) ~f:(fun info ->
+        List.is_empty selected.additional && Option.exists (completion_metadata c selected) ~f:(fun info ->
           info.resolvable && Option.is_none info.additional)
         && Option.equal [%equal: string * int] c.resolving
           (Some (selected.id, Editor.revision (Controller.editor t.controller)))) ->
@@ -652,6 +687,10 @@ let start_completion ?(manual = false) t =
       ~words ~limit:100 with
   | None -> t
   | Some (model, request) ->
+    let snippets = Ches_completion.User_snippets.candidates t.user_snippets
+        ~path:(Editor.path editor) ~text ~cursor:(Editor.cursor editor) ~limit:100 in
+    let model = Completion.receive model
+        { token; source = "\000user-snippets"; candidates = snippets; incomplete = false } in
     let identifier_character = Option.exists (Text_buffer.prev_boundary text request.cursor)
       ~f:(fun previous -> previous >= request.fallback_start) in
     let preceding = Option.value_map (Text_buffer.prev_boundary text request.cursor)
@@ -2067,6 +2106,7 @@ let apply_view (prefs : Geometry.Prefs.t) (view : View_command.t) : Geometry.Pre
   | Toggle_smear
   | Toggle_completion | Toggle_completion_ghost
   | Insert_demo_snippet
+  | Reload_snippets
   | Toggle_status
   | Toggle_hotkey_hints
   | Position_status _
@@ -2108,6 +2148,7 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   | Toggle_completion -> Some (if t.completion_enabled then "Automatic completion enabled" else "Automatic completion disabled")
   | Toggle_completion_ghost -> Some (if t.completion_ghost_enabled then "Completion ghost enabled" else "Completion ghost disabled")
   | Insert_demo_snippet -> None
+  | Reload_snippets -> None
   | Present_buffers presentation -> Some
       (match presentation with
        | Top -> "Open buffers in top strip"
@@ -3112,6 +3153,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Toggle_completion -> { t with completion_enabled = not t.completion_enabled }
   | Toggle_completion_ghost -> { t with completion_ghost_enabled = not t.completion_ghost_enabled }
   | Insert_demo_snippet -> insert_demo_snippet t
+  | Reload_snippets -> reload_snippets t
   | Toggle_terminal -> toggle_terminal t ~width ~height
   | Select_terminal number -> select_terminal t number ~width ~height
   | Adjust_terminal_size steps -> adjust_terminal_size t steps
@@ -3868,7 +3910,7 @@ let rec receive t (event : Ches_error.Source_event.t) =
        let metadata = List.fold (List.take items 1000) ~init:c.metadata ~f:(fun metadata info ->
          let candidate = List.find (Completion.candidates c.model) ~f:(fun candidate ->
            String.equal candidate.id info.Ches_error.Completion_info.candidate_id
-           && match candidate.source with Lsp provider -> String.equal provider source | Buffer -> false) in
+           && match candidate.source with Lsp provider -> String.equal provider source | Buffer | Snippet -> false) in
          let selected = Option.exists (Completion.selected c.model) ~f:(fun candidate ->
            String.equal candidate.id info.candidate_id) in
          let valid = match info.revision with

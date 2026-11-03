@@ -46,6 +46,9 @@ end
     picker hosts retain their supplied initial UI state. *)
 val app
   :  ?terminal:Terminal_host.t
+   -> ?snippets:Snippet_host.t
+        (** Optional runtime override. Each app otherwise owns one asynchronous
+            snippet loader, drained after transitions and stopped on deactivation. *)
    -> ?smear_enabled:bool
    -> ?zen:bool
    -> ?bare:bool

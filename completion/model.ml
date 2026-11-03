@@ -8,7 +8,7 @@ module Token = struct
 end
 
 module Candidate = struct
-  type source = Buffer | Lsp of string [@@deriving sexp_of, equal]
+  type source = Buffer | Lsp of string | Snippet [@@deriving sexp_of, equal]
   type t =
     { id : string; source : source; label : string; detail : string option
     ; filter_text : string; sort_text : string; primary : Text_edit.t
@@ -202,7 +202,10 @@ let receive t (reply : Reply.t) =
     let providers = List.Assoc.add t.providers ~equal:String.equal reply.source contribution in
     let lsp = List.sort providers ~compare:(fun (a, _) (b, _) -> String.compare a b)
       |> List.concat_map ~f:snd
-      |> List.stable_sort ~compare:(fun a b -> String.compare a.Candidate.sort_text b.sort_text)
+      |> List.stable_sort ~compare:(fun a b ->
+        let template = Bool.compare (Option.is_none a.Candidate.snippet)
+            (Option.is_none b.Candidate.snippet) in
+        if template <> 0 then template else String.compare a.sort_text b.sort_text)
     in
     let items = List.fold (lsp @ t.buffer) ~init:[] ~f:(fun acc item ->
       if List.exists acc ~f:(equivalent item) then acc else item :: acc)

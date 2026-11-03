@@ -127,6 +127,46 @@ let parse input =
   with Invalid_snippet message -> Or_error.error_string message
 ;;
 
+let indent t ~prefix =
+  try
+  if String.is_empty prefix then Ok t else
+    let output = Buffer.create (String.length t.expanded) in
+    let add_string value =
+      if String.length value > max_input - Buffer.length output
+      then invalid "indented snippet input exceeds 65536 bytes";
+      Buffer.add_string output value
+    in
+    let add_char c =
+      if Buffer.length output >= max_input
+      then invalid "indented snippet input exceeds 65536 bytes";
+      Buffer.add_char output c
+    in
+    let escaped ?(default = false) value =
+      String.iter value ~f:(fun c ->
+        if Char.equal c '\\' || Char.equal c '$' || (default && Char.equal c '}')
+        then add_char '\\';
+        add_char c;
+        if Char.equal c '\n' then add_string prefix)
+    in
+    let at = ref 0 in
+    let seen = ref Int.Set.empty in
+    List.iter t.occurrences ~f:(fun o ->
+      escaped (String.sub t.expanded ~pos:!at ~len:(o.range.start - !at));
+      if o.number = 0 then add_string "${0}"
+      else if Set.mem !seen o.number then
+        add_string ("${" ^ Int.to_string o.number ^ "}")
+      else (
+        seen := Set.add !seen o.number;
+        add_string ("${" ^ Int.to_string o.number ^ ":");
+        escaped ~default:true (String.sub t.expanded ~pos:o.range.start
+                   ~len:(o.range.stop - o.range.start));
+        add_char '}');
+      at := o.range.stop);
+    escaped (String.drop_prefix t.expanded !at);
+    parse (Buffer.contents output)
+  with Invalid_snippet message -> Or_error.error_string message
+;;
+
 module Session = struct
   type template = t
   type t =

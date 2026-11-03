@@ -147,6 +147,9 @@ let%expect_test "content frontend interrupted paste and resize cancel search wit
     let controller = Ches_app.Controller.create (Ches_core.Editor.create ~cell_width:Cell_map.width text) in
     let opened = Runtime.open_picker runtime (Ui_state.create ~tiles_visible:false controller)
       ~root ~width:80 ~height:24 |> Or_error.ok_exn in
+    (* This fixture tests paste feedback, independently of asynchronous startup
+       snippet notifications. Keep its builtin catalog without requesting disk I/O. *)
+    let opened, _ = Ui_state.take_snippet_reload_requests opened in
     let session = Content_picker_tile.session (Option.value_exn (Ui_state.content_picker opened)) in
     let consumed = ref 0 in
     let content_picker : Ches_ui.Editor_view.Content_picker_host.t =

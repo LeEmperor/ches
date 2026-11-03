@@ -14,6 +14,10 @@ val text : t -> string
 val fields : t -> field list
 val final_cursor : t -> int
 
+(** Add [prefix] after every expanded newline, including newlines introduced by
+    linked defaults. Reparse the indented template to retain accurate ranges. *)
+val indent : t -> prefix:string -> t Or_error.t
+
 module Session : sig
   type template = t
   type t [@@deriving sexp_of]

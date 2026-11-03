@@ -12,7 +12,7 @@ module Token : sig
 end
 
 module Candidate : sig
-  type source = Buffer | Lsp of string [@@deriving sexp_of, equal]
+  type source = Buffer | Lsp of string | Snippet [@@deriving sexp_of, equal]
   (** Edits use the session's base snapshot. [cursor] is a byte boundary within
       [primary.text], not an absolute document offset. When [snippet] is present,
       [primary.text] must equal [Snippet.text snippet]. *)
@@ -96,7 +96,8 @@ val start
     this provider's contribution, validate against base, preserve selection.
     Inspect at most 1000 candidates per reply, matching [filter_text] against the
     original identifier prefix case-sensitively before applying the menu limit.
-    An empty prefix matches all candidates. *)
+    An empty prefix matches all candidates. Parsed templates rank before plain
+    provider words; deduplication preserves distinct placeholder semantics. *)
 val receive : t -> Reply.t -> t
 val candidates : t -> Candidate.t list
 val selected : t -> Candidate.t option

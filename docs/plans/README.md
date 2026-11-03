@@ -10,6 +10,7 @@ history of decisions and verification; for current controls, use the
 - [File picker](file_picker.md)
 - [Automatic code completion](completion.md)
 - [Snippet completion and placeholders](snippets.md)
+- [Independent user snippets](user_snippets.md)
 - [Floating tiles](floating_tiles.md)
 - [VCS workspace](vcs_workspace.md)
 - [Performance tests](performance_tests.md)

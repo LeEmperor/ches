@@ -43,6 +43,7 @@ type t =
   | Toggle_completion
   | Toggle_completion_ghost
   | Insert_demo_snippet
+  | Reload_snippets
   | Toggle_terminal
   | Select_terminal of int
   | Adjust_terminal_size of int
@@ -126,6 +127,7 @@ let scale t ~count =
   | Toggle_directory
   | Toggle_completion | Toggle_completion_ghost
   | Insert_demo_snippet
+  | Reload_snippets
   | Select_terminal _
   | Reset_terminal_size
   | Directory_major

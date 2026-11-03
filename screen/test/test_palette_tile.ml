@@ -193,7 +193,7 @@ let%expect_test "Space c c opens a centered floating palette, with a bar cursor"
     ││ >                                                                          ││|
     ││ > Save buffer                                                      Space w ││|
     ││   Language servers                                               Space l i ││|
-    ╰╰─ 1/87 ─────────────────────────────────────────────────────────────────────╯╯|
+    ╰╰─ 1/88 ─────────────────────────────────────────────────────────────────────╯╯|
     cursor: 5,2 Bar
     |}]
 ;;

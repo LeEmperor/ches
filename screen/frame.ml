@@ -649,6 +649,7 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
         let style = if chosen then Style.Mode Insert else Style.Status in
         let provider = match c.source with
           | Buffer -> "buffer"
+          | Snippet -> "snippet"
           | Lsp _ -> "LSP" in
         let detail = if chosen then Option.first_some
             (Option.bind info ~f:(fun info -> info.detail)) c.detail else c.detail in
