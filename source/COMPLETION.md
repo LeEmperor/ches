@@ -1,5 +1,71 @@
 # Completion transport integration
 
+## Completion and lazy resolve transport
+
+New transport (no Candidate layout changes):
+- `Source_request.Resolve_completion { token; candidate_id; revision }`: lazily
+  resolve the selected item, guarded by the **current editor revision** (which
+  may be newer than token.revision after Tab installs a primary).
+- `Source_event.Completion_metadata { token; source; items }`, where items are
+  `Completion_info.t` records: `candidate_id`, `kind : int option`,
+  `documentation : string option`, `detail : string option`, `resolvable : bool`,
+  `additional : Text_edit.t list option`. Initial metadata has additional=None;
+  a resolved result has Some edits, including Some [] when empty.
+- Resolved metadata also includes `revision : int option` on each item: None for
+  initial metadata, Some requested revision for resolve responses.
+
+The UI routes metadata immediately (like Completion), retains it by exact token
+and candidate id, and rejects resolve results unless current revision equals the
+item revision, the same session/candidate is still selected, the provider matches,
+and a resolve for that candidate/revision is outstanding. Edits are in the
+**original completion base coordinates**, never current-buffer coordinates.
+Resolved additional edits are used only at acceptance, atomically with the primary
+via the model's finalize/rebase mechanism. They are never installed on Tab or
+on metadata arrival while the menu is active. Session dismissal sends
+Cancel_completion (which releases the raw cache); selecting another LSP candidate
+should send a new Resolve_completion, superseding the previous resolve. Selecting
+a buffer candidate must ignore the old response via the selection guard. A
+resolve response never changes primary edits.
+The source retains bounded raw items for 10 seconds, and cancels outstanding
+resolve on any document change; a new request after Tab can use retained items.
+
+## Actual UI acceptance implementation
+
+`screen/ui_state.ml` keeps the original text/cursor alongside the completion
+model. `resolved_finalize` rebuilds a one-candidate planning model from that base,
+substitutes the resolved additional edit list, acknowledges the primary already
+installed in the real editor, and asks the model for its normal atomic finalize
+plan. This avoids changing the shared Candidate/model API. The resolved list
+**replaces**, rather than appends to, the original additional edits; Some [] clears
+them. Finalization is permitted only after a real successful primary installation.
+An untouched menu with resolved docs/extras cannot fabricate an installed primary
+when ordinary typing or Escape dismisses it. Enter explicitly installs first.
+
+A resolve accepted before Tab stays valid in the session's base coordinates and
+can be reused after primary installation/cycling. An unaccepted response captured
+before a revision-changing Tab is stale: Tab issues a fresh resolve for the new
+revision, and the old response is rejected. Selection changes clear the resolve
+marker even when the next item does not need resolution, allowing a revisit to a
+same-primary/no-op candidate to query again after a deselected response was dropped.
+
+Known additional edits finalize immediately at acceptance. If none are known and
+the selected item has an outstanding resolve for the exact current revision,
+acceptance hides the menu and retains a **one-second** guarded continuation;
+typing never waits. A successful result within that interval may finish the
+additional edits only while buffer owner, controller lifetime, Insert mode,
+revision and cursor still match the accepted snapshot. Any later key (including
+one held by timed shortcut recognition), terminal key, or paste start cancels the
+continuation before processing that input. Lifecycle/snapshot changes also
+invalidate it. Source failures, raw-cache expiry and missing replies therefore
+leave the accepted primary in place, with no additional edits.
+
+The frontend's existing `toggle_key_pending` / `Toggle_tick` deadline mechanism
+also schedules and expires pending completion acceptance independently of
+animation, even with no further input. Every source-event arrival checks expiry
+again, so a queued response cannot bypass the deadline if it beats the tick.
+Unrelated metadata does not extend it. Expiry drops the captured snapshot and
+sends exact-token cancellation to release source-side work/cache.
+
 Shared variants (available in `error/`):
 
 - `Source_request.Complete of Ches_completion.Model.Request.t`
@@ -21,6 +87,11 @@ session, revision and request identity. Changes, closes and restart cancel pendi
 requests. Cancellation is token-exact. Limits: one pending request per document,
 32 per connection, 10-second expiry, first 512 response items, 128 additional edits
 per candidate. Eviction cancels a pending request when the connection is full.
+Raw completion cache: at most 32 documents/connection, at most 512 retained
+candidates/document, expires 10 seconds after the reply. One pending resolve per
+document, at most 32/connection, also with a 10-second deadline. Close, restart,
+cache expiry/eviction, and exact-token cancellation release raw items and cancel
+resolve. Document changes cancel resolve without extending the raw cache expiry.
 
 UTF-8/16/32 conversion requires exact code-point/line boundaries. Primary and
 additional edits are normalized and validated against the captured snapshot.
@@ -29,8 +100,16 @@ Completion arrays, null results and completion lists are supported; lists preser
 it becomes an ordinary invocation. `Incomplete` sends the corresponding protocol
 trigger. Automatic typing requests can always requery.
 
-Deliberate limitations: no snippets, commands, resolve, insert/replace edits,
-dynamic capability registration, or list item defaults. Unsupported items are
+InsertReplaceEdit always chooses the replace range explicitly, validating its
+same-start/single-line/insert-prefix requirements. CompletionList itemDefaults
+supports editRange (including insert/replace), insertTextFormat, insertTextMode
+(AsIs only), and opaque data. textEditText is used with a default editRange;
+explicit textEdit wins. Defaults are expanded into the raw item sent to resolve,
+preserving server data. Initial metadata includes kind/docs/detail; resolve can
+enrich docs/detail/additional edits but never changes the primary or ranking.
+
+Deliberate limitations: no snippets, commands, indentation adjustment,
+commit-character acceptance, or dynamic capability registration. Unsupported items are
 skipped. Servers with an unknown position encoding are not queried. Requests
 before initialization are ignored, as are requests whose current snapshot cannot
 be synchronized with the server's declared change support. Failures/timeouts do
@@ -40,3 +119,19 @@ Independent protocol verification: `dune runtest -j 6 source/test/completion`.
 It covers Unicode conversion, flush ordering, plain/fallback/additional edits,
 unsupported items, late replies after cancellation/revision/supersession/reopen,
 capability checks, pooled request bounds, restart, and event queue isolation.
+Next-phase cases cover default inheritance/item overrides, UTF16 insert/replace
+normalization, textEditText, opaque default data round-trip, lazy resolve after
+primary installation, stale resolve after change/cancel/supersession/close/restart,
+overlapping resolved edits, and primary-only Tab followed by additional-edit
+finalization. Resolve errors/invalid results/timeouts emit no metadata; the UI's
+one-second continuation bounds the wait and prevents late edits.
+
+End-to-end wire/UI verification:
+`dune runtest -j 6 source/test/completion_screen screen/test`.
+The fake server exercises resolve before/after Tab, immediate/deferred acceptance,
+late responses after typing or the UI deadline (even without a frontend tick),
+and real raw-item expiry (including ignored retry).
+`screen/test/test_completion_resolve.ml` covers uninstalled-primary safety,
+resolved-extra replacement/clearing, deadline cancellation without typing, held
+shortcut keys, paste, and same-primary selection races. The existing completion
+tests also cover stale pre-Tab metadata, ownership changes and undo grouping.

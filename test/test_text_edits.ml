@@ -85,7 +85,7 @@ let%test_unit "ordinary edits: one destination, no old-text scan or substring al
   List.iter [ 65536; 209920; 1048576 ] ~f:(fun size ->
     let source = String.init size ~f:(fun i -> if i % 80 = 79 then '\n' else 'a') in
     let t = text source in
-    let run f expected_size max_scan =
+    let run ?(line_array = true) f expected_size max_scan =
       let before = Stdlib.Gc.allocated_bytes () in
       let result, work = B.For_testing.measure f in
       let allocated = Stdlib.Gc.allocated_bytes () -. before in
@@ -93,21 +93,34 @@ let%test_unit "ordinary edits: one destination, no old-text scan or substring al
       [%test_result: int] work.destinations ~expect:1;
       [%test_result: int] work.destination_bytes ~expect:expected_size;
       assert (work.inserted_scan_bytes <= max_scan);
-      (* One text + at most one line array + fixed small record/closure overhead.
+      (* One text + at most one line array + bounded metadata/closure overhead.
          A temporary prefix/suffix pair or intermediate document exceeds this. *)
-      let budget = expected_size + 8 * (B.line_count result + 1) + 8192 in
+      let budget = expected_size + (if line_array then 8 * (B.line_count result + 1) else 0) + 8192 in
       assert (Float.(allocated < of_int budget));
       result
     in
     ignore (run (fun () -> B.insert t ~at:1 "x" |> Result.ok |> Option.value_exn) (size + 1) 2 : B.t);
     ignore (run (fun () -> B.delete t ~pos:1 ~len:1) (size - 1) 0 : B.t);
-    let replaced = run (fun () -> replace t ~pos:1 ~len:1 "z") size 1 in
+    let replaced = run ~line_array:false (fun () -> replace t ~pos:1 ~len:1 "z") size 1 in
     (* Equal-length replacement must allocate no new line array. *)
     let before = Stdlib.Gc.allocated_bytes () in
     ignore (replace replaced ~pos:1 ~len:1 "a" : B.t);
     let budget = size + 8192 in
     assert (Float.(Stdlib.Gc.allocated_bytes () -. before < of_int budget));
-    [%test_result: int] (B.retained_bytes replaced) ~expect:(B.retained_bytes t);
+    (* Equal-size text/line storage is unchanged, but the first replacement adds
+       one 80-byte edit descriptor. Metadata grows only through 64 descriptors. *)
+    [%test_result: int] (B.retained_bytes replaced) ~expect:(B.retained_bytes t + 80);
+    let saturated = List.fold (List.range 1 71) ~init:replaced ~f:(fun previous i ->
+      let edited = run ~line_array:false
+        (fun () -> replace previous ~pos:1 ~len:1 (if i % 2 = 0 then "z" else "a")) size 1 in
+      [%test_result: int] (B.retained_bytes edited)
+        ~expect:(B.retained_bytes t + (80 * Int.min 64 (i + 1)));
+      edited) in
+    (* A full metadata window must still require just one document destination,
+       no old-text indexing scan, and the same allocation budget. *)
+    ignore (run (fun () -> B.insert saturated ~at:1 "x" |> Result.ok |> Option.value_exn)
+      (size + 1) 2 : B.t);
+    ignore (run (fun () -> B.delete saturated ~pos:1 ~len:1) (size - 1) 0 : B.t);
     let no_op, work = B.For_testing.measure (fun () -> replace t ~pos:1 ~len:0 "") in
     assert (phys_equal t no_op);
     [%test_result: int] work.destinations ~expect:0)

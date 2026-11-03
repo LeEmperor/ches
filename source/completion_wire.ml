@@ -64,7 +64,59 @@ let edit encoding text json =
   { Text_edit.start; stop; text }
 ;;
 
-let candidates ~encoding ~text ~(request : Model.Request.t) ~source json =
+let effective_item defaults item =
+  match item with
+  | `Assoc fields ->
+    let fields = List.fold ["insertTextFormat"; "insertTextMode"; "data"; "commitCharacters"]
+      ~init:fields ~f:(fun fields key ->
+        if List.Assoc.mem fields key ~equal:String.equal then fields
+        else match field defaults key with None -> fields | Some value -> (key, value) :: fields) in
+    let item = `Assoc fields in
+    if Option.is_some (field item "textEdit") then item
+    else (match field defaults "editRange" with
+      | None -> item
+      | Some range ->
+        let new_text = Option.first_some (string_field item "textEditText")
+          (Option.first_some (string_field item "insertText") (string_field item "label")) in
+        match new_text with
+        | None -> item
+        | Some text ->
+          let ranges = match field range "insert", field range "replace" with
+            | Some insert, Some replace -> ["insert", insert; "replace", replace]
+            | _ -> ["range", range] in
+          `Assoc (("textEdit", `Assoc (("newText", `String text) :: ranges)) :: fields))
+  | _ -> item
+;;
+
+(* Ches deliberately chooses replace, never insert, for InsertReplaceEdit.
+   Validate the protocol's same-start, single-line, insert-prefix constraints. *)
+let primary_edit encoding text request json =
+  match field json "insert", field json "replace" with
+  | None, None -> edit encoding text json
+  | Some insert, Some replace ->
+    let open Option.Let_syntax in
+    let%bind i = edit encoding text (`Assoc ["range", insert; "newText", `String ""]) in
+    let%bind r = edit encoding text (`Assoc ["range", replace;
+      "newText", Option.value (field json "newText") ~default:`Null]) in
+    let%bind start = field replace "start" in
+    let%bind stop = field replace "end" in
+    let%bind start_line = int_field start "line" in
+    let%bind stop_line = int_field stop "line" in
+    Option.some_if (i.start = r.start && i.stop <= r.stop && i.start <= request.Model.Request.cursor
+      && request.cursor <= i.stop && start_line = stop_line) r
+  | _ -> None
+;;
+
+let metadata ?revision ?additional ~resolvable candidate_id item =
+  let documentation = match field item "documentation" with
+    | Some (`String text) -> Some text
+    | Some json -> string_field json "value"
+    | None -> None in
+  { Ches_error.Completion_info.candidate_id; kind = int_field item "kind";
+    documentation; detail = string_field item "detail"; resolvable; additional; revision }
+;;
+
+let decode ~encoding ~text ~(request : Model.Request.t) ~source json =
   let items, incomplete = match json with
     | `List items -> items, false
     | `Assoc _ ->
@@ -72,18 +124,21 @@ let candidates ~encoding ~text ~(request : Model.Request.t) ~source json =
       (match field json "isIncomplete" with Some (`Bool b) -> b | _ -> false)
     | _ -> [], false
   in
+  let defaults = Option.value (field json "itemDefaults") ~default:`Null in
+  let retained = ref [] in
   let base = Ches_core.Text_buffer.of_string text |> Result.ok in
   let candidates = List.take items 512 |> List.filter_mapi ~f:(fun index item ->
+    let item = effective_item defaults item in
     let open Option.Let_syntax in
     let%bind base = base in
     let%bind label = string_field item "label" in
-    let%bind () = match int_field item "insertTextFormat", field item "command" with
-      | (None | Some 1), (None | Some `Null) -> Some ()
+    let%bind () = match int_field item "insertTextFormat", int_field item "insertTextMode", field item "command" with
+      | (None | Some 1), (None | Some 1), (None | Some `Null) -> Some ()
       | _ -> None in
     let%bind primary = match field item "textEdit" with
       | None | Some `Null -> Some { Text_edit.start = request.fallback_start; stop = request.fallback_stop;
           text = Option.value (string_field item "insertText") ~default:label }
-      | Some json -> edit encoding text json in
+      | Some json -> primary_edit encoding text request json in
     let%bind additional = match field item "additionalTextEdits" with
       | None | Some `Null -> Some []
       | Some (`List edits) when List.length edits <= 128 ->
@@ -91,11 +146,37 @@ let candidates ~encoding ~text ~(request : Model.Request.t) ~source json =
       | _ -> None in
     let%bind () = match Text_edit.apply base [primary :: additional] with
       | Ok _ -> Some () | Error _ -> None in
-    Some { Model.Candidate.id = sprintf "%s:%d" source index
+    let id = sprintf "%s:%d" source index in
+    retained := (id, item) :: !retained;
+    Some { Model.Candidate.id = id
       ; source = Lsp source; label; detail = string_field item "detail"
       ; filter_text = Option.value (string_field item "filterText") ~default:label
       ; sort_text = Option.value (string_field item "sortText") ~default:label
       ; primary; additional; cursor = String.length primary.text })
   in
-  { Model.Reply.token = request.token; source; candidates; incomplete }
+  { Model.Reply.token = request.token; source; candidates; incomplete }, List.rev !retained
+;;
+
+let candidates ~encoding ~text ~request ~source json =
+  fst (decode ~encoding ~text ~request ~source json)
+;;
+
+(* Resolve may enrich docs/detail/additional edits only; never replace the
+   already presented primary, ranking, format or command semantics. *)
+let resolved ~encoding ~text ~(candidate : Model.Candidate.t) raw json =
+  let open Option.Let_syntax in
+  let%bind fields = match raw, json with
+    | `Assoc old, `Assoc fresh ->
+      Some (`Assoc (fresh @ List.filter old ~f:(fun (key, _) ->
+        not (List.Assoc.mem fresh key ~equal:String.equal))))
+    | _ -> None in
+  let%bind () = match int_field fields "insertTextFormat", field fields "command" with
+    | (None | Some 1), (None | Some `Null) -> Some () | _ -> None in
+  let%bind additional = match field fields "additionalTextEdits" with
+    | None | Some `Null -> Some candidate.additional
+    | Some (`List edits) when List.length edits <= 128 -> Option.all (List.map edits ~f:(edit encoding text))
+    | _ -> None in
+  let%bind base = Ches_core.Text_buffer.of_string text |> Result.ok in
+  let%map _ = Text_edit.apply base [candidate.primary :: additional] |> Result.ok in
+  fields, additional
 ;;

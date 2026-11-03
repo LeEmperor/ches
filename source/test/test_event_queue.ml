@@ -12,6 +12,7 @@ let show queue =
     print_s
       (match event with
        | Completion _ -> [%message "completion"]
+       | Completion_metadata _ -> [%message "completion metadata"]
        | Servers _ -> [%message "servers"]
        | Owned _ -> [%message "owned"]
        | Diagnostics { source; resource; revision; _ } ->

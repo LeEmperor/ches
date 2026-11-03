@@ -12,6 +12,20 @@ type completion_session =
   ; owner : Buffer_id.t option
   ; document : Controller.Document_id.t
   ; installed : bool
+  ; metadata : Ches_error.Completion_info.t String.Map.t
+  ; resolving : (string * int) option
+  ; base : Text_buffer.t
+  ; base_cursor : int
+  }
+
+type completion_acceptance =
+  { session : completion_session
+  ; deadline : Time_ns.t
+  }
+
+type completion_words =
+  { document : Controller.Document_id.t
+  ; words : Completion.Buffer_words.t
   }
 
 module Message = struct
@@ -94,7 +108,9 @@ type toggle_pending =
 type t =
   { controller : Controller.t
   ; completion : completion_session option
+  ; completion_acceptance : completion_acceptance option
   ; completion_serial : int
+  ; completion_words : completion_words Buffer_id.Map.t
   ; completion_enabled : bool
   ; completion_ghost_enabled : bool
   ; session : Session.t
@@ -234,7 +250,9 @@ let create
   let controller = Option.value_exn (Session.active_controller session) in
   { controller
   ; completion = None
+  ; completion_acceptance = None
   ; completion_serial = 0
+  ; completion_words = Buffer_id.Map.empty
   ; completion_enabled = true
   ; completion_ghost_enabled = false
   ; session
@@ -340,7 +358,9 @@ let terminal_generation t = t.terminal_generation
 let terminal_failure t = t.terminal_failure
 let terminal_visible t = t.terminal_visible
 let terminal_key_pending t = Option.is_some t.terminal_pending_j
-let toggle_key_pending t = Option.is_some t.toggle_pending
+(* The existing foreground deadline tick also expires deferred completion
+   acceptance, independently of animation and of further keyboard input. *)
+let toggle_key_pending t = Option.is_some t.toggle_pending || Option.is_some t.completion_acceptance
 let terminal_capturing t =
   Option.is_some t.terminal_paste
   || (t.terminal_visible && View_id.equal
@@ -403,6 +423,13 @@ let completion_selected t =
     if completion_current t c then Completion.selected c.model else None)
 ;;
 
+let completion_info t =
+  Option.bind t.completion ~f:(fun c ->
+    if not (completion_current t c) then None else
+    Option.bind (Completion.selected c.model) ~f:(fun candidate ->
+      Map.find c.metadata candidate.id))
+;;
+
 let completion_ghost t =
   if not t.completion_ghost_enabled then None else
     Option.bind t.completion ~f:(fun c ->
@@ -410,7 +437,9 @@ let completion_ghost t =
 ;;
 
 let dismiss_completion t =
-  match t.completion with
+  let completion = Option.first_some t.completion
+    (Option.map t.completion_acceptance ~f:(fun pending -> pending.session)) in
+  match completion with
   | None -> t
   | Some c ->
     let queued = List.exists t.source_commands ~f:(function
@@ -418,10 +447,45 @@ let dismiss_completion t =
       | _ -> false) in
     let source_commands = List.filter t.source_commands ~f:(function
       | Complete request -> not (Completion.Token.equal request.token c.token)
+      | Resolve_completion request -> not (Completion.Token.equal request.token c.token)
       | _ -> true) in
-    { t with completion = None
+    { t with completion = None; completion_acceptance = None
     ; source_commands = if t.source_attached && not queued then Cancel_completion c.token :: source_commands
         else source_commands }
+;;
+
+let expire_completion_acceptance t ~at =
+  match t.completion_acceptance with
+  | Some pending when Time_ns.(at >= pending.deadline)
+      || not (completion_current t pending.session) -> dismiss_completion t
+  | _ -> t
+;;
+
+let resolve_completion t =
+  match t.completion with
+  | Some c when completion_current t c && t.source_attached ->
+    (match Completion.selected c.model with
+     | Some candidate ->
+        let revision = Editor.revision (Controller.editor t.controller) in
+        let identity = candidate.id, revision in
+        (* A result for a deselected item can be dropped. Forget the marker on
+           selection changes even if the new item needs no RPC, so revisiting a
+           same-text/no-op candidate can issue another resolve. *)
+        let c = if Option.equal [%equal: string * int] c.resolving (Some identity)
+          then c else { c with resolving = None } in
+        let t = { t with completion = Some c } in
+       (match Map.find c.metadata candidate.id with
+        | Some info when info.resolvable && Option.is_none info.additional
+            && not (Option.equal [%equal: string * int] c.resolving (Some identity)) ->
+          let source_commands = List.filter t.source_commands ~f:(function
+            | Resolve_completion request -> not (Completion.Token.equal request.token c.token)
+            | _ -> true) in
+          { t with completion = Some { c with resolving = Some identity }
+          ; source_commands = Resolve_completion { token = c.token; candidate_id = candidate.id; revision }
+              :: source_commands }
+        | _ -> t)
+     | None -> { t with completion = Some { c with resolving = None } })
+  | _ -> t
 ;;
 
 let install_completion t c plan =
@@ -438,29 +502,68 @@ let install_completion t c plan =
     { t with controller; completion = Some { c with model; installed = true } }
 ;;
 
+(* Resolve leaves the primary immutable. Rebuild a one-choice planning model from
+   the captured base, acknowledge the already installed primary, and use its
+   normal atomic finalization/rebase. Never interpret base offsets as live ones. *)
+let resolved_finalize c ~revision =
+  Option.bind (Completion.selected c.model) ~f:(fun selected ->
+    Option.bind (Map.find c.metadata selected.id) ~f:(fun info ->
+      Option.bind info.additional ~f:(fun additional ->
+        let selected = { selected with additional } in
+        Option.bind (Completion.start ~token:c.token ~text:c.base ~cursor:c.base_cursor
+          ~words:(Completion.Buffer_words.create Text_buffer.empty) ~limit:1)
+          ~f:(fun (model, _) ->
+            let source = match selected.source with Buffer -> "" | Lsp source -> source in
+            let model = Completion.receive model
+              { token = c.token; source; candidates = [ selected ]; incomplete = false } in
+            Option.bind (Completion.plan model Next) ~f:(fun plan ->
+              Completion.finalize (Completion.applied model plan ~revision))))))
+;;
+
+let apply_final_completion t c =
+  if not c.installed || not (completion_current t c) then t else
+  let revision = Editor.revision (Controller.editor t.controller) in
+  let resolved = Option.exists (Completion.selected c.model) ~f:(fun selected ->
+    Option.exists (Map.find c.metadata selected.id) ~f:(fun info -> Option.is_some info.additional)) in
+  let plan = if resolved then resolved_finalize c ~revision else Completion.finalize c.model in
+  Option.value_map plan ~default:t ~f:(fun plan ->
+    match Controller.apply_insert_edits t.controller ~expected_revision:revision
+        ~edits:(Completion.edits plan) ~cursor:(Completion.cursor plan) with
+    | Error _ -> t
+    | Ok controller -> { t with controller = Controller.cancel_pending controller })
+;;
+
 let finalize_completion t =
-  let t = match t.completion with
-    | Some c when completion_current t c ->
-      Option.value_map (Completion.finalize c.model) ~default:t
-        ~f:(install_completion t c)
-    | _ -> t in
-  dismiss_completion t
+  let t = match t.completion_acceptance with None -> t | Some _ -> dismiss_completion t in
+  match t.completion with
+  | Some c when completion_current t c && c.installed
+      && Option.exists (Completion.selected c.model) ~f:(fun selected ->
+        List.is_empty selected.additional && Option.exists (Map.find c.metadata selected.id) ~f:(fun info ->
+          info.resolvable && Option.is_none info.additional)
+        && Option.equal [%equal: string * int] c.resolving
+          (Some (selected.id, Editor.revision (Controller.editor t.controller)))) ->
+    (* Acceptance never waits. A single guarded continuation may finish imports
+       while the exact accepted snapshot still exists; the menu is already gone. *)
+    { t with completion = None; completion_acceptance = Some
+        { session = c; deadline = Time_ns.add (Time_ns.now ()) (Time_ns.Span.of_int_sec 1) } }
+  | Some c -> dismiss_completion (apply_final_completion t c)
+  | None -> t
 ;;
 
 let cycle_completion t direction =
   match t.completion with
   | Some c when completion_current t c ->
     Option.value_map (Completion.plan c.model direction) ~default:t
-      ~f:(install_completion t c)
+      ~f:(fun plan -> resolve_completion (install_completion t c plan))
   | _ -> dismiss_completion t
 ;;
 
-(* Sessions are captured after a real editor change, never from preview text.
-   Word scanning and the merged list are bounded by the pure model. *)
-let start_completion t =
+(* Keep the incremental index across queries and tab switches, keyed by both
+   session buffer identity and controller document lifetime. *)
+let start_completion ?(manual = false) t =
   let t = dismiss_completion t in
   let editor = Controller.editor t.controller in
-  if not t.completion_enabled || not (has_document t)
+  if (not manual && not t.completion_enabled) || not (has_document t)
      || not (Controller.Kind.equal (Controller.kind t.controller) File)
      || not (Mode.equal (Editor.mode editor) Insert)
      || not (List.is_empty (Editor.block_insert_points editor))
@@ -473,22 +576,31 @@ let start_completion t =
   let token = { Completion.Token.resource = Option.value (Editor.path editor) ~default:""
     ; generation; revision = Editor.revision editor; request = serial } in
   let text = Editor.text editor in
+  let document = Controller.document_id t.controller in
+  let words = Option.bind owner ~f:(Map.find t.completion_words)
+    |> Option.filter ~f:(fun cached -> Controller.Document_id.equal cached.document document)
+    |> Option.map ~f:(fun cached -> cached.words) in
+  let words = match words with
+    | None -> Completion.Buffer_words.create text
+    | Some words -> Completion.Buffer_words.update words text in
+  let t = Option.value_map owner ~default:t ~f:(fun id ->
+    { t with completion_words = Map.set t.completion_words ~key:id ~data:{ document; words } }) in
   match Completion.start ~token ~text ~cursor:(Editor.cursor editor)
-      ~words:(Completion.Buffer_words.create text) ~limit:100 with
+      ~words ~limit:100 with
   | None -> t
   | Some (model, request) ->
-    let two_characters = Option.exists (Text_buffer.prev_boundary text request.cursor)
-      ~f:(fun previous -> Option.exists (Text_buffer.prev_boundary text previous)
-        ~f:(fun before -> before >= request.fallback_start)) in
+    let identifier_character = Option.exists (Text_buffer.prev_boundary text request.cursor)
+      ~f:(fun previous -> previous >= request.fallback_start) in
     let preceding = Option.value_map (Text_buffer.prev_boundary text request.cursor)
       ~default:"" ~f:(fun at -> Text_buffer.slice text ~pos:at ~len:(request.cursor - at)) in
     let punctuation = List.mem [ "."; ":"; ">"; "/" ] preceding ~equal:String.equal in
-    if not two_characters && not punctuation then t else
-    let request = if punctuation then
+    if not manual && not identifier_character && not punctuation then t else
+    let request = if punctuation && not manual then
         { request with trigger = Character preceding }
       else request in
     { t with completion_serial = serial
-    ; completion = Some { model; token; owner; document = Controller.document_id t.controller; installed = false }
+    ; completion = Some { model; token; owner; document = Controller.document_id t.controller; installed = false
+        ; metadata = String.Map.empty; resolving = None; base = text; base_cursor = Editor.cursor editor }
     ; source_commands = if t.source_attached && not (String.is_empty token.resource)
         then Complete request :: t.source_commands else t.source_commands }
 ;;
@@ -1583,7 +1695,7 @@ let synchronize t ~width ~height =
           else "Details updated"
         in
         { t with host = Host.with_notice t.host text }
-      | _ -> t)
+     | _ -> t)
   in
   let t =
     match Host.reconcile t.host ~available:(available t ~width ~height) with
@@ -1616,6 +1728,8 @@ let geometry t ~width ~height =
    [keep_focus] (a buffer closed under a view the user is in), neither the active tab
    nor focus moves. *)
 let adopt_session_state ?(keep_view_tab = false) ?(keep_focus = false) t session ~width ~height =
+  let t = if Session.same_file_lifetimes t.session session then t else
+    { t with completion_words = Map.filter_keys t.completion_words ~f:(Session.has_buffer session) } in
   (* Session-owned navigation (notably [Toggle_directory]) may consume its view
      command before it reaches the screen. An explicitly focused browser must
      become visible, including when its retained placement is a side pane. *)
@@ -3081,6 +3195,8 @@ let finish_step t ~width ~height ~controller ~views ~keymap_notice =
 let feed t ~width ~height (input : Keymap.Input.t) =
   let accepting = not (List.is_empty (completion_candidates t)) in
   match input with
+  | Key (Ctrl 'n') when Mode.equal (Editor.mode (Controller.editor t.controller)) Insert ->
+    start_completion ~manual:true (finalize_completion t), Controller.Status.Running
   | Key (Tab | Shift_tab as key) when accepting ->
     cycle_completion t (if Key.equal key Tab then Next else Previous), Controller.Status.Running
   | Key Enter when accepting ->
@@ -3549,11 +3665,45 @@ let apply_source t update ~text =
 ;;
 
 let rec receive t (event : Ches_error.Source_event.t) =
+  (* Arrival can race the frontend tick, including queued source batches. *)
+  let t = expire_completion_acceptance t ~at:(Time_ns.now ()) in
   match event with
   | Completion reply ->
     (match t.completion with
      | Some c when completion_current t c ->
-       { t with completion = Some { c with model = Completion.receive c.model reply } }
+       resolve_completion { t with completion = Some { c with model = Completion.receive c.model reply } }
+      | _ -> t)
+  | Completion_metadata { token; source; items } ->
+    let pending = Option.is_none t.completion in
+    let current = Option.first_some t.completion
+      (Option.map t.completion_acceptance ~f:(fun pending -> pending.session)) in
+    (match current with
+     | Some c when Completion.Token.equal c.token token && completion_current t c ->
+       let revision = Editor.revision (Controller.editor t.controller) in
+       let metadata = List.fold (List.take items 1000) ~init:c.metadata ~f:(fun metadata info ->
+         let candidate = List.find (Completion.candidates c.model) ~f:(fun candidate ->
+           String.equal candidate.id info.Ches_error.Completion_info.candidate_id
+           && match candidate.source with Lsp provider -> String.equal provider source | Buffer -> false) in
+         let selected = Option.exists (Completion.selected c.model) ~f:(fun candidate ->
+           String.equal candidate.id info.candidate_id) in
+         let valid = match info.revision with
+           | None -> not pending && Option.is_none info.additional
+           | Some at -> at = revision && selected
+             && Option.equal [%equal: string * int] c.resolving (Some (info.candidate_id, at)) in
+         if Option.is_none candidate || not valid then metadata else
+         (* An out-of-order initial metadata event must not erase a resolved item. *)
+         match Map.find metadata info.candidate_id with
+         | Some previous when Option.is_some previous.additional && Option.is_none info.revision -> metadata
+         | _ -> Map.set metadata ~key:info.candidate_id ~data:info) in
+       let c = { c with metadata } in
+       if pending then
+         let ready = Option.exists (Completion.selected c.model) ~f:(fun selected ->
+           Option.exists (Map.find metadata selected.id) ~f:(fun info -> Option.is_some info.additional)) in
+         if ready then dismiss_completion
+           (apply_final_completion { t with completion = Some c; completion_acceptance = None } c)
+          else { t with completion_acceptance = Option.map t.completion_acceptance
+            ~f:(fun pending -> { pending with session = c }) }
+       else resolve_completion { t with completion = Some c }
      | _ -> t)
   | Servers servers ->
     { t with views = View_registry.map t.views Language_servers_tile.key
@@ -3582,7 +3732,7 @@ let rec receive t (event : Ches_error.Source_event.t) =
         @ [ key, update, text ]
     }
   | Diagnostics _ | Started _ | Stopped _ | Unavailable _ -> apply_source t update ~text
-  | Owned _ | Servers _ | Completion _ -> assert false
+  | Owned _ | Servers _ | Completion _ | Completion_metadata _ -> assert false
 ;;
 
 let receive_all t ~width ~height events =
@@ -3640,10 +3790,17 @@ let toggle_step text c =
 ;;
 
 let rec apply t ~width ~height (input : Input.t) =
+  (* Even a key held by the timed toggle recognizer ends the opportunity for
+     deferred edits. It need not have changed revision/cursor yet. *)
+  let t = match input, t.completion_acceptance with
+    | (Key _ | Key_at _ | Terminal_key _ | Terminal_key_at _ | Paste_start), Some _ ->
+      dismiss_completion t
+    | _ -> t in
   if t.exited
   then t, Controller.Status.Exit
   else (
-    let next, status = apply_running t ~width ~height input in
+     let next, status = apply_running t ~width ~height input in
+     let next = expire_completion_acceptance next ~at:(Time_ns.now ()) in
     let next = match next.toggle_pending with
       | Some pending when next.exited || not (Option.exists (toggle_owner next ~width ~height)
           ~f:(same_toggle_owner pending.owner)) -> { next with toggle_pending = None }
@@ -3661,6 +3818,7 @@ and apply_running t ~width ~height (input : Input.t) : t * Controller.Status.t =
   match input with
   | Key key -> apply_running t ~width ~height (Key_at { key; at = Time_ns.now () })
   | Toggle_tick at ->
+    let t = expire_completion_acceptance t ~at in
     (match t.toggle_pending with
      | Some pending when toggle_expired pending at -> flush_toggle t ~width ~height
      | Some pending when not (Option.exists (toggle_owner t ~width ~height)
@@ -3672,7 +3830,7 @@ and apply_running t ~width ~height (input : Input.t) : t * Controller.Status.t =
       | _ -> None in
     timed_toggle t ~width ~height ~at ~c ~key:(Editor_key key)
       ~literal:(fun t -> apply_regular t ~width ~height (Input.Key key))
-  | Paste_start when toggle_key_pending t ->
+   | Paste_start when Option.is_some t.toggle_pending ->
     let t, _ = flush_toggle t ~width ~height in
     apply_running t ~width ~height Paste_start
   | Terminal_session_update { terminal; generation; event } ->

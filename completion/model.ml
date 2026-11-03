@@ -48,16 +48,31 @@ let prefix_start text cursor =
 ;;
 
 module Buffer_words = struct
-  type t = { text : B.t; words : (string * int list) list }
+  type t = { text : B.t; words : int String.Map.t }
 
-  let create text =
-    let rec boundary at = if B.is_boundary text at then at else boundary (at - 1) in
-    let bound = boundary (Int.min (B.length text) 65536) in
+  module For_testing = struct
+    let active = ref None
+    let measure f =
+      let bytes = ref 0 in
+      let previous = !active in
+      active := Some bytes;
+      Exn.protect ~f:(fun () -> let result = f () in result, !bytes)
+        ~finally:(fun () -> active := previous)
+    ;;
+  end
+
+  let scan text ~start ~stop ~delta words =
+    Option.iter !(For_testing.active) ~f:(fun bytes -> bytes := !bytes + stop - start);
+    let add words start stop =
+      let key = B.slice text ~pos:start ~len:(stop - start) in
+      Map.change words key ~f:(fun count ->
+        let count = Option.value count ~default:0 + delta in
+        if count = 0 then None else Some count)
+    in
     let rec scan at word_start words =
-      if at >= bound then
+      if at >= stop then
         match word_start with
-        | Some start when at = B.length text ->
-          Map.add_multi words ~key:(B.slice text ~pos:start ~len:(at - start)) ~data:start
+        | Some start -> add words start at
         | _ -> words
       else if identifier text at then
         scan (Option.value_exn (B.next_boundary text at))
@@ -66,11 +81,40 @@ module Buffer_words = struct
         let words = match word_start with
           | None -> words
           | Some start ->
-            Map.add_multi words ~key:(B.slice text ~pos:start ~len:(at - start)) ~data:start
+            add words start at
         in
         scan (Option.value_exn (B.next_boundary text at)) None words
     in
-    { text; words = Map.to_alist (scan 0 None String.Map.empty) }
+    scan start None words
+  ;;
+
+  let create text =
+    { text; words = scan text ~start:0 ~stop:(B.length text) ~delta:1 String.Map.empty }
+  ;;
+
+  let word_stop text at =
+    let rec loop at =
+      if identifier text at then loop (Option.value_exn (B.next_boundary text at)) else at
+    in
+    loop at
+  ;;
+
+  let update t text =
+    if phys_equal t.text text then t else
+      match B.changed_range ~before:t.text ~after:text with
+      | None -> { t with text }
+      | Some (start, old_stop, new_stop) ->
+        let rec left at =
+          match B.prev_boundary t.text at with
+          | Some before when identifier t.text before -> left before
+          | _ -> at
+        in
+        let start = left start in
+        let old_stop = word_stop t.text old_stop in
+        let new_stop = word_stop text new_stop in
+        let words = scan t.text ~start ~stop:old_stop ~delta:(-1) t.words in
+        let words = scan text ~start ~stop:new_stop ~delta:1 words in
+        { text; words }
   ;;
 
   let candidates t ~text ~cursor ~limit =
@@ -79,18 +123,19 @@ module Buffer_words = struct
       | None -> []
       | Some start ->
         let prefix = B.slice text ~pos:start ~len:(cursor - start) in
-        if String.is_empty prefix then [] else
-          List.filter_map t.words ~f:(fun (word, offsets) ->
-            if String.equal word prefix || not (String.is_prefix word ~prefix) then None
-            else
-              if List.exists offsets ~f:(fun at -> at <> start) then Some word else None)
-          (* The index's string map already supplies lexical order. *)
-          |> Fn.flip List.take limit
-          |> List.map ~f:(fun word ->
-            { Candidate.id = "buffer:" ^ word; source = Buffer; label = word; detail = None
-            ; filter_text = word; sort_text = word
-            ; primary = { start; stop = cursor; text = word }; additional = []
-            ; cursor = String.length word })
+        let current = B.slice text ~pos:start ~len:(word_stop text cursor - start) in
+        Map.to_sequence t.words ~keys_greater_or_equal_to:prefix
+        |> Sequence.take_while ~f:(fun (word, _) -> String.is_prefix word ~prefix)
+        |> Sequence.filter ~f:(fun (word, count) ->
+          not (String.equal word prefix)
+          && (count > 1 || not (String.equal word current)))
+        |> Fn.flip Sequence.take limit
+        |> Sequence.to_list
+        |> List.map ~f:(fun (word, _) ->
+          { Candidate.id = "buffer:" ^ word; source = Buffer; label = word; detail = None
+          ; filter_text = word; sort_text = word
+          ; primary = { start; stop = cursor; text = word }; additional = []
+          ; cursor = String.length word })
   ;;
 end
 

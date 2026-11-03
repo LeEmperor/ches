@@ -2,6 +2,7 @@ open! Core
 
 type t =
   | Complete of Ches_completion.Model.Request.t
+  | Resolve_completion of { token : Ches_completion.Model.Token.t; candidate_id : string; revision : int }
   | Cancel_completion of Ches_completion.Model.Token.t
   | Document_opened of { resource : string; generation : int }
   | Document_closed of { resource : string }

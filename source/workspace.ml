@@ -22,7 +22,8 @@ let start ~create () =
           let name source = sprintf "%s#%d" source generation in
            match event with
            | Servers _ -> Servers []
-           | Completion reply -> Completion { reply with source = name reply.source }
+            | Completion reply -> Completion { reply with source = name reply.source }
+            | Completion_metadata info -> Completion_metadata { info with source = name info.source }
           | Diagnostics d -> Diagnostics { d with source = name d.source }
           | Started d -> Started { d with source = name d.source }
           | Stopped d -> Stopped { d with source = name d.source }
@@ -51,8 +52,10 @@ let start ~create () =
         | Document_closed { resource } -> close resource
         | Document_changed { resource; _ } | Document_saved { resource; _ } ->
           Option.iter (Hashtbl.find drivers resource) ~f:(fun (_, source, _) -> Source.send source request)
-        | Complete { token = { resource; _ }; _ } | Cancel_completion { resource; _ } ->
-          Option.iter (Hashtbl.find drivers resource) ~f:(fun (_, source, _) -> Source.send source request)
+         | Complete { token = { resource; _ }; _ } | Cancel_completion { resource; _ } ->
+           Option.iter (Hashtbl.find drivers resource) ~f:(fun (_, source, _) -> Source.send source request)
+         | Resolve_completion { token = { resource; _ }; _ } ->
+           Option.iter (Hashtbl.find drivers resource) ~f:(fun (_, source, _) -> Source.send source request)
         | Restart | Kill -> Hashtbl.iter drivers ~f:(fun (_, source, _) -> Source.send source request))
     ; stop = (fun () -> stopped := true; List.iter (Hashtbl.keys drivers) ~f:close)
     })

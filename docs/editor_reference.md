@@ -680,10 +680,17 @@ and slang's HDL hierarchy and waveform features are not wired into the editor.
 
 ### Code completion
 
-Automatic completion is enabled by default in ordinary Insert mode. After two
-identifier characters, a small menu offers matching words from the current buffer
+Automatic completion is enabled by default in ordinary Insert mode. After one
+identifier character, a small menu offers matching words from the current buffer
 and candidates from an attached language server. Punctuation `.`, `:`, `>`, and
 `/` also requests server suggestions. Buffer suggestions work without an LSP.
+
+**Ctrl-n** explicitly requests completion in Insert mode, even with automatic
+completion disabled or with zero/one typed prefix characters. An empty prefix
+offers lexically ordered buffer words and available server candidates. The menu
+aligns candidate labels first, followed by aligned buffer/LSP source tags, and
+displays available kind, signature/detail, and selected-item documentation within
+the available space. One blank cell pads the right edge.
 
 | Key | While candidates are available |
 | --- | --- |
@@ -708,11 +715,20 @@ Open the command palette (`Space c c`) and search for:
 
 These toggles last for the current editor session. Buffer matches are case-sensitive
 and lexically ordered; LSP candidates use server sorting and precede buffer-only
-matches. Buffer-word indexing currently covers the first 64 KiB of the document,
-and the combined list is limited to 100 candidates. LSP requests synchronize the
-document first and discard obsolete replies. Snippets, completion commands,
-resolve, insert/replace edits, and completion-list item defaults are not supported
-in this first version; unsupported items are skipped.
+matches. Buffer-word indexing covers the entire document and is cached per live
+buffer; ordinary edits update only affected words. The initial index build is
+synchronous and may briefly pause on multi-megabyte files. The combined list is
+limited to 100 candidates, and typed-prefix scanning is limited to 4096 bytes.
+
+LSP requests synchronize the document first and discard obsolete replies.
+Insert/replace edits use the replace range; supported completion-list defaults
+are inherited by items. Selected candidates can lazily resolve documentation,
+details, and additional edits. Known additional edits apply at acceptance. If
+resolution is still pending, acceptance keeps the primary text and allows up to
+one second for extras to arrive while the accepted buffer/cursor remain unchanged.
+Any subsequent key or paste cancels this deferred action; typing never waits.
+Snippets, completion commands, indentation adjustment, commit-character acceptance,
+and dynamic capability registration remain unsupported.
 
 ### Synthetic checker (live diagnostic source)
 

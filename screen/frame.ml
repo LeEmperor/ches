@@ -605,37 +605,58 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
             Span.overlay row ~x:anchor.x ~width:cols (Span.take spans ~n:cols) else row) in
       let candidates = Ui_state.completion_candidates ui in
       let selected = Ui_state.completion_selected ui in
+      let info = Ui_state.completion_info ui in
+      (* Bound bytes before decoding server metadata, then let Span escape control
+         characters and clip by terminal cells (including wide Unicode). *)
+      let bounded s =
+        let rec boundary n =
+          if n > 0 && n < String.length s && Char.to_int s.[n] land 0xc0 = 0x80
+          then boundary (n - 1) else n in
+        String.prefix s (boundary (Int.min 256 (String.length s))) in
+      let documentation = Option.bind info ~f:(fun info -> info.documentation)
+        |> Option.value_map ~default:[] ~f:(fun text ->
+          List.take (String.split (bounded text) ~on:'\n') 3) in
       let index = Option.value (List.findi candidates ~f:(fun _ c ->
         Option.exists selected ~f:(fun s -> Ches_completion.Model.Candidate.equal s c))
         |> Option.map ~f:fst) ~default:0 in
       let below = viewport.y + viewport.height - anchor.y - 1 in
       let above = anchor.y - viewport.y in
       let down = below >= Int.min 8 (List.length candidates) || below >= above in
-      let count = Int.min 8 (Int.min (List.length candidates) (if down then below else above)) in
+      let available = if down then below else above in
+      let doc_count = Int.min (List.length documentation) (Int.max 0 (available - 1)) in
+      let count = Int.min 8 (Int.min (List.length candidates) (available - doc_count)) in
       if count <= 0 then rows else
       let first = Int.max 0 (index - count + 1) in
       let visible = List.take (List.drop candidates first) count in
-      let menu = List.map visible ~f:(fun c ->
+      let labels = List.map visible ~f:(fun c ->
+        Span.of_text (bounded c.label) ~style:Status ~special:Status) in
+      let label_width = List.fold labels ~init:0 ~f:(fun n label ->
+        Int.max n (Span.total_width label)) in
+      let menu = List.map2_exn visible labels ~f:(fun c label ->
         let chosen = Option.exists selected ~f:(Ches_completion.Model.Candidate.equal c) in
         let style = if chosen then Style.Mode Insert else Style.Status in
-        (* Map only a bounded UTF-8 prefix of provider display metadata. *)
-        let bounded s =
-          let rec boundary n =
-            if n > 0 && n < String.length s && Char.to_int s.[n] land 0xc0 = 0x80
-            then boundary (n - 1) else n in
-          String.prefix s (boundary (Int.min 256 (String.length s))) in
-        let label = (if chosen then "> " else "  ") ^ bounded c.label ^
-          Option.value_map c.detail ~default:"" ~f:(fun d -> "  " ^ bounded d) in
-        Span.of_text label ~style ~special:style) in
+        let provider = match c.source with
+          | Buffer -> "buffer"
+          | Lsp _ -> "LSP" in
+        let detail = if chosen then Option.first_some
+            (Option.bind info ~f:(fun info -> info.detail)) c.detail else c.detail in
+        [ Span.create style (if chosen then "> " else "  ") ~width:2 ]
+        @ List.map label ~f:(fun span -> { span with Span.style = style })
+        @ [ Span.blank style (label_width - Span.total_width label + 2) ]
+        @ Span.of_text ("[" ^ provider ^ "]" ^
+            Option.value_map detail ~default:"" ~f:(fun d -> "  " ^ bounded d))
+            ~style ~special:style) in
+      let menu = menu @ List.map (List.take documentation doc_count) ~f:(fun text ->
+        Span.of_text ("  " ^ text) ~style:Hint ~special:Hint) in
       let cols = Int.min 60 (Int.min viewport.width
-        (Int.max 16 (List.fold menu ~init:0 ~f:(fun n row -> Int.max n (Span.total_width row))))) in
+        (Int.max 16 (1 + List.fold menu ~init:0 ~f:(fun n row -> Int.max n (Span.total_width row))))) in
       let x = Int.max viewport.x (Int.min anchor.x (viewport.x + viewport.width - cols)) in
-      let y = if down then anchor.y + 1 else anchor.y - count in
+      let y = if down then anchor.y + 1 else anchor.y - List.length menu in
       List.mapi rows ~f:(fun line row ->
         match List.nth menu (line - y) with
         | None -> row
         | Some content ->
-          let content = Span.take content ~n:cols in
+          let content = Span.take content ~n:(Int.max 0 (cols - 1)) in
           let style = match content with s :: _ -> s.Span.style | [] -> Status in
           Span.overlay row ~x ~width:cols
             (content @ [ Span.blank style (cols - Span.total_width content) ]))

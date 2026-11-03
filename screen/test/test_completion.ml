@@ -17,7 +17,7 @@ let describe t =
 let%expect_test "automatic buffer menu, original-slot cycling, wrap, Enter and one undo" =
   let initial = "\nalpha alpine" in
   let t = press (ui initial) "ia" in
-  assert (not (has_menu t));
+  assert (has_menu t);
   let t = press t "l" in
   describe t;
   show ~width:32 ~height:6 t;
@@ -38,8 +38,8 @@ let%expect_test "automatic buffer menu, original-slot cycling, wrap, Enter and o
      \nalpha alpine" (alpha alpine) Insert)
     ╭─ f.txt ──────────────────────╮|
     │  al                          │|
-    │  al> alpha                   │|
-    │      alpine                  │|
+    │  al> alpha   [buffer]        │|
+    │      alpine  [buffer]        │|
     ╰──────────────────────────────╯|
      INSERT  f.txt [+]          1:3 |
     cursor: 5,1 Bar
@@ -100,8 +100,8 @@ let%expect_test "palette toggles automatic suggestions and independent ghost ren
   [%expect {|
     ╭─ f.txt ──────────────────────╮|
     │  alpha                       │|
-    │  al> alpha                   │|
-    │      alpine                  │|
+    │  al> alpha   [buffer]        │|
+    │      alpine  [buffer]        │|
     ╰──────────────────────────────╯|
      INSERT  f.txt [+]          1:3 |
     cursor: 5,1 Bar
@@ -196,26 +196,26 @@ let%expect_test "menu stays bounded on tiny panes and above a bottom-line cursor
     List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width)));
   let above = Frame.render t ~width:32 ~height:3 in
   let top = List.hd_exn above.rows |> List.map ~f:(fun s -> s.Span.text) |> String.concat in
-  assert (String.is_substring top ~substring:"> alpha");
+  assert (String.is_substring top ~substring:"> alpha  [buffer]");
   assert ((Option.value_exn above.cursor).y = 1);
   show ~width:32 ~height:4 t;
   [%expect {|
       alpha alpine                  |
       al                            |
-        > alpha                     |
+        > alpha  [buffer]           |
      INSERT  f.txt [+]          2:3 |
     cursor: 4,1 Bar
     |}]
 ;;
 
 let%expect_test "source dispatch flushes the snapshot first, cancels superseded work, and triggers punctuation" =
-  let t = press (attached "") "ial" in
+  let t = press (attached "") "ia" in
   let t, requests = Ui_state.take_source_requests t in
   let req = match requests with
     | [ Document_opened opened; Document_changed changed; Complete req ] ->
       assert (String.equal opened.resource req.token.resource);
       assert (opened.generation = req.token.generation);
-      assert (changed.revision = req.token.revision && String.equal changed.text "al");
+      assert (changed.revision = req.token.revision && String.equal changed.text "a");
       req
     | _ -> failwith "Completion must follow its captured document snapshot" in
   let t = press t "p" in
@@ -284,7 +284,7 @@ let%expect_test "finalization precedes Enter, Escape, movement, paste, toggle an
 let%expect_test "Unicode prefixes use characters, completion cycles and undo preserve UTF-8" =
   let initial = "\néclair école" in
   let t = run (press (ui initial) "i") [ Key (Ches_input.Key.Char (Uchar.of_scalar_exn 0xe9)) ] in
-  assert (not (has_menu t));
+  assert (has_menu t);
   let t = press t "c" in
   assert (has_menu t);
   let t = press t "<Tab><Tab><CR>" in
@@ -362,5 +362,229 @@ let%expect_test "different primary ranges finalize both-sided edits, synchronize
   assert (String.equal (text t) initial);
   let t = press t "<C-r>" in
   assert (String.equal (text t) final);
+  [%expect {| |}]
+;;
+
+let%expect_test "Ctrl-n manually invokes with auto off, one character and empty prefix" =
+  let t = press (ui "\nalpha alpine") " cccompletion.toggle<CR>i" in
+  assert (not (Ui_state.completion_enabled t));
+  let t = press t "<C-n>" in
+  assert (String.equal (text t) "\nalpha alpine");
+  assert ([%equal: string list] (labels t) [ "alpha"; "alpine" ]);
+  let t = press (ui "\nalpha alpine") " cccompletion.toggle<CR>ia<C-n>" in
+  assert (has_menu t);
+  let t = press t "<Tab><Tab><CR>!" in
+  assert (String.equal (text t) "alpine!\nalpha alpine");
+  assert (not (has_menu t));
+  (* Normal Ctrl-n retains its keymap behavior and does not invoke completion. *)
+  assert (not (has_menu (press (ui "alpha alpine") "<C-n>")));
+  let t, req = request (press (attached "") " cccompletion.toggle<CR>i<C-n>") in
+  assert (req.cursor = 0 && req.fallback_start = 0);
+  let t = reply t req [ candidate req "alpha" ] |> fun t -> press t "<CR>" in
+  assert (String.equal (text t) "alpha");
+  [%expect {| |}]
+;;
+
+let%expect_test "manual Ctrl-n at an empty slot offers buffer words without LSP and undoes atomically" =
+  let initial = "\nzebra alpha Beta éclair" in
+  let t = press (ui initial) "i" in
+  assert (not (has_menu t));
+  let t = press t "<C-n>" in
+  assert (String.equal (text t) initial);
+  assert ([%equal: string list] (labels t) [ "Beta"; "alpha"; "zebra"; "éclair" ]);
+  let t, requests = Ui_state.take_source_requests t in
+  assert (not (List.exists requests ~f:(function Complete _ -> true | _ -> false)));
+  let t = press t "<Tab>" in
+  assert (String.equal (text t) "Beta\nzebra alpha Beta éclair");
+  let t = press t "<Tab><CR>" in
+  assert (String.equal (text t) "alpha\nzebra alpha Beta éclair");
+  assert (Mode.equal (Editor.mode (editor t)) Insert && not (has_menu t));
+  let t = press t "<Esc>u" in
+  assert (String.equal (text t) initial);
+  let t = press t "<C-r>" in
+  assert (String.equal (text t) "alpha\nzebra alpha Beta éclair");
+  [%expect {| |}]
+;;
+
+let%expect_test "manual completion leaves terminal Ctrl-n and block insert ownership intact" =
+  let module Terminal = Ches_terminal.Model in
+  let t = run ~width:80 ~height:24 (ui "alpha alpine") (keys " /") in
+  let t, _ = Ui_state.take_terminal_requests t in
+  let key = { Terminal.code = Char (Uchar.of_char 'n')
+            ; modifiers = { Terminal.no_modifiers with ctrl = true } } in
+  let t = run ~width:80 ~height:24 t [ Terminal_key key ] in
+  let _, requests = Ui_state.take_terminal_requests t in
+  assert (List.equal Terminal.equal_request requests [ Terminal.Key key ]);
+  assert (not (has_menu t) && String.equal (text t) "alpha alpine");
+  let t = press (ui "alpha\nalpine") "<C-v>jI<C-n>" in
+  assert (not (has_menu t));
+  assert (not (List.is_empty (Editor.block_insert_points (editor t))));
+  [%expect {| |}]
+;;
+
+let frame_text t ~width ~height =
+  let frame = Frame.render t ~width ~height in
+  List.map frame.rows ~f:(fun row -> List.map row ~f:(fun s -> s.Span.text) |> String.concat)
+  |> String.concat ~sep:"\n"
+;;
+
+let%expect_test "menu identifies providers and safely renders signature metadata" =
+  let t, req = request (press (attached "\nalpha") "ial") in
+  let t = reply t req [ { (candidate req "alpine") with detail = Some "(x: int) -> string" } ] in
+  let rendered = frame_text t ~width:80 ~height:8 in
+  assert (String.is_substring rendered ~substring:"alpine  [LSP]  (x: int) -> string");
+  assert (String.is_substring rendered ~substring:"alpha   [buffer]");
+  (* Equal source columns for wide, multibyte, and combining labels. The
+     selection marker occupies its own two cells regardless of label width. *)
+  let unicode = reply t req
+    [ { (candidate req "alpine") with label = "界"; detail = None }
+    ; { (candidate req "alps") with label = "é"; detail = None }
+    ; { (candidate req "altar") with label = "é"; detail = None } ] in
+  let rendered = frame_text unicode ~width:80 ~height:8 in
+  assert (String.is_substring rendered ~substring:"  界     [LSP]");
+  assert (String.is_substring rendered ~substring:"  é      [LSP]");
+  assert (String.is_substring rendered ~substring:"  é      [LSP]");
+  let t = reply t req [ { (candidate req "alpine") with
+    detail = Some ("界\t\027\n" ^ String.make 10000 'x') } ] in
+  let t = press t "<Tab><Tab>" in
+  assert (String.equal (Option.value_exn (Ui_state.completion_selected t)).label "alpine");
+  List.iter [ 4; 18; 80 ] ~f:(fun width ->
+    let frame = Frame.render t ~width ~height:6 in
+    assert (List.length frame.rows = 6);
+    List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width));
+    if width >= 18 then (
+      let selected = List.concat frame.rows
+        |> List.filter ~f:(fun span -> Style.equal span.Span.style (Mode Insert)) in
+      assert (not (List.is_empty selected));
+      assert (String.is_suffix (List.last_exn selected).text ~suffix:" ")));
+  [%expect {| |}]
+;;
+
+let%expect_test "whole-buffer index updates and survives buffer switches without leaking words" =
+  let initial = "\n" ^ String.make 70000 ' ' ^ "\nzephyr zeta" in
+  let t = press (ui initial) "ize" in
+  assert (List.mem (labels t) "zephyr" ~equal:String.equal);
+  let t, scanned = M.Buffer_words.For_testing.measure (fun () -> press t "p<C-h>") in
+  assert (scanned < 128);
+  let original = Session.active_id (Ui_state.session t) |> Option.value_exn in
+  let t = press t "<CR>!<Esc>" in
+  let t, _ = Ui_state.open_file t ~width:40 ~height:8 "/__ches_completion_cache_other__.ml"
+    |> Or_error.ok_exn in
+  let t = press t "ize" in
+  assert (not (has_menu t));
+  let t, scanned = M.Buffer_words.For_testing.measure (fun () ->
+    let t = Ui_state.activate_buffer t ~width:40 ~height:8 original |> Or_error.ok_exn in
+    press t "0ize") in
+  assert (scanned < 256);
+  assert (has_menu t);
+  let t = press t "<Esc>" in
+  let t, closed = Ui_state.close_current t ~width:40 ~height:8 ~force:true in
+  assert closed;
+  let t = press t "<Esc>0i<C-n>" in
+  assert (not (List.mem (labels t) "zephyr" ~equal:String.equal));
+  [%expect {| |}]
+;;
+
+let metadata t (req : M.Request.t) items =
+  run t [ Source (Completion_metadata { token = req.token; source = "test"; items }) ]
+;;
+
+let info ?revision ?additional ?(resolvable = true) candidate_id : Ches_error.Completion_info.t =
+  { candidate_id; kind = Some 3; documentation = Some "Function documentation\nsecond line"
+  ; detail = Some "(value: int) -> string"; resolvable; additional; revision }
+;;
+
+let resolve_request t candidate_id =
+  let t, requests = Ui_state.take_source_requests t in
+  let revision = List.find_map_exn requests ~f:(function
+    | Ches_error.Source_request.Resolve_completion request when String.equal request.candidate_id candidate_id ->
+      Some request.revision
+    | _ -> None) in
+  t, revision
+;;
+
+let resolvable () =
+  let t, req = request (press (attached "\n") "ial") in
+  let t = reply t req [ candidate req "alpha"; candidate req "alpine" ] in
+  let t = metadata t req [ info "alpha"; info "alpine" ] in
+  t, req
+;;
+
+let%expect_test "metadata is immediate, lazy resolve follows selection, and resolved imports wait for acceptance" =
+  let t, req = resolvable () in
+  let rendered = frame_text t ~width:80 ~height:10 in
+  assert (String.is_substring rendered ~substring:"Function documentation");
+  assert (String.is_substring rendered ~substring:"(value: int) -> string");
+  List.iter [ 4; 16; 80 ] ~f:(fun width ->
+    let frame = Frame.render t ~width ~height:5 in
+    assert (List.length frame.rows = 5);
+    List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width)));
+  let t, before = resolve_request t "alpha" in
+  assert (before = Editor.revision (editor t));
+  let t = press t "<Tab>" in
+  let t, revision = resolve_request t "alpha" in
+  assert (revision = Editor.revision (editor t) && revision > before);
+  (* A resolve captured before primary insertion is stale. *)
+  let extras = [ { Text_edit.start = 3; stop = 3; text = "import\n" } ] in
+  let t = metadata t req [ info ~revision:before ~additional:extras "alpha" ] in
+  assert (String.equal (text t) "alpha\n");
+  let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
+  assert (String.equal (text t) "alpha\n");
+  let t = press t "<CR>" in
+  assert (String.equal (text t) "alpha\nimport\n" && not (has_menu t));
+  assert (String.equal (text (press t "<Esc>u")) "\n");
+  let t, req = resolvable () in
+  let t = press t "<Tab><Tab>" in
+  let t, revision = resolve_request t "alpine" in
+  let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
+  assert (String.equal (text t) "alpine\n");
+  let t = metadata t req [ info ~revision ~additional:extras "alpine" ] in
+  let t = press t "<CR>" in
+  assert (String.equal (text t) "alpine\nimport\n");
+  [%expect {| |}]
+;;
+
+let%expect_test "known additional edits finalize immediately even while resolve is pending" =
+  let t, req = request (press (attached "\n") "ial") in
+  let extras = [ { Text_edit.start = 3; stop = 3; text = "known import\n" } ] in
+  let t = reply t req [ candidate req ~additional:extras "alpha" ] in
+  let t = metadata t req [ info "alpha" ] |> fun t -> press t "<CR>" in
+  assert (String.equal (text t) "alpha\nknown import\n");
+  let before = text t in
+  let t = metadata t req [ info ~revision:(Editor.revision (editor t))
+    ~additional:[ { Text_edit.start = 3; stop = 3; text = "late\n" } ] "alpha" ] in
+  assert (String.equal before (text t));
+  [%expect {| |}]
+;;
+
+let%expect_test "nonblocking acceptance applies a resolve only to its exact unchanged accepted snapshot" =
+  let accept () =
+    let t, req = request (press (attached "\n") "Gial") in
+    let t = reply t req [ candidate req "alpha" ] in
+    let t = metadata t req [ info "alpha" ] in
+    let t = press t "<CR>" in
+    let t, revision = resolve_request t "alpha" in
+    assert (not (has_menu t) && String.equal (text t) "\nalpha");
+    t, req, revision in
+  let extras = [ { Text_edit.start = 0; stop = 0; text = "import\n" } ] in
+  let t, req, revision = accept () in
+  let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
+  assert (String.equal (text t) "import\n\nalpha");
+  assert (Editor.cursor (editor t) = 13);
+  assert (String.equal (text (press t "!<Esc>u")) "\n");
+  List.iter [ "!"; "<Esc>"; "<C-h>"; "<C-n>" ] ~f:(fun key ->
+    let t, req, revision = accept () in
+    let t = press t key in
+    let before = text t in
+    let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
+    assert (String.equal (text t) before));
+  let t, req, revision = accept () in
+  let original = Session.active_id (Ui_state.session t) |> Option.value_exn in
+  let t, _ = Ui_state.open_file t ~width:40 ~height:8 "/__ches_late_resolve__.ml" |> Or_error.ok_exn in
+  let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
+  assert (String.equal (text t) "");
+  let t = Ui_state.activate_buffer t ~width:40 ~height:8 original |> Or_error.ok_exn in
+  let t = metadata t req [ info ~revision ~additional:extras "alpha" ] in
+  assert (String.equal (text t) "\nalpha");
   [%expect {| |}]
 ;;

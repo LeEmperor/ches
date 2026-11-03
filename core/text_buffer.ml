@@ -74,6 +74,8 @@ type t =
   ; identities : (int * string) list
   ; identity_bytes : int
   ; mutable layouts : (int * Cell_layout.Width.t * Cell_layout.Index.t) list
+  ; stamp : unit ref
+  ; changes : (unit ref * int * int * int) list
   }
 
 let sexp_of_t t = [%sexp (t.text : string)]
@@ -94,7 +96,7 @@ let compute_line_starts text =
 ;;
 
 (* Only for text already known to be valid. *)
-let of_valid_string text = { text; line_starts = compute_line_starts text; identity_scope = None; identities = []; identity_bytes = 0; layouts = [] }
+let of_valid_string text = { text; line_starts = compute_line_starts text; identity_scope = None; identities = []; identity_bytes = 0; layouts = []; stamp = ref (); changes = [] }
 let normalize_identities t =
   let line_start offset =
     let rec search lo hi =
@@ -121,7 +123,7 @@ let empty = of_valid_string ""
 let of_string text = Result.map (validate text) ~f:(fun () -> of_valid_string text)
 let to_string t = t.text
 let length t = String.length t.text
-let retained_bytes t = 128 + String.length t.text + (8 * Array.length t.line_starts) + t.identity_bytes
+let retained_bytes t = 168 + String.length t.text + (8 * Array.length t.line_starts) + t.identity_bytes + (80 * List.length t.changes)
 let is_continuation_byte c = Char.to_int c land 0xC0 = 0x80
 
 let is_boundary t offset =
@@ -213,7 +215,8 @@ let replace_valid ?(identities = []) ?(anchor_affinity = `Right)
         Some (anchor, token))) in
     { text; line_starts; identity_scope = t.identity_scope
     ; identities = existing @ (if inserted = 0 then [] else List.map identities ~f:(fun (offset, token) -> pos + offset, token))
-    ; identity_bytes = 0; layouts = [] }
+    ; identity_bytes = 0; layouts = []; stamp = ref ()
+    ; changes = (t.stamp, pos, len, inserted) :: List.take t.changes 63 }
     |> normalize_identities)
 ;;
 
@@ -337,4 +340,53 @@ let offset_of_column t ~line column =
   if column < 0 then invalid_argf "Text_buffer.offset_of_column: column %d < 0" column ();
   line_start t line + Cell_layout.Index.pos_of_scalar_column
     (line_layout t ~width:scalar_width line) column
+;;
+
+let changed_range ~before ~after =
+  let recent ancestor descendant =
+    let rec find changes acc =
+      match changes with
+      | [] -> None
+      | ((stamp, _, _, _) as change) :: rest ->
+        let acc = change :: acc in
+        if phys_equal stamp ancestor.stamp then Some acc else find rest acc
+    in
+    Option.map (find descendant.changes []) ~f:(fun changes ->
+      List.fold changes ~init:None ~f:(fun range (_, pos, removed, inserted) ->
+        match range with
+        | None -> Some (pos, pos + removed, pos + inserted)
+        | Some (start, old_stop, new_stop) ->
+          Some (Int.min start pos,
+            old_stop + Int.max 0 (pos + removed - new_stop),
+            Int.max new_stop (pos + removed) + inserted - removed))
+      |> Option.value_exn)
+  in
+  if phys_equal before.stamp after.stamp || phys_equal before.text after.text then None
+  else match recent before after with
+  | Some range -> Some range
+  | None ->
+    match recent after before with
+    | Some (start, new_stop, old_stop) -> Some (start, old_stop, new_stop)
+    | None ->
+      let old_len = length before and new_len = length after in
+      let bound = Int.min old_len new_len in
+      let rec prefix at =
+        if at < bound && Char.equal before.text.[at] after.text.[at]
+        then prefix (at + 1) else at
+      in
+      let start = prefix 0 in
+      if start = old_len && start = new_len then None else
+        let rec boundary at = if is_boundary before at && is_boundary after at then at else boundary (at - 1) in
+        let start = boundary start in
+        let rec suffix n =
+          if n < bound - start
+             && Char.equal before.text.[old_len - n - 1] after.text.[new_len - n - 1]
+          then suffix (n + 1) else n
+        in
+        let rec boundary n =
+          if is_boundary before (old_len - n) && is_boundary after (new_len - n)
+          then n else boundary (n - 1)
+        in
+        let same = boundary (suffix 0) in
+        Some (start, old_len - same, new_len - same)
 ;;

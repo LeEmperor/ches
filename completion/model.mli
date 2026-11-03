@@ -55,12 +55,25 @@ end
 
 module Buffer_words : sig
   type t
-  (** Scan at most 64 KiB from the beginning; incomplete boundary words are
-      excluded. The immutable index belongs to this exact text snapshot. *)
+  (** Index the whole snapshot, with storage proportional to distinct word bytes.
+      The immutable index belongs to this exact text snapshot. *)
   val create : Text_buffer.t -> t
+  (** Reuse an index across edits. Recent local edits scan only the changed region
+      expanded to complete identifier boundaries, not the whole document.
+      Unrelated snapshots or edits beyond the text buffer's bounded history may
+      require a whole-document comparison. Identity-only changes reuse the words.
+      Cache the returned index per buffer, replacing the previous value. *)
+  val update : t -> Text_buffer.t -> t
   (** Case-sensitive prefix matches in lexical order, independent of proximity.
-      Reads at most 4096 prefix bytes. A mismatched index yields no candidates. *)
+      Empty prefixes match all words, up to [limit]; the sole occurrence of the
+      current word is excluded even at its start. Reads at most 4096 prefix bytes.
+      A mismatched index yields no candidates. *)
   val candidates : t -> text:Text_buffer.t -> cursor:int -> limit:int -> Candidate.t list
+  module For_testing : sig
+    (** Result and total bytes tokenized by [create]/[update] in this scope.
+        Excludes prefix queries and the text buffer's fallback comparison. *)
+    val measure : (unit -> 'a) -> 'a * int
+  end
 end
 
 type t

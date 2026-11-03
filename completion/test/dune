@@ -1,5 +1,12 @@
 (library
  (name ches_completion_test)
+ (modules test_model test_buffer_words)
  (libraries core ches_core ches_completion)
  (inline_tests)
+ (preprocess (pps ppx_jane)))
+
+(executable
+ (name bench_buffer_words)
+ (modules bench_buffer_words)
+ (libraries core ches_core ches_completion)
  (preprocess (pps ppx_jane)))

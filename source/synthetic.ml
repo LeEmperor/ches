@@ -159,7 +159,7 @@ let begin_session state =
 
 let handle state (request : Ches_error.Source_request.t) =
   match request with
-  | Complete _ | Cancel_completion _ -> ()
+  | Complete _ | Cancel_completion _ | Resolve_completion _ -> ()
   | Inspect -> state.emit (Servers [])
   | Document_opened _ -> ()
   | Document_closed { resource } ->

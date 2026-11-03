@@ -14,6 +14,7 @@ let show t requests =
     print_s
       (match request with
        | Complete _ -> [%message "complete"]
+       | Resolve_completion _ -> [%message "resolve completion"]
        | Cancel_completion _ -> [%message "cancel completion"]
        | Inspect -> [%message "inspect"]
        | Document_opened { resource; generation } -> [%message "opened" ~_:(H.relative t resource : string) (generation : int)]

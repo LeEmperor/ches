@@ -7,7 +7,12 @@ open! Core
 type t =
   | Complete of Ches_completion.Model.Request.t
   (** Query the attached pooled server against this token's exact document snapshot.
-      Requests before initialization or for stale tokens are ignored. *)
+       Requests before initialization or for stale tokens are ignored. *)
+  | Resolve_completion of { token : Ches_completion.Model.Token.t; candidate_id : string; revision : int }
+  (** Resolve a retained candidate lazily. [revision] guards the current buffer,
+      and may differ from token.revision after installing a primary. Results are
+      Completion_metadata, with edits in the token's original base coordinates.
+      A new resolve supersedes the prior resolve for this document. *)
   | Cancel_completion of Ches_completion.Model.Token.t
   (** Cancel only the matching in-flight token; obsolete cancellation is harmless. *)
   | Document_opened of { resource : string; generation : int }

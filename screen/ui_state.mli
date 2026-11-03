@@ -82,6 +82,7 @@ val completion_enabled : t -> bool
 val completion_ghost_enabled : t -> bool
 val completion_candidates : t -> Ches_completion.Model.Candidate.t list
 val completion_selected : t -> Ches_completion.Model.Candidate.t option
+val completion_info : t -> Ches_error.Completion_info.t option
 val completion_ghost : t -> Ches_completion.Model.ghost option
 
 (** Numbered persistent shells share one transient float. The selected ID defaults
@@ -105,6 +106,8 @@ val terminal_key_pending : t -> bool
 (** Whether the frontend should schedule [Terminal_tick], including with smear off. *)
 val toggle_key_pending : t -> bool
 (** Whether to schedule [Toggle_tick], independently of animation and terminal jk.
+    Also true while completion acceptance has a deferred resolve; the same tick
+    expires that continuation after one second without further keyboard input.
     Insert recognizes optional positive ASCII digits followed by Space /, with
     each gap strictly less than 200ms. At 200ms the prefix is literal. Paste
     bypasses recognition. Ownership loss safely cancels the bounded prefix. *)

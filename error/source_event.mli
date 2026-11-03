@@ -21,6 +21,9 @@ end
 type t =
   | Completion of Ches_completion.Model.Reply.t
   (** Plain-text completion results; route immediately, independently of diagnostics. *)
+  | Completion_metadata of { token : Ches_completion.Model.Token.t; source : string; items : Completion_info.t list }
+  (** Initial metadata or revision-guarded lazy resolve results. Route immediately;
+      see Completion_info and source/COMPLETION.md for acceptance semantics. *)
   | Servers of Server.t list
   (** Authoritative current managed LSP inventory, independent of diagnostics.
       Never document-owned. Entries disappear when their last resource closes.
@@ -42,5 +45,5 @@ type t =
 [@@deriving sexp_of]
 
 (** The feedback update, stamping [current_revision] onto diagnostics.
-    [Servers] and [Completion] yield [Noop]; consumers route them separately. *)
+    [Servers], [Completion] and [Completion_metadata] yield [Noop]. *)
 val to_update : t -> current_revision:int -> Feedback.update

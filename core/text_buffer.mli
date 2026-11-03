@@ -62,7 +62,8 @@ val of_string : string -> (t, Invalid_text.t) Result.t
 val to_string : t -> string
 
 (** O(1) conservative retention estimate: text bytes, line-start array (8 bytes per
-    entry), snapshot/string headers and protected identity lists/tokens/scope.
+    entry), snapshot/string headers, bounded edit metadata and protected identity
+    lists/tokens/scope.
     Shared storage is charged in full. Excludes the bounded mutable layout cache. *)
 val retained_bytes : t -> int
 
@@ -74,6 +75,13 @@ val with_identities : t -> scope:string -> (int * string) list -> t
 
 (** Length in bytes. *)
 val length : t -> int
+
+(** A conservative boundary-aligned replacement taking [before] to [after].
+    [None] means identical text. Recent edits (up to 64 replacements, forward or
+    reverse) use bounded metadata without scanning unchanged bytes or retaining
+    ancestor snapshots. Otherwise compares the common prefix/suffix in O(N).
+    Returned [(start, old_stop, new_stop)] uses offsets in the respective texts. *)
+val changed_range : before:t -> after:t -> (int * int * int) option
 
 (** {2 Editing} *)
 

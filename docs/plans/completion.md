@@ -58,16 +58,15 @@ build jobs; manager checks run after those builds finish, with at most 20 jobs.
 
 ## Status
 
-Implemented and validated. Automatic suggestions start after two identifier
-characters or selected punctuation. Buffer words sort lexically, with LSP
+Implemented and validated. Automatic suggestions start after one identifier
+character or selected punctuation. Buffer words sort lexically, with LSP
 candidates ranked by server sort text before buffer-only suggestions. Ghost
 preview defaults off; both palette toggles are session-local.
 
-The first version deliberately excludes snippets, commands, resolve,
-insert/replace edits, dynamic completion capability registration, and completion
-list item defaults. Unsupported items are skipped. Buffer indexing scans the first
-64 KiB; the combined candidate limit is 100. The host bounds pending requests to
-one per document and 32 per connection, with a ten-second timeout.
+The combined candidate limit is 100. The host bounds pending requests to one per
+document and 32 per connection, with a ten-second timeout. Snippets, commands,
+indentation adjustment, commit-character acceptance, and dynamic completion
+capability registration remain deferred.
 
 Validation passed:
 
@@ -82,4 +81,45 @@ cycling, undo/redo, delayed Insert shortcuts, paste and terminal routing, Unicod
 buffer lifetimes, stale replies, synchronization ordering, cancellation, and
 deferred additional edits with differing primary replacement ranges. A review
 corrected initial proximity-based buffer sorting to the requested lexical order.
-Interactive terminal appearance has not yet been manually evaluated.
+The user subsequently verified the initial interaction in a SystemVerilog file.
+A reported `lo` → `assign` mismatch exposed missing LSP prefix filtering; this was
+fixed with regression coverage before the next phase.
+
+## Second phase: coverage and polish
+
+Implemented:
+
+- **Whole-buffer cached indexing.** A counted lexical map covers the entire file.
+  `Buffer_words.update` uses bounded edit descriptors in `Text_buffer` to retokenize
+  affected identifiers, including undo. Cache entries follow live buffer lifetimes.
+  Old/branched snapshots fall back to comparison; initial creation is synchronous.
+- **Manual invocation.** Insert-mode Ctrl-n works with automatic suggestions off
+  and with short or empty prefixes, for both buffer and LSP candidates.
+- **Menu metadata.** Source labels, available kinds/details, and selected-item
+  documentation use bounded cell-safe rendering.
+- **LSP compatibility.** InsertReplaceEdit chooses the replace range. Supported
+  itemDefaults inherit editRange, text format/mode, and opaque data; textEditText
+  is normalized. Lazy resolve enriches metadata and deferred additional edits.
+- **Guarded acceptance.** Known extras finalize atomically. An unresolved accepted
+  item may finish extras within one second only against the exact unchanged
+  accepted snapshot. Any key/paste, stale revision, lifetime change, or deadline
+  invalidates that continuation. Server waiting never blocks typing.
+
+Integration review fixed finalization before primary insertion, acceptance expiry,
+delayed-key races, and same-primary selection/resolve races. Tests include actual
+source-to-screen fake-server flows in addition to independent layer tests.
+
+Measured initial index creation was about 31–50 ms for 1 MiB and 124–214 ms for
+4 MiB; local index updates averaged 5–6 microseconds on the implementation host.
+These exclude existing text-copy costs and are not latency guarantees. See
+[`completion/BUFFER_WORDS.md`](../../completion/BUFFER_WORDS.md) for storage costs,
+worst cases, and the reproducible benchmark. Background initial indexing remains
+a possible performance follow-up.
+
+Final second-phase checks passed: `dune build -j 12 @all`, `dune runtest -j 12`,
+and `git diff --check`. Existing edit-allocation tests now account explicitly for
+the bounded descriptor overhead while retaining no-old-text-scan and one-destination
+checks. New menu appearance still needs interactive evaluation.
+
+Next feature phase: snippet expansion and placeholder navigation, with an explicit
+handoff from Tab-based candidate cycling to Tab-based placeholder navigation.

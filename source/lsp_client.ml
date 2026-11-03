@@ -215,6 +215,13 @@ module Document = struct
     }
 end
 
+type retained_completion =
+  { token : Ches_completion.Model.Token.t
+  ; document : Document.t
+  ; items : (Ches_completion.Model.Candidate.t * Yojson.Safe.t) list
+  ; expires : Clock_ns.Event.t_unit
+  }
+
 type session =
   { process : Process.t
   ; mutable next_id : int
@@ -222,8 +229,11 @@ type session =
   ; mutable encoding : Convert.encoding
   ; mutable initialized : bool
   ; mutable completion : bool
+  ; mutable completion_resolve : bool
   ; mutable completion_triggers : string list
   ; completions : (Ches_completion.Model.Token.t * int * Clock_ns.Event.t_unit) String.Table.t
+  ; retained : retained_completion String.Table.t
+  ; resolves : (Ches_completion.Model.Token.t * int * Clock_ns.Event.t_unit) String.Table.t
   ; mutable sync_kind : Types.TextDocumentSyncKind.t
   ; mutable save_text : bool
   ; changes : Clock_ns.Event.t_unit String.Table.t
@@ -305,6 +315,24 @@ let cancel_completions session =
   List.iter (Hashtbl.keys session.completions) ~f:(cancel_completion session)
 ;;
 
+let cancel_resolve session file =
+  Option.iter (Hashtbl.find_and_remove session.resolves file) ~f:(fun (_, id, timer) ->
+    Clock_ns.Event.abort_if_possible timer ();
+    Hashtbl.remove session.pending id;
+    send session (Notification (Jsonrpc.Notification.create ~method_:"$/cancelRequest"
+      ~params:(`Assoc ["id", `Int id]) ())))
+;;
+
+let forget_completion session file =
+  cancel_resolve session file;
+  Option.iter (Hashtbl.find_and_remove session.retained file) ~f:(fun entry ->
+    Clock_ns.Event.abort_if_possible entry.expires ())
+;;
+
+let clear_retained session =
+  List.iter (Hashtbl.keys session.retained) ~f:(forget_completion session)
+;;
+
 let kill session =
   ignore (Process.send_signal_compat session.process Signal.kill : [ `Ok | `No_such_process ])
 ;;
@@ -315,6 +343,7 @@ let report_stop t session ~reason =
   then (
     cancel_changes session;
     cancel_completions session;
+    clear_retained session;
     t.session <- None;
     let reason =
       match session.stderr_last with
@@ -437,6 +466,7 @@ let complete t (completion : Ches_completion.Model.Request.t) =
       Option.iter (Completion_wire.position session.encoding document.text completion.cursor)
         ~f:(fun position ->
           cancel_completion session file;
+          forget_completion session file;
           flush_document t session file;
           (* Do not query a snapshot the server could not synchronize. *)
           if Option.exists (Hashtbl.find session.opened file) ~f:(fun sent -> sent.version = document.version)
@@ -466,10 +496,65 @@ let complete t (completion : Ches_completion.Model.Request.t) =
                     && [%equal: int option] now.owner document.owner)
                 then (match response.result with
                   | Error _ -> ()
-                  | Ok json -> t.emit (Completion (Completion_wire.candidates
-                    ~encoding:session.encoding ~text:document.text ~request:completion
-                    ~source:t.config.source json)))
+                   | Ok json ->
+                     let reply, raw = Completion_wire.decode
+                       ~encoding:session.encoding ~text:document.text ~request:completion
+                       ~source:t.config.source json in
+                     if Hashtbl.length session.retained >= 32 then
+                       Option.iter (List.hd (Hashtbl.keys session.retained)) ~f:(forget_completion session);
+                     let items = List.filter_map reply.candidates ~f:(fun candidate ->
+                       Option.map (List.Assoc.find raw candidate.id ~equal:String.equal)
+                         ~f:(fun raw -> candidate, raw)) in
+                     let expires = Clock_ns.Event.run_after (Time_ns.Span.of_int_sec 10)
+                       (fun () -> forget_completion session file) () in
+                     Hashtbl.set session.retained ~key:file ~data:{ token; document; items; expires };
+                     t.emit (Completion reply);
+                     t.emit (Completion_metadata { token; source = t.config.source;
+                       items = List.map items ~f:(fun (candidate, raw) ->
+                         Completion_wire.metadata ~resolvable:session.completion_resolve candidate.id raw) }))
               | _ -> ())))
+    | _ -> ())
+;;
+
+let resolve_completion t token candidate_id revision =
+  let file = canonical token.Ches_completion.Model.Token.resource in
+  Option.iter t.session ~f:(fun session ->
+    match Hashtbl.find session.retained file, Hashtbl.find t.documents file with
+    | Some entry, Some document when session.completion_resolve && not session.closed
+        && Ches_completion.Model.Token.equal token entry.token
+        && document.revision = revision && String.equal document.resource token.resource
+        && [%equal: int option] document.owner (Some token.generation)
+        && phys_equal document.recent entry.document.recent ->
+      Option.iter (List.find entry.items ~f:(fun (candidate, _) -> String.equal candidate.id candidate_id))
+        ~f:(fun (candidate, raw) ->
+          cancel_resolve session file;
+          if Hashtbl.length session.resolves >= 32 then
+            Option.iter (List.hd (Hashtbl.keys session.resolves)) ~f:(cancel_resolve session);
+          let id = session.next_id in
+          session.next_id <- id + 1;
+          let timer = Clock_ns.Event.run_after (Time_ns.Span.of_int_sec 10)
+            (fun () -> cancel_resolve session file) () in
+          Hashtbl.set session.resolves ~key:file ~data:(token, id, timer);
+          Hashtbl.set session.pending ~key:id ~data:(fun response ->
+            match Hashtbl.find session.resolves file with
+            | Some (_, active_id, _) when active_id = id ->
+              Hashtbl.remove session.resolves file;
+              Clock_ns.Event.abort_if_possible timer ();
+              if current t session && not t.stopped
+                && Option.exists (Hashtbl.find t.documents file) ~f:(fun now ->
+                  phys_equal document.recent now.recent && now.revision = revision
+                  && [%equal: int option] now.owner document.owner)
+              then (match response.result with
+                | Error _ -> ()
+                | Ok json -> Option.iter
+                    (Completion_wire.resolved ~encoding:session.encoding ~text:entry.document.text ~candidate raw json)
+                    ~f:(fun (raw, additional) ->
+                      t.emit (Completion_metadata { token; source = t.config.source;
+                        items = [Completion_wire.metadata ~revision ~additional ~resolvable:false candidate_id raw] })))
+            | _ -> ());
+          send session (Request (Jsonrpc.Request.create ~id:(`Int id)
+            ~method_:"completionItem/resolve"
+            ~params:(match raw with `Assoc fields -> `Assoc fields | _ -> `Assoc []) ())))
     | _ -> ())
 ;;
 
@@ -656,9 +741,16 @@ let initialize t session =
             ~general:(Types.GeneralClientCapabilities.create ~positionEncodings:[ UTF8; UTF16; UTF32 ] ())
            ~textDocument:
               (Types.TextDocumentClientCapabilities.create
-                 ~completion:(Types.CompletionClientCapabilities.create
-                   ~completionItem:(Types.CompletionClientCapabilities.create_completionItem
-                     ~snippetSupport:false ()) ~contextSupport:true ())
+                  ~completion:(Types.CompletionClientCapabilities.create
+                    ~completionList:(Types.CompletionClientCapabilities.create_completionList
+                      ~itemDefaults:["editRange"; "insertTextFormat"; "insertTextMode"; "data"] ())
+                    ~completionItem:(Types.CompletionClientCapabilities.create_completionItem
+                      ~snippetSupport:false ~commitCharactersSupport:false
+                      ~insertReplaceSupport:true ~documentationFormat:[PlainText; Markdown]
+                      ~insertTextModeSupport:(Types.CompletionClientCapabilities.create_insertTextModeSupport
+                        ~valueSet:[AsIs])
+                      ~resolveSupport:(Types.CompletionClientCapabilities.create_resolveSupport
+                        ~properties:["documentation"; "detail"; "additionalTextEdits"]) ()) ~contextSupport:true ())
                 ~publishDiagnostics:
                   (Types.PublishDiagnosticsClientCapabilities.create ~versionSupport:true ())
                 ~synchronization:
@@ -685,7 +777,9 @@ let initialize t session =
            fail t session ~reason:(sprintf "initialize failed: %s" (Exn.to_string exn))
          | result ->
              session.encoding <- Convert.encoding result.capabilities.positionEncoding;
-             session.completion <- Option.is_some result.capabilities.completionProvider;
+              session.completion <- Option.is_some result.capabilities.completionProvider;
+              session.completion_resolve <- Option.value_map result.capabilities.completionProvider
+                ~default:false ~f:(fun options -> Option.value options.resolveProvider ~default:false);
              session.completion_triggers <- Option.value_map result.capabilities.completionProvider
                ~default:[] ~f:(fun options -> Option.value options.triggerCharacters ~default:[]);
              (match result.capabilities.positionEncoding with
@@ -723,6 +817,7 @@ let rec read t session =
 let close_pipes session =
   cancel_changes session;
   cancel_completions session;
+  clear_retained session;
   session.closed <- true;
   Hashtbl.clear session.pending;
   Deferred.all_unit
@@ -811,9 +906,12 @@ let start_session t =
            ; next_id = 1
            ; pending = Int.Table.create ()
             ; encoding = Utf16
-            ; completion = false
+             ; completion = false
+             ; completion_resolve = false
             ; completion_triggers = []
-            ; completions = String.Table.create ()
+             ; completions = String.Table.create ()
+             ; retained = String.Table.create ()
+             ; resolves = String.Table.create ()
             ; initialized = false
             ; sync_kind = None
             ; save_text = false
@@ -846,6 +944,7 @@ let end_session t =
   Option.iter t.session ~f:(fun session ->
     cancel_changes session;
     cancel_completions session;
+    clear_retained session;
     t.session <- None;
     let initialized = session.initialized in
     let exited = Process.wait session.process |> Deferred.ignore_m in
@@ -869,12 +968,16 @@ let end_session t =
 let rec handle_request t (request : Source_request.t) =
   match request with
   | Complete completion -> complete t completion
+  | Resolve_completion { token; candidate_id; revision } -> resolve_completion t token candidate_id revision
   | Cancel_completion token ->
     Option.iter t.session ~f:(fun session ->
       let file = canonical token.resource in
-      if Option.exists (Hashtbl.find session.completions file) ~f:(fun (active, _, _) ->
-        Ches_completion.Model.Token.equal token active)
-      then cancel_completion session file)
+       if Option.exists (Hashtbl.find session.completions file) ~f:(fun (active, _, _) ->
+         Ches_completion.Model.Token.equal token active)
+       then cancel_completion session file;
+       if Option.exists (Hashtbl.find session.retained file) ~f:(fun entry ->
+         Ches_completion.Model.Token.equal token entry.token)
+       then forget_completion session file)
   | Inspect -> ()
   | Document_opened { resource; generation } ->
     handle_request t (Document_closed { resource });
@@ -887,7 +990,8 @@ let rec handle_request t (request : Source_request.t) =
        Hash_set.remove t.saves file;
         Option.iter t.session ~f:(fun session ->
           cancel_change session file;
-          cancel_completion session file;
+           cancel_completion session file;
+           forget_completion session file;
          Option.iter (Hashtbl.find_and_remove session.opened file) ~f:(fun opened ->
            notify session
              (TextDocumentDidClose
@@ -897,7 +1001,7 @@ let rec handle_request t (request : Source_request.t) =
      | _ -> ())
    | Document_changed { resource; text; revision } ->
      let file = canonical resource in
-     Option.iter t.session ~f:(fun session -> cancel_completion session file);
+      Option.iter t.session ~f:(fun session -> cancel_completion session file; cancel_resolve session file);
     let previous = Hashtbl.find t.documents file in
     if Option.exists previous ~f:(fun d -> not (String.equal d.resource resource))
     then (
@@ -1048,8 +1152,10 @@ let start_workspace ?(config_for_path = Config.for_path) ~cell_width () =
         | Inspect -> publish ()
          | Document_changed { resource; _ } | Document_saved { resource; _ } ->
            Option.iter (Hashtbl.find resources resource) ~f:(fun (_, driver) -> driver.handle request)
-         | Complete { token = { resource; _ }; _ } | Cancel_completion { resource; _ } ->
-           Option.iter (Hashtbl.find resources resource) ~f:(fun (_, driver) -> driver.handle request)
+          | Complete { token = { resource; _ }; _ } | Cancel_completion { resource; _ } ->
+            Option.iter (Hashtbl.find resources resource) ~f:(fun (_, driver) -> driver.handle request)
+          | Resolve_completion { token = { resource; _ }; _ } ->
+            Option.iter (Hashtbl.find resources resource) ~f:(fun (_, driver) -> driver.handle request)
         | Restart | Kill -> List.iter !pools ~f:(fun (_, _, driver, _, _) -> driver.handle request))
     ; stop = (fun () -> List.iter !pools ~f:(fun (_, _, driver, _, _) -> driver.stop ());
         pools := []; Hashtbl.clear resources)

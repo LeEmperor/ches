@@ -64,6 +64,9 @@ let gap_on_save = ref false
 let close_stdout = ref false
 let hold_completion = ref false
 let no_completion = ref false
+let next_completion = ref false
+let hold_resolve = ref false
+let bad_resolve = ref false
 let completion_replies = Queue.create ()
 
 let log method_ =
@@ -208,7 +211,12 @@ let handle (packet : Jsonrpc.Packet.t) =
        List.Assoc.find_exn fields key ~equal:String.equal | _ -> failwith "initialize object" in
      let capabilities = field (Option.value_exn params) "capabilities" in
      let item = field (field (field capabilities "textDocument") "completion") "completionItem" in
-     assert (Poly.equal (field item "snippetSupport") (`Bool false));
+      assert (Poly.equal (field item "snippetSupport") (`Bool false));
+      if !next_completion then (
+        assert (Poly.equal (field item "insertReplaceSupport") (`Bool true));
+        assert (Poly.equal (field item "commitCharactersSupport") (`Bool false));
+        let properties = field (field item "resolveSupport") "properties" in
+        assert (Poly.equal properties (`List (List.map ["documentation"; "detail"; "additionalTextEdits"] ~f:(fun s -> `String s)))));
      if !delay_init then ignore (Core_unix.nanosleep 0.1 : float);
     if !fail_init
     then
@@ -237,7 +245,7 @@ let handle (packet : Jsonrpc.Packet.t) =
          else `TextDocumentSyncKind kind in
        let textDocumentSync = Option.some_if (not (String.equal !sync "absent")) textDocumentSync in
         let completionProvider = Option.some_if (not !no_completion)
-          (Types.CompletionOptions.create ~triggerCharacters:["."] ()) in
+           (Types.CompletionOptions.create ~triggerCharacters:["."] ~resolveProvider:!next_completion ()) in
         let capabilities = Types.ServerCapabilities.create ?positionEncoding ?textDocumentSync ?completionProvider () in
       send
         (Response
@@ -267,7 +275,32 @@ let handle (packet : Jsonrpc.Packet.t) =
        ; `Assoc ["label", `String "bad-range"; "textEdit", edit (position 999 0) (position 999 1) "bad"]
        ; `Assoc ["label", `String "overlap"; "textEdit", primary; "additionalTextEdits", `List [primary]]
        ]] in
-     if !hold_completion then Queue.enqueue completion_replies (id, result)
+      let result = if not !next_completion then result else
+        let range start stop = `Assoc ["start", start; "end", stop] in
+        let start = position p.line 0 in
+        let replace = position p.line (String.length (List.nth_exn (String.split text ~on:'\n') p.line)) in
+        `Assoc ["isIncomplete", `Bool false;
+          "itemDefaults", `Assoc ["editRange", `Assoc [
+            "insert", range start (Types.Position.yojson_of_t p); "replace", range start replace];
+            "insertTextFormat", `Int 1; "insertTextMode", `Int 1;
+            "data", `Assoc ["ticket", `String "opaque-default"]];
+          "items", `List [
+            `Assoc ["label", `String "format"; "textEditText", `String "formatted"; "kind", `Int 3];
+            `Assoc ["label", `String "snippet"; "insertTextFormat", `Int 2];
+            `Assoc ["label", `String "adjust-indent"; "insertTextMode", `Int 2]]] in
+      if !hold_completion then Queue.enqueue completion_replies (id, result)
+      else send (Response (Jsonrpc.Response.ok id result))
+   | Request { id; method_ = "completionItem/resolve"; params = Some (`Assoc fields) } ->
+     let get key = List.Assoc.find_exn fields key ~equal:String.equal in
+     assert (Poly.equal (get "data") (`Assoc ["ticket", `String "opaque-default"]));
+     assert (Poly.equal (get "textEditText") (`String "formatted"));
+     let p line character = `Assoc ["line", `Int line; "character", `Int character] in
+     let range = if !bad_resolve then `Assoc ["start", p 1 0; "end", p 1 2]
+       else `Assoc ["start", p 0 0; "end", p 0 0] in
+     let result = `Assoc (["documentation", `Assoc ["kind", `String "markdown"; "value", `String "Resolved **docs**"];
+       "detail", `String "resolved detail";
+       "additionalTextEdits", `List [`Assoc ["range", range; "newText", `String "import\n"]]] @ fields) in
+     if !hold_resolve then Queue.enqueue completion_replies (id, result)
      else send (Response (Jsonrpc.Response.ok id result))
    | Request { method_ = "shutdown"; _ } when !ignore_shutdown -> ()
    | Request { id; method_ = "shutdown"; _ } -> send (Response (Jsonrpc.Response.ok id `Null))
@@ -342,7 +375,10 @@ let () =
      ; "-gap-on-save", Set gap_on_save, ""
       ; "-close-stdout", Set close_stdout, ""
       ; "-hold-completion", Set hold_completion, ""
-      ; "-no-completion", Set no_completion, ""
+       ; "-no-completion", Set no_completion, ""
+       ; "-next-completion", Set next_completion, ""
+       ; "-hold-resolve", Set hold_resolve, ""
+       ; "-bad-resolve", Set bad_resolve, ""
     ]
     ignore
      "fake_lsp";

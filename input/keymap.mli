@@ -74,6 +74,7 @@
       Insert  Enter                  Insert_newline (autoindents)
       Insert  Tab                    Insert_soft_tab or Insert_text "\t" ({!Config.tab})
       Insert  Backspace, Ctrl-h      Delete_soft_tab_backward or Delete_backward
+      Insert  Ctrl-n                 Manually invoke completion (screen-owned)
        Insert  Delete                 Delete_forward
        Insert  Ctrl-t / Ctrl-d        Shift current line right / left
       Insert  Escape                 Exit_insert

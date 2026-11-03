@@ -135,10 +135,15 @@ let%test_unit "empty prefix after punctuation accepts all filter texts" =
   let assign = candidate "assign" ~start:4 ~stop:4 "assign" in
   let logic = candidate "logic" ~filter_text:"" ~start:4 ~stop:4 "logic" in
   let t = reply (start "obj." 4) [ logic; assign ] in
-  assert (List.equal Candidate.equal (candidates t) [ assign; logic ]);
+  assert (List.equal Candidate.equal (List.take (candidates t) 2) [ assign; logic ]);
+  [%test_eq: string list] (List.map (candidates t) ~f:(fun c -> c.Candidate.label))
+    [ "assign"; "logic"; "obj" ];
+  (* The selected buffer word survives arrival of server candidates. *)
   let t, current = apply t (text "obj.") 1 (Option.value_exn (plan t Next)) in
+  assert (String.equal (string current) "obj.obj");
+  let t, current = apply t current 2 (Option.value_exn (plan t Next)) in
   assert (String.equal (string current) "obj.assign");
-  let _, current = apply t current 2 (Option.value_exn (plan t Next)) in
+  let _, current = apply t current 3 (Option.value_exn (plan t Next)) in
   assert (String.equal (string current) "obj.logic")
 ;;
 
@@ -154,7 +159,7 @@ let%test_unit "LSP inspection bound and final menu cap still apply" =
   assert (List.equal Candidate.equal (candidates t) (List.take matches 100))
 ;;
 
-let%test_unit "bounded words, UTF prefix, lexical order regardless of proximity, no partial long word" =
+let%test_unit "whole-buffer words, UTF prefix, lexical order regardless of proximity" =
   let base = text "fox f far" in
   let words = Buffer_words.create base in
   let items = Buffer_words.candidates words ~text:base ~cursor:5 ~limit:2 in
@@ -169,7 +174,8 @@ let%test_unit "bounded words, UTF prefix, lexical order regardless of proximity,
   let base = text (String.make 70000 'a' ^ " alpha a") in
   let items = Buffer_words.candidates (Buffer_words.create base) ~text:base
       ~cursor:(Text_buffer.length base) ~limit:100 in
-  assert (List.is_empty items);
+  assert (List.equal String.equal (List.map items ~f:(fun c -> c.Candidate.label))
+    [ String.make 70000 'a'; "alpha" ]);
   assert (Option.is_none (Ches_completion.Model.start ~token ~text:base ~cursor:5000
       ~words:(Buffer_words.create base) ~limit:100))
 ;;
