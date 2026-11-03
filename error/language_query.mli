@@ -9,11 +9,19 @@ type target =
 type content_kind = Plaintext | Markdown [@@deriving sexp_of, equal]
 type content = { kind : content_kind; value : string } [@@deriving sexp_of, equal]
 type hover = { contents : content list; range : range option } [@@deriving sexp_of, equal]
-type kind = Hover | Declaration | Definition [@@deriving sexp_of, equal]
+type instance = { hier_path : string; target : target option } [@@deriving sexp_of, equal]
+type instance_list =
+  { module_name : string; module_range : range; encoding : encoding
+  ; active : string option; instances : instance list }
+[@@deriving sexp_of, equal]
+type instance_activated = { module_name : string; hier_path : string } [@@deriving sexp_of, equal]
+type kind = Hover | Declaration | Definition | References | Instances
+  | Activate_instance of instance_activated | Instantiation [@@deriving sexp_of, equal]
 type request =
   { token : Ches_completion.Model.Token.t; cursor : int; kind : kind }
 [@@deriving sexp_of, equal]
-type result = Hover_result of hover option | Locations of target list | Failed of string
+type result = Hover_result of hover option | Locations of target list
+  | Instance_list of instance_list | Instance_activated of instance_activated | Failed of string
 [@@deriving sexp_of, equal]
 type reply =
   { token : Ches_completion.Model.Token.t

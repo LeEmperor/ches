@@ -13,6 +13,7 @@ module Id : sig
     | Pending (** Keys of an incomplete sequence. *)
     | Position (** One-based line and code-point column. *)
     | Message
+    | Instance
   [@@deriving sexp_of, equal, enumerate]
 end
 

@@ -19,6 +19,10 @@ module Server : sig
 end
 
 type t =
+  | Instance_context_changed of
+      { source : string; revision : int; module_name : string option; hier_path : string option }
+  (** Connection-wide invalidation, never document-owned; revision is session-local.
+      Optional fields describe confirmed server context. *)
   | Query_result of Language_query.reply
   (** Independent of diagnostic coalescing. Consumers check the token and cursor
       against the current buffer lifetime, revision and pending request. *)

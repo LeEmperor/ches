@@ -46,8 +46,11 @@ let floating_layer ?allocation ?floating ui ~width ~height =
       Option.bind (Ui_state.hover_layout ui ~width ~height) ~f:(fun layout ->
         Option.map (Ui_state.hover ui) ~f:(fun hover ->
           { Floating_layer.id = Hover_tile.id; layout
-          ; content = Hover_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
-              hover ~width:layout.content.width ~rows:layout.content.height
+          ; content = (let content = Hover_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+              hover ~width:layout.content.width ~rows:layout.content.height in
+              match Ui_state.active_instance_label ui with
+              | None -> content
+              | Some label -> { content with title = content.title ^ " · " ^ label })
           ; cursor = None }))
     | None when Option.is_some (Ui_state.destinations ui) ->
       Option.bind (Ui_state.destinations_layout ui ~width ~height) ~f:(fun layout ->
@@ -56,6 +59,13 @@ let floating_layer ?allocation ?floating ui ~width ~height =
           ; content = Destination_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
               picker ~width:layout.content.width ~rows:layout.content.height
           ; cursor = Some (Destination_picker_tile.cursor picker ~width:layout.content.width) }))
+    | None when Option.is_some (Ui_state.instances ui) ->
+      Option.bind (Ui_state.instances_layout ui ~width ~height) ~f:(fun layout ->
+        Option.map (Ui_state.instances ui) ~f:(fun picker ->
+          { Floating_layer.id = Instance_picker_tile.id; layout
+          ; content = Instance_picker_tile.render ~hotkey_hints ?notice:(Ui_state.capture_notice ui)
+              picker ~width:layout.content.width ~rows:layout.content.height
+          ; cursor = Some (Instance_picker_tile.cursor picker ~width:layout.content.width) }))
     | None when Ui_state.terminal_visible ui ->
       Option.map (Ui_state.terminal_layout ui ~width ~height) ~f:(fun layout ->
         let content = layout.content in
@@ -184,6 +194,7 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
      | None when Option.is_some allocation ->
           Some ((if Option.is_some (Ui_state.hover ui) then Hover_tile.id
              else if Option.is_some (Ui_state.destinations ui) then Destination_picker_tile.id
+             else if Option.is_some (Ui_state.instances ui) then Instance_picker_tile.id
              else if Option.is_some (Ui_state.theme_picker ui) then Theme_picker_tile.id
             else if Option.is_some (Ui_state.snippet_picker ui) then Snippet_picker_tile.id
             else if Option.is_some (Ui_state.content_picker ui) then Content_picker_tile.id

@@ -260,7 +260,15 @@ let handle (packet : Jsonrpc.Packet.t) =
            let providers = match !navigation with
              | "ocaml" -> ["hoverProvider", `Bool true; "declarationProvider", `Assoc [];
                  "definitionProvider", `Bool true]
-             | "slang" -> ["hoverProvider", `Assoc []; "definitionProvider", `Assoc []]
+              | "slang" -> ["hoverProvider", `Assoc []; "definitionProvider", `Assoc []]
+              | profile when String.is_prefix profile ~prefix:"instances" -> ["hoverProvider", `Bool true; "referencesProvider", `Bool true;
+                  "documentSymbolProvider", `Bool true;
+                  "executeCommandProvider", `Assoc ["commands", `List (
+                    ["slang.getModulesInFile"; "slang.getInstancesOfModule"; "slang.getActiveInstance";
+                     "slang.setActiveInstance"]
+                    |> List.filter ~f:(fun s -> not (String.equal profile "instances-symbols" && String.equal s "slang.getModulesInFile"))
+                    |> List.map ~f:(fun s -> `String (if String.equal profile "instances-activate" && String.equal s "slang.setActiveInstance"
+                      then "slang.activateInstance" else s)))]]
              | "declaration" -> ["declarationProvider", `Bool true]
              | "disabled" -> ["hoverProvider", `Bool false; "declarationProvider", `Bool false;
                  "definitionProvider", `Bool false]
@@ -272,14 +280,55 @@ let handle (packet : Jsonrpc.Packet.t) =
            (Jsonrpc.Response.ok
               id
                result)))
-   | Request { id; method_ = ("textDocument/hover" | "textDocument/declaration" | "textDocument/definition" as method_);
+    | Request { id; method_ = "textDocument/documentSymbol"; _ } ->
+      let p n = `Assoc ["line", `Int 0; "character", `Int n] in
+      let r a b = `Assoc ["start", p a; "end", p b] in
+      send (Response (Jsonrpc.Response.ok id (`List [
+        `Assoc ["name", `String "earlier"; "kind", `Int 2; "range", r 0 1; "selectionRange", r 0 1];
+        `Assoc ["name", `String "leaf"; "kind", `Int 2; "range", r 2 100; "selectionRange", r 2 6]])))
+    | Request { id; method_ = "workspace/executeCommand"; params = Some params } ->
+      let field json name = match json with
+        | `Assoc xs -> List.Assoc.find_exn xs name ~equal:String.equal
+        | _ -> failwith "command object expected" in
+      let command = field params "command" in
+      let qualified path = `Assoc ["instPath", `String path; "instLoc", `Assoc [
+        "uri", `String "file:///tmp/instance%20%23%25%C3%A9.sv";
+        "range", `Assoc ["start", `Assoc ["line", `Int 3; "character", `Int 2];
+          "end", `Assoc ["line", `Int 3; "character", `Int 6]]]] in
+      let result = match command with
+        | `String "slang.getModulesInFile" ->
+          (match field params "arguments" with `List [`String path] -> assert (String.is_prefix path ~prefix:"/") | _ -> assert false);
+          `List [`String "earlier"; `String "leaf"]
+        | `String "slang.getInstancesOfModule" ->
+          assert (Poly.equal (field params "arguments") (`List [`String "leaf"]));
+          `List [qualified "top.narrow"; qualified "top.wide"]
+        | `String "slang.getActiveInstance" ->
+          if String.equal !navigation "instances-top" then `Assoc ["instPath", `String "top"; "instLoc", `Null]
+          else qualified "top.wide"
+        | `String "slang.setActiveInstance" -> `Bool (not (String.equal !navigation "instances-fail"))
+        | `String "slang.activateInstance" ->
+          assert (Poly.equal (field params "arguments") (`List [`Assoc ["hierPath", `String "top.narrow";
+            "interactionSource", `Int 1]]));
+          `Bool true
+        | _ -> assert false in
+      if String.equal !navigation "instances-refresh" && Poly.equal command (`String "slang.setActiveInstance") then (
+        server_request 701 "workspace/inlayHint/refresh" (`Assoc []);
+        server_request 702 "workspace/codeLens/refresh" (`Assoc []);
+        send (Notification (Jsonrpc.Notification.create ~method_:"slang/activeInstanceChanged"
+          ~params:(`Assoc ["hierPath", `String "top.narrow"; "interactionSource", `String "editor"]) ())));
+      if String.equal !navigation "instances-held" && Poly.equal command (`String "slang.setActiveInstance")
+      then Queue.enqueue completion_replies (id, result)
+      else send (Response (Jsonrpc.Response.ok id result))
+    | Request { id; method_ = ("textDocument/references" | "textDocument/hover" | "textDocument/declaration" | "textDocument/definition" as method_);
        params = Some params } ->
      let field json name = match json with
        | `Assoc fields -> List.Assoc.find_exn fields name ~equal:String.equal
        | _ -> failwith "query object expected" in
      let uri = field (field params "textDocument") "uri" |> Lsp.Uri.t_of_yojson in
      let _, _, text = Hashtbl.find_exn documents (Lsp.Uri.to_path uri) in
-     let p = field params "position" |> Types.Position.t_of_yojson in
+      let p = field params "position" |> Types.Position.t_of_yojson in
+      if String.equal method_ "textDocument/references" then
+        assert (Poly.equal (field (field params "context") "includeDeclaration") (`Bool true));
      assert (offset text p = String.length text);
      let is_decl = String.equal method_ "textDocument/declaration" in
      let is_def = String.equal method_ "textDocument/definition" in

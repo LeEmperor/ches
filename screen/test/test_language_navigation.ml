@@ -32,6 +32,9 @@ let hover : Q.hover =
 
 let%test_unit "bare uppercase hover and declaration/definition keys and palette use ordered source queries" =
   List.iter [ "K", Q.Hover; "gd", Q.Declaration; "gD", Q.Definition;
+      "gr", Q.References; " ccFind references<CR>", Q.References;
+      " ccSelect active instance<CR>", Q.Instances;
+      " ccGo to instantiation<CR>", Q.Instantiation;
       " ccHover<CR>", Q.Hover;
       " ccGo to declaration<CR>", Q.Declaration;
       " ccGo to definition<CR>", Q.Definition ] ~f:(fun (keys, kind) ->

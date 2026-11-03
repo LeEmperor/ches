@@ -230,6 +230,10 @@ type session =
   ; mutable encoding : Convert.encoding
   ; mutable initialized : bool
   ; mutable query_caps : Query.kind list
+  ; mutable commands : string list
+  ; mutable symbols : bool
+  ; mutable context_revision : int
+  ; choices : (Ches_completion.Model.Token.t * int * Query.instance_list) String.Table.t
   ; queries : (Query.request * int * Clock_ns.Event.t_unit) String.Table.t
   ; mutable completion : bool
   ; mutable completion_resolve : bool
@@ -319,9 +323,10 @@ let cancel_completions session =
 ;;
 
 let cancel_query session file =
-  Option.iter (Hashtbl.find_and_remove session.queries file) ~f:(fun (_, id, timer) ->
-    Clock_ns.Event.abort_if_possible timer ();
-    Hashtbl.remove session.pending id;
+  Option.iter (Hashtbl.find_and_remove session.queries file) ~f:(fun (q, id, timer) ->
+    (match q.kind with
+     | Activate_instance _ -> () (* A late mutation acknowledgement still invalidates context. *)
+     | _ -> Clock_ns.Event.abort_if_possible timer (); Hashtbl.remove session.pending id);
     send session (Notification (Jsonrpc.Notification.create ~method_:"$/cancelRequest"
       ~params:(`Assoc ["id", `Int id]) ())))
 ;;
@@ -344,6 +349,18 @@ let forget_completion session file =
 
 let clear_retained session =
   List.iter (Hashtbl.keys session.retained) ~f:(forget_completion session)
+;;
+
+let context_changed t session ?module_name ?hier_path () =
+  if current t session && not session.closed then (
+    session.context_revision <- session.context_revision + 1;
+    Hashtbl.clear session.choices;
+    List.iter (Hashtbl.to_alist session.queries) ~f:(fun (file, (q, _, _)) ->
+      match q.kind with Activate_instance _ -> () | _ -> cancel_query session file);
+    cancel_completions session;
+    clear_retained session;
+    t.emit (Instance_context_changed { source = t.config.source;
+      revision = session.context_revision; module_name; hier_path }))
 ;;
 
 let kill session =
@@ -471,6 +488,112 @@ let flush_document t session file =
     Option.iter (Hashtbl.find t.documents file) ~f:(synchronize_document t session)
 ;;
 
+let instance_query t session (document : Document.t) (q : Query.request) position ~emit =
+  let file = document.file in
+  let fail s = emit (Query.Failed s) in
+  let encoding = match session.encoding with Convert.Utf8 -> Query.Utf8 | Utf16 -> Utf16 | Utf32 -> Utf32 in
+  let revision = session.context_revision in
+  let snapshot_valid () = current t session && not session.closed
+    && Option.exists (Hashtbl.find t.documents file) ~f:(fun d ->
+      phys_equal d.recent document.recent && d.revision = document.revision && [%equal: int option] d.owner document.owner) in
+  let valid () = snapshot_valid () && revision = session.context_revision in
+  let supported command = List.mem session.commands command ~equal:String.equal in
+  let deadline = Time_ns.add (Time_ns.now ()) (Time_ns.Span.of_int_sec 10) in
+  let call ?(mutation = None) method_ params next =
+    if valid () then (
+      let id = session.next_id in
+      session.next_id <- id + 1;
+      let timer = Clock_ns.Event.run_at deadline (fun () ->
+        (* The query deadline ends UI work, but a mutation observer survives until
+           acknowledgement/session end. Its slot remains in the 32-request budget. *)
+        if Option.is_none mutation then Hashtbl.remove session.pending id;
+        (match Hashtbl.find session.queries file with
+         | Some (_, active_id, _) when active_id = id ->
+           Hashtbl.remove session.queries file;
+           if snapshot_valid () then fail "Language query timed out"
+         | _ -> ());
+        (* A sent mutation can have taken effect without a response. *)
+        Option.iter mutation ~f:(fun _ -> context_changed t session ())) () in
+      Hashtbl.set session.queries ~key:file ~data:(q, id, timer);
+      Hashtbl.set session.pending ~key:id ~data:(fun response ->
+        Clock_ns.Event.abort_if_possible timer ();
+        let live = match Hashtbl.find session.queries file with
+          | Some (_, active_id, _) -> active_id = id | None -> false in
+        if live then Hashtbl.remove session.queries file;
+        let deliver = live && (if Option.is_some mutation then snapshot_valid () else valid ()) in
+        (match mutation with
+         | Some (choice : Query.instance_activated) ->
+           (match response.result with
+            | Ok (`Bool true) ->
+              context_changed t session ~module_name:choice.module_name ~hier_path:choice.hier_path ();
+              if deliver then emit (Instance_activated choice)
+            | Ok _ -> if deliver then fail "Language server failed to activate instance"
+            | Error error -> if deliver then fail error.message)
+         | None -> if deliver then (match response.result with
+           | Ok json -> next json | Error error -> fail error.message)));
+      send session (Request (Jsonrpc.Request.create ~id:(`Int id) ~method_ ~params ()));
+      Option.iter mutation ~f:(fun _ -> context_changed t session ())) in
+  let command name arg next =
+    if not (supported name) then fail ("Language server does not support " ^ name)
+    else call "workspace/executeCommand" (`Assoc ["command", `String name; "arguments", `List [arg]]) next in
+  let active module_name next = command "slang.getActiveInstance" (`String module_name) (fun json ->
+    match json with `Null -> next None | _ -> match Instance_wire.instance encoding json with
+      | Ok i -> next (Some i) | Error s -> fail s) in
+  match q.kind with
+  | Activate_instance choice ->
+    (match Hashtbl.find session.choices file with
+     | Some (token, context, inventory) when token.generation = q.token.generation
+         && token.revision = q.token.revision && String.equal token.resource q.token.resource
+         && context = revision && String.equal inventory.module_name choice.module_name
+         && Navigation_wire.compare_point inventory.module_range.start
+              { line = position.Types.Position.line; character = position.character } <= 0
+         && Navigation_wire.compare_point
+              { line = position.Types.Position.line; character = position.character } inventory.module_range.stop <= 0
+         && List.exists inventory.instances ~f:(fun i -> String.equal i.hier_path choice.hier_path) ->
+       let name, arg = if supported "slang.setActiveInstance" then
+           "slang.setActiveInstance", `String choice.hier_path
+          else "slang.activateInstance", `Assoc ["hierPath", `String choice.hier_path; "interactionSource", `Int 1] in
+       if not (supported name) then fail "Language server does not support instance activation"
+       else call ~mutation:(Some choice) "workspace/executeCommand"
+         (`Assoc ["command", `String name; "arguments", `List [arg]]) ignore
+     | _ -> fail "Instance selection is stale; discover instances again")
+  | Instances | Instantiation ->
+    if not session.symbols || not (supported "slang.getActiveInstance")
+       || (Query.equal_kind q.kind Instances && not (supported "slang.getInstancesOfModule"))
+    then fail "Language server does not support instance queries"
+    else call "textDocument/documentSymbol"
+      (`Assoc ["textDocument", `Assoc ["uri", `String (Lsp.Uri.to_string document.uri)]]) (fun json ->
+        let p : Query.position = { line = position.Types.Position.line; character = position.character } in
+        let candidates = Instance_wire.modules ~uri:(Lsp.Uri.to_string document.uri) ~position:p json in
+        let choose names =
+          let eligible = List.filter candidates ~f:(fun (name, _) -> List.mem names name ~equal:String.equal) in
+          match List.hd eligible with
+          | None -> fail "No server module encloses the cursor"
+          | Some (module_name, module_range) ->
+            active module_name (fun selected -> match q.kind with
+              | Instantiation -> (match Option.bind selected ~f:(fun i -> i.target) with
+                | Some target -> emit (Locations [target])
+                | None -> fail "Active instance is top-level or has no instantiation location")
+              | _ -> command "slang.getInstancesOfModule" (`String module_name) (fun json ->
+                match Instance_wire.instances encoding json with
+                | Error s -> fail s
+                | Ok instances ->
+                   let inventory : Query.instance_list = { module_name; module_range; encoding;
+                    active = Option.map selected ~f:(fun i -> i.hier_path); instances } in
+                  Hashtbl.set session.choices ~key:file ~data:(q.token, revision, inventory);
+                  emit (Instance_list inventory))) in
+        if supported "slang.getModulesInFile" then
+          command "slang.getModulesInFile" (`String file) (function
+            | `List xs when List.length xs <= 4096 ->
+              (match Result.all (List.map xs ~f:(function `String s -> Ok s | _ -> Error ())) with
+               | Ok names -> choose names | Error () -> fail "Invalid module list")
+            | _ -> fail "Invalid module list")
+        else
+          (* Only Module / Interface symbols survive the bounded decoder. *)
+          choose (List.map candidates ~f:fst))
+  | _ -> fail "Invalid instance query"
+;;
+
 let query t (q : Query.request) =
   let token = q.token in
   let file = canonical token.resource in
@@ -492,11 +615,14 @@ let query t (q : Query.request) =
          flush_document t session file;
          if not (Option.exists (Hashtbl.find session.opened file) ~f:(fun sent -> sent.version = document.version))
          then fail "Language server cannot synchronize this document"
-         else if Hashtbl.length session.queries >= 32 then fail "Too many pending language queries"
+          else if Hashtbl.length session.queries >= 32 || Hashtbl.length session.pending >= 32 then fail "Too many pending language queries"
+          else if (match q.kind with Instances | Instantiation | Activate_instance _ -> true | _ -> false)
+          then instance_query t session document q position ~emit
          else
            let methods = match q.kind with
              | Hover -> [Query.Hover] | Declaration -> [Declaration; Definition]
-             | Definition -> [Definition; Declaration] in
+              | Definition -> [Definition; Declaration] | References -> [References]
+              | Instances | Instantiation | Activate_instance _ -> [] in
            let encoding = match session.encoding with
              | Utf8 -> Query.Utf8 | Utf16 -> Utf16 | Utf32 -> Utf32 in
            let valid () = current t session && not t.stopped && not session.closed
@@ -534,10 +660,12 @@ let query t (q : Query.request) =
                        | Ok result -> emit result | Error message -> fail message))
                  | _ -> ());
                let method_ = match kind with Hover -> "textDocument/hover"
-                 | Declaration -> "textDocument/declaration" | Definition -> "textDocument/definition" in
+                  | Declaration -> "textDocument/declaration" | Definition -> "textDocument/definition"
+                  | References -> "textDocument/references" | _ -> assert false in
                send session (Request (Jsonrpc.Request.create ~id:(`Int id) ~method_
-                 ~params:(`Assoc ["textDocument", `Assoc ["uri", `String (Lsp.Uri.to_string document.uri)];
-                   "position", Types.Position.yojson_of_t position]) ()))
+                  ~params:(`Assoc (["textDocument", `Assoc ["uri", `String (Lsp.Uri.to_string document.uri)];
+                    "position", Types.Position.yojson_of_t position]
+                    @ (if Query.equal_kind kind References then ["context", `Assoc ["includeDeclaration", `Bool true]] else []))) ()))
            in
            attempt methods false)
     | _ -> fail "Language query document snapshot is stale or unattached"
@@ -770,6 +898,9 @@ let publish t session (params : Types.PublishDiagnosticsParams.t) =
 let answer t session (request : Jsonrpc.Request.t) =
   let ok json = send session (Response (Jsonrpc.Response.ok request.id json)) in
   match request.method_ with
+  | "workspace/inlayHint/refresh" | "workspace/codeLens/refresh"
+  | "workspace/semanticTokens/refresh" | "workspace/diagnostic/refresh" ->
+    context_changed t session (); ok `Null
   | "window/workDoneProgress/create"
   | "client/registerCapability"
   | "client/unregisterCapability"
@@ -806,6 +937,10 @@ let answer t session (request : Jsonrpc.Request.t) =
 let handle t session (packet : Jsonrpc.Packet.t) =
   match packet with
   | Notification notification ->
+    if String.equal notification.method_ "slang/activeInstanceChanged" then (
+      let params = (Option.value notification.params ~default:(`Assoc []) :> Yojson.Safe.t) in
+      context_changed t session ?module_name:(Completion_wire.string_field params "moduleName")
+        ?hier_path:(Completion_wire.string_field params "hierPath") ());
     (match Lsp.Server_notification.of_jsonrpc notification with
      | Ok (PublishDiagnostics params) -> publish t session params
      | Ok _ | Error _ -> return ())
@@ -866,9 +1001,15 @@ let initialize t session =
          fail t session ~reason:(sprintf "initialize failed: %s" error.message)
        | Ok json ->
          let caps = Option.value (Completion_wire.field json "capabilities") ~default:`Null in
-         session.query_caps <- List.filter [Query.Hover; Declaration; Definition] ~f:(fun kind ->
+          session.commands <- (match Completion_wire.field caps "executeCommandProvider" with
+            | Some provider -> (match Completion_wire.field provider "commands" with
+              | Some (`List xs) -> List.filter_map xs ~f:(function `String s -> Some s | _ -> None)
+              | _ -> []) | _ -> []);
+          session.symbols <- (match Completion_wire.field caps "documentSymbolProvider" with
+            | Some (`Bool true) | Some (`Assoc _) -> true | _ -> false);
+          session.query_caps <- List.filter [Query.Hover; Declaration; Definition; References] ~f:(fun kind ->
            let key = match kind with Hover -> "hoverProvider" | Declaration -> "declarationProvider"
-             | Definition -> "definitionProvider" in
+              | Definition -> "definitionProvider" | References -> "referencesProvider" | _ -> assert false in
            match Completion_wire.field caps key with Some (`Bool true) | Some (`Assoc _) -> true | _ -> false);
         (match Lsp.Client_request.response_of_json initialize json with
          | exception exn ->
@@ -881,7 +1022,8 @@ let initialize t session =
              session.completion_triggers <- Option.value_map result.capabilities.completionProvider
                ~default:[] ~f:(fun options -> Option.value options.triggerCharacters ~default:[]);
              (match result.capabilities.positionEncoding with
-               | Some (Other _) -> session.completion <- false; session.query_caps <- [] | _ -> ());
+                | Some (Other _) -> session.completion <- false; session.query_caps <- [];
+                  session.symbols <- false; session.commands <- [] | _ -> ());
             session.sync_kind <- (match result.capabilities.textDocumentSync with
               | Some (`TextDocumentSyncKind kind) -> kind
               | Some (`TextDocumentSyncOptions options) -> Option.value options.change ~default:None
@@ -1004,7 +1146,11 @@ let start_session t =
            { process
            ; next_id = 1
             ; pending = Int.Table.create ()
-            ; query_caps = []
+             ; query_caps = []
+             ; commands = []
+             ; symbols = false
+             ; context_revision = 0
+             ; choices = String.Table.create ()
             ; queries = String.Table.create ()
             ; encoding = Utf16
              ; completion = false

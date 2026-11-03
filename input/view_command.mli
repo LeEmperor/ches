@@ -52,6 +52,9 @@ type t =
   | Hover
   | Go_to_declaration
   | Go_to_definition
+  | Find_references
+  | Select_active_instance
+  | Go_to_instantiation
   | Jump_back
   | Jump_forward
   | Toggle_completion

@@ -96,4 +96,5 @@ let hover json =
 
 let decode encoding kind json = match kind with
   | Hover -> Result.map (hover json) ~f:(fun h -> Hover_result h)
-  | Declaration | Definition -> Result.map (locations encoding json) ~f:(fun xs -> Locations xs)
+  | References | Declaration | Definition -> Result.map (locations encoding json) ~f:(fun xs -> Locations xs)
+  | Instances | Activate_instance _ | Instantiation -> Error "Invalid instance query decoder"

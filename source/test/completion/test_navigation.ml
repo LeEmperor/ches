@@ -24,6 +24,39 @@ let start root args =
   let%map () = H.until ~quiet:true source ~root ~f:(H.is_diagnostics ~revision:1) in
   source, resource
 
+let%expect_test "references and instance pipeline use server identity and direct destinations" =
+  H.with_root (fun root ->
+    let%bind source, resource = start root ["-navigation"; "instances"] in
+    Source.send source (Document_changed { resource; revision = 2; text = "abcdefghijk" });
+    let ask id kind =
+      Source.send source (Query (request resource 2 id kind));
+      receive source >>| fun reply -> reply.result in
+    let%bind refs = ask 1 References in
+    (match refs with Locations [_] -> () | _ -> failwith "references failed");
+    let%bind found = ask 2 Instances in
+    (match found with
+     | Instance_list inventory ->
+       assert (String.equal inventory.module_name "leaf");
+       assert (inventory.module_range.start.character = 2);
+       assert (Option.equal String.equal inventory.active (Some "top.wide"));
+       assert (List.length inventory.instances = 2)
+     | Failed s -> failwith s | _ -> failwith "missing inventory");
+    let%bind rejected = ask 3 (Activate_instance { module_name = "leaf"; hier_path = "unlisted" }) in
+    assert (match rejected with Failed _ -> true | _ -> false);
+    let%bind activated = ask 4 (Activate_instance { module_name = "leaf"; hier_path = "top.narrow" }) in
+    assert (match activated with Instance_activated _ -> true | _ -> false);
+    let%bind stale = ask 5 (Activate_instance { module_name = "leaf"; hier_path = "top.wide" }) in
+    assert (match stale with Failed _ -> true | _ -> false);
+    let%bind location = ask 6 Instantiation in
+    (match location with
+     | Locations [target] -> assert (String.equal target.path "/tmp/instance #%é.sv");
+       assert (target.selection.start.line = 3)
+     | _ -> failwith "missing current instantiation");
+    Source.stop source;
+    print_endline "references context; enclosing second module; validated activation; stale inventory; exact URI";
+    [%expect {| references context; enclosing second module; validated activation; stale inventory; exact URI |}];
+    return ())
+
 let%expect_test "shared exact position helper handles Unicode, CRLF, invalid boundaries" =
   let text = "a😀é\r\nz\rx\n" in
   List.iter [Utf8; Utf16; Utf32] ~f:(fun encoding ->
@@ -37,6 +70,146 @@ let%expect_test "shared exact position helper handles Unicode, CRLF, invalid bou
   assert (Option.is_none (offset Utf8 ~text:"bad\xff" {line = 0; character = 0}));
   assert (Option.is_none (offset Utf8 ~text {line = -1; character = 0}));
   [%expect {| |}]; return ()
+
+let%expect_test "instance command versions and failed activation retain no invented context" =
+  let%bind () = Deferred.List.iter ["instances-symbols"; "instances-activate"; "instances-fail"; "instances-refresh"]
+    ~how:`Sequential ~f:(fun profile -> H.with_root (fun root ->
+      let%bind source, resource = start root ["-navigation"; profile] in
+      Source.send source (Document_changed { resource; revision = 2; text = "abcdefghijk" });
+      Source.send source (Query (request resource 2 1 Instances));
+      let%bind inventory = receive source in
+      assert (match inventory.result with Instance_list _ -> true | _ -> false);
+      Source.send source (Query (request resource 2 2 (Activate_instance { module_name = "leaf"; hier_path = "top.narrow" })));
+      let%bind reply = receive source in
+      assert (match reply.result with
+        | Failed _ -> String.equal profile "instances-fail"
+        | Instance_activated _ -> not (String.equal profile "instances-fail") | _ -> false);
+      Source.stop source; return ())) in
+  [%expect {| |}]; return ()
+
+let%expect_test "instance inventories carry the exact negotiated range encoding" =
+  let%bind () = Deferred.List.iter ["utf-8", Utf8; "utf-16", Utf16; "utf-32", Utf32]
+    ~how:`Sequential ~f:(fun (wire_encoding, encoding) -> H.with_root (fun root ->
+      let%bind source, resource = start root ["-navigation"; "instances"; "-encoding"; wire_encoding] in
+      Source.send source (Document_changed { resource; revision = 2; text = "😀abcdefg" });
+      Source.send source (Query (request resource 2 1 Instances));
+      let%bind reply = receive source in
+      (match reply.result with
+       | Instance_list inventory ->
+         assert (equal_encoding inventory.encoding encoding);
+         List.iter inventory.instances ~f:(fun instance ->
+           assert (equal_encoding (Option.value_exn instance.target).encoding encoding))
+       | _ -> failwith "missing encoded inventory");
+      Source.stop source; return ())) in
+  [%expect {| |}]; return ()
+
+let%expect_test "references capability, null and exact server errors never use declaration fallback" =
+  let%bind () = Deferred.List.iter ["instances", "all-null"; "instances", "fallback-error";
+      "ocaml", "normal"; "disabled", "normal"] ~how:`Sequential ~f:(fun (caps, mode) ->
+    H.with_root (fun root ->
+      let log = Filename.concat root "requests.log" in
+      let%bind source, resource = start root ["-navigation"; caps; "-navigation-result"; mode; "-log"; log] in
+      Source.send source (Query (request resource 1 1 References));
+      let%bind reply = receive source in
+      assert (match reply.result with
+        | Locations [] -> String.equal mode "all-null"
+        | Failed s -> if String.equal mode "fallback-error" then String.equal s "genuine server error"
+          else String.equal s "Language server does not support this query"
+        | _ -> false);
+      let%bind lines = Reader.file_lines log in
+      assert (not (List.exists lines ~f:(fun line ->
+        String.is_suffix line ~suffix:"textDocument/declaration" || String.is_suffix line ~suffix:"textDocument/definition")));
+      Source.stop source; return ())) in
+  [%expect {| |}]; return ()
+
+let%expect_test "top-level instance has an explicit no-location notice" =
+  H.with_root (fun root ->
+    let%bind source, resource = start root ["-navigation"; "instances-top"] in
+    Source.send source (Document_changed { resource; revision = 2; text = "abcdefghijk" });
+    Source.send source (Query (request resource 2 1 Instantiation));
+    let%bind reply = receive source in
+    assert (match reply.result with Failed s -> String.is_substring s ~substring:"top-level" | _ -> false);
+    Source.stop source;
+    [%expect {| |}]; return ())
+
+let%expect_test "module identity excludes same-named children and foreign included-file symbols" =
+  let p character = `Assoc ["line", `Int 0; "character", `Int character] in
+  let range a b = `Assoc ["start", p a; "end", p b] in
+  let module_ name a b children = `Assoc ["name", `String name; "kind", `Int 2;
+    "range", range a b; "children", `List children] in
+  let json = `List [module_ "first" 0 9 [];
+    module_ "second" 10 99 [`Assoc ["name", `String "first"; "kind", `Int 13; "range", range 20 40]];
+    `Assoc ["name", `String "included"; "kind", `Int 2; "location", `Assoc [
+      "uri", `String "file:///included.svh"; "range", range 25 35]]] in
+  let candidates = Instance_wire.modules ~uri:"file:///source.sv" ~position:{ line = 0; character = 30 } json in
+  assert ([%equal: string list] (List.map candidates ~f:fst) ["second"]);
+  [%expect {| |}]; return ()
+
+let%expect_test "instance activation invalidates hover and completion across connection documents" =
+  H.with_root (fun root ->
+    let%bind source, resource = start root ["-navigation"; "instances"; "-hold-query"; "-hold-completion"] in
+    Source.send source (Document_changed { resource; revision = 2; text = "abcdefghijk" });
+    Source.send source (Query (request resource 2 1 Instances));
+    let%bind _ = receive source in
+    let sibling = Filename.concat root "sibling.ml" in
+    Source.send source (Document_opened { resource = sibling; generation = 7 });
+    Source.send source (Document_changed { resource = sibling; revision = 2; text = "😀\n😀fo" });
+    Source.send source (Query (request sibling 2 2 Hover));
+    Source.send source (Complete (Test_completion.request sibling 7 2 3));
+    Source.send source (Query (request resource 2 4 (Activate_instance { module_name = "leaf"; hier_path = "top.narrow" })));
+    let%bind activated = receive source in
+    assert (match activated.result with Instance_activated _ -> true | _ -> false);
+    Source.send source (Document_saved { resource = sibling; revision = 2 });
+    let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 150) in
+    let events = Source.poll source in
+    assert (List.is_empty (replies events));
+    assert (List.is_empty (Test_completion.replies events));
+    Source.stop source;
+    [%expect {| |}]; return ())
+
+let%expect_test "unanswered activation expires with unknown context and rejects inventory reuse" =
+  H.with_root (fun root ->
+    let%bind source, resource = start root ["-navigation"; "instances-held"] in
+    Source.send source (Document_changed { resource; revision = 2; text = "abcdefghijk" });
+    Source.send source (Query (request resource 2 1 Instances));
+    let%bind _ = receive source in
+    Source.send source (Query (request resource 2 2 (Activate_instance { module_name = "leaf"; hier_path = "top.narrow" })));
+    let%bind reply = receive source in
+    assert (match reply.result with Failed message -> String.equal message "Language query timed out" | _ -> false);
+    Source.send source (Query (request resource 2 3 (Activate_instance { module_name = "leaf"; hier_path = "top.wide" })));
+    let%bind reply = receive source in
+    assert (match reply.result with Failed _ -> true | _ -> false);
+    Source.send source (Document_saved { resource; revision = 2 });
+    let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 100) in
+    let events = Source.poll source in
+    assert (List.is_empty (replies events));
+    assert (List.exists events ~f:(function
+      | Instance_context_changed { module_name = Some "leaf"; hier_path = Some "top.narrow"; _ } -> true
+      | _ -> false));
+    Source.stop source;
+    [%expect {| |}]; return ())
+
+let%expect_test "late cancelled activation still invalidates pooled context without stale acknowledgement" =
+  H.with_root (fun root ->
+    let%bind source, resource = start root ["-navigation"; "instances-held"] in
+    Source.send source (Document_changed { resource; revision = 2; text = "abcdefghijk" });
+    Source.send source (Query (request resource 2 1 Instances));
+    let%bind _ = receive source in
+    let q = request resource 2 2 (Activate_instance { module_name = "leaf"; hier_path = "top.narrow" }) in
+    Source.send source (Query q);
+    let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 100) in
+    ignore (Source.poll source : Ches_error.Source_event.t list);
+    Source.send source (Cancel_query q.token);
+    Source.send source (Document_changed { resource; revision = 3; text = "changed" });
+    Source.send source (Document_saved { resource; revision = 3 });
+    let%bind () = Clock_ns.after (Time_ns.Span.of_int_ms 150) in
+    let events = Source.poll source in
+    assert (List.is_empty (replies events));
+    assert (List.exists events ~f:(function
+      | Instance_context_changed { module_name = Some "leaf"; hier_path = Some "top.narrow"; _ } -> true
+      | _ -> false));
+    Source.stop source;
+    [%expect {| |}]; return ())
 
 let%expect_test "OCaml and Slang capabilities, both preference orders, fallback and flush" =
   let cases = List.concat_map ["utf-8"; "utf-16"; "utf-32"] ~f:(fun encoding ->

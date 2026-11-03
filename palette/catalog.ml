@@ -88,6 +88,9 @@ let default =
     ; view ~id:"navigation.hover" ~title:"Hover" ~keywords:[ "symbol"; "documentation"; "lsp" ] Hover
     ; view ~id:"navigation.declaration" ~title:"Go to declaration" Go_to_declaration
     ; view ~id:"navigation.definition" ~title:"Go to definition" Go_to_definition
+    ; view ~id:"navigation.references" ~title:"Find references" ~keywords:[ "symbol"; "lsp" ] Find_references
+    ; view ~id:"navigation.instance" ~title:"Select active instance" ~keywords:[ "slang"; "hierarchy" ] Select_active_instance
+    ; view ~id:"navigation.instantiation" ~title:"Go to instantiation" Go_to_instantiation
     ; view ~id:"navigation.back" ~title:"Jump back" Jump_back
     ; view ~id:"navigation.forward" ~title:"Jump forward" Jump_forward
     ; view ~id:"tabs.next" ~title:"Next file tab" ~keywords:[ "buffer"; "switch" ] Next_tab

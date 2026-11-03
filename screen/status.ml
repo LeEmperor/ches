@@ -69,6 +69,12 @@ let fields ui : Status_field.t list =
         ~side:Right
         (Span.of_text keys ~style:Pending ~special:Status_special))
   in
+  let instance =
+    if Option.is_some view_tab then None else
+    Option.bind (Ui_state.active_instance_label ui) ~f:(fun label ->
+      field Instance ~priority:5 ~fit:Cut_right
+        (Span.of_text label ~style:Status ~special:Status_special))
+  in
   let position =
     if Option.is_some view_tab then None else
     let s =
@@ -85,7 +91,7 @@ let fields ui : Status_field.t list =
       [ message
       ; Option.map pending ~f:(fun field -> { field with priority = 0; side = Left })
       ]
-  else List.filter_opt [ mode; filename; dirty; message; pending; position ]
+  else List.filter_opt [ mode; filename; dirty; instance; message; pending; position ]
 ;;
 
 (* Fields that are shown cut must keep at least this many cells. *)

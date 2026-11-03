@@ -55,3 +55,23 @@ let%test_unit "selection scrolls into view and query editing is Unicode-aware" =
   let t = paste t "界é" |> fun t -> P.update t ~rows:6 Backspace in
   [%test_eq: string] (P.query t) "界"
 ;;
+
+let%test_unit "references heading and counts preserve selection query and navigation" =
+  let a = target "/alpha.ml" 0 0 and b = target "/beta.ml" 2 3 in
+  let t = P.create [a; b] in
+  [%test_eq: string] (P.render t ~width:80 ~rows:5).title "Choose destination (2/2)";
+  let t = P.update t ~rows:5 Next |> fun t -> P.with_title t "Find references" in
+  assert (L.equal_target (selected t) b);
+  let rendered = P.render t ~width:80 ~rows:5 in
+  [%test_eq: string] rendered.title "Find references (2/2)";
+  assert (String.is_substring (Option.value_exn rendered.footer).text ~substring:"2/2");
+  let t = paste t "beta" |> fun t -> P.with_title t "Find references" in
+  [%test_eq: string] (P.query t) "beta";
+  assert (L.equal_target (selected t) b);
+  [%test_eq: string] (P.render t ~width:80 ~rows:5).title "Find references (1/2)";
+  [%test_eq: string] (P.render (paste t "absent") ~width:80 ~rows:5).title "Find references (0/2)";
+  [%test_eq: string] (P.render (P.with_title (P.create []) "Find references") ~width:80 ~rows:5).title
+    "Find references (0/0)";
+  let t = P.with_title (P.create [b]) "Find references" in
+  assert (L.equal_target (selected (P.update t ~rows:2 Next)) b)
+;;
