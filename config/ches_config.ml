@@ -10,8 +10,22 @@ let min_prefix_chars = ref 1
 let prefer_local_snippets = ref true
 let line_numbers = ref false
 let theme = ref "vim-classic"
+let completion_colors = ref []
 
 module Completion = struct
+  let set_color ~role color =
+    if not (List.mem role
+      [ "background"; "selected_background"; "label"; "selected_label"
+      ; "source"; "selected_source"; "detail"; "selected_detail"
+      ; "match"; "selected_match"; "documentation" ]) then
+      invalid_arg ("unknown completion color role: " ^ role);
+    if String.length color <> 7 || color.[0] <> '#'
+       || not (String.for_all (function
+         | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true | _ -> false)
+         (String.sub color 1 6)) then
+      invalid_arg ("completion color must be #RRGGBB: " ^ color);
+    completion_colors := List.remove_assoc role !completion_colors
+      @ [role, String.lowercase_ascii color]
   let set_enabled value = enabled := value
   let set_ghost_preview value = ghost_preview := value
   let set_min_prefix_chars value =
@@ -82,7 +96,7 @@ let write_result path =
   let number n = line (string_of_int n) in
   let operations = List.rev !(Snippets.operations) in
   if List.length operations > 1000 then invalid_arg "snippets exceeds 1000 operations";
-  line "CHES_SETTINGS_3";
+  line "CHES_SETTINGS_4";
   List.iter (fun value -> line (string_of_bool value)) [!enabled; !ghost_preview];
   number !min_prefix_chars;
   List.iter (fun value -> line (string_of_bool value)) [!prefer_local_snippets; !line_numbers];
@@ -106,6 +120,10 @@ let write_result path =
        | None -> line "none"
        | Some value -> line "some"; hex value);
       hex declaration.body) operations;
+  if List.length !completion_colors > 11 then
+    invalid_arg "completion colors exceeds 11 entries";
+  number (List.length !completion_colors);
+  List.iter (fun (role, color) -> hex role; hex color) !completion_colors;
   let channel = open_out_bin path in
   Fun.protect ~finally:(fun () -> close_out channel) (fun () ->
     output_string channel (Buffer.contents buffer))

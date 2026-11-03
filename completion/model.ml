@@ -261,6 +261,7 @@ type plan =
   ; batches : Text_edit.t list list; final_cursor : int }
 
 let candidates t = t.items
+let prefix t = t.prefix
 let selected t = List.nth t.items t.selected_index
 let edits p = p.batches
 let cursor p = p.final_cursor

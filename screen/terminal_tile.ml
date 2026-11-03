@@ -120,16 +120,18 @@ let inspection_left t ~width =
 
 let id = Ches_tile.View_id.of_string "terminal"
 let spec = Ches_tile.Spec.result_picker id ~title:"Tile Terms"
-let default_size : Floating.Size.t = { width = 200; height = 60 }
+let default_size ~width ~height : Floating.Size.t =
+  { width = Int.max 20 (width * 4 / 5); height = Int.max 6 (height * 4 / 5) }
 
 let placement_with_preferred ~preferred ~width ~height =
+  let preferred = Option.value preferred ~default:(default_size ~width ~height) in
   Floating.layout ~bounds:{ Geometry.Rect.x = 0; y = 0; width; height }
     ~preferred ~minimum:{ width = 20; height = 6 }
     ~policy:{ Tile_shell.Policy.minor with min_content_height = 4 }
 ;;
 
 let placement ~width ~height =
-  placement_with_preferred ~preferred:default_size ~width ~height
+  placement_with_preferred ~preferred:None ~width ~height
 ;;
 
 let render ?(hotkey_hints = false) ?(number = 1) ?inspection snapshot ~failure ~width ~rows : Tile_shell.Content.t =

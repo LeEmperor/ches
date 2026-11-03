@@ -652,6 +652,7 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
           List.mapi rows ~f:(fun y row -> if y = anchor.y && cols > 0 then
             Span.overlay row ~x:anchor.x ~width:cols (Span.take spans ~n:cols) else row) in
       let candidates = Ui_state.completion_candidates ui in
+      let prefix = Ui_state.completion_prefix ui in
       let selected = Ui_state.completion_selected ui in
       let info = Ui_state.completion_info ui in
       (* Bound bytes before decoding server metadata, then let Span escape control
@@ -696,37 +697,59 @@ let prepare_document ?highlights ?allocation ?reserve_status_row ?floating ui ~w
       else
       let first = Int.max 0 (index - count + 1) in
       let visible = List.take (List.drop candidates first) count in
-      let labels = List.map visible ~f:(fun c ->
-        Span.of_text (bounded c.label) ~style:Status ~special:Status) in
+       let labels = List.map visible ~f:(fun c ->
+         let chosen = Option.exists selected ~f:(Ches_completion.Model.Candidate.equal c) in
+         let label = bounded c.label in
+         let glyphs = Cell_map.glyphs label in
+         let matches = not (String.is_empty prefix) && String.is_prefix label ~prefix
+           && Array.for_all glyphs ~f:(fun g ->
+             g.pos >= String.length prefix || Cell_map.Kind.equal g.kind Plain) in
+         (* Keep zero-width marks in the base cell's style, even when the typed
+            byte prefix ends between that base and its combining marks. Decode
+            the whole label so TAB columns and escaped metadata stay intact. *)
+         let preceding = ref None in
+         Array.to_list glyphs |> List.filter_map ~f:(fun g ->
+           let style = Style.completion ~selected:chosen
+               (if matches && g.pos < String.length prefix then Match else Label) in
+           if g.width = 0 then
+             Option.map !preceding ~f:(fun style -> Span.create style g.text ~width:0)
+           else (
+             preceding := if Cell_map.Kind.equal g.kind Plain then Some style else None;
+             Some (Span.create style g.text ~width:g.width))) |> Span.merge) in
       let label_width = List.fold labels ~init:0 ~f:(fun n label ->
         Int.max n (Span.total_width label)) in
       let menu = List.map2_exn visible labels ~f:(fun c label ->
         let chosen = Option.exists selected ~f:(Ches_completion.Model.Candidate.equal c) in
-        let style = if chosen then Style.Mode Insert else Style.Status in
+         let style part = Style.completion ~selected:chosen part in
         let provider = match c.source with
           | Buffer -> "buffer"
           | Snippet -> "snippet"
           | Lsp _ -> "LSP" in
         let detail = if chosen then Option.first_some
             (Option.bind info ~f:(fun info -> info.detail)) c.detail else c.detail in
-        [ Span.create style (if chosen then "> " else "  ") ~width:2 ]
-        @ List.map label ~f:(fun span -> { span with Span.style = style })
-        @ [ Span.blank style (label_width - Span.total_width label + 2) ]
-        @ Span.of_text ("[" ^ provider ^ "]" ^
-            Option.value_map detail ~default:"" ~f:(fun d -> "  " ^ bounded d))
-            ~style ~special:style) in
-      let menu = menu @ List.map (List.take documentation doc_count) ~f:(fun text ->
-        Span.of_text ("  " ^ text) ~style:Hint ~special:Hint) in
-      let cols = Int.min 60 (Int.min viewport.width
-        (Int.max 16 (1 + List.fold menu ~init:0 ~f:(fun n row -> Int.max n (Span.total_width row))))) in
+         [ Span.create (style (if chosen then Match else Padding))
+             (if chosen then ">" else " ") ~width:1
+         ; Span.blank (style Padding) 1 ]
+         @ label
+         @ [ Span.blank (style Padding) (label_width - Span.total_width label + 2) ]
+         @ Span.of_text ("[" ^ provider ^ "]") ~style:(style Source) ~special:(style Source)
+         @ Option.value_map detail ~default:[] ~f:(fun d ->
+             [ Span.blank (style Padding) 2 ]
+             @ Span.of_text (bounded d) ~style:(style Detail) ~special:(style Detail))
+         |> fun spans -> spans, style Padding) in
+       let menu = menu @ List.map (List.take documentation doc_count) ~f:(fun text ->
+         [ Span.blank (Style.completion Padding) 2 ]
+         @ Span.of_text text ~style:(Style.completion Documentation)
+             ~special:(Style.completion Documentation), Style.completion Padding) in
+       let cols = Int.min 60 (Int.min viewport.width
+         (Int.max 16 (1 + List.fold menu ~init:0 ~f:(fun n (row, _) -> Int.max n (Span.total_width row))))) in
       let x = Int.max viewport.x (Int.min anchor.x (viewport.x + viewport.width - cols)) in
       let y = if down then anchor.y + 1 else anchor.y - List.length menu in
       List.mapi rows ~f:(fun line row ->
         match List.nth menu (line - y) with
         | None -> row
-        | Some content ->
-          let content = Span.take content ~n:(Int.max 0 (cols - 1)) in
-          let style = match content with s :: _ -> s.Span.style | [] -> Status in
+         | Some (content, style) ->
+           let content = Span.take content ~n:(Int.max 0 (cols - 1)) in
           Span.overlay row ~x ~width:cols
             (content @ [ Span.blank style (cols - Span.total_width content) ]))
     | _ -> rows

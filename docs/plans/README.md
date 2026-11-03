@@ -19,6 +19,7 @@ history of decisions and verification; for current controls, use the
 - [LSP hover, symbol navigation, and jump history](lsp_navigation.md)
 - [Slang instance context and Find references](instances_and_references.md)
 - [Signature help, OCaml companions, and config caching](signatures_companions_cache.md)
+- [Completion-specific styling](completion_styling.md)
 - [Floating tiles](floating_tiles.md)
 - [VCS workspace](vcs_workspace.md)
 - [Performance tests](performance_tests.md)

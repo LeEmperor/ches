@@ -832,6 +832,13 @@ filename extensions.
 
 ### Code completion
 
+The menu colors labels, source tags, type/detail strings and matched prefixes
+separately. Selection uses a dedicated subdued background across the entire row,
+and documentation uses the menu background. Detail text receives a semantic type
+color rather than per-token syntax highlighting. Override individual colors with
+`Completion.set_color ~role ...` in `config.ml`; see
+[completion menu colors](configuration.md#completion-menu-colors).
+
 Startup preferences can be set in [OCaml configuration](configuration.md), including
 automatic completion, ghost preview, trigger length, and local-snippet priority.
 Palette changes last only for the current session; Reload configuration restores

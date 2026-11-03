@@ -72,7 +72,7 @@ let%test_unit "configuration changes, disables, removals and invalid whole snaps
       signature_help_enabled = false;
       completion_ghost_preview = true; completion_min_prefix_chars = 3;
       completion_prefer_local_snippets = false; line_numbers = true;
-      theme = Ches_theme.Theme.id (List.last_exn Ches_theme.Theme.all);
+      theme = Ches_theme.Theme.id (List.last_exn Ches_theme.Theme.all); completion_colors = [];
       snippets = [declaration "would replace $0"; declaration ~id:"bad.entry" "${UNKNOWN}"] };
     Ok { Settings.default with theme = "missing"; snippets = [] }]
     ~f:(fun result ->

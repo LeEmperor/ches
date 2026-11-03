@@ -10,6 +10,7 @@ module Settings : sig
     ; completion_ghost_preview : bool
     ; completion_min_prefix_chars : int
     ; completion_prefer_local_snippets : bool
+    ; completion_colors : (string * string) list
     ; line_numbers : bool
     ; theme : string
     ; snippets : Ches_completion.User_snippets.operation list
@@ -24,7 +25,7 @@ module Loader : sig
 end
 ```
 
-Defaults, in record-field order: `true`, `true`, `false`, `1`, `true`, `false`,
+Defaults, in record-field order: `true`, `true`, `false`, `1`, `true`, `[]`, `false`,
 `"vim-classic"`, `[]`. Validation requires a positive minimum prefix and a theme that
 is nonempty after trimming whitespace. The screen must check theme existence
 before applying the snapshot. It validates every snippet operation against the
@@ -42,6 +43,7 @@ let () =
   Completion.set_ghost_preview false;
   Completion.set_min_prefix_chars 1;
   Completion.set_prefer_local_snippets true;
+  Completion.set_color ~role:"detail" "#b8d7a3";
   Signature_help.set_enabled true;
   View.set_line_numbers false;
   Theme.set "vim-classic"
@@ -55,6 +57,7 @@ module Completion : sig
   val set_ghost_preview : bool -> unit
   val set_min_prefix_chars : int -> unit
   val set_prefer_local_snippets : bool -> unit
+  val set_color : role:string -> string -> unit
 end
 module View : sig val set_line_numbers : bool -> unit end
 module Signature_help : sig val set_enabled : bool -> unit end
@@ -64,6 +67,20 @@ module Snippets : sig
   val disable : id:string -> unit
   val set_collection_enabled : collection:string -> bool -> unit
 end
+```
+
+Completion color roles are exactly `background`, `selected_background`, `label`,
+`selected_label`, `source`, `selected_source`, `detail`, `selected_detail`, `match`,
+`selected_match`, and `documentation`. Values must be exactly `#RRGGBB`, with
+case-insensitive ASCII hexadecimal digits, and are stored lowercase. Repeated
+roles are last-wins; each fresh helper starts with an empty override list. Omitted
+roles follow the theme. The setter raises `Invalid_argument` for an invalid role
+or value before changing its state. The host validates every snapshot entry before
+normalizing duplicates, so even an invalid value later overwritten rejects the
+complete snapshot. Qualified calls work without opening the API module:
+
+```ocaml
+let () = Ches_config.Completion.set_color ~role:"selected_background" "#283447"
 ```
 
 Snippet declarations are ordered: the last operation for an ID wins, including
@@ -116,7 +133,7 @@ catalog. Legacy `parse : string -> t Core.Or_error.t` remains available and stil
 rejects duplicate JSON user IDs. Apply OCaml operations to the chosen legacy/base
 catalog to preserve legacy entries and give OCaml declarations precedence.
 
-Invalid prefix/theme setters raise `Invalid_argument`. Snapshots are validated
+Invalid prefix/theme/color setters raise `Invalid_argument`. Snapshots are validated
 again by the host. Other definitions in the embedded source are implementation
 details, not supported user API.
 
@@ -136,15 +153,21 @@ details, not supported user API.
   and line numbers. Argument vectors are passed directly, without a shell.
 - Source and result reads are each capped at **1 MiB**; nonregular files are
   rejected. The helper bounds its entire encoded result to 1 MiB before writing,
-   and accepts at most **1000 snippet operations**. `CHES_SETTINGS_3` uses newline
+   and accepts at most **1000 snippet operations**. `CHES_SETTINGS_4` uses newline
   framing: magic; enabled; ghost; minimum prefix; prefer local; line numbers;
   hex theme; signature-help enabled; decimal operation count; then ordered operations. A `disable` tag
   is followed by hex ID. An `add` tag is followed by hex ID, hex prefix, decimal
    scope count, that many hex scopes, optional collection and description (each
    encoded as `none` or `some` followed by its hex value), and hex body. A
    `collection` operation tag is followed by hex collection name and enabled
-   boolean. Version-2 decoding remains supported: adds have no collection field,
-    collection operations are unavailable, and signature help defaults to true.
+    boolean. After the operations, version 4 appends a canonical decimal color
+    count (maximum **11**) followed by that many hex role / hex color pairs.
+    Unknown roles and malformed RGB values are rejected; duplicate roles normalize
+    last-wins only after every entry is validated. Version-3 decoding retains its
+    signature-help and collection fields and defaults colors to `[]`.
+    Version-2 decoding remains supported: adds have no collection field,
+     collection operations are unavailable, signature help defaults to true, and
+     colors default to `[]`.
     Every field ends in a newline; strings use lowercase
   hex, booleans are `true`/`false`, counts are canonical nonnegative decimals.
   The decoder rejects unsupported versions, malformed encodings/tags/counts,

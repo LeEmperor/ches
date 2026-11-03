@@ -130,7 +130,7 @@ type terminal_session =
   ; snapshot : Ches_terminal.Model.snapshot option
   ; failure : string option
   ; size : (int * int) option
-  ; preferred : Floating.Size.t
+  ; preferred : Floating.Size.t option
   ; pending_j : (Time_ns.t * int) option
   ; inspection : Terminal_tile.inspection option
   ; cwd : string option
@@ -138,7 +138,7 @@ type terminal_session =
 
 let empty_terminal_session =
   { started = false; generation = 0; snapshot = None; failure = None
-  ; size = None; preferred = Terminal_tile.default_size
+  ; size = None; preferred = None
   ; pending_j = None; inspection = None; cwd = None }
 ;;
 
@@ -193,6 +193,7 @@ type t =
   ; completion_min_prefix_chars : int
   ; completion_prefer_local_snippets : bool
   ; configuration_theme_override : Ches_theme.Theme.t option
+  ; completion_colors : (string * string) list
   ; config_generation : int
   ; config_reload_requests : int list
   ; config_loading : bool
@@ -225,7 +226,7 @@ type t =
   ; terminal_snapshot : Ches_terminal.Model.snapshot option
   ; terminal_failure : string option
   ; terminal_size : (int * int) option
-  ; terminal_preferred : Floating.Size.t
+  ; terminal_preferred : Floating.Size.t option
   ; terminal_pending_j : (Time_ns.t * int) option
   ; toggle_pending : toggle_pending option
   ; terminal_requests : (int * Ches_terminal.Model.request) list (** Newest first, stamped at enqueue. *)
@@ -366,6 +367,7 @@ let create
   ; completion_min_prefix_chars = 1
   ; completion_prefer_local_snippets = true
   ; configuration_theme_override = theme
+  ; completion_colors = []
   ; config_generation = 0
   ; config_reload_requests = []
   ; config_loading = false
@@ -422,7 +424,7 @@ let create
   ; terminal_snapshot = None
   ; terminal_failure = None
   ; terminal_size = None
-  ; terminal_preferred = Terminal_tile.default_size
+  ; terminal_preferred = None
   ; terminal_pending_j = None
   ; toggle_pending = None
   ; terminal_requests = []
@@ -518,7 +520,9 @@ let take_terminal_requests t =
   let t, requests = take_terminal_session_requests t in
   t, List.map requests ~f:snd
 ;;
-let theme t = Option.value_map t.theme_picker ~f:Theme_picker_tile.preview ~default:t.theme
+let theme t =
+  let base = Option.value_map t.theme_picker ~f:Theme_picker_tile.preview ~default:t.theme in
+  Ches_theme.Theme.with_completion_colors base t.completion_colors |> Or_error.ok_exn
 let theme_picker t = t.theme_picker
 let snippet_picker t = t.snippet_picker
 let hover t = t.hover
@@ -695,6 +699,11 @@ let completion_candidates t =
     if completion_current t c then Completion.candidates c.model else [])
 ;;
 
+let completion_prefix t =
+  Option.value_map t.completion ~default:"" ~f:(fun c ->
+    if completion_current t c then Completion.prefix c.model else "")
+;;
+
 let completion_selected t =
   Option.bind t.completion ~f:(fun c ->
     if completion_current t c then Completion.selected c.model else None)
@@ -756,6 +765,9 @@ let apply_configuration ?theme_override t (settings : Ches_config_runtime.Settin
       | Ok user_snippets ->
       let configuration_theme_override = Option.first_some theme_override t.configuration_theme_override in
       let theme = Option.value configuration_theme_override ~default:configured_theme in
+      match Ches_theme.Theme.with_completion_colors theme settings.completion_colors with
+      | Error error -> Error (Error.to_string_hum error)
+      | Ok _ ->
       let line_numbers = if settings.line_numbers then Line_numbers.Absolute else Off in
       let t = dismiss_signature (dismiss_snippet_picker (dismiss_completion t)) in
       let host = if Option.is_some t.theme_picker then
@@ -768,6 +780,7 @@ let apply_configuration ?theme_override t (settings : Ches_config_runtime.Settin
         ; completion_prefer_local_snippets = settings.completion_prefer_local_snippets
         ; user_snippets; configuration_snippets = settings.snippets
         ; configuration_theme_override; theme; theme_picker = None; host
+        ; completion_colors = settings.completion_colors
         ; prefs = { t.prefs with line_numbers }
         ; bare_prefs = { line_numbers } }
 ;;
@@ -1756,15 +1769,15 @@ let flush_terminal_j t =
       ; terminal_requests = if live then (t.terminal_number, Key key) :: t.terminal_requests else t.terminal_requests }
 ;;
 
-let adjust_terminal_size t steps =
-  let p = t.terminal_preferred in
+let adjust_terminal_size t steps ~width ~height =
+  let p = Option.value t.terminal_preferred ~default:(Terminal_tile.default_size ~width ~height) in
   { t with terminal_preferred =
-      { width = Int.clamp_exn (p.width + (10 * steps)) ~min:20 ~max:1000
+      Some { width = Int.clamp_exn (p.width + (10 * steps)) ~min:20 ~max:1000
       ; height = Int.clamp_exn (p.height + (2 * steps)) ~min:6 ~max:500 } }
 ;;
 
 let reset_terminal_size t =
-  { t with terminal_preferred = Terminal_tile.default_size }
+  { t with terminal_preferred = None }
 ;;
 
 (* Close a view's capture-local state (details) when it stops being focused. *)
@@ -2010,9 +2023,9 @@ let terminal_key_raw t ~width ~height (key : Ches_terminal.Model.key) =
             else select_terminal { t with terminal_prefix = [] } count ~width ~height
           else if sequence " tr" then { (reset_terminal_size t) with terminal_prefix = [] }
           else if sequence "+" || sequence "=" || sequence " t+" then
-            { (adjust_terminal_size t count) with terminal_prefix = [] }
+            { (adjust_terminal_size t count ~width ~height) with terminal_prefix = [] }
           else if sequence "-" || sequence " t-" then
-            { (adjust_terminal_size t (-count)) with terminal_prefix = [] }
+            { (adjust_terminal_size t (-count) ~width ~height) with terminal_prefix = [] }
           else if sequence " " || sequence " t" then { t with terminal_prefix = keys }
           else
           if Key.equal key (Key.char ' ') then { t with terminal_prefix = [ key ] }
@@ -2660,7 +2673,9 @@ let view_feedback t ~before ~width ~height (view : View_command.t) : string opti
   | Inspect_problems | Show_language_servers | Scroll _ | Next_tab | Previous_tab | Recreate_missing_file -> None
   | Toggle_terminal | Select_terminal _ -> Host.notice t.host
   | Adjust_terminal_size _ | Reset_terminal_size ->
-    Some (sprintf "Tile Term size %dx%d (requested)" t.terminal_preferred.width t.terminal_preferred.height)
+    Some (match t.terminal_preferred with
+      | None -> "Tile Term size 80% of window"
+      | Some p -> sprintf "Tile Term size %dx%d (requested)" p.width p.height)
      | Open_theme_picker | Open_palette | Open_line_picker | Open_file_picker | Open_content_picker -> Host.notice t.host
   | Toggle_problems_filter ->
     Some (if problems_current_document t then "Problems: current document" else "Problems: workspace")
@@ -3946,7 +3961,7 @@ let apply_view_command t ~width ~height (view : View_command.t) =
   | Reload_configuration -> reload_configuration t
   | Toggle_terminal -> toggle_terminal t ~width ~height
   | Select_terminal number -> select_terminal t number ~width ~height
-  | Adjust_terminal_size steps -> adjust_terminal_size t steps
+  | Adjust_terminal_size steps -> adjust_terminal_size t steps ~width ~height
   | Reset_terminal_size -> reset_terminal_size t
   | Toggle_bare ->
     if bare t then { t with presentation = t.bare_return; rows = None }

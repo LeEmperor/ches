@@ -15,7 +15,7 @@ let configured = { Settings.completion_enabled = false
   ; signature_help_enabled = false
   ; completion_ghost_preview = true; completion_min_prefix_chars = 3
   ; completion_prefer_local_snippets = false; line_numbers = true
-  ; theme = Theme.id (List.last_exn Theme.all); snippets = [] }
+  ; theme = Theme.id (List.last_exn Theme.all); snippets = []; completion_colors = [] }
 
 let%test_unit "startup application is explicit; session toggles and removed fields reset on reload" =
   let t = Helpers.ui "unsaved" in
@@ -140,6 +140,70 @@ let%test_unit "explicit startup theme and apply override persist across reloads"
   let t = apply ~theme_override:Theme.default t configured in
   let t = reload t |> fun t -> Ui_state.receive_configuration t ~generation:2 (Ok configured) in
   assert (Theme.equal (Ui_state.theme t) Theme.default)
+;;
+
+let%test_unit "completion colors follow preview, acceptance, cancellation and CLI themes without registry mutation" =
+  let colors = ["selected_detail", "#123456"; "background", "#234567"] in
+  let settings = { Settings.default with completion_colors = colors } in
+  let base = List.nth_exn Theme.all 1 in
+  let initial = Ui_state.create ~theme:base (Ui_state.controller (Helpers.ui "keep")) in
+  let initial = apply initial settings in
+  let expected base = Theme.with_completion_colors base colors |> Or_error.ok_exn in
+  assert (Theme.equal (Ui_state.theme initial) (expected base));
+  let preview = press initial " vT<Tab>" in
+  let preview_base = Theme_picker_tile.preview (Option.value_exn (Ui_state.theme_picker preview)) in
+  assert (not (Theme.equal base preview_base));
+  assert (Theme.equal (Ui_state.theme preview) (expected preview_base));
+  assert (Theme.equal (Ui_state.theme (press preview "<Esc>")) (expected base));
+  let accepted = press preview "<CR>" in
+  assert (Theme.equal (Ui_state.theme accepted) (expected preview_base));
+  let removed = apply accepted Settings.default in
+  (* The explicit CLI choice remains the base on configuration reload. *)
+  assert (Theme.equal (Ui_state.theme removed) base);
+  let fresh = apply (Helpers.ui "keep") settings in
+  let accepted = press fresh " vT<Tab><CR>" in
+  let id = Theme.id (Ui_state.theme accepted) in
+  let accepted_base = Theme.find id |> Option.value_exn in
+  assert (Theme.equal (Ui_state.theme accepted) (expected accepted_base));
+  let reset = apply accepted { Settings.default with theme = id } in
+  assert (Theme.equal (Ui_state.theme reset) accepted_base);
+  assert (Theme.equal (Theme.find (Theme.id base) |> Option.value_exn) base)
+;;
+
+let%test_unit "invalid completion colors preserve live menu, effective theme and all settings on reload" =
+  let settings = { Settings.default with completion_colors = ["detail", "#123456"] } in
+  let t = apply (Helpers.ui "\nfoobar") settings |> reload |> fun t -> press t "if" in
+  let candidates = Ui_state.completion_candidates t in
+  assert (not (List.is_empty candidates));
+  List.iter [["detail", "red"]; ["Detail", "#123456"];
+    ["detail", "#123456"; "selected_detail", "#bad"]] ~f:(fun completion_colors ->
+    let invalid = { configured with completion_colors } in
+    assert (Result.is_error (Ui_state.apply_configuration t invalid));
+    let failed = Ui_state.receive_configuration t ~generation:1 (Ok invalid) in
+    assert (Theme.equal (Ui_state.theme failed) (Ui_state.theme t));
+    assert (Ui_state.completion_enabled failed);
+    assert (List.equal Ches_completion.Model.Candidate.equal candidates
+      (Ui_state.completion_candidates failed));
+    assert (String.equal (text failed) (text t)))
+;;
+
+let%test_unit "completion override changes invalidate colored frame cache even with the same theme ID" =
+  let cache = Frame.Cache.create () in
+  let initial = Helpers.ui "keep" in
+  let draws = ref 0 in
+  let draw_base _ = incr draws in
+  let get t = ignore (Frame.Cache.get cache t ~width:80 ~height:12 ~draw_base : Frame.t * unit) in
+  get initial;
+  get initial;
+  assert (!draws = 1);
+  let colored = apply initial { Settings.default with completion_colors = ["label", "#123456"] } in
+  assert (String.equal (Theme.id (Ui_state.theme colored)) (Theme.id (Ui_state.theme initial)));
+  assert ([%equal: int * int * int] (Theme.color (Ui_state.theme colored) Completion_label) (18, 52, 86));
+  get colored;
+  get colored;
+  assert (!draws = 2);
+  get (apply colored Settings.default);
+  assert (!draws = 3)
 ;;
 
 let%test_unit "minimum prefix counts Unicode characters; manual and punctuation bypass; reload restores default" =

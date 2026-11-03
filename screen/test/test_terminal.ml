@@ -65,6 +65,24 @@ let%test_unit "deferred j flushes before Ctrl-Space, paste, resize and hidden li
   requests_equal (snd (take t)) []
 ;;
 
+let%test_unit "default terminal tracks window size and reset restores responsive sizing" =
+  let run t ~width ~height keys = Helpers.run ~width ~height t (Helpers.keys keys) in
+  let size t ~width ~height =
+    let l = U.terminal_layout t ~width ~height |> Option.value_exn in
+    l.outer.width, l.outer.height in
+  let t = run (Helpers.ui "x") ~width:200 ~height:100 " /" in
+  [%test_eq: int * int] (size t ~width:200 ~height:100) (160, 80);
+  let t = Helpers.run ~width:300 ~height:150 t [ Resize ] in
+  [%test_eq: int * int] (size t ~width:300 ~height:150) (240, 120);
+  let t = Helpers.run ~width:300 ~height:150 t [ ctrl ' ' ] in
+  let t = run t ~width:300 ~height:150 "+" in
+  [%test_eq: int * int] (size t ~width:300 ~height:150) (250, 122);
+  let t = Helpers.run ~width:400 ~height:200 t [ Resize ] in
+  [%test_eq: int * int] (size t ~width:400 ~height:200) (250, 122);
+  let t = run t ~width:400 ~height:200 " tr" in
+  [%test_eq: int * int] (size t ~width:400 ~height:200) (320, 160)
+;;
+
 let%test_unit "preferred terminal size survives clamping hide and hidden adjustments" =
   let big t inputs = Helpers.run ~width:1200 ~height:600 t inputs in
   let open_big t = big t (Helpers.keys " /") in
@@ -72,26 +90,26 @@ let%test_unit "preferred terminal size survives clamping hide and hidden adjustm
     let l = U.terminal_layout t ~width:1200 ~height:600 |> Option.value_exn in
     l.outer.width, l.outer.height in
   let t = open_big (Helpers.ui "x") |> take |> fst in
-  [%test_eq: int * int] (size t) (200, 60);
+  [%test_eq: int * int] (size t) (960, 480);
   let t = big t ([ ctrl ' ' ] @ Helpers.keys "3+") in
-  [%test_eq: int * int] (size t) (230, 66);
+  [%test_eq: int * int] (size t) (990, 486);
   let t, requests = take t in
   let l = U.terminal_layout t ~width:1200 ~height:600 |> Option.value_exn in
   requests_equal requests [ Resize { rows = l.content.height; cols = l.content.width } ];
   let t = Helpers.run ~width:40 ~height:12 t [ Resize ] in
   let t = big t [ Resize ] in
-  [%test_eq: int * int] (size t) (230, 66);
+  [%test_eq: int * int] (size t) (990, 486);
   let t = big t (Helpers.keys " /") |> take |> fst in
   let t = big t (Helpers.keys "2 t-") in
   requests_equal (snd (take t)) [];
   let t = open_big t in
-  [%test_eq: int * int] (size t) (210, 62);
+  [%test_eq: int * int] (size t) (970, 482);
   let t = big t ([ ctrl ' ' ] @ Helpers.keys "999+") in
   [%test_eq: int * int] (size t) (1000, 500);
   let t = big t (Helpers.keys "999-") in
   [%test_eq: int * int] (size t) (20, 6);
   let t = big t (Helpers.keys " tr") in
-  [%test_eq: int * int] (size t) (200, 60)
+  [%test_eq: int * int] (size t) (960, 480)
 ;;
 let snapshot ?exited () : M.snapshot =
   { rows = [| [| { M.text = "界"; width = 2; style }
@@ -192,19 +210,19 @@ let%test_unit "size changes preserve frozen inspection and live snapshot; reset 
 ;;
 
 let%test_unit "palette sizing while hidden retains preferred size without starting a shell" =
-  let big t inputs = Helpers.run ~width:240 ~height:80 t inputs in
+  let big t inputs = Helpers.run ~width:600 ~height:240 t inputs in
   let t = big (Helpers.ui "x") (Helpers.keys " ccgrow tile term<CR>") in
   assert (not (U.terminal_visible t));
   requests_equal (snd (take t)) [];
   let t = big t (Helpers.keys " /") in
-  let l = U.terminal_layout t ~width:240 ~height:80 |> Option.value_exn in
-  [%test_eq: int * int] (l.outer.width, l.outer.height) (210, 62);
+  let l = U.terminal_layout t ~width:600 ~height:240 |> Option.value_exn in
+  [%test_eq: int * int] (l.outer.width, l.outer.height) (490, 194);
   let t = big t ([ ctrl ' ' ] @ Helpers.keys " /") |> take |> fst in
   let t = big t (Helpers.keys " ccshrink tile term<CR> ccreset tile term size<CR>") in
   requests_equal (snd (take t)) [];
   let t = big t (Helpers.keys " /") in
-  let l = U.terminal_layout t ~width:240 ~height:80 |> Option.value_exn in
-  [%test_eq: int * int] (l.outer.width, l.outer.height) (200, 60)
+  let l = U.terminal_layout t ~width:600 ~height:240 |> Option.value_exn in
+  [%test_eq: int * int] (l.outer.width, l.outer.height) (480, 192)
 ;;
 
 let%test_unit "lazy session; exact content geometry; hide preserves shell and snapshot" =
@@ -782,25 +800,25 @@ let%test_unit "requests retain enqueue owner through switches and paste lifecycl
 ;;
 
 let%test_unit "numbered sessions keep independent preferred sizes and hidden sizing targets selected ID" =
-  let big t s = Helpers.run ~width:240 ~height:80 t (Helpers.keys s) in
-  let normal t = Helpers.run ~width:240 ~height:80 t [ctrl ' '] in
+  let big t s = Helpers.run ~width:600 ~height:240 t (Helpers.keys s) in
+  let normal t = Helpers.run ~width:600 ~height:240 t [ctrl ' '] in
   let size t =
-    let l = U.terminal_layout t ~width:240 ~height:80 |> Option.value_exn in
+    let l = U.terminal_layout t ~width:600 ~height:240 |> Option.value_exn in
     l.outer.width, l.outer.height in
   let t = big (Helpers.ui "document") "3 /" |> routed |> fst in
   let t = big (normal t) "3+" in
-  [%test_eq: int * int] (size t) (230, 66);
+  [%test_eq: int * int] (size t) (510, 198);
   let t = big t "v4 /" in
-  [%test_eq: int * int] (size t) (200, 60);
+  [%test_eq: int * int] (size t) (480, 192);
   assert (Option.is_none (U.terminal_inspection t));
   let t = big (normal t) " /2 t-" |> routed |> fst in
   assert (not (U.terminal_visible t));
   let t = big t " /" in
-  [%test_eq: int * int] (size t) (180, 56);
+  [%test_eq: int * int] (size t) (460, 188);
   let t = big (normal t) "3 /" in
-  [%test_eq: int * int] (size t) (230, 66);
+  [%test_eq: int * int] (size t) (510, 198);
   let t = big (normal t) " tr4 /" in
-  [%test_eq: int * int] (size t) (180, 56)
+  [%test_eq: int * int] (size t) (460, 188)
 ;;
 
 let%test_unit "toggle count scales to selector, explicit selectors never repeat" =

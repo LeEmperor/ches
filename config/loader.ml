@@ -65,6 +65,7 @@ let decode text =
   let version = match next () with
     | "CHES_SETTINGS_2" -> 2
     | "CHES_SETTINGS_3" -> 3
+    | "CHES_SETTINGS_4" -> 4
     | _ -> failwith "malformed or unsupported settings result" in
   let completion_enabled = boolean () in
   let completion_ghost_preview = boolean () in
@@ -107,12 +108,19 @@ let decode text =
       let body = hex () in
       Add { id; prefix; scopes; collection; description; body }
     | _ -> failwith "invalid snippet operation in settings result") in
+  let completion_colors = if version < 4 then [] else
+    let count = number "completion color count (maximum 11)" ~max:11 in
+    read_list count (fun () ->
+      let role = hex () in
+      let color = hex () in
+      role, color)
+  in
   (match !lines with
    | [ "" ] -> ()
    | _ -> failwith "malformed settings result framing");
   Settings.validate
     { completion_enabled; signature_help_enabled; completion_ghost_preview; completion_min_prefix_chars
-    ; completion_prefer_local_snippets; line_numbers; theme; snippets }
+    ; completion_prefer_local_snippets; completion_colors; line_numbers; theme; snippets }
   |> Or_error.ok_exn
 ;;
 

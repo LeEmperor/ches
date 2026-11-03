@@ -3,6 +3,118 @@ open Ches_theme
 
 let channels (r, g, b) = [ r; g; b ]
 
+let completion_roles : (string * Theme.Role.t) list =
+  [ "background", Completion_background
+  ; "selected_background", Completion_selected_background
+  ; "label", Completion_label; "selected_label", Completion_selected_label
+  ; "source", Completion_source; "selected_source", Completion_selected_source
+  ; "detail", Completion_detail; "selected_detail", Completion_selected_detail
+  ; "match", Completion_match; "selected_match", Completion_selected_match
+  ; "documentation", Completion_documentation ]
+;;
+
+let luminance (r, g, b) =
+  let linear n =
+    let c = Float.of_int n /. 255. in
+    if Float.(c <= 0.04045) then c /. 12.92
+    else ((c +. 0.055) /. 1.055) ** 2.4 in
+  (0.2126 *. linear r) +. (0.7152 *. linear g) +. (0.0722 *. linear b)
+;;
+
+let contrast a b =
+  let a = luminance a and b = luminance b in
+  (Float.max a b +. 0.05) /. (Float.min a b +. 0.05)
+;;
+
+let check_completion_contrast theme =
+  let check foreground background target =
+    let ratio = contrast (Theme.color theme foreground) (Theme.color theme background) in
+    if Float.(ratio < target) then
+      raise_s [%message "completion contrast too low" (Theme.id theme : string)
+        (foreground : Theme.Role.t) (background : Theme.Role.t) (ratio : float)] in
+  List.iter
+    [ Theme.Role.Completion_label, Theme.Role.Completion_background, 4.5
+    ; Completion_selected_label, Completion_selected_background, 4.5
+    ; Completion_source, Completion_background, 3.
+    ; Completion_selected_source, Completion_selected_background, 3.
+    ; Completion_detail, Completion_background, 4.5
+    ; Completion_selected_detail, Completion_selected_background, 4.5
+    ; Completion_match, Completion_background, 4.5
+    ; Completion_selected_match, Completion_selected_background, 4.5
+    ; Completion_documentation, Completion_background, 4.5 ]
+    ~f:(fun (fg, bg, target) -> check fg bg target)
+;;
+
+let%test_unit "completion defaults stay readable and selection stays subdued in all palettes" =
+  List.iter Theme.all ~f:(fun theme ->
+    check_completion_contrast theme;
+    let bg = Theme.color theme Completion_background in
+    let selected = Theme.color theme Completion_selected_background in
+    assert (not (Poly.equal bg selected));
+    assert (not (Poly.equal selected (Theme.color theme Insert_accent)));
+    assert (Float.(contrast bg selected < 1.7));
+    assert (Float.(contrast bg selected < contrast bg (Theme.color theme Insert_accent))));
+  let vim = Option.value_exn (Theme.find "vim-classic") in
+  List.iter
+    [ [ Theme.Role.Completion_label; Completion_source; Completion_detail ]
+    ; [ Completion_selected_label; Completion_selected_source; Completion_selected_detail ] ]
+    ~f:(fun roles ->
+      assert (not (List.contains_dup (List.map roles ~f:(Theme.color vim)) ~compare:Poly.compare)))
+;;
+
+let%test_unit "custom Base16 palettes also receive readable completion roles" =
+  List.iter
+    [ Theme.Kind.Dark, (30, 30, 30), (128, 128, 128)
+    ; Light, (220, 220, 220), (128, 128, 128)
+    ; Dark, (110, 110, 110), (255, 255, 255)
+    ; Light, (125, 125, 125), (0, 0, 0) ]
+    ~f:(fun (kind, ground, foreground) ->
+      let palette = Array.create ~len:16 ground in
+      palette.(5) <- foreground;
+      palette.(10) <- (110, 120, 100);
+      let theme = Theme.of_base16 ~id:"custom" ~title:"Custom" ~kind ~palette in
+      List.iter Theme.Role.all ~f:(fun role -> ignore (Theme.color theme role : Theme.rgb));
+      check_completion_contrast theme;
+      assert (Poly.equal (Theme.color theme Syntax_type) palette.(10)))
+;;
+
+let%test_unit "completion overrides are exact, independent, last-wins and immutable" =
+  assert (List.equal String.equal Theme.completion_color_roles (List.map completion_roles ~f:fst));
+  List.iter Theme.all ~f:(fun original ->
+    let overrides = List.mapi completion_roles ~f:(fun i (name, _) ->
+      name, sprintf "#%02x%02x%02x" (i + 1) (i + 20) (i + 40)) in
+    let changed = Or_error.ok_exn (Theme.with_completion_colors original overrides) in
+    assert (String.equal (Theme.id original) (Theme.id changed));
+    assert (String.equal (Theme.title original) (Theme.title changed));
+    assert (Theme.Kind.equal (Theme.kind original) (Theme.kind changed));
+    List.iteri completion_roles ~f:(fun i (_, role) ->
+      assert (Poly.equal (Theme.color changed role) (i + 1, i + 20, i + 40)));
+    List.iter Theme.Role.all ~f:(fun role ->
+      if not (List.exists completion_roles ~f:(fun (_, r) -> Theme.Role.equal r role)) then
+        assert (Poly.equal (Theme.color changed role) (Theme.color original role)));
+    assert (Theme.equal original (Option.value_exn (Theme.find (Theme.id original)))));
+  let original = Theme.default in
+  assert (Theme.equal original (Or_error.ok_exn (Theme.with_completion_colors original [])));
+  let changed = Or_error.ok_exn (Theme.with_completion_colors original
+    [ "selected_label", "#abcdef"; "selected_background", "#123456"
+    ; "selected_label", "#AbCdEf"; "selected_label", "#FEDCBA" ]) in
+  assert (Poly.equal (Theme.color changed Completion_selected_label) (254, 220, 186));
+  assert (Poly.equal (Theme.color changed Completion_selected_background) (18, 52, 86));
+  assert (Poly.equal (Theme.color changed Completion_label) (Theme.color original Completion_label))
+;;
+
+let%test_unit "invalid completion role or non-strict RGB rejects the entire list" =
+  List.iter
+    [ "unknown", "#123456"; "Label", "#123456"; " label", "#123456"
+    ; "label", "red"; "label", "123456"; "label", "#123"
+    ; "label", "#1234567"; "label", "#12gg34"; "label", " #123456"
+    ; "label", "#123456 "; "label", ""; "label", "#12_456" ]
+    ~f:(fun invalid ->
+      assert (Or_error.is_error (Theme.with_completion_colors Theme.default
+        [ "label", "#123456"; invalid ])));
+  assert (Theme.equal Theme.default (Option.value_exn (Theme.find "vim-classic")))
+;;
+
 let%test_unit "registry is total, valid, distinct, and normalized" =
   assert (List.length Theme.all = 52);
   assert (String.equal (Theme.id Theme.default) "vim-classic");

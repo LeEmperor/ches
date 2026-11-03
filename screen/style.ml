@@ -12,6 +12,13 @@ module Overlay = struct
   [@@deriving sexp_of, equal, enumerate]
 end
 
+module Completion = struct
+  type part = Label | Source | Detail | Match | Documentation | Padding
+  [@@deriving sexp_of, equal, enumerate]
+
+  type t = { part : part; selected : bool } [@@deriving sexp_of, equal]
+end
+
 module Document = struct
   type t =
     { syntax : Syntax.t
@@ -30,6 +37,7 @@ type t =
   | Terminal of Ches_terminal.Model.style
   | Backdrop
   | Document of Document.t
+  | Completion of Completion.t
   | Gutter
   | Gutter_cursor_line
   | Border
@@ -53,6 +61,8 @@ type t =
   | Diff_hunk
   | Diff_meta
 [@@deriving sexp_of, equal]
+
+let completion ?(selected = false) part = Completion { part; selected }
 
 let document ?syntax ?current_line ?special ?overlay () =
   Document (Document.create ?syntax ?current_line ?special ?overlay ())

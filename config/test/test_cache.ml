@@ -31,6 +31,8 @@ let main () =
   let c = open_in %S in let value = input_line c in close_in c;
   Ches_config.Theme.set (value ^ (match Sys.getenv_opt "OCAMLPARAM" with None -> "" | Some s -> s));
   Ches_config.Signature_help.set_enabled (value = "first");
+  Ches_config.Completion.set_color ~role:"detail" (if value = "first" then "#AbC123" else "#456DEF");
+  if value = "first" then Ches_config.Completion.set_color ~role:"documentation" "#112233";
   Ches_config.Snippets.add ~id:"fresh" ~prefix:"q" value
 |} executions data in
     Out_channel.write_all path ~data:source;
@@ -51,6 +53,11 @@ let main () =
     check (String.equal (ok warm).theme "second") "cached settings instead of program";
     check ((ok cold).signature_help_enabled && not (ok warm).signature_help_enabled)
       "cached signature settings instead of program";
+    check ([%equal: (string * string) list] (ok cold).completion_colors
+        ["detail", "#abc123"; "documentation", "#112233"]
+      && [%equal: (string * string) list] (ok warm).completion_colors
+        ["detail", "#456def"])
+      "cached colors instead of fresh values or fresh empty role defaults";
     let body settings = match settings.Settings.snippets with
       | [Ches_completion.User_snippets.Add declaration] -> declaration.body
       | _ -> failwith "missing fresh snippet" in
@@ -199,7 +206,8 @@ let main () =
     let%bind () = Deferred.List.iter ~how:`Sequential
       [ "let () = exit 0", "missing protocol"
       ; "let () = at_exit (fun () -> let c = open_out Sys.argv.(1) in output_string c \"bad\\n\"; close_out c)", "bad protocol"
-      ; "let () = Ches_config.theme := \"\"", "invalid settings"
+       ; "let () = Ches_config.theme := \"\"", "invalid settings"
+       ; "let () = Ches_config.completion_colors := [\"detail\", \"invalid\"]", "invalid colors"
       ; "let () = while true do () done", "timeout"
       ] ~f:(fun (ending, label) ->
         Out_channel.write_all path ~data:(source ^ "\n" ^ ending ^ "\n");

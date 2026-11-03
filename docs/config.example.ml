@@ -12,6 +12,13 @@ let () =
   View.set_line_numbers false;
   Theme.set "vim-classic"
 
+(* Optional completion-menu overrides (otherwise colors follow the theme):
+   let () =
+     Completion.set_color ~role:"selected_background" "#283447";
+     Completion.set_color ~role:"detail" "#b8d7a3";
+     Completion.set_color ~role:"selected_detail" "#c9e8b4"
+*)
+
 (* All snippet collections are enabled by default. For example:
    let () =
      Snippets.set_collection_enabled ~collection:"hardcaml" false;

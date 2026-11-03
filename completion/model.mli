@@ -119,6 +119,8 @@ val receive : t -> Reply.t -> t
     provider ordering/selection; ignored after installation/finalization. *)
 val receive_words : t -> Request.t -> Buffer_words.t -> t
 val candidates : t -> Candidate.t list
+(** Original typed identifier prefix, retained while cycling installed candidates. *)
+val prefix : t -> string
 val selected : t -> Candidate.t option
 (** First press inserts the selected primary in either direction; later presses
     cycle/wrap, replacing only the primary. Additional edits are deferred. *)

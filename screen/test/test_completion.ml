@@ -552,7 +552,8 @@ let%expect_test "menu identifies providers and safely renders signature metadata
     List.iter frame.rows ~f:(fun row -> assert (Span.total_width row = width));
     if width >= 18 then (
       let selected = List.concat frame.rows
-        |> List.filter ~f:(fun span -> Style.equal span.Span.style (Mode Insert)) in
+         |> List.filter ~f:(fun span -> match span.Span.style with
+           | Completion { selected = true; _ } -> true | _ -> false) in
       assert (not (List.is_empty selected));
       assert (String.is_suffix (List.last_exn selected).text ~suffix:" ")));
   [%expect {| |}]
@@ -608,6 +609,106 @@ let resolvable () =
   let t = reply t req [ candidate req "alpha"; candidate req "alpine" ] in
   let t = metadata t req [ info "alpha"; info "alpine" ] in
   t, req
+;;
+
+let completion_spans t ~width =
+  (Frame.render t ~width ~height:12).rows
+  |> List.map ~f:(List.filter ~f:(fun span -> match span.Span.style with
+    | Completion _ -> true | _ -> false))
+  |> List.filter ~f:(fun row -> not (List.is_empty row))
+;;
+
+let part_text rows ~selected part =
+  List.concat rows |> List.filter ~f:(fun span ->
+    Style.equal span.Span.style (Style.completion ~selected part))
+  |> List.map ~f:(fun span -> span.Span.text) |> String.concat
+;;
+
+let%test_unit "completion parts retain prefix during cycling and separate source, detail and docs" =
+  let t, _ = resolvable () in
+  List.iter [t; press t "<Tab>"; press t "<Tab><Tab>"] ~f:(fun t ->
+    let rows = completion_spans t ~width:80 in
+    assert (String.equal (Ui_state.completion_prefix t) "al");
+    assert (String.equal (part_text rows ~selected:true Match) ">al");
+    assert (String.equal (part_text rows ~selected:false Match) "al");
+    assert (String.equal (part_text rows ~selected:true Source) "[LSP]");
+    assert (String.equal (part_text rows ~selected:true Detail) "(value: int) -> string");
+    assert (String.equal (part_text rows ~selected:false Documentation)
+      "Function documentationsecond line");
+    List.iter rows ~f:(fun row ->
+      assert (Span.total_width row = Span.total_width (List.hd_exn rows));
+      let last = List.last_exn row in
+      assert (String.is_suffix last.text ~suffix:" ");
+      match last.style with
+      | Completion { part = Padding; selected } ->
+        List.iter row ~f:(fun span -> match span.Span.style with
+          | Completion c -> assert (Bool.equal selected c.selected)
+          | _ -> assert false)
+      | _ -> assert false))
+;;
+
+let%test_unit "buffer, LSP and local snippet providers use the source part on selected rows" =
+  let lsp, _ = resolvable () in
+  List.iter [press (ui "\nalpha alpine") "ial", "[buffer]";
+             lsp, "[LSP]";
+             press (ui ~path:"module.sv" "") "iaff", "[snippet]"]
+    ~f:(fun (t, source) ->
+      let rows = completion_spans t ~width:80 in
+      assert (String.equal (part_text rows ~selected:true Source) source);
+      assert (String.is_prefix (part_text rows ~selected:true Match) ~prefix:">"))
+;;
+
+let%test_unit "filterText alone never highlights a mismatching label, including escaped controls" =
+  let t, req = request (press (attached "") "ial") in
+  List.iter ["different"; "a\027label"; "界 label"] ~f:(fun label ->
+    let c = { (candidate req "alpha") with label } in
+    let t = reply t req [c] in
+    let rows = completion_spans t ~width:80 in
+    assert (String.equal (part_text rows ~selected:true Match) ">");
+    assert (String.is_empty (part_text rows ~selected:false Match)))
+;;
+
+let%test_unit "Unicode prefix spans retain whole combining cells and clip wide glyphs safely" =
+  List.iter ["é", "éclair"; "e", "éclair"; "界", "界面"] ~f:(fun (prefix, label) ->
+    let t = press (attached "") "i" in
+    (* Paste leaves a clean Unicode slot; manual completion captures its prefix. *)
+    let t, req = request (run t (paste prefix) |> fun t -> press t "<C-n>") in
+    let t = reply t req [candidate req label] in
+    let rows = completion_spans t ~width:80 in
+    let expected = if String.equal prefix "e" then ">é" else ">" ^ prefix in
+    assert (String.equal (part_text rows ~selected:true Match) expected);
+    List.iter [4; 5; 7; 12; 18] ~f:(fun width ->
+      let frame = Frame.render t ~width ~height:8 in
+      List.iter frame.rows ~f:(fun row ->
+        assert (Span.total_width row = width);
+        List.iter row ~f:(fun span ->
+          assert (Result.is_ok (Text_buffer.of_string span.Span.text))))))
+;;
+
+let%test_unit "matching labels with escaped suffixes preserve cell widths and selected clipping styles" =
+  let t, req = request (press (attached "") "ial") in
+  List.iter ["al\027́pha"; "al\t́pha"; "al界́pha"] ~f:(fun label ->
+    let c = { (candidate req label) with detail = Some "界́\027\tvalue" } in
+    let t = reply t req [c] in
+    let rows = completion_spans t ~width:80 in
+    assert (String.equal (part_text rows ~selected:true Match) ">al");
+    let rendered = part_text rows ~selected:true Label in
+    if String.is_substring label ~substring:"\027" then (
+      assert (String.is_substring rendered ~substring:"^[pha");
+      assert (not (String.is_substring rendered ~substring:"́")));
+    (* Exercise clipping in the marker, label, inter-column padding, provider,
+       detail and the final padding cell, including partial wide glyphs. *)
+    List.iter (List.range 3 61) ~f:(fun width ->
+      let rows = completion_spans t ~width in
+      List.iter rows ~f:(fun row ->
+        List.iter row ~f:(fun span ->
+          assert (span.Span.width = Cell_map.total_width (Cell_map.glyphs span.text));
+          match span.style with
+          | Completion { selected = true; _ } -> ()
+          | _ -> assert false);
+        let last = List.last_exn row in
+        assert (Style.equal last.style (Style.completion ~selected:true Padding));
+        assert (String.is_suffix last.text ~suffix:" "))))
 ;;
 
 let%expect_test "metadata is immediate, lazy resolve follows selection, and resolved imports wait for acceptance" =

@@ -56,11 +56,66 @@ let () =
     let expected : Settings.t =
       { completion_enabled = false; signature_help_enabled = false; completion_ghost_preview = true
       ; completion_min_prefix_chars = 3; completion_prefer_local_snippets = false
-      ; line_numbers = true; theme = "custom-theme"; snippets = [] } in
+      ; completion_colors = []; line_numbers = true; theme = "custom-theme"; snippets = [] } in
     check (Settings.equal (ok result) expected) "real Stdlib configuration";
     check_clean ();
     let%bind defaults = load "let () = ()" in
     check (Settings.equal (ok defaults) Settings.default) "fresh defaults each load";
+    let roles = [ "background"; "selected_background"; "label"; "selected_label"
+                ; "source"; "selected_source"; "detail"; "selected_detail"
+                ; "match"; "selected_match"; "documentation" ] in
+    let colors_equal = [%equal: (string * string) list] in
+    let%bind colored = load (remember ^ {|open Ches_config
+let () =
+  List.iter (fun role -> Completion.set_color ~role "#Ab09EF")
+    [ "background"; "selected_background"; "label"; "selected_label"
+    ; "source"; "selected_source"; "detail"; "selected_detail"
+    ; "match"; "selected_match"; "documentation" ];
+  for _ = 1 to 20 do Ches_config.Completion.set_color ~role:"detail" "#C0fFeE" done;
+  Signature_help.set_enabled false;
+  View.set_line_numbers true;
+  Theme.set "custom-theme";
+  Snippets.set_collection_enabled ~collection:"hardcaml" false
+|}) in
+    let colored = ok colored in
+    let expected_colors = List.filter_map roles ~f:(fun role ->
+      if String.equal role "detail" then None else Some (role, "#ab09ef"))
+      @ ["detail", "#c0ffee"] in
+    check (colors_equal colored.completion_colors expected_colors)
+      "all eleven colors, mixed-case RGB, repeated role last-wins, qualified setter";
+    check_clean ();
+    let%bind defaults = load "let () = ()" in
+    check (Settings.equal (ok defaults) Settings.default) "fresh helper leaked colors";
+    let%bind () = Deferred.List.iter ~how:`Sequential
+      [ "Label", "#123456"; "", "#123456"; "selection", "#123456"
+      ; "detail", "123456"; "detail", "#12345"; "detail", "#1234567"
+      ; "detail", "#12345g"; "detail", " #123456"; "detail", "#123456\n"
+      ; "detail", "#１２３４５６"; "detail", ""; "detail", "#123\00056" ]
+      ~f:(fun (role, color) ->
+        let%map result = load (remember ^ sprintf
+          "let () = Ches_config.View.set_line_numbers true; Ches_config.Completion.set_color ~role:%S %S; Ches_config.Completion.set_color ~role:%S \"#abcdef\""
+          role color role) in
+        check (contains (error result) "Invalid_argument") "invalid color setter accepted";
+        check_clean ();
+        check (colors_equal colored.completion_colors expected_colors
+               && colored.line_numbers && not colored.signature_help_enabled
+               && String.equal colored.theme "custom-theme"
+               && List.length colored.snippets = 1)
+          "failed color load changed previous complete snapshot") in
+    List.iter ["detail", "bad"; "unknown", "#123456"] ~f:(fun entry ->
+      check (Result.is_error (Settings.validate
+        { colored with completion_colors = [entry; "detail", "#123456"] }))
+        "host accepted invalid entry before overwrite");
+    let%bind bypassed = load (remember ^ {|let () =
+  Ches_config.completion_colors := ["detail", "bad"; "detail", "#123456"]
+|}) in
+    check (contains (error bypassed) "Invalid settings result") "host color validation bypassed";
+    check_clean ();
+    let%bind oversized_colors = load (remember ^ {|let () =
+  Ches_config.completion_colors := List.init 12 (fun _ -> "detail", "#123456")
+|}) in
+    check (contains (error oversized_colors) "11 entries") "writer color entry bound missing";
+    check_clean ();
     let%bind result = load {config|open Ches_config
 let () =
   Snippets.add ~id:"personal" ~prefix:"q" ~scope:["ocaml"; ".foo"]
@@ -159,16 +214,41 @@ let () = Snippets.add ~id:"invalid.first" ~prefix:"q" "${UNKNOWN}";
       [U.Add { id = "a"; prefix = "b"; scopes = []; collection = None; description = None; body = "c" }])
       "legacy v2 add did not default to untagged";
     check legacy.signature_help_enabled "legacy signature default";
+    check (List.is_empty legacy.completion_colors) "v2 colors must default empty";
     let protocol3 = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" ^ "true\n" in
     List.iter ["1\ncollection\n612e\nfalse\n"; "1\ncollection\n61\ninvalid\n";
                 "1\nadd\n61\n62\n0\ninvalid\nnone\n63\n"] ~f:(fun suffix ->
        check (Result.is_error (Loader.For_testing.decode (protocol3 ^ suffix))) "malformed v3 accepted");
     List.iter ["true"; "false"] ~f:(fun signature ->
       let prefix = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" in
-      let decoded = Loader.For_testing.decode (prefix ^ signature ^ "\n0\n") |> Or_error.ok_exn in
+       let decoded = Loader.For_testing.decode (prefix ^ signature ^ "\n0\n") |> Or_error.ok_exn in
+       check (List.is_empty decoded.completion_colors) "v3 colors must default empty";
       check (Bool.equal decoded.signature_help_enabled (String.equal signature "true"))
         "v3 signature field decoded incorrectly");
     let prefix3 = String.substr_replace_first protocol ~pattern:"CHES_SETTINGS_2" ~with_:"CHES_SETTINGS_3" in
+    let protocol4 = String.substr_replace_first protocol3 ~pattern:"CHES_SETTINGS_3" ~with_:"CHES_SETTINGS_4" ^ "0\n" in
+    let hex text = String.concat (List.init (String.length text) ~f:(fun i ->
+      sprintf "%02x" (Char.to_int text.[i]))) ^ "\n" in
+    let pair role color = hex role ^ hex color in
+    let decoded = Loader.For_testing.decode
+      (protocol4 ^ "11\n" ^ String.concat (List.map roles ~f:(fun role -> pair role "#ABCdef")))
+      |> Or_error.ok_exn in
+    check (colors_equal decoded.completion_colors (List.map roles ~f:(fun role -> role, "#abcdef")))
+      "eleven serialized colors rejected or not canonicalized";
+    let decoded = Loader.For_testing.decode
+      (protocol4 ^ "2\n" ^ pair "detail" "#ABCdef" ^ pair "detail" "#123456")
+      |> Or_error.ok_exn in
+    check (colors_equal decoded.completion_colors ["detail", "#123456"])
+      "serialized duplicate normalization differs from setter";
+    List.iter
+      [ ""; "0"; "01\n"; "-1\n"; "12\n"; "99999999999999999999\n"
+      ; "1\n"; "1\n0g\n"; "1\n" ^ hex "detail"
+      ; "1\n" ^ pair "Detail" "#123456"
+      ; "1\n" ^ pair "detail" "#abcdeg"
+      ; "2\n" ^ pair "detail" "bad" ^ pair "detail" "#123456"
+      ; "0\nextra\n" ] ~f:(fun suffix ->
+        check (Result.is_error (Loader.For_testing.decode (protocol4 ^ suffix)))
+          "malformed or excessive v4 colors accepted");
     List.iter [""; "0\n"; "TRUE\n0\n"; "1\n0\n"; "true"; "true\n0";
                "false\n0\nextra\n"; "true\n01\n"] ~f:(fun suffix ->
       check (Result.is_error (Loader.For_testing.decode (prefix3 ^ suffix)))

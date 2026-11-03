@@ -41,6 +41,8 @@ module Font = struct
   ;;
 
   let default : Ches_screen.Style.t -> t list = function
+    | Completion { part = Match; _ } -> [ Bold ]
+    | Completion _ -> []
     | Title | Mode _ | Dirty | Pending | Error -> [ Bold ]
     | Backdrop
     | Document _
@@ -97,6 +99,21 @@ let colors theme (style : Ches_screen.Style.t) =
     ; Attr.bg (terminal_color Background style.bg)
     ] @ (if style.reverse then [ Attr.invert ] else [])
   | Backdrop -> colors Foreground Backdrop
+  | Completion { part; selected } ->
+    let foreground : Role.t = match part, selected with
+      | Label, false | Padding, false -> Completion_label
+      | Label, true | Padding, true -> Completion_selected_label
+      | Source, false -> Completion_source
+      | Source, true -> Completion_selected_source
+      | Detail, false -> Completion_detail
+      | Detail, true -> Completion_selected_detail
+      | Match, false -> Completion_match
+      | Match, true -> Completion_selected_match
+      | Documentation, _ -> Completion_documentation in
+    let background : Role.t = match part with
+      | Documentation -> Completion_background
+      | _ -> if selected then Completion_selected_background else Completion_background in
+    colors foreground background
   | Document { syntax; current_line; special; overlay } ->
     (match overlay with
      | Some Search_match -> colors Search_foreground Search_background

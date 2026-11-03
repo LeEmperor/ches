@@ -8,6 +8,45 @@ let default_color role =
   let r, g, b = Ches_theme.Theme.color Ches_theme.Theme.default role in
   Attr.Color.rgb ~r ~g ~b
 
+let%test_unit "completion parts retain independent selected colors and uniform documentation" =
+  let module Palette = Ches_theme.Theme in
+  let cases : (Ches_screen.Style.Completion.part * Palette.Role.t * Palette.Role.t) list =
+    [ Label, Completion_label, Completion_selected_label
+    ; Padding, Completion_label, Completion_selected_label
+    ; Source, Completion_source, Completion_selected_source
+    ; Detail, Completion_detail, Completion_selected_detail
+    ; Match, Completion_match, Completion_selected_match
+    ; Documentation, Completion_documentation, Completion_documentation ] in
+  let check theme =
+    let color role =
+      let r, g, b = Palette.color theme role in Attr.Color.rgb ~r ~g ~b in
+    List.iter cases ~f:(fun (part, plain, selected_role) ->
+      List.iter [ false; true ] ~f:(fun selected ->
+        let style = Ches_screen.Style.completion ~selected part in
+        let fg = if selected then selected_role else plain in
+        let bg : Palette.Role.t =
+          match part with
+          | Documentation -> Completion_background
+          | _ -> if selected then Completion_selected_background else Completion_background in
+        let colors = [ Attr.fg (color fg); Attr.bg (color bg) ] in
+        let fonts = match part with
+          | Match -> [ Attr.bold ]
+          | _ -> [] in
+        assert (same_attrs (Theme.attrs ~theme style) (colors @ fonts));
+        assert (same_attrs (Theme.attrs ~theme ~font:(fun _ -> [ Italic ]) style)
+          (colors @ [ Attr.italic ]))));
+    assert (same_attrs (Theme.attrs ~theme (Ches_screen.Style.Mode Insert))
+      [ Attr.fg (color Background); Attr.bg (color Insert_accent); Attr.bold ]) in
+  List.iter Palette.all ~f:check;
+  (* Unique colors make accidental foreground/background or state aliases visible. *)
+  let overrides = List.mapi Palette.completion_color_roles ~f:(fun i role ->
+    role, sprintf "#%02x%02x%02x" (10 + i) (40 + i) (90 + i)) in
+  let theme = Or_error.ok_exn (Palette.with_completion_colors Palette.default overrides) in
+  check theme;
+  assert (same_attrs (Theme.attrs ~theme (Ches_screen.Style.Mode Insert))
+    (Theme.attrs (Ches_screen.Style.Mode Insert)))
+;;
+
 let%test_unit "terminal colors preserve all indexed entries and exact RGB" =
   let module M = Ches_terminal.Model in
   let samples =

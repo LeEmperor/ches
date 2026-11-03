@@ -1,9 +1,11 @@
 open! Core
 val id : Ches_tile.View_id.t
 val spec : Ches_tile.Spec.t
-val default_size : Floating.Size.t
+val default_size : width:int -> height:int -> Floating.Size.t
+(** Eighty percent of each window dimension, subject to the minimum tile size. *)
 val placement : width:int -> height:int -> Tile_shell.Layout.t option
-val placement_with_preferred : preferred:Floating.Size.t -> width:int -> height:int -> Tile_shell.Layout.t option
+val placement_with_preferred : preferred:Floating.Size.t option -> width:int -> height:int -> Tile_shell.Layout.t option
+(** [None] follows the window size; [Some size] retains a manually chosen size. *)
 type inspection
 (** Frozen screen grid, canonical UTF-8 text and read-only modal cursor. The grid
     never reflows when the float is resized: rendering clips around its cursor.

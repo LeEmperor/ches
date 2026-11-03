@@ -56,6 +56,7 @@ let () =
 | `Completion.set_ghost_preview` | `false` | Preview a simple selected completion suffix |
 | `Completion.set_min_prefix_chars` | `1` | Positive number of identifier characters needed for automatic completion |
 | `Completion.set_prefer_local_snippets` | `true` | Rank local snippet candidates ahead of LSP candidates |
+| `Completion.set_color ~role` | Theme-derived | Override one completion-menu color with `"#RRGGBB"` |
 | `Signature_help.set_enabled` | `true` | Automatically show server-provided call signatures while typing |
 | `View.set_line_numbers` | `false` | Show absolute line numbers; applies across presentation profiles |
 | `Theme.set` | `"vim-classic"` | Select a built-in theme by ID |
@@ -72,6 +73,56 @@ existing CLI/keybinding behavior; arbitrary editor commands and external OCaml
 packages are not exposed through this configuration API.
 
 ## Session changes and reload
+
+### Completion menu colors
+
+The completion menu has independent colors for candidate labels, source tags,
+detail/type strings, matching prefixes, and documentation. Selected rows share a
+subdued background without flattening all foregrounds into the Insert-mode color.
+The complete detail string uses one semantic color; it is not syntax-tokenized.
+
+For example, add this dark-menu palette to `config.ml`:
+
+```ocaml
+let () =
+  Completion.set_color ~role:"background" "#18212b";
+  Completion.set_color ~role:"selected_background" "#283447";
+  Completion.set_color ~role:"label" "#e1e7ef";
+  Completion.set_color ~role:"selected_label" "#ffffff";
+  Completion.set_color ~role:"source" "#91a0b5";
+  Completion.set_color ~role:"selected_source" "#a9bad1";
+  Completion.set_color ~role:"detail" "#b8d7a3";
+  Completion.set_color ~role:"selected_detail" "#c9e8b4";
+  Completion.set_color ~role:"match" "#82baff";
+  Completion.set_color ~role:"selected_match" "#acd2ff";
+  Completion.set_color ~role:"documentation" "#d0d9e6"
+```
+
+| Role | Applies to |
+| --- | --- |
+| `background` | Unselected rows and documentation background |
+| `selected_background` | Entire selected row, including spacing and trailing padding |
+| `label` / `selected_label` | Candidate name and row marker/padding foreground |
+| `source` / `selected_source` | `[LSP]`, `[buffer]`, or `[snippet]` |
+| `detail` / `selected_detail` | Type/signature/detail string after the source |
+| `match` / `selected_match` | Actual typed-prefix match in the displayed candidate label |
+| `documentation` | Completion documentation text |
+
+Specify only the roles you want to override. Selected and unselected foregrounds
+are independent; setting `detail` alone does not set `selected_detail`. Omitted
+roles follow the current theme, including theme previews and switches. Defaults
+are adjusted for readability across dark and light palettes; explicit overrides
+are applied exactly as supplied. Matching prefixes are emphasized by the default
+font policy and remain tied to the original prefix while cycling candidates.
+
+Colors must be strict six-digit hex strings; letter case is accepted either way.
+Repeated declarations are last-wins. Invalid roles or colors reject the entire
+configuration reload, preserving your active settings. Removing an override and
+reloading restores that role's theme default. Use **Reload configuration** after
+editing; completion color settings follow the same startup/session model as other
+preferences.
+
+### Applying session settings
 
 After startup, toggling line numbers, completion, ghost text, or the theme affects
 only the running session. To make a setting permanent, edit `config.ml`.

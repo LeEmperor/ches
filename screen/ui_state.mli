@@ -103,6 +103,8 @@ val receive_configuration
 val completion_enabled : t -> bool
 val completion_ghost_enabled : t -> bool
 val completion_candidates : t -> Ches_completion.Model.Candidate.t list
+(** Original typed prefix, including while Tab cycling; empty without a live session. *)
+val completion_prefix : t -> string
 val completion_selected : t -> Ches_completion.Model.Candidate.t option
 val completion_info : t -> Ches_error.Completion_info.t option
 val completion_ghost : t -> Ches_completion.Model.ghost option
@@ -170,7 +172,8 @@ val terminal_generation : t -> int
 val terminal_failure : t -> string option
 val terminal_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option
 (** The global effective appearance: live preview while the theme picker is open,
-    otherwise the committed choice. Independent of presentation and file buffers. *)
+    otherwise the committed base choice, with configured completion colors applied.
+    Independent of presentation and file buffers; never mutates registered themes. *)
 val theme : t -> Ches_theme.Theme.t
 val theme_picker : t -> Theme_picker_tile.t option
 val theme_picker_layout : t -> width:int -> height:int -> Tile_shell.Layout.t option

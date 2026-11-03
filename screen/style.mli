@@ -17,6 +17,13 @@ module Overlay : sig
   [@@deriving sexp_of, equal, enumerate]
 end
 
+module Completion : sig
+  type part = Label | Source | Detail | Match | Documentation | Padding
+  [@@deriving sexp_of, equal, enumerate]
+
+  type t = { part : part; selected : bool } [@@deriving sexp_of, equal]
+end
+
 module Document : sig
   type t =
     { syntax : Syntax.t
@@ -41,6 +48,7 @@ type t =
   | Document of Document.t
   (** Independent foreground, current-line background, special-display treatment,
       and interaction overlay. Chrome styles remain separate. *)
+  | Completion of Completion.t
   | Gutter
   | Gutter_cursor_line
   | Border
@@ -64,6 +72,8 @@ type t =
   | Diff_hunk (** A hunk header ([@@ ... @@]). *)
   | Diff_meta (** A file or commit header line of a diff. *)
 [@@deriving sexp_of, equal]
+
+val completion : ?selected:bool -> Completion.part -> t
 
 val document
   :  ?syntax:Syntax.t

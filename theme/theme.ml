@@ -11,6 +11,11 @@ module Role = struct
     | Search_foreground | Search_background
     | Search_current_foreground | Search_current_background
     | Diff_added | Diff_removed | Diff_hunk
+    | Completion_background | Completion_selected_background
+    | Completion_label | Completion_selected_label
+    | Completion_source | Completion_selected_source
+    | Completion_detail | Completion_selected_detail
+    | Completion_match | Completion_selected_match | Completion_documentation
   [@@deriving sexp_of, equal, enumerate]
 end
 
@@ -32,6 +37,98 @@ let id t = t.id
 let title t = t.title
 let kind t = t.kind
 let color t role = List.Assoc.find_exn t.colors role ~equal:Role.equal
+
+let completion_roles : (string * Role.t) list =
+  [ "background", Completion_background
+  ; "selected_background", Completion_selected_background
+  ; "label", Completion_label; "selected_label", Completion_selected_label
+  ; "source", Completion_source; "selected_source", Completion_selected_source
+  ; "detail", Completion_detail; "selected_detail", Completion_selected_detail
+  ; "match", Completion_match; "selected_match", Completion_selected_match
+  ; "documentation", Completion_documentation ]
+;;
+
+let completion_color_roles = List.map completion_roles ~f:fst
+let is_completion role = List.exists completion_roles ~f:(fun (_, r) -> Role.equal r role)
+
+let with_completion_colors t overrides =
+  let open Or_error.Let_syntax in
+  let%map overrides =
+    List.map overrides ~f:(fun (name, value) ->
+      match List.Assoc.find completion_roles name ~equal:String.equal with
+      | None -> Or_error.errorf "Unknown completion color role: %s" name
+      | Some role ->
+        if String.length value <> 7
+           || not (Char.equal value.[0] '#')
+           || not (String.for_all (String.drop_prefix value 1) ~f:(fun c ->
+             Char.is_digit c || String.mem "abcdefABCDEF" c))
+        then Or_error.errorf "Completion color %s: expected #RRGGBB, got %S" name value
+        else
+          let channel pos = Int.of_string ("0x" ^ String.sub value ~pos ~len:2) in
+          Ok (role, (channel 1, channel 3, channel 5)))
+    |> Or_error.all
+  in
+  { t with colors = List.map t.colors ~f:(fun (role, original) ->
+      role, Option.value (List.Assoc.find (List.rev overrides) role ~equal:Role.equal)
+        ~default:original) }
+;;
+
+let blend (r, g, b) (r', g', b') amount =
+  let channel a b = Float.iround_nearest_exn
+      (Float.of_int a +. (Float.of_int (b - a) *. amount)) in
+  channel r r', channel g g', channel b b'
+;;
+
+let luminance (r, g, b) =
+  let linear n =
+    let c = Float.of_int n /. 255. in
+    if Float.(c <= 0.04045) then c /. 12.92
+    else ((c +. 0.055) /. 1.055) ** 2.4 in
+  (0.2126 *. linear r) +. (0.7152 *. linear g) +. (0.0722 *. linear b)
+;;
+
+let contrast a b =
+  let a = luminance a and b = luminance b in
+  (Float.max a b +. 0.05) /. (Float.min a b +. 0.05)
+;;
+
+(* Keep the semantic hue, moving only as far toward ink/paper as readability
+   requires. This also handles custom Base16 ramps with low-contrast foregrounds. *)
+let completion_defaults t =
+  let bg = color t Surface in
+  (* An unusual custom ramp may straddle the ink/paper contrast crossover.
+     Reduce the blend there so one readable foreground can serve both states. *)
+  let rec selection amount =
+    let candidate = blend bg (color t Foreground) (Float.of_int amount /. 100.) in
+    let readable endpoint =
+      Float.(contrast endpoint bg >= 4.5 && contrast endpoint candidate >= 4.5) in
+    if amount = 0 || readable (0, 0, 0) || readable (255, 255, 255)
+    then candidate else selection (amount - 1) in
+  let selected_bg = selection 12 in
+  let readable original target =
+    let score c = Float.min (contrast c bg) (contrast c selected_bg) in
+    let black = 0, 0, 0 and white = 255, 255, 255 in
+    let endpoint = if Float.(score black >= score white) then black else white in
+    let rec adjust step =
+      let candidate = blend original endpoint (Float.of_int step /. 100.) in
+      if step = 100 || Float.(score candidate >= target) then candidate
+      else adjust (step + 1) in
+    adjust 0
+  in
+  let label = readable (color t Foreground) 4.5 in
+  let source = readable (color t Muted) 3. in
+  let detail = readable (color t Syntax_type) 4.5 in
+  let matched = readable (color t Normal_accent) 4.5 in
+  let defaults : (Role.t * rgb) list =
+    [ Completion_background, bg; Completion_selected_background, selected_bg
+    ; Completion_label, label; Completion_selected_label, label
+    ; Completion_source, source; Completion_selected_source, source
+    ; Completion_detail, detail; Completion_selected_detail, detail
+    ; Completion_match, matched; Completion_selected_match, matched
+    ; Completion_documentation, label ] in
+  { t with colors = List.filter t.colors ~f:(fun (role, _) -> not (is_completion role))
+                    @ defaults }
+;;
 
 let validate_rgb (r, g, b) =
   if List.exists [ r; g; b ] ~f:(fun c -> c < 0 || c > 255)
@@ -60,8 +157,16 @@ let of_base16 ~id ~title ~(kind : Kind.t) ~palette =
     | Syntax_module -> 12
     | Normal_accent | Block_cursor | Search_background | Syntax_function -> 13
     | Special | Syntax_keyword | Diff_hunk -> 14
+    | Completion_background | Completion_selected_background
+    | Completion_label | Completion_selected_label
+    | Completion_source | Completion_selected_source
+    | Completion_detail | Completion_selected_detail
+    | Completion_match | Completion_selected_match | Completion_documentation ->
+      assert false (* Derived below from semantic roles, not Base16 slots. *)
   in
-  { id; title; kind; colors = List.map Role.all ~f:(fun role -> role, palette.(slot role)) }
+  { id; title; kind; colors = List.filter_map Role.all ~f:(fun role ->
+      if is_completion role then None else Some (role, palette.(slot role))) }
+  |> completion_defaults
 ;;
 
 let rgb n = (n lsr 16) land 255, (n lsr 8) land 255, n land 255
@@ -180,6 +285,7 @@ let legacy id title values =
   in
   { id; title; kind = Dark
   ; colors = colors @ List.map aliases ~f:(fun (role, source) -> role, get source) }
+  |> completion_defaults
 ;;
 
 let midnight = legacy "midnight" "Midnight"
@@ -198,6 +304,7 @@ let with_overrides t (overrides : (Role.t * int) list) =
       role, match List.Assoc.find overrides role ~equal:Role.equal with
       | Some packed -> rgb packed
       | None -> original) }
+  |> completion_defaults
 ;;
 
 (* Nostalgic Vim-inspired neon, not an exact Vim colorscheme port. Document,
