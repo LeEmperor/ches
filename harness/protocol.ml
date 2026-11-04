@@ -1,18 +1,18 @@
 open! Core
 
 type work = 
-  { action : string
-  ; location : string
-  ; dirty : string list 
+  { action    : string
+  ; location  : string
+  ; dirty     : string list 
   } [@@deriving sexp_of]
   
 type run =
-  { run_id : string
-  ; status : string
-  ; exit_code : int
-  ; project_root : string
-  ; log_path : string
-  ; waveform : string option
+  { run_id        : string
+  ; status        : string
+  ; exit_code     : int
+  ; project_root  : string
+  ; log_path      : string
+  ; waveform      : string option
   } [@@deriving sexp_of]
 
 (* Variant constructors on reply type; reply is either a Created or a Finished variant 
@@ -32,7 +32,7 @@ let parse text =
     let open Yojson.Safe.Util in
     
     (* Turn string into json; yippee serialization. *)
-    let json = Yojson.Safe.from_string text in
+    let json : Yojson.Safe.t = Yojson.Safe.from_string text in
     
     (* quick string helper for extraction out of the tagged variant constructors *)
     let string name : string = member name json |> to_string in
@@ -59,10 +59,16 @@ let parse text =
         Or construct a Finished reply with relevant tagged metadata grouped; 
       *)
       | _ ->
+      
+        (* check failure for wrong runid corresponding; see if member "error" in the json payload has a message *)
         (match member "run_id" json with
          | `String _ -> ()
          | _ -> failwith (match member "error" json with
-             | `String message -> message | _ -> "qh response has no run_id"));
+             | `String message -> message | _ -> "qh response has no run_id"
+             )
+        );
+        
+        (* else emit a Finished *)
         Finished
           { run_id        = string "run_id"
           ; status        = string "status"
@@ -71,9 +77,27 @@ let parse text =
           ; log_path      = string "log_path"
           
           (* Construct the waveform in place; if it exists return its place, otherwise return none; *)
-          ; waveform      = member "artifacts" json 
-                |> to_list 
-                |> List.find_map ~f:(fun item -> (* find the first Some occurrence *)
+          (* 
+              member : string -> t -> t = 
+                fun k obj -> 
+                ...
+              returns the value asssocaited with key k in the json obj 
+              
+              This is an example of an artifact in artifacts record as a json obj, which has members inside of it;
+                Artifact.t (not a real type but conceptually think of it like that)
+                
+                Each Artifact.t has a "kind" which we're checking to be "waveform", and if it is,
+                  we wrap a Some onto the "path" member the artifact of kind waveform has.
+              [
+                {
+                  "kind": "waveform",
+                  "path": "/tmp/waves.vcd"
+                }
+              ]
+          *)
+          ; waveform      = member "artifacts" json   (* out of the json object json, we extract the field "artifacts" out of *)
+                |> to_list                            (* convert the artifacts item into a list; *)
+                |> List.find_map ~f:(fun item ->      (* find the first non-None occurrence *)
                     if String.equal (member "kind" item |> to_string) "waveform" (* if there is a "waveform" kind existing *)
                       then Some (member "path" item |> to_string) (* then construct a Some on the path belonging to the artifact *)
                     else None
